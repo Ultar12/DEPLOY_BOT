@@ -19,6 +19,30 @@ bot.onText(/\/alive/, (msg) => {
   bot.sendMessage(chatId, `✅ I'm alive and ready to deploy!\n🕒 ${now}`);
 });
 
+// === /apps COMMAND ===
+bot.onText(/\/apps/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  try {
+    const res = await axios.get('https://api.heroku.com/apps', {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+
+    if (res.data.length === 0) {
+      return bot.sendMessage(chatId, '📭 No apps found in your Heroku account.');
+    }
+
+    const apps = res.data.map(app => `• ${app.name}`).join('\n');
+    bot.sendMessage(chatId, `📦 Your Heroku Apps:\n\n${apps}`);
+  } catch (err) {
+    console.error(err.message);
+    bot.sendMessage(chatId, `❌ Failed to fetch apps: ${err.message}`);
+  }
+});
+
 // === /deploy COMMAND ===
 bot.onText(/\/deploy/, (msg) => {
   const chatId = msg.chat.id;
@@ -37,19 +61,42 @@ bot.on('message', async (msg) => {
 
   switch (state.step) {
     case 'SESSION_ID':
+      if (!text || text.length < 5) {
+        return bot.sendMessage(chatId, '⚠️ SESSION_ID must be at least 5 characters. Try again:');
+      }
       state.data.SESSION_ID = text;
       state.step = 'APP_NAME';
       bot.sendMessage(chatId, '📝 Please enter APP_NAME (this will be your Heroku app name):');
       break;
 
     case 'APP_NAME':
-      state.data.APP_NAME = text.toLowerCase().replace(/\s+/g, '-');
-      state.step = 'AUTO_STATUS_VIEW';
-      bot.sendMessage(chatId, '📝 Please enter AUTO_STATUS_VIEW (true or false):');
+      const appName = text.toLowerCase().replace(/\s+/g, '-');
+      try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+          }
+        });
+        bot.sendMessage(chatId, `❌ The app name "${appName}" is already taken. Please choose another:`);
+      } catch (err) {
+        if (err.response && err.response.status === 404) {
+          state.data.APP_NAME = appName;
+          state.step = 'AUTO_STATUS_VIEW';
+          bot.sendMessage(chatId, '📝 Please enter AUTO_STATUS_VIEW (true or false):');
+        } else {
+          bot.sendMessage(chatId, `❌ Error checking app name: ${err.message}`);
+          delete userStates[chatId];
+        }
+      }
       break;
 
     case 'AUTO_STATUS_VIEW':
-      state.data.AUTO_STATUS_VIEW = text.toLowerCase() === 'true' ? 'true' : 'false';
+      const val = text.toLowerCase();
+      if (val !== 'true' && val !== 'false') {
+        return bot.sendMessage(chatId, '⚠️ Please enter "true" or "false" for AUTO_STATUS_VIEW:');
+      }
+      state.data.AUTO_STATUS_VIEW = val;
       state.step = 'STATUS_VIEW_EMOJI';
       bot.sendMessage(chatId, '📝 Please enter STATUS_VIEW_EMOJI (e.g. 👁️):');
       break;
