@@ -9,7 +9,15 @@ const GITHUB_REPO_URL = 'https://github.com/ultar1/lev'; // your repo
 // === INIT BOT ===
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
-// === DEPLOY HANDLER ===
+// === /alive COMMAND ===
+bot.onText(/\/alive/, (msg) => {
+  const chatId = msg.chat.id;
+  const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+
+  bot.sendMessage(chatId, `✅ I'm alive and ready to deploy!\n🕒 ${now}`);
+});
+
+// === /deploy COMMAND ===
 bot.onText(/\/deploy(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const appName = `levanter-${Date.now()}`;
