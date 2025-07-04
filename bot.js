@@ -2,11 +2,10 @@ require('dotenv').config();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
-// === Load app.json env vars ===
+// === Load app.json default env vars ===
 let defaultEnvVars = {};
 try {
   const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
@@ -19,34 +18,39 @@ try {
 
 // === Config from .env ===
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
-const GITHUB_REPO_URL = process.env.GITHUB_REPO_URL;
-const ADMIN_ID = process.env.ADMIN_ID;
+const HEROKU_API_KEY     = process.env.HEROKU_API_KEY;
+const GITHUB_REPO_URL    = process.env.GITHUB_REPO_URL;
+const ADMIN_ID           = process.env.ADMIN_ID;  // e.g. "123456789"
 
 // === Init bot ===
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // === In-memory state ===
-const userStates = {};
-const authorizedUsers = new Set();
-const validKeys = new Set();
+const userStates      = {};        // { chatId: { step, data } }
+const authorizedUsers = new Set(); // chatIds allowed to /deploy
+const validKeys       = new Set(); // one-time 8-char uppercase keys
 
-// === Generate one-time key ===
+// === Util: generate one-time key ===
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 8 })
-    .map(() => chars.charAt(Math.floor(Math.random() * chars.length)))
+    .map(() => chars[Math.floor(Math.random() * chars.length)])
     .join('');
 }
 
-// === /menu — Reply keyboard ===
-bot.onText(/^\/menu$/, (msg) => {
+// === Global polling error handler ===
+bot.on('polling_error', err => {
+  console.error('[polling_error]', err.code, err.message);
+});
+
+// === /menu — show reply keyboard ===
+bot.onText(/^\/menu$/, msg => {
   const cid = msg.chat.id;
   const keyboard = {
     keyboard: [
       ['🚀 Deploy', '📦 Apps'],
       ['🗑️ Delete', '📜 Logs'],
-      ['🔐 Generate Key', '🧪 Check Git']
+      ['🔐 Generate Key']
     ],
     resize_keyboard: true,
     one_time_keyboard: false
@@ -56,37 +60,11 @@ bot.onText(/^\/menu$/, (msg) => {
   });
 });
 
-// === Handle reply keyboard buttons ===
-bot.on('message', (msg) => {
-  const text = msg.text;
-  const cid = msg.chat.id.toString();
-
-  switch (text) {
-    case '🚀 Deploy':
-      return bot.emit('text', { chat: { id: cid }, text: '/deploy' });
-    case '📦 Apps':
-      return bot.emit('text', { chat: { id: cid }, text: '/apps' });
-    case '🗑️ Delete':
-      return bot.emit('text', { chat: { id: cid }, text: '/delete' });
-    case '📜 Logs':
-      return bot.sendMessage(cid, '📥 Please type: /log [app-name]');
-    case '🔐 Generate Key':
-      return bot.emit('text', { chat: { id: cid }, text: '/generate' });
-    case '🧪 Check Git':
-      return bot.emit('text', { chat: { id: cid }, text: '/checkgit' });
-  }
-});
-// === GLOBAL POLLING ERROR HANDLER ===
-bot.on('polling_error', err => {
-  console.error('[polling_error]', err.code, err.message);
-});
-
 // === /generate — Admin only: create one-time keys ===
 bot.onText(/^\/generate$/, msg => {
   const cid = msg.chat.id.toString();
-  if (cid !== ADMIN_ID) {
+  if (cid !== ADMIN_ID)
     return bot.sendMessage(cid, '❌ Only admin can generate keys.');
-  }
   const key = generateKey();
   validKeys.add(key);
   bot.sendMessage(cid,
@@ -95,7 +73,7 @@ bot.onText(/^\/generate$/, msg => {
   );
 });
 
-// === /start — Prompt for one-time key ===
+// === /start — prompt for key ===
 bot.onText(/^\/start$/, msg => {
   const cid = msg.chat.id.toString();
   if (cid === ADMIN_ID) {
@@ -106,7 +84,7 @@ bot.onText(/^\/start$/, msg => {
   bot.sendMessage(cid, '🔐 Please enter your one-time deploy key:');
 });
 
-// === /alive — Healthcheck ===
+// === /alive — health check ===
 bot.onText(/^\/alive$/, msg => {
   const cid = msg.chat.id.toString();
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
@@ -116,9 +94,8 @@ bot.onText(/^\/alive$/, msg => {
 // === /apps — Admin only: list Heroku apps ===
 bot.onText(/^\/apps$/, async msg => {
   const cid = msg.chat.id.toString();
-  if (cid !== ADMIN_ID) {
+  if (cid !== ADMIN_ID)
     return bot.sendMessage(cid, '❌ Only admin can list apps.');
-  }
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
       headers: {
@@ -126,9 +103,8 @@ bot.onText(/^\/apps$/, async msg => {
         Accept:        'application/vnd.heroku+json; version=3'
       }
     });
-    if (!res.data.length) {
+    if (!res.data.length)
       return bot.sendMessage(cid, '📭 No apps found.');
-    }
     const list = res.data.map(a => `• \`${a.name}\``).join('\n');
     bot.sendMessage(cid, `📦 Heroku Apps:\n${list}`, { parse_mode: 'Markdown' });
   } catch (err) {
@@ -139,20 +115,18 @@ bot.onText(/^\/apps$/, async msg => {
 // === /delete — Admin only: interactive delete ===
 bot.onText(/^\/delete$/, msg => {
   const cid = msg.chat.id.toString();
-  if (cid !== ADMIN_ID) {
+  if (cid !== ADMIN_ID)
     return bot.sendMessage(cid, '❌ Only admin can delete apps.');
-  }
   userStates[cid] = { step: 'AWAITING_DELETE_APP' };
-  bot.sendMessage(cid, '🗑️ Enter the Heroku app name you want to delete:');
+  bot.sendMessage(cid, '🗑️ Enter the Heroku app name to delete:');
 });
 
 // === /log — Admin only: fetch recent logs ===
 bot.onText(/^\/log (.+)$/, async (msg, match) => {
   const cid     = msg.chat.id.toString();
   const appName = match[1].trim();
-  if (cid !== ADMIN_ID) {
+  if (cid !== ADMIN_ID)
     return bot.sendMessage(cid, '❌ Only admin can fetch logs.');
-  }
   try {
     const session = await axios.post(
       `https://api.heroku.com/apps/${appName}/log-sessions`,
@@ -186,35 +160,33 @@ bot.onText(/^\/log (.+)$/, async (msg, match) => {
   }
 });
 
-// === /checkgit — Verify Git installation ===
-bot.onText(/^\/checkgit$/, msg => {
-  const cid = msg.chat.id.toString();
-  const res = spawnSync('git', ['--version']);
-  if (res.error) {
-    return bot.sendMessage(cid, `❌ Git not found: ${res.error.message}`);
-  }
-  bot.sendMessage(cid, `✅ Git version: ${res.stdout.toString().trim()}`);
-});
-
 // === /deploy — Interactive deploy flow ===
 bot.onText(/^\/deploy$/, msg => {
-  const cid = msg.chat.id.toString();
+  const cid     = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  if (!isAdmin && !authorizedUsers.has(cid)) {
+  if (!isAdmin && !authorizedUsers.has(cid))
     return bot.sendMessage(cid, '❌ Not authorized. Use /start and enter a valid key.');
-  }
   userStates[cid] = { step: 'SESSION_ID', data: {} };
   bot.sendMessage(cid, '📝 Enter your SESSION_ID:');
 });
 
-// === MESSAGE HANDLER: key entry, delete & deploy flows ===
+// === Message handler: buttons, key, delete, deploy ===
 bot.on('message', async msg => {
   const cid   = msg.chat.id.toString();
   const text  = msg.text || '';
   const state = userStates[cid];
-  if (!state) return;
 
-  // 1) One-time key entry
+  // Handle reply-keyboard buttons when not in a state
+  if (!state) {
+    if (text === '🚀 Deploy')  return bot.emit('text', { chat:{ id:cid }, text:'/deploy' });
+    if (text === '📦 Apps')    return bot.emit('text', { chat:{ id:cid }, text:'/apps' });
+    if (text === '🗑️ Delete')  return bot.emit('text', { chat:{ id:cid }, text:'/delete' });
+    if (text === '📜 Logs')    return bot.sendMessage(cid, '📥 Please type: /log [app-name]');
+    if (text === '🔐 Generate Key') return bot.emit('text',{chat:{id:cid},text:'/generate'});
+    return; // nothing else to do when no state
+  }
+
+  // 1) One-time-key entry
   if (state.step === 'AWAITING_KEY') {
     const key = text.trim().toUpperCase();
     if (validKeys.has(key)) {
@@ -248,18 +220,16 @@ bot.on('message', async msg => {
   try {
     switch (state.step) {
       case 'SESSION_ID':
-        if (text.length < 5) {
+        if (text.length < 5)
           return bot.sendMessage(cid, '⚠️ SESSION_ID must be at least 5 characters.');
-        }
         state.data.SESSION_ID = text.trim();
         state.step = 'APP_NAME';
         return bot.sendMessage(cid, '📝 Enter APP_NAME (lowercase, no spaces):');
 
       case 'APP_NAME':
         const appName = text.toLowerCase().trim().replace(/\s+/g, '-');
-        if (!/^[a-z0-9-]+$/.test(appName)) {
+        if (!/^[a-z0-9-]+$/.test(appName))
           return bot.sendMessage(cid, '⚠️ APP_NAME may only contain lowercase letters, numbers, and dashes:');
-        }
         try {
           await axios.get(`https://api.heroku.com/apps/${appName}`, {
             headers: {
@@ -278,9 +248,8 @@ bot.on('message', async msg => {
         }
 
       case 'AUTO_STATUS_VIEW':
-        if (text.toLowerCase() !== 'true') {
+        if (text.toLowerCase() !== 'true')
           return bot.sendMessage(cid, '⚠️ Please type "true" to enable AUTO_STATUS_VIEW:');
-        }
         state.data.AUTO_STATUS_VIEW = 'no-dl';
         state.step = 'STATUS_VIEW_EMOJI';
         return bot.sendMessage(cid, '📝 Enter STATUS_VIEW_EMOJI (e.g. 👁️):');
@@ -299,16 +268,13 @@ bot.on('message', async msg => {
   }
 });
 
-// === HELPER: Deploy to Heroku ===
+// === Helper: deploy to Heroku ===
 async function deployToHeroku(chatId, vars) {
   const appName = vars.APP_NAME;
 
   // 1) Create app
   await axios.post('https://api.heroku.com/apps', { name: appName }, {
-    headers: {
-      Authorization: `Bearer ${HEROKU_API_KEY}`,
-      Accept:        'application/vnd.heroku+json; version=3'
-    }
+    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
   });
 
   // 2) Set buildpacks
@@ -350,7 +316,7 @@ async function deployToHeroku(chatId, vars) {
     }
   );
 
-  // 4) Trigger build from GitHub tarball
+  // 4) Trigger build
   const buildRes = await axios.post(
     `https://api.heroku.com/apps/${appName}/builds`,
     { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -385,4 +351,4 @@ async function deployToHeroku(chatId, vars) {
   } else {
     bot.sendMessage(chatId, `❌ Build ${status}. Check your Heroku dashboard for details.`);
   }
-}
+          }
