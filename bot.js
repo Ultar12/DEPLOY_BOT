@@ -1,5 +1,7 @@
-require('dotenv').config();            // Load .env
+require('dotenv').config();          // Load .env
 const fs            = require('fs');
+const os            = require('os');
+const path          = require('path');
 const { spawnSync } = require('child_process');
 const TelegramBot   = require('node-telegram-bot-api');
 const axios         = require('axios');
@@ -25,9 +27,9 @@ const ADMIN_ID           = process.env.ADMIN_ID;  // e.g. "7302005705"
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // === IN-MEMORY STATE ===
-const userStates      = {};         // { chatId: { step, data } }
-const authorizedUsers = new Set();  // chatIds allowed to /deploy
-const validKeys       = new Set();  // one-time 8-char uppercase keys
+const userStates      = {};        // { chatId: { step, data } }
+const authorizedUsers = new Set(); // chatIds allowed to /deploy
+const validKeys       = new Set(); // one-time 8-char uppercase keys
 
 // === UTIL: Generate an 8-char uppercase alphanumeric key ===
 function generateKey() {
@@ -56,7 +58,7 @@ bot.onText(/^\/generate$/, msg => {
   );
 });
 
-// === /start — All users begin here ===
+// === /start ===
 bot.onText(/^\/start$/, msg => {
   const cid = msg.chat.id.toString();
   if (cid === ADMIN_ID) {
@@ -67,14 +69,14 @@ bot.onText(/^\/start$/, msg => {
   bot.sendMessage(cid, '🔐 Please enter your one-time deploy key:');
 });
 
-// === /alive — Healthcheck ===
+// === /alive ===
 bot.onText(/^\/alive$/, msg => {
   const cid = msg.chat.id.toString();
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
   bot.sendMessage(cid, `✅ I'm alive and ready!\n🕒 ${now}`);
 });
 
-// === /apps — Admin only: list Heroku apps ===
+// === /apps ===
 bot.onText(/^\/apps$/, async msg => {
   const cid = msg.chat.id.toString();
   if (cid !== ADMIN_ID) {
@@ -97,7 +99,7 @@ bot.onText(/^\/apps$/, async msg => {
   }
 });
 
-// === /delete — Admin only: interactive delete ===
+// === /delete ===
 bot.onText(/^\/delete$/, msg => {
   const cid = msg.chat.id.toString();
   if (cid !== ADMIN_ID) {
@@ -107,7 +109,7 @@ bot.onText(/^\/delete$/, msg => {
   bot.sendMessage(cid, '🗑️ Enter the name of the Heroku app you want to delete:');
 });
 
-// === /log — Admin only: fetch recent logs ===
+// === /log ===
 bot.onText(/^\/log (.+)$/, async (msg, match) => {
   const cid     = msg.chat.id.toString();
   const appName = match[1].trim();
@@ -115,39 +117,52 @@ bot.onText(/^\/log (.+)$/, async (msg, match) => {
     return bot.sendMessage(cid, '❌ Only admin can fetch logs.');
   }
   try {
-    const ls = await axios.post(
+    // 1) Create log session
+    const session = await axios.post(
       `https://api.heroku.com/apps/${appName}/log-sessions`,
       { dyno: 'web', tail: false },
-      { headers: {
+      {
+        headers: {
           Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept:        'application/vnd.heroku+json; version=3'
+          Accept: 'application/vnd.heroku+json; version=3'
         }
       }
     );
-    const logs = (await axios.get(ls.data.logplex_url)).data;
-    bot.sendMessage(cid,
-      `📜 Logs for \`${appName}\`:\n\`\`\`\n${logs}\n\`\`\``,
-      { parse_mode: 'Markdown' }
-    );
+    // 2) Download logs
+    const logs = (await axios.get(session.data.logplex_url)).data;
+    // 3) Send as message or file
+    if (logs.length < 4000) {
+      return bot.sendMessage(cid,
+        `📜 Logs for \`${appName}\`:\n\`\`\`\n${logs}\n\`\`\``,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    const filePath = path.join(os.tmpdir(), `${appName}-logs.txt`);
+    fs.writeFileSync(filePath, logs);
+    await bot.sendDocument(cid, filePath, {}, {
+      filename: `${appName}-logs.txt`,
+      contentType: 'text/plain'
+    });
+    fs.unlinkSync(filePath);
   } catch (err) {
     bot.sendMessage(cid,
-      `❌ Could not fetch logs for \`${appName}\`: ${err.message}`,
+      `❌ Failed to fetch logs for \`${appName}\`: ${err.message}`,
       { parse_mode: 'Markdown' }
     );
   }
 });
 
-// === /checkgit — Verify Git installation ===
+// === /checkgit ===
 bot.onText(/^\/checkgit$/, msg => {
   const cid = msg.chat.id.toString();
-  const result = spawnSync('git', ['--version']);
-  if (result.error) {
-    return bot.sendMessage(cid, `❌ Git not found: ${result.error.message}`);
+  const res = spawnSync('git', ['--version']);
+  if (res.error) {
+    return bot.sendMessage(cid, `❌ Git not found: ${res.error.message}`);
   }
-  bot.sendMessage(cid, `✅ Git version: ${result.stdout.toString().trim()}`);
+  bot.sendMessage(cid, `✅ Git version: ${res.stdout.toString().trim()}`);
 });
 
-// === /deploy — Interactive deploy flow ===
+// === /deploy ===
 bot.onText(/^\/deploy$/, msg => {
   const cid     = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
@@ -158,16 +173,15 @@ bot.onText(/^\/deploy$/, msg => {
   bot.sendMessage(cid, '📝 Please enter SESSION_ID:');
 });
 
-// === MESSAGE HANDLER: key entry, delete & deploy flows ===
+// === MESSAGE HANDLER ===
 bot.on('message', async msg => {
   const cid   = msg.chat.id.toString();
   const text  = msg.text || '';
   const state = userStates[cid];
 
-  // 1) Ignore if no active flow or slash command
   if (!state && text.startsWith('/')) return;
 
-  // 2) Handle one-time key entry
+  // 1) Key entry
   if (state?.step === 'AWAITING_KEY') {
     if (text.startsWith('/')) return;
     const key = text.trim().toUpperCase();
@@ -180,7 +194,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, '❌ Invalid or expired key. Please try again:');
   }
 
-  // 3) Handle interactive delete
+  // 2) Delete flow
   if (state?.step === 'AWAITING_DELETE_APP') {
     const appToDelete = text.trim();
     try {
@@ -201,8 +215,9 @@ bot.on('message', async msg => {
     return;
   }
 
-  // 4) Deploy flow steps
   if (!state) return;
+
+  // 3) Deploy flow
   try {
     switch (state.step) {
       case 'SESSION_ID':
@@ -294,13 +309,13 @@ async function deployToHeroku(chatId, vars) {
     }
   );
 
-  // 3) Set config vars (merge defaults + overrides)
+  // 3) Set config vars
   const configVars = {
     ...defaultEnvVars,
     SESSION_ID:        vars.SESSION_ID,
     AUTO_STATUS_VIEW:  vars.AUTO_STATUS_VIEW,
     STATUS_VIEW_EMOJI: vars.STATUS_VIEW_EMOJI,
-    HEROKU_API_KEY     // if your app needs it
+    HEROKU_API_KEY
   };
   await axios.patch(
     `https://api.heroku.com/apps/${appName}/config-vars`,
@@ -314,7 +329,7 @@ async function deployToHeroku(chatId, vars) {
     }
   );
 
-  // 4) Trigger build from GitHub tarball
+  // 4) Trigger build
   const buildRes = await axios.post(
     `https://api.heroku.com/apps/${appName}/builds`,
     { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -353,4 +368,4 @@ async function deployToHeroku(chatId, vars) {
       `❌ Build ${status}. Check your Heroku dashboard for details.`
     );
   }
-          }
+}
