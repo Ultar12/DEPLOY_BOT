@@ -3,8 +3,8 @@ const axios = require('axios');
 const crypto = require('crypto');
 
 // === CONFIG ===
-const TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const HEROKU_API_KEY = 'YOUR_HEROKU_API_KEY';
+const TELEGRAM_BOT_TOKEN = '7350697926:AAFNtsuGfJy4wOkA0Xuv_uY-ncx1fXPuTGI';
+const HEROKU_API_KEY = 'HRKU-AAAMAdZpLGcOXNIsooI3esdjfzVJUaTHqBnaMYZJFjOA_____weN3O9gU6ep';
 const GITHUB_REPO_URL = 'https://github.com/ultar1/lev';
 const ADMIN_ID = '7302005705'; // your Telegram user ID
 
