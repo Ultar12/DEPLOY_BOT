@@ -1,21 +1,22 @@
-require('dotenv').config(); // Load .env variables
+require('dotenv').config();  // Load .env
 
 const TelegramBot = require('node-telegram-bot-api');
 const axios       = require('axios');
+const crypto      = require('crypto');
 
 // === CONFIG FROM .env ===
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const HEROKU_API_KEY     = process.env.HEROKU_API_KEY;
 const GITHUB_REPO_URL    = process.env.GITHUB_REPO_URL;
-const ADMIN_ID           = process.env.ADMIN_ID;        // e.g. "7302005705"
+const ADMIN_ID           = process.env.ADMIN_ID;  // e.g. "7302005705"
 
 // === INIT BOT ===
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // === IN-MEMORY STATE ===
-const userStates      = {};    // { chatId: { step, data } }
-const authorizedUsers = new Set(); // chatIds cleared after deploy
-const validKeys       = new Set(); // one-time 8-char uppercase keys
+const userStates      = {};         // { chatId: { step, data } }
+const authorizedUsers = new Set();  // chatIds allowed to /deploy
+const validKeys       = new Set();  // one-time 8-char uppercase keys
 
 // === UTIL: Generate an 8-char uppercase alphanumeric key ===
 function generateKey() {
@@ -50,7 +51,6 @@ bot.onText(/^\/generate$/, msg => {
 // === /start — All users begin here ===
 bot.onText(/^\/start$/, msg => {
   const cid = msg.chat.id.toString();
-  // Admin bypasses key
   if (cid === ADMIN_ID) {
     authorizedUsers.add(cid);
     return bot.sendMessage(cid, '✅ Admin access granted. You may use all commands.');
@@ -110,26 +110,30 @@ bot.onText(/^\/deploy$/, msg => {
   bot.sendMessage(cid, '📝 Please enter SESSION_ID:');
 });
 
-// === MESSAGE HANDLER: key entry, delete and deploy flows ===
+// === MESSAGE HANDLER: keys, delete, and deploy flows ===
 bot.on('message', async msg => {
   const cid   = msg.chat.id.toString();
   const text  = msg.text;
   const state = userStates[cid];
 
-  // 1) Handle one-time key entry
+  // 1) No active flow & slash command → ignore
+  if (!state && text.startsWith('/')) return;
+
+  // 2) Handle one-time key entry
   if (state && state.step === 'AWAITING_KEY') {
+    if (text.startsWith('/')) return;  // ignore commands while waiting key
+
     const key = text.trim().toUpperCase();
     if (validKeys.has(key)) {
       validKeys.delete(key);
       authorizedUsers.add(cid);
       delete userStates[cid];
       return bot.sendMessage(cid, '✅ Key accepted! You may now use /deploy.');
-    } else {
-      return bot.sendMessage(cid, '❌ Invalid or expired key. Please try again:');
     }
+    return bot.sendMessage(cid, '❌ Invalid or expired key. Please try again:');
   }
 
-  // 2) Handle interactive delete
+  // 3) Handle interactive delete
   if (state && state.step === 'AWAITING_DELETE_APP') {
     const appToDelete = text.trim();
     try {
@@ -139,18 +143,24 @@ bot.on('message', async msg => {
           Accept:        'application/vnd.heroku+json; version=3'
         }
       });
-      bot.sendMessage(cid, `✅ App \`${appToDelete}\` deleted.`, { parse_mode: 'Markdown' });
+      bot.sendMessage(cid,
+        `✅ App \`${appToDelete}\` deleted.`,
+        { parse_mode: 'Markdown' }
+      );
     } catch (err) {
-      bot.sendMessage(cid, `❌ Could not delete \`${appToDelete}\`: ${err.message}`, { parse_mode: 'Markdown' });
+      bot.sendMessage(cid,
+        `❌ Could not delete \`${appToDelete}\`: ${err.message}`,
+        { parse_mode: 'Markdown' }
+      );
     }
     delete userStates[cid];
     return;
   }
 
-  // 3) Ignore if no active flow or a slash command
-  if (!state || text.startsWith('/')) return;
+  // 4) Not in any flow → ignore
+  if (!state) return;
 
-  // 4) Deploy flow steps
+  // 5) Deploy flow
   try {
     switch (state.step) {
       case 'SESSION_ID':
@@ -170,22 +180,28 @@ bot.on('message', async msg => {
               Accept:        'application/vnd.heroku+json; version=3'
             }
           });
-          return bot.sendMessage(cid, `❌ \`${appName}\` already exists. Choose another.`, { parse_mode: 'Markdown' });
+          return bot.sendMessage(cid,
+            `❌ \`${appName}\` already exists. Choose another.`,
+            { parse_mode: 'Markdown' }
+          );
         } catch (e) {
           if (e.response && e.response.status === 404) {
             state.data.APP_NAME = appName;
             state.step = 'AUTO_STATUS_VIEW';
-            return bot.sendMessage(cid, '📝 Enter AUTO_STATUS_VIEW ("no-dl" or "false"):');
+            return bot.sendMessage(cid,
+              '📝 Enter AUTO_STATUS_VIEW (type "true" to enable):'
+            );
           }
           throw e;
         }
 
       case 'AUTO_STATUS_VIEW':
-        const v = text.toLowerCase();
-        if (v !== 'no-dl' && v !== 'false') {
-          return bot.sendMessage(cid, '⚠️ AUTO_STATUS_VIEW must be "no-dl" or "false". Try again:');
+        if (text.toLowerCase() !== 'true') {
+          return bot.sendMessage(cid,
+            '⚠️ Please type "true" to enable AUTO_STATUS_VIEW:'
+          );
         }
-        state.data.AUTO_STATUS_VIEW = v;
+        state.data.AUTO_STATUS_VIEW = 'no-dl';  // always store as "no-dl"
         state.step = 'STATUS_VIEW_EMOJI';
         return bot.sendMessage(cid, '📝 Enter STATUS_VIEW_EMOJI (e.g. 👁️):');
 
@@ -194,7 +210,7 @@ bot.on('message', async msg => {
         bot.sendMessage(cid, '🚀 Deploying to Heroku…');
         await deployToHeroku(cid, state.data);
         delete userStates[cid];
-        authorizedUsers.delete(cid); // revoke one-time access
+        authorizedUsers.delete(cid);  // revoke one-time access
         return;
 
       default:
@@ -212,12 +228,12 @@ async function deployToHeroku(chatId, vars) {
   const appName = vars.APP_NAME;
   const configVars = {
     SESSION_ID:        vars.SESSION_ID,
-    AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW,
+    AUTO_STATUS_VIEW:  vars.AUTO_STATUS_VIEW,
     STATUS_VIEW_EMOJI: vars.STATUS_VIEW_EMOJI,
     HEROKU_API_KEY:    HEROKU_API_KEY
   };
 
-  // 1) Create Heroku app
+  // 1) Create app
   await axios.post('https://api.heroku.com/apps', { name: appName }, {
     headers: {
       Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -226,24 +242,28 @@ async function deployToHeroku(chatId, vars) {
   });
 
   // 2) Set config vars
-  await axios.patch(`https://api.heroku.com/apps/${appName}/config-vars`, configVars, {
-    headers: {
-      Authorization: `Bearer ${HEROKU_API_KEY}`,
-      Accept:        'application/vnd.heroku+json; version=3',
-      'Content-Type':'application/json'
+  await axios.patch(
+    `https://api.heroku.com/apps/${appName}/config-vars`,
+    configVars,
+    { headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept:        'application/vnd.heroku+json; version=3',
+        'Content-Type':'application/json'
+      }
     }
-  });
+  );
 
   // 3) Trigger build from GitHub tarball
-  await axios.post(`https://api.heroku.com/apps/${appName}/builds`, {
-    source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` }
-  }, {
-    headers: {
-      Authorization: `Bearer ${HEROKU_API_KEY}`,
-      Accept:        'application/vnd.heroku+json; version=3',
-      'Content-Type':'application/json'
+  await axios.post(
+    `https://api.heroku.com/apps/${appName}/builds`,
+    { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
+    { headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept:        'application/vnd.heroku+json; version=3',
+        'Content-Type':'application/json'
+      }
     }
-  });
+  );
 
   // 4) Notify user
   bot.sendMessage(
