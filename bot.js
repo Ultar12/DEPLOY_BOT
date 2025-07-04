@@ -1,15 +1,14 @@
-require('dotenv').config(); // Load .env
-
-const fs          = require('fs');
-const TelegramBot = require('node-telegram-bot-api');
-const axios       = require('axios');
-const crypto      = require('crypto');
+require('dotenv').config();            // Load .env
+const fs            = require('fs');
+const { spawnSync } = require('child_process');
+const TelegramBot   = require('node-telegram-bot-api');
+const axios         = require('axios');
 
 // === LOAD app.json DEFAULT ENV VARS ===
 let defaultEnvVars = {};
 try {
   const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-  defaultEnvVars   = Object.fromEntries(
+  defaultEnvVars = Object.fromEntries(
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
   );
 } catch (err) {
@@ -20,24 +19,22 @@ try {
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const HEROKU_API_KEY     = process.env.HEROKU_API_KEY;
 const GITHUB_REPO_URL    = process.env.GITHUB_REPO_URL;
-const ADMIN_ID           = process.env.ADMIN_ID; // e.g. "7302005705"
+const ADMIN_ID           = process.env.ADMIN_ID;  // e.g. "7302005705"
 
 // === INIT BOT ===
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // === IN-MEMORY STATE ===
-const userStates      = {};        // { chatId: { step, data } }
-const authorizedUsers = new Set(); // chatIds allowed to /deploy
-const validKeys       = new Set(); // one-time 8-char uppercase keys
+const userStates      = {};         // { chatId: { step, data } }
+const authorizedUsers = new Set();  // chatIds allowed to /deploy
+const validKeys       = new Set();  // one-time 8-char uppercase keys
 
 // === UTIL: Generate an 8-char uppercase alphanumeric key ===
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let key = '';
-  for (let i = 0; i < 8; i++) {
-    key += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return key;
+  return Array.from({ length: 8 })
+    .map(() => chars.charAt(Math.floor(Math.random() * chars.length)))
+    .join('');
 }
 
 // === GLOBAL POLLING ERROR HANDLER ===
@@ -90,13 +87,11 @@ bot.onText(/^\/apps$/, async msg => {
         Accept:        'application/vnd.heroku+json; version=3'
       }
     });
-    if (res.data.length === 0) {
+    if (!res.data.length) {
       return bot.sendMessage(cid, '📭 No apps found.');
     }
     const list = res.data.map(a => `• \`${a.name}\``).join('\n');
-    bot.sendMessage(cid,
-      `📦 Heroku Apps:\n${list}`, { parse_mode: 'Markdown' }
-    );
+    bot.sendMessage(cid, `📦 Heroku Apps:\n${list}`, { parse_mode: 'Markdown' });
   } catch (err) {
     bot.sendMessage(cid, `❌ Could not fetch apps: ${err.message}`);
   }
@@ -120,7 +115,6 @@ bot.onText(/^\/log (.+)$/, async (msg, match) => {
     return bot.sendMessage(cid, '❌ Only admin can fetch logs.');
   }
   try {
-    // Create a log session
     const ls = await axios.post(
       `https://api.heroku.com/apps/${appName}/log-sessions`,
       { dyno: 'web', tail: false },
@@ -130,15 +124,27 @@ bot.onText(/^\/log (.+)$/, async (msg, match) => {
         }
       }
     );
-    // Fetch logs from the logplex URL
     const logs = (await axios.get(ls.data.logplex_url)).data;
     bot.sendMessage(cid,
       `📜 Logs for \`${appName}\`:\n\`\`\`\n${logs}\n\`\`\``,
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
-    bot.sendMessage(cid, `❌ Could not fetch logs for \`${appName}\`: ${err.message}`, { parse_mode: 'Markdown' });
+    bot.sendMessage(cid,
+      `❌ Could not fetch logs for \`${appName}\`: ${err.message}`,
+      { parse_mode: 'Markdown' }
+    );
   }
+});
+
+// === /checkgit — Verify Git installation ===
+bot.onText(/^\/checkgit$/, msg => {
+  const cid = msg.chat.id.toString();
+  const result = spawnSync('git', ['--version']);
+  if (result.error) {
+    return bot.sendMessage(cid, `❌ Git not found: ${result.error.message}`);
+  }
+  bot.sendMessage(cid, `✅ Git version: ${result.stdout.toString().trim()}`);
 });
 
 // === /deploy — Interactive deploy flow ===
@@ -152,18 +158,18 @@ bot.onText(/^\/deploy$/, msg => {
   bot.sendMessage(cid, '📝 Please enter SESSION_ID:');
 });
 
-// === MESSAGE HANDLER: keys, delete, and deploy flows ===
+// === MESSAGE HANDLER: key entry, delete & deploy flows ===
 bot.on('message', async msg => {
   const cid   = msg.chat.id.toString();
   const text  = msg.text || '';
   const state = userStates[cid];
 
-  // 1) No active flow & slash command → ignore
+  // 1) Ignore if no active flow or slash command
   if (!state && text.startsWith('/')) return;
 
   // 2) Handle one-time key entry
-  if (state && state.step === 'AWAITING_KEY') {
-    if (text.startsWith('/')) return; // ignore commands
+  if (state?.step === 'AWAITING_KEY') {
+    if (text.startsWith('/')) return;
     const key = text.trim().toUpperCase();
     if (validKeys.has(key)) {
       validKeys.delete(key);
@@ -175,7 +181,7 @@ bot.on('message', async msg => {
   }
 
   // 3) Handle interactive delete
-  if (state && state.step === 'AWAITING_DELETE_APP') {
+  if (state?.step === 'AWAITING_DELETE_APP') {
     const appToDelete = text.trim();
     try {
       await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
@@ -186,20 +192,21 @@ bot.on('message', async msg => {
       });
       bot.sendMessage(cid, `✅ App \`${appToDelete}\` deleted.`, { parse_mode: 'Markdown' });
     } catch (err) {
-      bot.sendMessage(cid, `❌ Could not delete \`${appToDelete}\`: ${err.message}`, { parse_mode: 'Markdown' });
+      bot.sendMessage(cid,
+        `❌ Could not delete \`${appToDelete}\`: ${err.message}`,
+        { parse_mode: 'Markdown' }
+      );
     }
     delete userStates[cid];
     return;
   }
 
-  // 4) Not in any flow → ignore
+  // 4) Deploy flow steps
   if (!state) return;
-
-  // 5) Deploy flow steps
   try {
     switch (state.step) {
       case 'SESSION_ID':
-        if (!text || text.length < 5) {
+        if (text.length < 5) {
           return bot.sendMessage(cid, '⚠️ SESSION_ID must be at least 5 characters.');
         }
         state.data.SESSION_ID = text;
@@ -220,7 +227,7 @@ bot.on('message', async msg => {
             { parse_mode: 'Markdown' }
           );
         } catch (e) {
-          if (e.response && e.response.status === 404) {
+          if (e.response?.status === 404) {
             state.data.APP_NAME = appName;
             state.step = 'AUTO_STATUS_VIEW';
             return bot.sendMessage(cid,
@@ -236,26 +243,18 @@ bot.on('message', async msg => {
             '⚠️ Please type "true" to enable AUTO_STATUS_VIEW:'
           );
         }
-        state.data.AUTO_STATUS_VIEW = 'no-dl'; // always store as "no-dl"
+        state.data.AUTO_STATUS_VIEW = 'no-dl';
         state.step = 'STATUS_VIEW_EMOJI';
         return bot.sendMessage(cid,
           '📝 Enter STATUS_VIEW_EMOJI (e.g. 👁️) or type "skip":'
         );
 
       case 'STATUS_VIEW_EMOJI':
-        if (text.toLowerCase() === 'skip') {
-          state.data.STATUS_VIEW_EMOJI = '';
-        } else {
-          state.data.STATUS_VIEW_EMOJI = text;
-        }
+        state.data.STATUS_VIEW_EMOJI = text.toLowerCase() === 'skip' ? '' : text;
         bot.sendMessage(cid, '🚀 Deploying to Heroku…');
         await deployToHeroku(cid, state.data);
         delete userStates[cid];
-        authorizedUsers.delete(cid); // revoke one-time access
-        return;
-
-      default:
-        delete userStates[cid];
+        authorizedUsers.delete(cid);
         return;
     }
   } catch (err) {
@@ -264,17 +263,9 @@ bot.on('message', async msg => {
   }
 });
 
-// === HELPER: Perform the Heroku deploy steps ===
+// === HELPER: Deploy to Heroku ===
 async function deployToHeroku(chatId, vars) {
   const appName = vars.APP_NAME;
-  // Merge default env vars and overrides
-  const configVars = {
-    ...defaultEnvVars,
-    SESSION_ID:        vars.SESSION_ID,
-    AUTO_STATUS_VIEW:  vars.AUTO_STATUS_VIEW,
-    STATUS_VIEW_EMOJI: vars.STATUS_VIEW_EMOJI,
-    HEROKU_API_KEY    // include if needed in your app
-  };
 
   // 1) Create app
   await axios.post('https://api.heroku.com/apps', { name: appName }, {
@@ -284,32 +275,60 @@ async function deployToHeroku(chatId, vars) {
     }
   });
 
-  // 2) Set config vars
+  // 2) Set buildpacks
+  await axios.put(
+    `https://api.heroku.com/apps/${appName}/buildpack-installations`,
+    {
+      updates: [
+        { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+        { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+        { buildpack: 'heroku/nodejs' }
+      ]
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept:        'application/vnd.heroku+json; version=3',
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  // 3) Set config vars (merge defaults + overrides)
+  const configVars = {
+    ...defaultEnvVars,
+    SESSION_ID:        vars.SESSION_ID,
+    AUTO_STATUS_VIEW:  vars.AUTO_STATUS_VIEW,
+    STATUS_VIEW_EMOJI: vars.STATUS_VIEW_EMOJI,
+    HEROKU_API_KEY     // if your app needs it
+  };
   await axios.patch(
     `https://api.heroku.com/apps/${appName}/config-vars`,
     configVars,
-    { headers: {
+    {
+      headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept:        'application/vnd.heroku+json; version=3',
-        'Content-Type':'application/json'
+        'Content-Type': 'application/json'
       }
     }
   );
 
-  // 3) Trigger build from GitHub tarball
+  // 4) Trigger build from GitHub tarball
   const buildRes = await axios.post(
     `https://api.heroku.com/apps/${appName}/builds`,
     { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
-    { headers: {
+    {
+      headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept:        'application/vnd.heroku+json; version=3',
-        'Content-Type':'application/json'
+        'Content-Type': 'application/json'
       }
     }
   );
 
-  // 4) Poll build status
-  const buildId       = buildRes.data.id;
+  // 5) Poll build status
+  const buildId        = buildRes.data.id;
   const buildStatusUrl = `https://api.heroku.com/apps/${appName}/builds/${buildId}`;
   let status = 'pending', attempts = 0;
   while (status === 'pending' && attempts < 20) {
@@ -324,16 +343,14 @@ async function deployToHeroku(chatId, vars) {
     attempts++;
   }
 
-  // 5) Notify user
+  // 6) Notify user
   if (status === 'succeeded') {
-    bot.sendMessage(
-      chatId,
+    bot.sendMessage(chatId,
       `✅ App deployed and live!\n🌐 https://${appName}.herokuapp.com`
     );
   } else {
-    bot.sendMessage(
-      chatId,
+    bot.sendMessage(chatId,
       `❌ Build ${status}. Check your Heroku dashboard for details.`
     );
   }
-}
+          }
