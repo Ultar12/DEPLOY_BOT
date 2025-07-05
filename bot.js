@@ -10,7 +10,7 @@ let defaultEnvVars = {};
 try {
   const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
   defaultEnvVars = Object.fromEntries(
-    Object.entries(appJson.env).map(([k, v]) => [k, v.value])
+    Object.entries(appJson.env).map(([k,v]) => [k, v.value])
   );
 } catch {}
 
@@ -44,7 +44,7 @@ function saveUserApps() {
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 8 })
-    .map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+    .map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
 function buildKeyboard(isAdmin) {
   return isAdmin
@@ -59,7 +59,7 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
-// === Global error handler ===
+// === Error handler ===
 bot.on('polling_error', console.error);
 
 // === /start & /menu ===
@@ -132,15 +132,14 @@ bot.on('message', async msg => {
   const text = msg.text?.trim();
   const isAdmin = cid === ADMIN_ID;
 
-  // ---- Admin reply-to-code logic ----
+  // 1) Admin reply-to-code
   if (isAdmin && msg.reply_to_message && msg.reply_to_message.text.includes('📱 Phone request for chat')) {
-    const match = msg.reply_to_message.text.match(/chat `(\d+)`/);
-    if (match) {
-      const userId = match[1];
-      const code = text;
+    const m = msg.reply_to_message.text.match(/chat `(\d+)`/);
+    if (m) {
+      const userId = m[1], code = text;
       try {
         await bot.sendMessage(userId,
-          `🔐 Here’s your pairing code:\n\`${code}\`\n\nPaste this in your WhatsApp-linked device to continue.`,
+          `🔐 Here’s your pairing code:\n\`${code}\`\n\nPaste this into your WhatsApp-linked device to continue.`,
           { parse_mode: 'Markdown' }
         );
         delete userStates[userId];
@@ -151,7 +150,7 @@ bot.on('message', async msg => {
     }
   }
 
-  // reset state on main buttons
+  // reset on main buttons
   const mainBtns = ['🧾 Get Session','🚀 Deploy','📦 My Bots','📜 Logs','🆘 Support','📦 Apps','🗑️ Delete','🔐 Generate Key'];
   if (mainBtns.includes(text)) delete userStates[cid];
 
@@ -159,7 +158,7 @@ bot.on('message', async msg => {
   if (text === '🧾 Get Session') {
     userStates[cid] = { step: 'AWAITING_SESSION_APPROVAL', data: {} };
     bot.sendMessage(cid, '⏳ Loading server...');
-    const name = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
+    const name = `${msg.from.first_name||''} ${msg.from.last_name||''}`.trim();
     const username = msg.from.username ? `@${msg.from.username}` : 'No username';
     bot.sendMessage(ADMIN_ID,
       `📥 Session request from:\nID: \`${cid}\`\nName: \`${name}\`\nUsername: \`${username}\``,
@@ -216,7 +215,7 @@ bot.on('message', async msg => {
     );
     return bot.sendMessage(cid,
       `📜 Total Bots: ${appsList.length}\nChoose one for logs:`,
-      { reply_markup: { inline_keyboard: rows } }
+      { reply_markup:{ inline_keyboard: rows } }
     );
   }
 
@@ -232,8 +231,8 @@ bot.on('message', async msg => {
         row.map(name => ({ text: name, callback_data: `delete:${name}` }))
       );
       return bot.sendMessage(cid,
-        `🗑️ Total Apps: ${appsList.length}\nChoose one to delete:`,
-        { reply_markup: { inline_keyboard: rows } }
+        `🗑️ Total Apps: ${appsList.length}\nChoose one to delete}`,
+        { reply_markup:{ inline_keyboard: rows } }
       );
     } catch (err) {
       return bot.sendMessage(cid, `❌ ${err.message}`);
@@ -242,9 +241,8 @@ bot.on('message', async msg => {
 
   // 🔐 Generate Key
   if (text === '🔐 Generate Key' && isAdmin) {
-    const key = generateKey();
-    validKeys.add(key);
-    return bot.sendMessage(cid, `🔑 One-time Key: \`${key}\``, { parse_mode: 'Markdown' });
+    const key = generateKey(); validKeys.add(key);
+    return bot.sendMessage(cid, `🔑 One-time Key: \`${key}\``, { parse_mode:'Markdown' });
   }
 
   // 🆘 Support
@@ -256,20 +254,16 @@ bot.on('message', async msg => {
   const state = userStates[cid];
   if (!state) return;
 
-  // 1) One-time key entry
+  // 1) One-time key
   if (state.step === 'AWAITING_KEY') {
     const key = text.toUpperCase();
     if (validKeys.has(key)) {
       validKeys.delete(key);
       authorizedUsers.add(cid);
       userStates[cid] = { step: 'SESSION_ID', data: {} };
-      return bot.sendMessage(cid,
-        '✅ Key accepted! Now please enter your SESSION_ID:'
-      );
+      return bot.sendMessage(cid, '✅ Key accepted! Now please enter your SESSION_ID:');
     }
-    return bot.sendMessage(cid,
-      '❌ Invalid or expired key. Get one from the admin if you don’t have it.'
-    );
+    return bot.sendMessage(cid, '❌ Invalid or expired key. Get one from the admin if you don’t have it.');
   }
 
   // 2) SESSION_ID
@@ -279,55 +273,46 @@ bot.on('message', async msg => {
     }
     state.data.SESSION_ID = text;
     state.step = 'APP_NAME';
-    return bot.sendMessage(cid, '📦 Build queued...');
+    return bot.sendMessage(cid, '📝 What name would you like to give your bot?');
   }
 
   // 3) APP_NAME
   if (state.step === 'APP_NAME') {
-    const nm = text.toLowerCase().replace(/\s+/g,'-');
-    if (!/^[a-z0-9-]+$/.test(nm)) {
-      return bot.sendMessage(cid, '⚠️ Invalid name. Use lowercase letters, numbers or hyphens.');
+    const name = text.trim();
+    if (name.length < 5) {
+      return bot.sendMessage(cid, '⚠️ Name must be at least 5 characters.');
+    }
+    const appName = name.toLowerCase().replace(/\s+/g,'-');
+    if (!/^[a-z0-9-]+$/.test(appName)) {
+      return bot.sendMessage(cid, '⚠️ Use lowercase letters, numbers or hyphens only.');
     }
     try {
-      await axios.get(`https://api.heroku.com/apps/${nm}`, {
+      await axios.get(`https://api.heroku.com/apps/${appName}`, {
         headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3' }
       });
-      return bot.sendMessage(cid, `❌ \`${nm}\` is taken. Choose another.`);
+      return bot.sendMessage(cid, `❌ \`${appName}\` is taken. Please choose another name.`);
     } catch (e) {
       if (e.response?.status === 404) {
-        state.data.APP_NAME = nm;
-        state.data.AUTO_STATUS_VIEW = 'no-dl';  // default
-        await bot.sendMessage(cid, '🛠️ Building in 3 mins...');
-        await deployToHeroku(cid, state.data);
-        delete userStates[cid];
-        authorizedUsers.delete(cid);
-        return;
+        state.data.APP_NAME = appName;
+        state.step = 'AUTO_STATUS_VIEW';
+        return bot.sendMessage(cid, '🟢 Should AUTO_STATUS_VIEW be enabled? (true/false)');
       }
       throw e;
     }
   }
 
-  // 4) Get Session Approval steps
-  if (state.step === 'AWAITING_SESSION_APPROVAL') return;
-  if (state.step === 'AWAITING_NAME') {
-    if ((text||'').length < 5) {
-      return bot.sendMessage(cid, '⚠️ Your name must be at least 5 characters.');
+  // 4) AUTO_STATUS_VIEW
+  if (state.step === 'AUTO_STATUS_VIEW') {
+    const v = text.toLowerCase();
+    if (!['true','false'].includes(v)) {
+      return bot.sendMessage(cid, '⚠️ Please type "true" or "false".');
     }
-    state.data.name = text;
-    state.step = 'AWAITING_PHONE';
-    return bot.sendMessage(cid, '📞 What is your phone number? (e.g. +2349012345678)');
-  }
-  if (state.step === 'AWAITING_PHONE') {
-    if (!/^\+234\d{10}$/.test(text)) {
-      return bot.sendMessage(cid, '⚠️ Invalid. Use format +2349012345678');
-    }
-    state.data.phone = text;
-    state.step = 'AWAITING_CODE';
-    await bot.sendMessage(cid, '⏳ Hang tight! Waiting for your pairing code...');
-    await bot.sendMessage(ADMIN_ID,
-      `📱 Phone request for chat \`${cid}\`\nPhone: \`${text}\`\n\nReply to this message with the pairing code.`,
-      { parse_mode: 'Markdown' }
-    );
+    state.data.AUTO_STATUS_VIEW = (v === 'true' ? 'no-dl' : 'false');
+    await bot.sendMessage(cid, '📦 Build queued...');
+    await bot.sendMessage(cid, '🛠️ Building in 3 mins...');
+    await deployToHeroku(cid, state.data);
+    delete userStates[cid];
+    authorizedUsers.delete(cid);
     return;
   }
 });
@@ -340,12 +325,12 @@ bot.on('callback_query', async query => {
 
   // Session approval
   if (action === 'approve') {
-    userStates[target] = { step: 'AWAITING_NAME', data: {} };
+    userStates[target] = { step:'AWAITING_NAME', data:{} };
     return bot.sendMessage(target, 'What is your name?');
   }
   if (action === 'reject') {
     delete userStates[target];
-    return bot.sendMessage(target, '❌ Your session request was rejected by the admin.');
+    return bot.sendMessage(target, '❌ Your session request was rejected.');
   }
 
   // App info
@@ -356,9 +341,8 @@ bot.on('callback_query', async query => {
       });
       const app = res.data;
       const createdAt = new Date(app.created_at);
-      const ageMs = Date.now() - createdAt.getTime();
-      const ageDays = Math.floor(ageMs / (1000*60*60*24));
-      const ageText = ageDays === 0 ? 'Today' : `${ageDays} day${ageDays>1?'s':''} ago`;
+      const ageDays = Math.floor((Date.now() - createdAt)/86400000);
+      const ageText = ageDays===0?'Today':`${ageDays} day${ageDays>1?'s':''} ago`;
       const info = `
 📦 *App Info:*
 • Name: \`${app.name}\`
@@ -384,14 +368,14 @@ bot.on('callback_query', async query => {
         { headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3' } }
       );
       const logs = (await axios.get(session.data.logplex_url)).data;
-      if (logs.length < 4000) {
+      if (logs.length<4000) {
         return bot.sendMessage(cid,
           `📜 Logs for \`${target}\`:\n\`\`\`\n${logs}\n\`\`\``, { parse_mode:'Markdown' }
         );
       }
-      const fp = path.join(os.tmpdir(), `${target}-logs.txt`);
-      fs.writeFileSync(fp, logs);
-      await bot.sendDocument(cid, fp);
+      const fp = path.join(os.tmpdir(),`${target}-logs.txt`);
+      fs.writeFileSync(fp,logs);
+      await bot.sendDocument(cid,fp);
       fs.unlinkSync(fp);
     } catch (err) {
       bot.sendMessage(cid, `❌ Could not fetch logs: ${err.message}`);
@@ -415,12 +399,10 @@ bot.on('callback_query', async query => {
 // === Deploy helper ===
 async function deployToHeroku(chatId, vars) {
   const appName = vars.APP_NAME;
-
   // Create app
   await axios.post('https://api.heroku.com/apps', { name:appName }, {
     headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3' }
   });
-
   // Buildpacks
   await axios.put(
     `https://api.heroku.com/apps/${appName}/buildpack-installations`,
@@ -429,59 +411,48 @@ async function deployToHeroku(chatId, vars) {
       { buildpack:'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
       { buildpack:'heroku/nodejs' }
     ]},
-    { headers:{
-      Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
-      'Content-Type':'application/json'
-    }}
+    { headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
+      'Content-Type':'application/json' }}
   );
-
   // Config vars
   const configVars = {
     ...defaultEnvVars,
-    SESSION_ID: vars.SESSION_ID,
+    SESSION_ID:       vars.SESSION_ID,
     AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW
   };
   await axios.patch(
     `https://api.heroku.com/apps/${appName}/config-vars`,
     configVars,
-    { headers:{
-      Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
-      'Content-Type':'application/json'
-    }}
+    { headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
+      'Content-Type':'application/json' }}
   );
-
   // Trigger build
   const buildRes = await axios.post(
     `https://api.heroku.com/apps/${appName}/builds`,
-    { source_blob:{ url:`${GITHUB_REPO_URL}/tarball/main` } },
-    { headers:{
-      Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
-      'Content-Type':'application/json'
-    }}
+    { source_blob:{ url:`${GITHUB_REPO_URL}/tarball/main` }},
+    { headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3',
+      'Content-Type':'application/json' }}
   );
-
   // Poll status
   let status = buildRes.data.status;
   const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${buildRes.data.id}`;
   let attempts = 0;
-  while (status === 'pending' && attempts < 20) {
-    await new Promise(r => setTimeout(r, 5000));
-    const poll = await axios.get(statusUrl, {
-      headers:{ Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3' }
-    });
-    status = poll.data.status;
-    attempts++;
+  while (status==='pending' && attempts<20) {
+    await new Promise(r=>setTimeout(r,5000));
+    const poll = await axios.get(statusUrl,{ headers:{
+      Authorization:`Bearer ${HEROKU_API_KEY}`, Accept:'application/vnd.heroku+json; version=3'
+    }});
+    status = poll.data.status; attempts++;
   }
-
-  // Final result
-  if (status === 'succeeded') {
-    userApps[chatId] = userApps[chatId] || [];
+  // Final
+  if (status==='succeeded') {
+    userApps[chatId] = userApps[chatId]||[];
     userApps[chatId].push(appName);
     saveUserApps();
     bot.sendMessage(chatId,
-      `✅ Deployed! Bot started...\nUse 📜 Logs to check for any errors.\n🌐 https://${appName}.herokuapp.com`
+      `✅ Deployed! Bot started...\nUse 📜 Logs to check for errors.\n🌐 https://${appName}.herokuapp.com`
     );
   } else {
     bot.sendMessage(chatId, `❌ Build ${status}. Check your Heroku dashboard.`);
   }
-                 }
+}
