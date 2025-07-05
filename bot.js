@@ -140,6 +140,13 @@ function chunkArray(arr, size) {
   return out;
 }
 
+async function sendAnimatedMessage(chatId, baseText) {
+    const msg = await bot.sendMessage(chatId, `⚙️ ${baseText}...`);
+    await new Promise(r => setTimeout(r, 1200)); // Wait for animation
+    return msg;
+}
+
+
 // 8) Send Heroku apps list
 async function sendAppList(chatId) {
   try {
@@ -170,7 +177,6 @@ async function buildWithProgress(chatId, vars) {
   const name = vars.APP_NAME;
 
   try {
-    // Create app
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -178,7 +184,6 @@ async function buildWithProgress(chatId, vars) {
       }
     });
 
-    // Provision Postgres
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
@@ -191,7 +196,6 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
-    // Configure buildpacks
     await axios.put(
       `https://api.heroku.com/apps/${name}/buildpack-installations`,
       {
@@ -210,10 +214,8 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
-    // Set config vars
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
-      // FIX: Ensure user-provided vars overwrite defaults from app.json.
       {
         ...defaultEnvVars,
         ...vars
@@ -227,7 +229,6 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
-    // Start build
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -240,11 +241,10 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
-    // FIX: Restored the building percentage animation.
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let status = 'pending';
     const progMsg = await bot.sendMessage(chatId, 'Building... 0%');
-    for (let i = 1; i <= 20; i++) { // Poll for up to 100 seconds
+    for (let i = 1; i <= 20; i++) { 
       await new Promise(r => setTimeout(r, 5000));
       try {
         const poll = await axios.get(statusUrl, {
@@ -262,27 +262,29 @@ async function buildWithProgress(chatId, vars) {
       await bot.editMessageText(`Building... ${pct}%`, {
         chat_id: chatId,
         message_id: progMsg.message_id
-      }).catch(() => {}); // Ignore errors if message is not modified
+      }).catch(() => {});
       
       if (status !== 'pending') break;
     }
 
-    // Final status
     if (status === 'succeeded') {
       await bot.editMessageText(
         `✅ Build complete! Your bot is live at https://${name}.herokuapp.com`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
+      return true; // Indicate success
     } else {
       await bot.editMessageText(
         `❌ Build status: ${status}. Check your Heroku dashboard for logs.`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
+      return false; // Indicate failure
     }
 
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
+    return false; // Indicate failure
   }
 }
 
@@ -293,7 +295,7 @@ bot.on('polling_error', console.error);
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear any previous state
+  delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
   await bot.sendMessage(cid,
@@ -355,13 +357,25 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
+    const guideCaption = 
+        "To get your session ID, please follow these steps carefully:\n\n" +
+        "1️⃣ *Open the Link*\n" +
+        "Visit: https://levanter-delta.vercel.app/\n\n" +
+        "2️⃣ *Important for iPhone Users*\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "3️⃣ *Skip Advertisements*\n" +
+        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
+        "4️⃣ *Use a CUSTOM ID*\n" +
+        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
+        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
+
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
-        caption: 'Visit https://levanter-delta.vercel.app/ to get your session ID. Once you have it, tap "Deploy" and provide it when asked.',
+        caption: guideCaption,
         parse_mode: 'Markdown'
       });
     } catch {
-      await bot.sendMessage(cid, 'Visit: https://levanter-delta.vercel.app/ to get your session ID.\n\nOnce you have it, tap "Deploy".');
+      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
     return;
   }
@@ -390,11 +404,23 @@ bot.on('message', async msg => {
     const keyAttempt = text.toUpperCase();
     const usesLeft = await useDeployKey(keyAttempt);
     if (usesLeft === null) {
-      return bot.sendMessage(cid, 'Invalid or expired key.');
+      // FIX: Tell user to contact admin for a key if their input is wrong
+      return bot.sendMessage(cid, `❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`);
     }
     authorizedUsers.add(cid);
     userStates[cid] = { step: 'SESSION_ID', data: {} };
-    await bot.sendMessage(ADMIN_ID, `🔑 Key used by ${cid}. Uses left: ${usesLeft}`);
+
+    const { first_name, last_name, username } = msg.from;
+    const userDetails = [
+      `*Name:* ${first_name || ''} ${last_name || ''}`,
+      `*Username:* @${username || 'N/A'}`,
+      `*Chat ID:* \`${cid}\``
+    ].join('\n');
+
+    await bot.sendMessage(ADMIN_ID,
+      `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
+      { parse_mode: 'Markdown' }
+    );
     return bot.sendMessage(cid, '✅ Key accepted. Now, please enter your session ID:');
   }
 
@@ -442,9 +468,28 @@ bot.on('message', async msg => {
       return bot.sendMessage(cid, '❌ Critical error: Missing app name or session ID. Please start over.');
     }
     
-    await buildWithProgress(cid, st.data);
-    await addUserBot(cid, APP_NAME, SESSION_ID);
-    delete userStates[cid]; // End of flow
+    const buildSuccessful = await buildWithProgress(cid, st.data);
+
+    if (buildSuccessful) {
+        await addUserBot(cid, APP_NAME, SESSION_ID);
+        
+        const { first_name, last_name, username } = msg.from;
+        const appUrl = `https://${APP_NAME}.herokuapp.com`;
+        const userDetails = [
+          `*Name:* ${first_name || ''} ${last_name || ''}`,
+          `*Username:* @${username || 'N/A'}`,
+          `*Chat ID:* \`${cid}\``
+        ].join('\n');
+        
+        const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\``;
+
+        await bot.sendMessage(ADMIN_ID, 
+            `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+            { parse_mode: 'Markdown', disable_web_page_preview: true }
+        );
+    }
+    
+    delete userStates[cid];
     return;
   }
 
@@ -507,29 +552,47 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'info') {
+    const animMsg = await sendAnimatedMessage(cid, 'Fetching app info');
     try {
-      const res = await axios.get(`https://api.heroku.com/apps/${payload}`, {
+      const appRes = await axios.get(`https://api.heroku.com/apps/${payload}`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      const { name, web_url, stack, created_at } = res.data;
-      return bot.sendMessage(cid, `Name: ${name}\nURL: ${web_url}\nStack: ${stack.name}\nCreated: ${new Date(created_at).toUTCString()}`);
+      const configRes = await axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+      });
+
+      const appData = appRes.data;
+      const configData = configRes.data;
+
+      const info = `*ℹ️ App Info: ${appData.name}*\n\n` +
+                   `*URL:* [${appData.web_url}](${appData.web_url})\n` +
+                   `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
+                   `*Stack:* ${appData.stack.name}\n` +
+                   `*Region:* ${appData.region.name}\n\n` +
+                   `*🔧 Key Config Vars:*\n` +
+                   `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
+                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+
+      return bot.editMessageText(info, { chat_id: cid, message_id: animMsg.message_id, parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch (e) {
-      return bot.sendMessage(cid, `Error fetching info: ${e.message}`);
+      return bot.editMessageText(`Error fetching info: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
   }
 
   if (action === 'restart') {
+    const animMsg = await sendAnimatedMessage(cid, 'Restarting app');
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      return bot.sendMessage(cid, `✅ "${payload}" restarted successfully.`);
+      return bot.editMessageText(`✅ "${payload}" restarted successfully.`, { chat_id: cid, message_id: animMsg.message_id });
     } catch (e) {
-      return bot.sendMessage(cid, `Error restarting: ${e.message}`);
+      return bot.editMessageText(`Error restarting: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
   }
 
   if (action === 'logs') {
+    const animMsg = await sendAnimatedMessage(cid, 'Fetching logs');
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
         { tail: false, lines: 100 },
@@ -537,24 +600,46 @@ bot.on('callback_query', async q => {
       );
       const logRes = await axios.get(sess.data.logplex_url);
       const logs = logRes.data.trim().slice(-4000);
+      await bot.deleteMessage(cid, animMsg.message_id);
       return bot.sendMessage(cid, `Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, { parse_mode: 'Markdown' });
     } catch (e) {
-      return bot.sendMessage(cid, `Error fetching logs: ${e.message}`);
+      return bot.editMessageText(`Error fetching logs: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
   }
 
   if (action === 'delete' || action === 'userdelete') {
-    try {
-      await axios.delete(`https://api.heroku.com/apps/${payload}`, {
-        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+      return bot.sendMessage(cid, `Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
+            { text: "❌ No, cancel", callback_data: 'canceldelete' }
+          ]]
+        }
       });
-      if (action === 'userdelete') {
-        await deleteUserBot(cid, payload);
+  }
+  
+  if (action === 'confirmdelete') {
+      const appToDelete = payload;
+      const originalAction = extra;
+      const animMsg = await sendAnimatedMessage(cid, `Deleting ${appToDelete}`);
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          if (originalAction === 'userdelete') {
+              await deleteUserBot(cid, appToDelete);
+          }
+          return bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: animMsg.message_id });
+      } catch (e) {
+          return bot.editMessageText(`Error deleting app: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
       }
-      return bot.sendMessage(cid, `✅ App "${payload}" has been deleted.`);
-    } catch (e) {
-      return bot.sendMessage(cid, `Error deleting app: ${e.message}`);
-    }
+  }
+
+  if (action === 'canceldelete') {
+      return bot.editMessageText('Deletion cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
   }
 
   if (action === 'setvar') {
