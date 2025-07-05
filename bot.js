@@ -443,7 +443,7 @@ if (st.step === 'AUTO_STATUS_VIEW') {
   await buildWithProgress(cid, st.data); // ⬅ Make sure this uses `st.data`
   await addUserBot(cid, APP_NAME, SESSION_ID);
   delete userStates[cid];
-  return);
+  return;
 }
 
 // SETVAR flow
