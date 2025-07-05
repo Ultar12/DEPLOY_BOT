@@ -203,20 +203,21 @@ async function buildWithProgress(chatId, vars) {
 
   // Set config vars (including APP_NAME)
   await axios.patch(
-    `https://api.heroku.com/apps/${name}/config-vars`,
-    {
-      SESSION_ID: vars.SESSION_ID,
-      APP_NAME: name,
-      AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW,
-      ...defaultEnvVars
-    },
-    { headers:{
-        Authorization:`Bearer ${HEROKU_API_KEY}`,
-        Accept:'application/vnd.heroku+json; version=3',
-        'Content-Type':'application/json'
-    }}
-  );
-
+  `https://api.heroku.com/apps/${name}/config-vars`,
+  {
+    SESSION_ID: vars.SESSION_ID?.trim() || 'INVALID_SESSION_ID',
+    APP_NAME: vars.APP_NAME?.trim() || name,
+    AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW || 'false',
+    ...defaultEnvVars
+  },
+  {
+    headers: {
+      Authorization: `Bearer ${HEROKU_API_KEY}`,
+      Accept: 'application/vnd.heroku+json; version=3',
+      'Content-Type': 'application/json'
+    }
+  }
+);
   // Start build
   const bres = await axios.post(
     `https://api.heroku.com/apps/${name}/builds`,
