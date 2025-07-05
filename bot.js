@@ -303,7 +303,7 @@ bot.on('message', async msg => {
       bot.sendMessage(cid,'⚠️ Visit:\nhttps://levanter-delta.vercel.app/');
     }
     return bot.sendMessage(cid,
-      `💡 *Note:*\n• iPhone use Chrome\n• Skip ads\n• Custom ID auto-starts\n\n`+
+      `💡 *Note:*\n• iPhone use Chrome\n• Skip ads and continue!\n• Use Custom ID for Bot to auto-starts whenever you rescan\n\n`+
       `When ready, tap 🚀 Deploy.`,
       { parse_mode:'Markdown' }
     );
