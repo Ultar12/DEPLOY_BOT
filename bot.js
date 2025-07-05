@@ -12,18 +12,21 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 
-// 2) Load fallback env vars from app.json
+// 2) Load fallback env vars from app.json (if using Heroku config)
 let defaultEnvVars = {};
 try {
-  const appJson = JSON.parse(fs.readFileSync('app.json','utf8'));
+  const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
   defaultEnvVars = Object.fromEntries(
-    Object.entries(appJson.env).map(([k,v]) => [k, v.value])
+    Object.entries(appJson.env).map(([k, v]) => [k, v.value])
   );
 } catch {
-  console.log('No app.json defaults loaded');
+  // no app.json or invalid
 }
 
-// 3) Environment config
+// 3) Environment variables
+// Ensure your .env contains:
+// TELEGRAM_BOT_TOKEN, HEROKU_API_KEY, GITHUB_REPO_URL=https://github.com/ultar1/lev
+// ADMIN_ID, DATABASE_URL
 const {
   TELEGRAM_BOT_TOKEN,
   HEROKU_API_KEY,
@@ -45,16 +48,18 @@ const pool = new Pool({
       bot_name   TEXT NOT NULL,
       session_id TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );`);
+    );
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deploy_keys (
       key        TEXT PRIMARY KEY,
       created_by TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );`);
+    );
+  `);
 })().catch(console.error);
 
-// 5) DB helpers
+// 5) DB helper functions
 async function addUserBot(userId, botName, sessionId) {
   await pool.query(
     'INSERT INTO user_bots(user_id, bot_name, session_id) VALUES($1,$2,$3)',
@@ -99,7 +104,7 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const userStates      = {};        // chatId -> { step, data }
 const authorizedUsers = new Set(); // chatIds with valid key
 
-// 7) Utilities
+// 7) Utility functions
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 8 })
@@ -119,7 +124,7 @@ function chunkArray(arr, size) {
   return out;
 }
 
-// 8) Send Heroku app list
+// 8) Send list of Heroku apps (admin only)
 async function sendAppList(chatId) {
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
@@ -133,11 +138,11 @@ async function sendAppList(chatId) {
       return bot.sendMessage(chatId, 'No apps found.');
     }
     const rows = chunkArray(apps, 3).map(r =>
-      r.map(name => ({ text:name, callback_data:`selectapp:${name}` }))
+      r.map(name => ({ text: name, callback_data: `selectapp:${name}` }))
     );
     await bot.sendMessage(chatId,
       `Total apps: ${apps.length}\nSelect an app:`,
-      { reply_markup:{ inline_keyboard: rows } }
+      { reply_markup: { inline_keyboard: rows } }
     );
   } catch (e) {
     console.error('sendAppList error:', e);
@@ -145,7 +150,7 @@ async function sendAppList(chatId) {
   }
 }
 
-// 9) Build & deploy helper
+// 9) Build & deploy helper with progress animation
 async function buildWithProgress(chatId, vars) {
   const name = vars.APP_NAME;
 
@@ -168,7 +173,7 @@ async function buildWithProgress(chatId, vars) {
     }}
   );
 
-  // 3. Buildpacks
+  // 3. Install buildpacks
   await axios.put(
     `https://api.heroku.com/apps/${name}/buildpack-installations`,
     { updates:[
@@ -183,7 +188,7 @@ async function buildWithProgress(chatId, vars) {
     }}
   );
 
-  // 4. Config vars
+  // 4. Set config vars
   await axios.patch(
     `https://api.heroku.com/apps/${name}/config-vars`,
     {
@@ -198,7 +203,7 @@ async function buildWithProgress(chatId, vars) {
     }}
   );
 
-  // 5. Start build
+  // 5. Trigger build
   let bres;
   try {
     bres = await axios.post(
@@ -215,10 +220,10 @@ async function buildWithProgress(chatId, vars) {
     throw new Error('Heroku build failed. Check session ID & repo URL.');
   }
 
-  // 6. Progress
+  // 6. Animate progress
   const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
   let status = 'pending';
-  const prog = await bot.sendMessage(chatId, 'Building... 0%');
+  const progMsg = await bot.sendMessage(chatId, 'Building... 0%');
   for (let i = 1; i <= 20; i++) {
     await new Promise(r => setTimeout(r, 5000));
     try {
@@ -232,26 +237,26 @@ async function buildWithProgress(chatId, vars) {
     } catch { break; }
     const pct = Math.min(100, i * 5);
     await bot.editMessageText(`Building... ${pct}%`, {
-      chat_id:chatId, message_id:prog.message_id
+      chat_id: chatId, message_id: progMsg.message_id
     });
     if (status !== 'pending') break;
   }
 
-  // 7. Final status
+  // 7. Final result
   if (status === 'succeeded') {
     await bot.editMessageText(
       `Build complete! Live at https://${name}.herokuapp.com`,
-      { chat_id:chatId, message_id:prog.message_id }
+      { chat_id: chatId, message_id: progMsg.message_id }
     );
   } else {
     await bot.editMessageText(
-      `Build ${status}. Check the Heroku dashboard.`,
-      { chat_id:chatId, message_id:prog.message_id }
+      `Build ${status}. Check your Heroku dashboard.`,
+      { chat_id: chatId, message_id: progMsg.message_id }
     );
   }
 }
 
-// 10) Polling errors
+// 10) Polling error handler
 bot.on('polling_error', console.error);
 
 // 11) Command handlers
@@ -281,7 +286,7 @@ bot.onText(/^\/apps$/i, msg => {
   if (cid === ADMIN_ID) sendAppList(cid);
 });
 
-// 12) Message handler
+// 12) Message handler (commands & buttons)
 bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
@@ -305,7 +310,7 @@ bot.on('message', async msg => {
     return sendAppList(cid);
   }
 
-  // Generate Key button
+  // Generate Key button (one-time)
   if (text === 'Generate Key' && isAdmin) {
     const key = generateKey();
     await addDeployKey(key, cid);
@@ -335,8 +340,8 @@ bot.on('message', async msg => {
       'Note:\n' +
       '- Use a modern browser (Chrome)\n' +
       '- Skip any ads/popups\n' +
-      '- Enter a custom session ID (e.g. your name)\n' +
-      '- This ID will automatically start your bot\n\n' +
+      '- Enter a custom session ID (your name)\n' +
+      '- This auto-starts your bot\n\n' +
       'Then tap "Deploy".'
     );
   }
@@ -358,7 +363,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, `Need help? Contact admin:\n${SUPPORT_USERNAME}`);
   }
 
-  // AWAITING_KEY state
+  // AWAITING_KEY step
   if (st?.step === 'AWAITING_KEY') {
     const valid = await useDeployKey(text.toUpperCase());
     if (!valid) {
@@ -370,7 +375,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
   }
 
-  // SESSION_ID state
+  // SESSION_ID step
   if (st?.step === 'SESSION_ID') {
     if (text.length < 5) {
       return bot.sendMessage(cid, 'Session ID must be at least 5 characters.');
@@ -380,12 +385,12 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Enter a name for your bot:');
   }
 
-  // APP_NAME state
+  // APP_NAME step
   if (st?.step === 'APP_NAME') {
     const name = text.toLowerCase().replace(/\s+/g,'-');
     if (name.length < 5 || !/^[a-z0-9-]+$/.test(name)) {
       return bot.sendMessage(cid,
-        'Invalid bot name. Use at least 5 chars: lowercase, numbers or hyphens.'
+        'Invalid bot name. ≥5 chars: lowercase, numbers or hyphens only.'
       );
     }
     try {
@@ -402,42 +407,40 @@ bot.on('message', async msg => {
         st.step = 'AUTO_STATUS_VIEW';
         return bot.sendMessage(cid, 'Enable automatic status view? (true/false)');
       }
-      console.error('App name check error:', e);
-      return bot.sendMessage(cid, 'Error checking bot name.');
+      console.error('APP_NAME error:', e);
+      return bot.sendMessage(cid, 'Error checking name.');
     }
   }
 
-  // AUTO_STATUS_VIEW state
+  // AUTO_STATUS_VIEW step → deploy
   if (st?.step === 'AUTO_STATUS_VIEW') {
     if (lc !== 'true' && lc !== 'false') {
       return bot.sendMessage(cid, 'Reply "true" or "false".');
     }
     st.data.AUTO_STATUS_VIEW = lc === 'true' ? 'no-dl' : 'false';
-
     try {
       await bot.sendMessage(cid, 'Starting deployment...');
       await buildWithProgress(cid, st.data);
       await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
       await bot.sendMessage(cid,
-        `Bot "${st.data.APP_NAME}" deployed successfully.`
+        `✅ Bot "${st.data.APP_NAME}" deployed successfully!`
       );
     } catch (err) {
       console.error('Deployment error:', err);
-      await bot.sendMessage(cid, `Deployment failed: ${err.message}`);
+      await bot.sendMessage(cid, `⚠️ Deployment failed: ${err.message}`);
     }
-
     delete userStates[cid];
     return;
   }
 });
 
-// 13) Callback queries
+// 13) Callback queries handler
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
   const [action, payload, extra, flag] = q.data.split(':');
   await bot.answerCallbackQuery(q.id);
 
-  // Admin app menu
+  // Admin app submenu
   if (action === 'selectapp') {
     return bot.sendMessage(cid, `Manage app "${payload}":`, {
       reply_markup:{ inline_keyboard:[
@@ -454,7 +457,7 @@ bot.on('callback_query', async q => {
     });
   }
 
-  // User bot menu
+  // User bot submenu
   if (action === 'selectbot') {
     return bot.sendMessage(cid, `Manage your bot "${payload}":`, {
       reply_markup:{ inline_keyboard:[
@@ -490,11 +493,11 @@ bot.on('callback_query', async q => {
         `• Stack: ${stack}\n` +
         `• Region: ${region?.name || 'unknown'}\n` +
         `• Created: ${createdDate.toDateString()}\n` +
-        `• Age: ${ageDays} day${ageDays===1?'':'s'}`
+        `• Age: ${ageDays} day${ageDays === 1 ? '' : 's'}`
       );
     } catch (e) {
       console.error('Info error:', e);
-      return bot.sendMessage(cid, `Error fetching app info: ${e.message}`);
+      return bot.sendMessage(cid, `Error fetching info: ${e.message}`);
     }
   }
 
@@ -602,18 +605,18 @@ bot.on('callback_query', async q => {
       });
     }
     userStates[cid] = {
-      step:'SETVAR_ENTER_VALUE',
-      data:{ APP_NAME:appName, VAR_NAME:varKey }
+      step: 'SETVAR_ENTER_VALUE',
+      data: { APP_NAME: appName, VAR_NAME: varKey }
     };
     return bot.sendMessage(cid, `Enter new value for ${varKey}:`);
   }
 
   // setvarbool
   if (action === 'setvarbool') {
-    const varKey = payload, appName = extra, flagVal = flag==='true';
+    const varKey = payload, appName = extra, flagVal = flag === 'true';
     let newVal;
-    if (varKey==='AUTO_STATUS_VIEW')    newVal = flagVal ? 'no-dl' : 'false';
-    else if (varKey==='ANTI_DELETE')     newVal = flagVal ? 'p'    : 'false';
+    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE')   newVal = flagVal ? 'p'    : 'false';
     else                                   newVal = flagVal ? 'true' : 'false';
     try {
       await axios.patch(
@@ -625,7 +628,7 @@ bot.on('callback_query', async q => {
             'Content-Type':'application/json'
         }}
       );
-      if (varKey==='SESSION_ID') {
+      if (varKey === 'SESSION_ID') {
         await updateUserSession(cid, appName, newVal);
       }
       return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
