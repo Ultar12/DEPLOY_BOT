@@ -296,14 +296,14 @@ bot.on('message', async msg => {
     try {
       await bot.sendPhoto(cid,'https://files.catbox.moe/an2cc1.jpeg',{ 
         caption:`🧾 *How to Get Your Session ID:*\n\n`+
-                `1. Tap the link\n2. Click *Session*\n3. Enter your Name In the custom SESSION ID Field\n\n`+
+                `1. Tap the link\n2. Click *Session*\n3. Enter your custom ID\n\n`+
                 `🔗 https://levanter-delta.vercel.app/`, parse_mode:'Markdown' 
       });
     } catch {
       bot.sendMessage(cid,'⚠️ Visit:\nhttps://levanter-delta.vercel.app/');
     }
     return bot.sendMessage(cid,
-      `💡 *Note:*\n• iPhone use Chrome\n• Skip ads and continue!\n• Use Custom Session Id while rescanning so that the bot can auto restart after 15 mins\n (make sure to use the same name!! )\n\n`+
+      `💡 *Note:*\n• iPhone use Chrome\n• Skip ads and continue!\n• Use Custom ID for Bot to auto-starts whenever you rescan\n\n`+
       `When ready, tap 🚀 Deploy.`,
       { parse_mode:'Markdown' }
     );
