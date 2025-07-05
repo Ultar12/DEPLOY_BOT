@@ -148,7 +148,7 @@ bot.on('message', async msg => {
     userStates[cid] = { step:'SESSION_ID', data:{} };
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
-        caption: `🧾 *How to Get Your Session ID:*\n\n1. Tap the link below\n2. Click *Session* on the left\n3. Follow the procedures on the right image to get your SESSION_ID. Please use chrome (Both iPhones users)\n\n🔗 https://levanter-delta.vercel.app/`,
+        caption: `🧾 *How to Get Your Session ID:*\n\n1. Tap the link below\n2. Click *Session* on the left\n3. Enter your custom session ID\n\n🔗 https://levanter-delta.vercel.app/`,
         parse_mode:'Markdown'
       });
     } catch(err) {
@@ -488,4 +488,4 @@ async function deployToHeroku(chatId, vars) {
   } else {
     bot.sendMessage(chatId, `❌ Build ${status}. Check Heroku dashboard.`);
   }
-           }
+          }
