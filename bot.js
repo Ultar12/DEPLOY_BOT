@@ -389,41 +389,48 @@ if (text === 'Deploy') {
     return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
   }
 
-  // Got session ID
-  if (st.step === 'SESSION_ID') {
-    if (text.length < 5) {
-      return bot.sendMessage(cid, 'Session ID must be at least 5 characters.');
-    }
-    st.data.SESSION_ID = text;
-    st.step = 'APP_NAME';
-    return bot.sendMessage(cid, 'Enter a name for your bot:');
+// Got session ID
+if (st.step === 'SESSION_ID') {
+  if (text.length < 5) {
+    return bot.sendMessage(cid, '❌ Session ID must be at least 5 characters.');
+  }
+  st.data.SESSION_ID = text;
+  st.step = 'BOT_NAME';
+  return bot.sendMessage(cid,
+    'What should your bot be called?\n' +
+    'Use only lowercase letters, numbers withoit hyphens (min 5 characters).'
+  );
+}
+
+// Got bot name (used as APP_NAME)
+if (st.step === 'BOT_NAME') {
+  const nm = text.toLowerCase().replace(/\s+/g, '-');
+  if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
+    return bot.sendMessage(cid,
+      '❌ Invalid name. Use at least 5 characters: lowercase letters, numbers.'
+    );
   }
 
-  // Got app name
-  if (st.step === 'APP_NAME') {
-    const nm = text.toLowerCase().replace(/\s+/g,'-');
-    if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
+  try {
+    await axios.get(`https://api.heroku.com/apps/${nm}`, {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+    return bot.sendMessage(cid, `❌ The name "${nm}" is already taken on Heroku.`);
+  } catch (e) {
+    if (e.response?.status === 404) {
+      st.data.APP_NAME = nm; // ✅ Set as Heroku app name
+      st.step = 'AUTO_STATUS_VIEW';
       return bot.sendMessage(cid,
-        'Invalid name. Use at least 5 characters: lowercase letters, numbers or hyphens.'
+        '✅ Name is available!\n\nEnable automatic status view? Reply "true" or "false".'
       );
     }
-    try {
-      await axios.get(`https://api.heroku.com/apps/${nm}`, {
-        headers:{
-          Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      return bot.sendMessage(cid, `The name "${nm}" is already taken.`);
-    } catch(e) {
-      if (e.response?.status === 404) {
-        st.data.APP_NAME = nm;
-        st.step = 'AUTO_STATUS_VIEW';
-        return bot.sendMessage(cid, 'Enable automatic status view? (true/false)');
-      }
-      throw e;
-    }
+    console.error('Name check error:', e);
+    return bot.sendMessage(cid, '❌ Error checking name availability.');
   }
+}
 
   // AUTO_STATUS_VIEW
   if (st.step === 'AUTO_STATUS_VIEW') {
