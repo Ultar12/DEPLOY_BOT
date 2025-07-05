@@ -312,23 +312,27 @@ bot.on('message', async msg => {
 
   // 🧾 Get Session
   if (text === '🧾 Get Session') {
-    userStates[cid] = { step:'SESSION_ID', data:{} };
-    await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
-      caption:
-        'How to get your session ID:\n\n' +
-        '1. Visit https://levanter-delta.vercel.app/\n' +
-        '2. Click the "Session" tab on left\n' +
-        '3. Enter a custom ID (no spaces)\n' +
-        '4. Click "Generate" and copy it\n\n' +
-        '📋 Then tap "🚀 Deploy".',
-      parse_mode:'Markdown'
-    });
-    // Drop-down note details
-    return bot.sendMessage(cid,
-      '💡 Note: Keep your session ID private. Anyone with it can control your bot.'
-    );
-  }
+  userStates[cid] = { step: 'SESSION_ID', data: {} };
 
+  await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+    caption:
+      '📸 *How to get your Session ID:*\n\n' +
+      '1. Visit [Levanter Session Tool](https://levanter-delta.vercel.app/)\n' +
+      '2. Click the *"Session"* tab on the left\n' +
+      '3. Enter a custom session ID (e.g. your name, no spaces)\n' +
+      '4. Click *"Submit"* and continue with the rest\n\n' +
+      'Once you have it, tap "🚀 Deploy" to continue.',
+    parse_mode: 'Markdown'
+  });
+
+  return bot.sendMessage(cid,
+    '💡 *Note:*\n' +
+    '• Make use of Chrome — especially iPhone users\n' +
+    '• Skip ads and continue\n' +
+    '• Use a *Custom Session ID* for auto-start when rescanned',
+    { parse_mode: 'Markdown' }
+  );
+}
   // 📦 My Bots
   if (text === '📦 My Bots') {
     const bots = await getUserBots(cid);
