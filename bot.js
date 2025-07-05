@@ -394,48 +394,39 @@ if (text === 'Deploy') {
     return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
   }
 
-// Got session ID
+// After SESSION_ID collected:
 if (st.step === 'SESSION_ID') {
   if (text.length < 5) {
     return bot.sendMessage(cid, '❌ Session ID must be at least 5 characters.');
   }
   st.data.SESSION_ID = text;
   st.step = 'BOT_NAME';
-  return bot.sendMessage(cid,
-    '🤖 Please enter a name for your bot.\n\n' +
-    '✅ Use only lowercase letters and numbers (no spaces or special characters).\n' +
-    '✅ Minimum length: 5 characters.'
-  );
-} // ✅ This was missing// Got bot name (used as APP_NAME)
+  return bot.sendMessage(cid, '🤖 Please enter a name for your bot.\n(Min 5 chars, lowercase, no spaces)');
+}
+
+// After APP_NAME collected:
 if (st.step === 'BOT_NAME') {
   const nm = text.toLowerCase().replace(/\s+/g, '-');
   if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-    return bot.sendMessage(cid,
-      '❌ Invalid name. Use at least 5 characters: lowercase letters, numbers.'
-    );
+    return bot.sendMessage(cid, '❌ Invalid name. Minimum 5 chars, lowercase, no spaces.');
   }
-
   try {
-    await axios.get(`https://api.heroku.com/apps/${nm}`, {
-      headers: {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-      }
-    });
+    await axios.get(`https://api.heroku.com/apps/${nm}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
     return bot.sendMessage(cid, `❌ The name "${nm}" is already taken on Heroku.`);
   } catch (e) {
     if (e.response?.status === 404) {
-      st.data.APP_NAME = nm; // ✅ Set as Heroku app name
+      st.data.APP_NAME = nm;
       st.step = 'AUTO_STATUS_VIEW';
-      return bot.sendMessage(cid,
-        '✅ Name is available!\n\nEnable automatic status view? Reply "true" or "false".'
-      );
+      return bot.sendMessage(cid, '✅ Name available! Enable auto status view? Reply "true" or "false".');
     }
-    console.error('Name check error:', e);
     return bot.sendMessage(cid, '❌ Error checking name availability.');
   }
 }
 
+// Before deployment:
+if (!st.data.SESSION_ID || !st.data.APP_NAME) {
+  return bot.sendMessage(cid, 'Deployment error: SESSION_ID or APP_NAME missing.');
+}
   // AUTO_STATUS_VIEW
   if (st.step === 'AUTO_STATUS_VIEW') {
     if (lc !== 'true' && lc !== 'false') {
