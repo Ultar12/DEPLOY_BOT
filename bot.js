@@ -561,26 +561,26 @@ bot.on('callback_query', async q => {
       return bot.sendMessage(cid, `❌ Error: ${e.message}`);
     }
   }
-  // SetVar menu
-  if (action === 'setvar') {
-    return bot.sendMessage(cid, Set variable for "${p}":, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: 'SESSIONID', callbackdata: varselect:SESSION_ID:${p} },
-            { text: 'AUTOSTATUSVIEW', callbackdata: varselect:AUTOSTATUS_VIEW:${p} }
-          ],
-          [
-            { text: 'ALWAYSONLINE', callbackdata: varselect:ALWAYS_ONLINE:${p} },
-            { text: 'PREFIX', callback_data: varselect:PREFIX:${p} }
-          ],
-          [
-            { text: 'ANTIDELETE', callbackdata: varselect:ANTI_DELETE:${p} }
-          ]
+ // SetVar menu
+if (action === 'setvar') {
+  return bot.sendMessage(cid, `Set variable for "${p}":`, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: 'SESSIONID', callback_data: `varselect:SESSION_ID:${p}` },
+          { text: 'AUTOSTATUSVIEW', callback_data: `varselect:AUTOSTATUS_VIEW:${p}` }
+        ],
+        [
+          { text: 'ALWAYSONLINE', callback_data: `varselect:ALWAYS_ONLINE:${p}` },
+          { text: 'PREFIX', callback_data: `varselect:PREFIX:${p}` }
+        ],
+        [
+          { text: 'ANTIDELETE', callback_data: `varselect:ANTI_DELETE:${p}` }
         ]
-      }
-    });
-  }
+      ]
+    }
+  });
+}
 
   // varselect
   if (action === 'varselect') {
