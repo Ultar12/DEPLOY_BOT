@@ -302,14 +302,14 @@ bot.on('message', async msg => {
   const isAdmin = cid === ADMIN_ID;
 
   // Button: Deploy
-  if (text === 'Deploy') {
-    if (!isAdmin && !authorizedUsers.has(cid)) {
-      userStates[cid] = { step: 'AWAITING_KEY', data: {} };
-      return bot.sendMessage(cid, 'Enter your deploy key:');
-    }
-    userStates[cid] = { step: 'SESSION_ID', data: {} };
-    return bot.sendMessage(cid, 'Enter your session ID:');
+if (text === 'Deploy') {
+  if (!isAdmin) {
+    userStates[cid] = { step: 'AWAITING_KEY', data: {} };
+    return bot.sendMessage(cid, '🔐 Please enter your deploy key:');
   }
+  userStates[cid] = { step: 'SESSION_ID', data: {} };
+  return bot.sendMessage(cid, '🧾 Enter your session ID:');
+}
 
   // Button: Apps
   if (text === 'Apps' && isAdmin) {
