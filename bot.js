@@ -672,3 +672,4 @@ bot.on('callback_query', async q => {
     }
   }
 });
+}
