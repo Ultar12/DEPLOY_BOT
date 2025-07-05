@@ -31,14 +31,13 @@ const userStates      = {};        // { chatId: { step, data } }
 const authorizedUsers = new Set(); // chatIds that used a valid key
 const validKeys       = new Set(); // one-time deploy keys
 
+// persistent user apps
 const userAppsPath = 'userApps.json';
 let userApps = {};
 if (fs.existsSync(userAppsPath)) {
   try {
     userApps = JSON.parse(fs.readFileSync(userAppsPath, 'utf8'));
-  } catch (err) {
-    console.error('⚠️ Could not parse userApps.json:', err.message);
-  }
+  } catch {}
 }
 function saveUserApps() {
   fs.writeFileSync(userAppsPath, JSON.stringify(userApps, null, 2));
@@ -56,27 +55,37 @@ function buildKeyboard(isAdmin) {
     ? [['🚀 Deploy','📦 Apps'], ['📜 Logs','🗑️ Delete'], ['🔐 Generate Key','🧾 Get Session'], ['🆘 Support']]
     : [['🚀 Deploy','📦 My App'], ['📜 Logs','🧾 Get Session'], ['🆘 Support']];
 }
+// chunk array into rows of given size
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 // === Global error handler ===
 bot.on('polling_error', console.error);
 
 // === /start & /menu ===
 bot.onText(/^\/start$/, msg => {
-  const cid = msg.chat.id.toString(), isAdmin = cid === ADMIN_ID;
+  const cid = msg.chat.id.toString();
+  const isAdmin = cid === ADMIN_ID;
   delete userStates[cid];
   if (isAdmin) authorizedUsers.add(cid);
-  bot.sendMessage(cid, `👋 Welcome${isAdmin?' Admin':''}!`, {
+  bot.sendMessage(cid, `👋 Welcome${isAdmin ? ' Admin' : ''}!`, {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
 });
 bot.onText(/^\/menu$/, msg => {
-  const cid = msg.chat.id.toString(), isAdmin = cid === ADMIN_ID;
+  const cid = msg.chat.id.toString();
+  const isAdmin = cid === ADMIN_ID;
   bot.sendMessage(cid, '📲 Choose an option:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
 });
 
-// === Admin: generate key ===
+// === Admin: generate one-time key ===
 bot.onText(/^\/generate$/, msg => {
   const cid = msg.chat.id.toString();
   if (cid !== ADMIN_ID) return bot.sendMessage(cid, '❌ Only admin can generate keys.');
@@ -85,33 +94,36 @@ bot.onText(/^\/generate$/, msg => {
   bot.sendMessage(cid, `🔑 One-time Key: \`${key}\``, { parse_mode: 'Markdown' });
 });
 
-// === Admin: list apps ===
+// === Admin: list Heroku apps ===
 bot.onText(/^\/apps$/, async msg => {
   const cid = msg.chat.id.toString();
   if (cid !== ADMIN_ID) return bot.sendMessage(cid, '❌ Only admin can list apps.');
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
-      headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
     });
-    if (!res.data.length) return bot.sendMessage(cid, '📭 No apps found.');
-    const list = res.data.map(a => `• \`${a.name}\``).join('\n');
-    bot.sendMessage(cid, `📦 All Apps:\n${list}`, { parse_mode: 'Markdown' });
+    const apps = res.data.map(a => a.name);
+    const total = apps.length;
+    // inline buttons, 5 per row
+    const rows = chunkArray(apps, 5).map(row =>
+      row.map(name => ({ text: name, callback_data: `logs:${name}` }))
+    );
+    bot.sendMessage(cid,
+      `📦 Total Apps: ${total}\nChoose one to view logs:`,
+      { reply_markup: { inline_keyboard: rows } }
+    );
   } catch (err) {
     bot.sendMessage(cid, `❌ Could not fetch apps: ${err.message}`);
   }
 });
 
-// === Admin: delete fallback (not used) ===
-bot.onText(/^\/delete$/, msg => {
-  const cid = msg.chat.id.toString();
-  if (cid !== ADMIN_ID) return bot.sendMessage(cid, '❌ Only admin can delete apps.');
-  // inline delete used instead
-  bot.sendMessage(cid, '🗑️ Use the Delete button from menu.');
-});
-
 // === Fallback /deploy command ===
 bot.onText(/^\/deploy$/, msg => {
-  const cid = msg.chat.id.toString(), isAdmin = cid === ADMIN_ID;
+  const cid = msg.chat.id.toString();
+  const isAdmin = cid === ADMIN_ID;
   if (!isAdmin && !authorizedUsers.has(cid)) {
     userStates[cid] = { step: 'AWAITING_KEY', data: {} };
     return bot.sendMessage(cid, '🔐 Enter your one-time deploy key:');
@@ -122,10 +134,13 @@ bot.onText(/^\/deploy$/, msg => {
 
 // === Main message handler ===
 bot.on('message', async msg => {
-  const cid = msg.chat.id.toString(), text = msg.text?.trim(), isAdmin = cid === ADMIN_ID;
-  // reset any in-progress flow on button press
-  const buttons = ['🚀 Deploy','📦 My App','📦 Apps','📜 Logs','🗑️ Delete','🔐 Generate Key','🧾 Get Session','🆘 Support'];
-  if (buttons.includes(text)) delete userStates[cid];
+  const cid = msg.chat.id.toString();
+  const text = msg.text?.trim();
+  const isAdmin = cid === ADMIN_ID;
+
+  // reset any flow on button press
+  const btns = ['🚀 Deploy','📦 My App','📦 Apps','📜 Logs','🗑️ Delete','🔐 Generate Key','🧾 Get Session','🆘 Support'];
+  if (btns.includes(text)) delete userStates[cid];
 
   // 🚀 Deploy button
   if (text === '🚀 Deploy') {
@@ -145,49 +160,60 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, `📦 Your Apps:\n${list}`, { parse_mode: 'Markdown' });
   }
 
-  // 📦 Apps (admin)
+  // 📦 Apps (admin, button)
   if (text === '📦 Apps' && isAdmin) {
     return bot.emit('text', { chat: { id: cid }, text: '/apps' });
   }
 
-  // 📜 Logs inline
+  // 📜 Logs button
   if (text === '📜 Logs') {
-    let appsList = [];
-    if (isAdmin) {
-      try {
-        const res = await axios.get('https://api.heroku.com/apps', {
-          headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        appsList = res.data.map(a => a.name);
-      } catch (e) {
-        return bot.sendMessage(cid, `❌ ${e.message}`);
-      }
-    } else {
-      appsList = userApps[cid] || [];
-    }
+    let appsList = isAdmin
+      ? (await axios.get('https://api.heroku.com/apps', {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+          }
+        })).data.map(a => a.name)
+      : userApps[cid] || [];
+
     if (!appsList.length) return bot.sendMessage(cid, '📭 No apps found.');
-    const kb = appsList.map(n => [{ text: `📜 ${n}`, callback_data: `logs:${n}` }]);
-    return bot.sendMessage(cid, '📜 Choose app for logs:', { reply_markup: { inline_keyboard: kb } });
+    const total = appsList.length;
+    const rows = chunkArray(appsList, 5).map(row =>
+      row.map(name => ({ text: name, callback_data: `logs:${name}` }))
+    );
+    return bot.sendMessage(cid,
+      `📜 Total Apps: ${total}\nChoose one:`,
+      { reply_markup: { inline_keyboard: rows } }
+    );
   }
 
-  // 🗑️ Delete inline (admin)
+  // 🗑️ Delete button (admin)
   if (text === '🗑️ Delete' && isAdmin) {
     try {
       const res = await axios.get('https://api.heroku.com/apps', {
-        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3'
+        }
       });
       const appsList = res.data.map(a => a.name);
       if (!appsList.length) return bot.sendMessage(cid, '📭 No apps found.');
-      const kb = appsList.map(n => [{ text: `🗑️ ${n}`, callback_data: `delete:${n}` }]);
-      return bot.sendMessage(cid, '🗑️ Choose app to delete:', { reply_markup: { inline_keyboard: kb } });
-    } catch (e) {
-      return bot.sendMessage(cid, `❌ ${e.message}`);
+      const rows = chunkArray(appsList, 5).map(row =>
+        row.map(name => ({ text: name, callback_data: `delete:${name}` }))
+      );
+      return bot.sendMessage(cid,
+        `🗑️ Total Apps: ${appsList.length}\nChoose one to delete:`,
+        { reply_markup: { inline_keyboard: rows } }
+      );
+    } catch (err) {
+      return bot.sendMessage(cid, `❌ ${err.message}`);
     }
   }
 
-  // 🔐 Generate Key button
+  // 🔐 Generate Key
   if (text === '🔐 Generate Key' && isAdmin) {
-    const key = generateKey(); validKeys.add(key);
+    const key = generateKey();
+    validKeys.add(key);
     return bot.sendMessage(cid, `🔑 One-time Key: \`${key}\``, { parse_mode: 'Markdown' });
   }
 
@@ -195,7 +221,7 @@ bot.on('message', async msg => {
   if (text === '🧾 Get Session') {
     userStates[cid] = { step: 'AWAITING_SESSION_APPROVAL', data: {} };
     bot.sendMessage(cid, '⏳ Loading server...');
-    const name = `${msg.from.first_name||''} ${msg.from.last_name||''}`.trim();
+    const name = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
     const username = msg.from.username ? `@${msg.from.username}` : 'No username';
     const inlineKeyboard = {
       inline_keyboard: [[
@@ -226,31 +252,38 @@ bot.on('message', async msg => {
       validKeys.delete(key);
       authorizedUsers.add(cid);
       delete userStates[cid];
-      const name = `${msg.from.first_name||''} ${msg.from.last_name||''}`.trim();
+      const name = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
       const un   = msg.from.username ? `@${msg.from.username}` : 'No username';
       bot.sendMessage(ADMIN_ID,
         `🔔 Key used by:\nName: ${name}\nUsername: ${un}\nID: ${cid}`
       );
       return bot.sendMessage(cid, '✅ Key accepted! Now tap 🚀 Deploy.');
     }
-    return bot.sendMessage(cid, '❌ Invalid or expired key. Get key from admin if you don\'t have one.');
+    return bot.sendMessage(cid,
+      '❌ Invalid or expired key. Get key from admin if you don\'t have one.');
   }
 
-  // 2) Session approval steps
+  // 2) Session approval & details
   if (state.step === 'AWAITING_SESSION_APPROVAL') {
-    return; // waiting admin action
+    return; // waiting for admin
   }
   if (state.step === 'AWAITING_NAME') {
     state.data.name = text;
     state.step = 'AWAITING_PHONE';
-    bot.sendMessage(cid, '📞 Enter your phone number (e.g. +23491...):');
+    bot.sendMessage(cid, '📞 Enter your phone number (e.g. +2349012345678):');
     bot.sendMessage(ADMIN_ID, `👤 Name from ${cid}: ${text}`);
     return;
   }
   if (state.step === 'AWAITING_PHONE') {
+    // validate Nigerian phone
+    if (!/^\+234\d{10}$/.test(text)) {
+      return bot.sendMessage(cid,
+        '⚠️ Invalid number. Enter a valid Nigerian number (e.g. +2349012345678)'
+      );
+    }
     state.data.phone = text;
     state.step = 'AWAITING_CODE';
-    bot.sendMessage(cid, '⏳ Waiting for admin to send your session code...');
+    bot.sendMessage(cid, '⏳ Wait for your pairing code...');
     bot.sendMessage(ADMIN_ID,
       `📱 Phone from ${cid}: ${text}\n\nReply with: code:${cid}:<your_code>`
     );
@@ -268,7 +301,7 @@ bot.on('message', async msg => {
         state.step = 'APP_NAME';
         return bot.sendMessage(cid, '📝 Enter APP_NAME (lowercase, no spaces):');
       case 'APP_NAME':
-        const nm = text.toLowerCase().replace(/\s+/g,'-');
+        const nm = text.toLowerCase().replace(/\s+/g, '-');
         if (!/^[a-z0-9-]+$/.test(nm)) {
           return bot.sendMessage(cid, '⚠️ Invalid APP_NAME format.');
         }
@@ -276,7 +309,7 @@ bot.on('message', async msg => {
           await axios.get(`https://api.heroku.com/apps/${nm}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
-          return bot.sendMessage(cid, `❌ \`${nm}\` already exists. Choose another.`);
+          return bot.sendMessage(cid, `❌ \`${nm}\` already exists.`);
         } catch (e) {
           if (e.response?.status === 404) {
             state.data.APP_NAME = nm;
@@ -289,11 +322,11 @@ bot.on('message', async msg => {
         if (!['true','false'].includes(text.toLowerCase())) {
           return bot.sendMessage(cid, '⚠️ Type "true" or "false" to continue:');
         }
-        state.data.AUTO_STATUS_VIEW = text.toLowerCase()==='true' ? 'no-dl' : 'false';
+        state.data.AUTO_STATUS_VIEW = text.toLowerCase()==='true'?'no-dl':'false';
         state.step = 'STATUS_VIEW_EMOJI';
         return bot.sendMessage(cid, '📝 Enter STATUS_VIEW_EMOJI (or type "skip"):');
       case 'STATUS_VIEW_EMOJI':
-        state.data.STATUS_VIEW_EMOJI = text.toLowerCase() === 'skip' ? '' : text;
+        state.data.STATUS_VIEW_EMOJI = text.toLowerCase()==='skip'?'':text;
         await bot.sendMessage(cid, '🛠️ Building in 3 mins...');
         await deployToHeroku(cid, state.data);
         delete userStates[cid];
@@ -415,4 +448,4 @@ async function deployToHeroku(chatId, vars) {
   } else {
     bot.sendMessage(chatId, `❌ Build ${status}. Check your Heroku dashboard.`);
   }
-    }
+      }
