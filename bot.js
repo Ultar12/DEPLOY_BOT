@@ -178,7 +178,7 @@ async function buildWithProgress(chatId, vars) {
   // Provision Postgres
   await axios.post(
     `https://api.heroku.com/apps/${name}/addons`,
-    { plan: 'heroku-postgresql:hobby-dev' },
+    { plan: 'heroku-postgresql' },
     { headers:{
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3',
