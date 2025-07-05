@@ -201,11 +201,12 @@ async function buildWithProgress(chatId, vars) {
     }}
   );
 
-  // Set config vars
+  // Set config vars (including APP_NAME)
   await axios.patch(
     `https://api.heroku.com/apps/${name}/config-vars`,
     {
       SESSION_ID: vars.SESSION_ID,
+      APP_NAME: name,
       AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW,
       ...defaultEnvVars
     },
@@ -303,12 +304,9 @@ bot.on('message', async msg => {
 
   // Button: Deploy
   if (text === 'Deploy') {
-    if (!isAdmin && !authorizedUsers.has(cid)) {
-      userStates[cid] = { step: 'AWAITING_KEY', data: {} };
-      return bot.sendMessage(cid, 'Enter your deploy key:');
-    }
-    userStates[cid] = { step: 'SESSION_ID', data: {} };
-    return bot.sendMessage(cid, 'Enter your session ID:');
+    // Always ask for deploy key (one-time use per deploy)
+    userStates[cid] = { step: 'AWAITING_KEY', data: {} };
+    return bot.sendMessage(cid, 'Enter your deploy key:');
   }
 
   // Button: Apps
@@ -436,6 +434,30 @@ bot.on('message', async msg => {
     delete userStates[cid];
     return;
   }
+
+  // Set variable new value (SESSION_ID, PREFIX etc)
+  if (st.step === 'SETVAR_ENTER_VALUE') {
+    const { APP_NAME, VAR_NAME } = st.data;
+    const newVal = text;
+    try {
+      await axios.patch(
+        `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+        { [VAR_NAME]: newVal },
+        { headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3',
+            'Content-Type': 'application/json'
+        }}
+      );
+      if (VAR_NAME === 'SESSION_ID') {
+        await updateUserSession(cid, APP_NAME, newVal);
+      }
+      delete userStates[cid];
+      return bot.sendMessage(cid, `${VAR_NAME} updated successfully.`);
+    } catch (e) {
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    }
+  }
 });
 
 // 13) Callback query handler
@@ -495,147 +517,4 @@ bot.on('callback_query', async q => {
       const res = await axios.get(`https://api.heroku.com/apps/${payload}`, {
         headers:{
           Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      const { name, web_url, stack, created_at } = res.data;
-      return bot.sendMessage(cid,
-        `Name: ${name}\nURL: ${web_url}\nStack: ${stack}\nCreated: ${created_at}`
-      );
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-
-  // Restart
-  if (action === 'restart') {
-    try {
-      await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
-        headers:{
-          Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      return bot.sendMessage(cid, `"${payload}" restarted.`);
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-
-  // Logs
-  if (action === 'logs') {
-    try {
-      const sess = await axios.post(
-        `https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail:false, lines:100 },
-        { headers:{
-            Authorization:`Bearer ${HEROKU_API_KEY}`,
-            Accept:'application/vnd.heroku+json; version=3',
-            'Content-Type':'application/json'
-        }}
-      );
-      const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim().slice(-4000);
-      return bot.sendMessage(cid,
-        `Logs for "${payload}":\n\`\`\`\n${logs}\n\`\`\``,
-        { parse_mode:'Markdown' }
-      );
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-
-  // Delete (admin)
-  if (action === 'delete') {
-    try {
-      await axios.delete(`https://api.heroku.com/apps/${payload}`, {
-        headers:{
-          Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      return bot.sendMessage(cid, `"${payload}" deleted.`);
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-
-  // Delete (user)
-  if (action === 'userdelete') {
-    try {
-      await axios.delete(`https://api.heroku.com/apps/${payload}`, {
-        headers:{
-          Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      await deleteUserBot(cid, payload);
-      return bot.sendMessage(cid, `Your bot "${payload}" deleted.`);
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-
-  // SetVar menu
-  if (action === 'setvar') {
-    return bot.sendMessage(cid, `Set variable for "${payload}":`, {
-      reply_markup:{ inline_keyboard:[
-        [
-          { text:'SESSION_ID',       callback_data:`varselect:SESSION_ID:${payload}` },
-          { text:'AUTO_STATUS_VIEW', callback_data:`varselect:AUTO_STATUS_VIEW:${payload}` }
-        ],
-        [
-          { text:'ALWAYS_ONLINE',    callback_data:`varselect:ALWAYS_ONLINE:${payload}` },
-          { text:'PREFIX',           callback_data:`varselect:PREFIX:${payload}` }
-        ],
-        [
-          { text:'ANTI_DELETE',      callback_data:`varselect:ANTI_DELETE:${payload}` }
-        ]
-      ]}
-    });
-  }
-
-  // varselect
-  if (action === 'varselect') {
-    const varKey = payload, appName = extra;
-    if (['AUTO_STATUS_VIEW','ALWAYS_ONLINE','ANTI_DELETE'].includes(varKey)) {
-      return bot.sendMessage(cid, `Set ${varKey} to:`, {
-        reply_markup:{ inline_keyboard:[[
-          { text:'true',  callback_data:`setvarbool:${varKey}:${appName}:true` },
-          { text:'false', callback_data:`setvarbool:${varKey}:${appName}:false` }
-        ]]}
-      });
-    }
-    userStates[cid] = {
-      step:'SETVAR_ENTER_VALUE',
-      data:{ APP_NAME:appName, VAR_NAME:varKey }
-    };
-    return bot.sendMessage(cid, `Enter new value for ${varKey}:`);
-  }
-
-  // setvarbool
-  if (action === 'setvarbool') {
-    const varKey = payload, appName = extra, flagVal = flag === 'true';
-    let newVal;
-    if (varKey === 'AUTO_STATUS_VIEW')    newVal = flagVal ? 'no-dl' : 'false';
-    else if (varKey === 'ANTI_DELETE')     newVal = flagVal ? 'p'    : 'false';
-    else                                   newVal = flagVal ? 'true' : 'false';
-    try {
-      await axios.patch(
-        `https://api.heroku.com/apps/${appName}/config-vars`,
-        { [varKey]: newVal },
-        { headers:{
-            Authorization:`Bearer ${HEROKU_API_KEY}`,
-            Accept:'application/vnd.heroku+json; version=3',
-            'Content-Type':'application/json'
-        }}
-      );
-      if (varKey === 'SESSION_ID') {
-        await updateUserSession(cid, appName, newVal);
-      }
-      return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
-    } catch(e) {
-      return bot.sendMessage(cid, `Error: ${e.message}`);
-    }
-  }
-});
+          Accept:'application
