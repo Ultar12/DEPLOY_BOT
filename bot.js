@@ -628,4 +628,4 @@ if (action === 'setvarbool') {
   } catch (e) {
     return bot.sendMessage(cid, `Error: ${e.message}`);
   }
-}
+});
