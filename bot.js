@@ -201,11 +201,12 @@ async function buildWithProgress(chatId, vars) {
     }}
   );
 
+  // Set config vars
 await axios.patch(
   `https://api.heroku.com/apps/${name}/config-vars`,
   {
     SESSION_ID: vars.SESSION_ID,
-    APP_NAME: vars.APP_NAME,
+    APP_NAME: vars.APP_NAME, // ✅ Add this
     AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW,
     ALWAYS_ONLINE: 'true',
     STATUS_VIEW_EMOJI: '🫥',
@@ -219,7 +220,7 @@ await axios.patch(
       'Content-Type': 'application/json'
     }
   }
-);  
+);
   // Start build
   const bres = await axios.post(
     `https://api.heroku.com/apps/${name}/builds`,
@@ -392,7 +393,7 @@ if (text === 'Deploy') {
     );
     return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
   }
-  
+
 // Got session ID
 if (st.step === 'SESSION_ID') {
   if (text.length < 5) {
@@ -405,28 +406,26 @@ if (st.step === 'SESSION_ID') {
     '✅ Use only lowercase letters and numbers (no spaces or special characters).\n' +
     '✅ Minimum length: 5 characters.'
   );
-}
-
-// Got bot name (used as APP_NAME)
+} // ✅ This was missing// Got bot name (used as APP_NAME)
 if (st.step === 'BOT_NAME') {
-  const name = text.toLowerCase().replace(/\s+/g, '-');
-  if (name.length < 5 || !/^[a-z0-9-]+$/.test(name)) {
+  const nm = text.toLowerCase().replace(/\s+/g, '-');
+  if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
     return bot.sendMessage(cid,
-      '❌ Invalid name. Use at least 5 characters: lowercase letters and numbers only.'
+      '❌ Invalid name. Use at least 5 characters: lowercase letters, numbers.'
     );
   }
 
   try {
-    await axios.get(`https://api.heroku.com/apps/${name}`, {
+    await axios.get(`https://api.heroku.com/apps/${nm}`, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
       }
     });
-    return bot.sendMessage(cid, `❌ The name "${name}" is already taken on Heroku.`);
+    return bot.sendMessage(cid, `❌ The name "${nm}" is already taken on Heroku.`);
   } catch (e) {
     if (e.response?.status === 404) {
-      st.data.APP_NAME = name;
+      st.data.APP_NAME = nm; // ✅ Set as Heroku app name
       st.step = 'AUTO_STATUS_VIEW';
       return bot.sendMessage(cid,
         '✅ Name is available!\n\nEnable automatic status view? Reply "true" or "false".'
@@ -437,28 +436,19 @@ if (st.step === 'BOT_NAME') {
   }
 }
 
-// AUTO_STATUS_VIEW
-if (st.step === 'AUTO_STATUS_VIEW') {
-  if (lc !== 'true' && lc !== 'false') {
-    return bot.sendMessage(cid, '❌ Reply "true" or "false".');
-  }
-
-  st.data.AUTO_STATUS_VIEW = lc === 'true' ? 'no-dl' : 'false';
-
-  try {
-    console.log('🧪 Deploying with vars:', st.data); // Debug log
-    await bot.sendMessage(cid, '🚀 Starting deployment...');
+  // AUTO_STATUS_VIEW
+  if (st.step === 'AUTO_STATUS_VIEW') {
+    if (lc !== 'true' && lc !== 'false') {
+      return bot.sendMessage(cid, 'Reply "true" or "false".');
+    }
+    st.data.AUTO_STATUS_VIEW = lc==='true'?'no-dl':'false';
     await buildWithProgress(cid, st.data);
     await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
-    await bot.sendMessage(cid, `✅ Bot "${st.data.APP_NAME}" deployed successfully!`);
-  } catch (err) {
-    console.error('❌ Deployment error:', err);
-    await bot.sendMessage(cid, `❌ Deployment failed: ${err.message}`);
+    delete userStates[cid];
+    return;
   }
+});
 
-  delete userStates[cid];
-  return;
-}
 // 13) Callback query handler
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
