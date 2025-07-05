@@ -329,7 +329,7 @@ bot.on('message', async msg => {
     '💡 *Note:*\n' +
     '• Make use of Chrome — especially iPhone users\n' +
     '• Skip ads and continue\n' +
-    '• Use a *Custom Session ID* for auto-start when rescanned',
+    '• Use a *Custom Session ID* for auto-start when rescanned (Make sure to use same name)',
     { parse_mode: 'Markdown' }
   );
 }
