@@ -18,7 +18,6 @@ try {
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
   );
 } catch (e) {
-  // FIX: Log the error instead of failing silently.
   console.warn('Could not load fallback env vars from app.json:', e.message);
 }
 
@@ -172,7 +171,6 @@ async function buildWithProgress(chatId, vars) {
 
   try {
     // Create app
-    await bot.sendMessage(chatId, `Creating app "${name}"...`);
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -181,7 +179,6 @@ async function buildWithProgress(chatId, vars) {
     });
 
     // Provision Postgres
-    await bot.sendMessage(chatId, 'Adding database...');
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
@@ -195,7 +192,6 @@ async function buildWithProgress(chatId, vars) {
     );
 
     // Configure buildpacks
-    await bot.sendMessage(chatId, 'Setting buildpacks...');
     await axios.put(
       `https://api.heroku.com/apps/${name}/buildpack-installations`,
       {
@@ -215,12 +211,12 @@ async function buildWithProgress(chatId, vars) {
     );
 
     // Set config vars
-    await bot.sendMessage(chatId, 'Configuring variables...');
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
+      // FIX: Ensure user-provided vars overwrite defaults from app.json.
       {
-        ...vars, // Contains APP_NAME, SESSION_ID, AUTO_STATUS_VIEW
-        ...defaultEnvVars
+        ...defaultEnvVars,
+        ...vars
       },
       {
         headers: {
@@ -244,12 +240,11 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
-    // Progress
+    // FIX: Restored the building percentage animation.
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let status = 'pending';
-    const progMsg = await bot.sendMessage(chatId, 'Building your app... This may take a few minutes.');
-    
-    for (let i = 0; i < 60; i++) { // Poll for up to 5 minutes
+    const progMsg = await bot.sendMessage(chatId, 'Building... 0%');
+    for (let i = 1; i <= 20; i++) { // Poll for up to 100 seconds
       await new Promise(r => setTimeout(r, 5000));
       try {
         const poll = await axios.get(statusUrl, {
@@ -259,13 +254,19 @@ async function buildWithProgress(chatId, vars) {
           }
         });
         status = poll.data.status;
-        if (status !== 'pending') break;
       } catch {
         status = 'error';
         break;
       }
+      const pct = Math.min(100, i * 5);
+      await bot.editMessageText(`Building... ${pct}%`, {
+        chat_id: chatId,
+        message_id: progMsg.message_id
+      }).catch(() => {}); // Ignore errors if message is not modified
+      
+      if (status !== 'pending') break;
     }
-    
+
     // Final status
     if (status === 'succeeded') {
       await bot.editMessageText(
@@ -420,7 +421,6 @@ bot.on('message', async msg => {
       });
       return bot.sendMessage(cid, `❌ The name "${nm}" is already taken. Please choose another.`);
     } catch (e) {
-      // FIX: Handle non-404 errors gracefully.
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
         st.step = 'AUTO_STATUS_VIEW';
@@ -441,7 +441,7 @@ bot.on('message', async msg => {
       delete userStates[cid];
       return bot.sendMessage(cid, '❌ Critical error: Missing app name or session ID. Please start over.');
     }
-    await bot.sendMessage(cid, '🚀 Starting deployment...');
+    
     await buildWithProgress(cid, st.data);
     await addUserBot(cid, APP_NAME, SESSION_ID);
     delete userStates[cid]; // End of flow
@@ -602,7 +602,6 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      // FIX: Removed the unreachable 'if (varKey === "SESSION_ID")' check.
       return bot.sendMessage(cid, `✅ ${varKey} updated to ${newVal}`);
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
