@@ -561,4 +561,68 @@ bot.on('callback_query', async q => {
       return bot.sendMessage(cid, `❌ Error: ${e.message}`);
     }
   }
+  // SetVar menu
+  if (action === 'setvar') {
+    return bot.sendMessage(cid, Set variable for "${p}":, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'SESSIONID', callbackdata: varselect:SESSION_ID:${p} },
+            { text: 'AUTOSTATUSVIEW', callbackdata: varselect:AUTOSTATUS_VIEW:${p} }
+          ],
+          [
+            { text: 'ALWAYSONLINE', callbackdata: varselect:ALWAYS_ONLINE:${p} },
+            { text: 'PREFIX', callback_data: varselect:PREFIX:${p} }
+          ],
+          [
+            { text: 'ANTIDELETE', callbackdata: varselect:ANTI_DELETE:${p} }
+          ]
+        ]
+      }
+    });
+  }
+
+  // varselect
+  if (action === 'varselect') {
+    const varKey = p, appName = extra;
+    if (['AUTOSTATUSVIEW','ALWAYSONLINE','ANTIDELETE'].includes(varKey)) {
+      return bot.sendMessage(cid, Set ${varKey} to:, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'true', callback_data: setvarbool:${varKey}:${appName}:true },
+            { text: 'false', callback_data: setvarbool:${varKey}:${appName}:false }
+          ]]
+        }
+      });
+    }
+    userStates[cid] = { step: 'SETVARENTERVALUE', data: { APPNAME: appName, VARNAME: varKey } };
+    return bot.sendMessage(cid, Enter new value for ${varKey}:);
+  }
+
+  // setvarbool
+  if (action === 'setvarbool') {
+    const varKey = p, appName = extra, flagVal = flag === 'true';
+    let newVal;
+    if (varKey === 'AUTOSTATUSVIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+    else newVal = flagVal ? 'true' : 'false';
+    try {
+      await axios.patch(
+        https://api.heroku.com/apps/${appName}/config-vars,
+        { [varKey]: newVal },
+        { headers: {
+            Authorization: Bearer ${HEROKUAPIKEY},
+            Accept: 'application/vnd.heroku+json; version=3',
+            'Content-Type': 'application/json'
+          }}
+      );
+      if (varKey === 'SESSION_ID') {
+        await updateUserSession(cid, appName, newVal);
+      }
+      return bot.sendMessage(cid, ${varKey} updated to ${newVal});
+    } catch (e) {
+      return bot.sendMessage(cid, Error: ${e.message});
+    }
+  }
 });
+`
