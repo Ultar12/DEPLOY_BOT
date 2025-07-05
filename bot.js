@@ -646,7 +646,7 @@ bot.on('callback_query', async q => {
     return bot.sendMessage(cid, `Enter new value for ${varKey}:`);
   }
 
-  // setvarbool
+    // setvarbool
   if (action === 'setvarbool') {
     const varKey = payload, appName = extra, flagVal = flag === 'true';
     let newVal;
@@ -672,4 +672,3 @@ bot.on('callback_query', async q => {
     }
   }
 });
-}
