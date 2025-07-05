@@ -397,10 +397,10 @@ if (st.step === 'SESSION_ID') {
   st.data.SESSION_ID = text;
   st.step = 'BOT_NAME';
   return bot.sendMessage(cid,
-    'What should your bot be called?\n' +
-    'Use only lowercase letters, numbers withoit hyphens (min 5 characters).'
-  );
-}
+  '🤖 Please enter a name for your bot.\n\n' +
+  '✅ Use only lowercase letters and numbers (no spaces or special characters).\n' +
+  '✅ Minimum length: 5 characters.'
+);
 
 // Got bot name (used as APP_NAME)
 if (st.step === 'BOT_NAME') {
