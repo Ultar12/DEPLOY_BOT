@@ -30,7 +30,7 @@ const {
   DATABASE_URL
 } = process.env;
 
-// PostgreSQL setup & auto-create table
+// PostgreSQL setup & table creation
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -44,10 +44,9 @@ const pool = new Pool({
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  console.log('user_bots table ready');
 })().catch(console.error);
 
-// Database helpers
+// DB helpers
 async function addUserBot(u, b, s) {
   await pool.query(
     'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
@@ -74,13 +73,13 @@ async function updateUserSession(u, b, s) {
   );
 }
 
-// Initialize bot & state
+// Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-const userStates      = {};        // chatId -> { step, data }
+const userStates = {};        // chatId -> { step, data }
 const authorizedUsers = new Set(); // chatIds with valid key
-const validKeys       = new Set(); // one-time deploy keys
+const validKeys = new Set();       // one-time deploy keys
 
-// Utility functions
+// Utils
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 8 })
@@ -119,7 +118,9 @@ async function sendAppList(chatId) {
       }
     });
     const apps = res.data.map(a => a.name);
-    if (!apps.length) return bot.sendMessage(chatId, 'No apps found.');
+    if (apps.length === 0) {
+      return bot.sendMessage(chatId, 'No apps found.');
+    }
     const rows = chunkArray(apps, 3).map(r =>
       r.map(name => ({ text: name, callback_data: `selectapp:${name}` }))
     );
@@ -135,14 +136,16 @@ async function sendAppList(chatId) {
 // Build & deploy with Postgres add-on & progress
 async function buildWithProgress(chatId, vars) {
   const appName = vars.APP_NAME;
-  // create app
+
+  // 1. Create app
   await axios.post('https://api.heroku.com/apps', { name: appName }, {
     headers: {
       Authorization: `Bearer ${HEROKU_API_KEY}`,
       Accept: 'application/vnd.heroku+json; version=3'
     }
   });
-  // provision Postgres
+
+  // 2. Provision Postgres add-on
   await axios.post(
     `https://api.heroku.com/apps/${appName}/addons`,
     { plan: 'heroku-postgresql:hobby-dev' },
@@ -154,7 +157,8 @@ async function buildWithProgress(chatId, vars) {
       }
     }
   );
-  // buildpacks
+
+  // 3. Set buildpacks
   await axios.put(
     `https://api.heroku.com/apps/${appName}/buildpack-installations`,
     { updates: [
@@ -168,7 +172,8 @@ async function buildWithProgress(chatId, vars) {
         'Content-Type': 'application/json'
     }}
   );
-  // config vars
+
+  // 4. Set config vars
   await axios.patch(
     `https://api.heroku.com/apps/${appName}/config-vars`,
     {
@@ -182,7 +187,8 @@ async function buildWithProgress(chatId, vars) {
         'Content-Type': 'application/json'
     }}
   );
-  // start build
+
+  // 5. Start build
   const buildRes = await axios.post(
     `https://api.heroku.com/apps/${appName}/builds`,
     { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -194,6 +200,8 @@ async function buildWithProgress(chatId, vars) {
   );
   const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${buildRes.data.id}`;
   let status = 'pending';
+
+  // 6. Progress animation
   const progMsg = await bot.sendMessage(chatId, 'Building... 0%');
   for (let i = 1; i <= 20; i++) {
     await new Promise(r => setTimeout(r, 5000));
@@ -215,6 +223,8 @@ async function buildWithProgress(chatId, vars) {
     });
     if (status !== 'pending') break;
   }
+
+  // 7. Final status
   if (status === 'succeeded') {
     await bot.editMessageText(
       `Build complete! Live at https://${appName}.herokuapp.com`,
@@ -228,7 +238,7 @@ async function buildWithProgress(chatId, vars) {
   }
 }
 
-// Polling errors
+// Handle polling errors
 bot.on('polling_error', console.error);
 
 // /start handler
@@ -237,13 +247,16 @@ bot.onText(/^\/start$/, async msg => {
   const isAdmin = chatId === ADMIN_ID;
   delete userStates[chatId];
   if (isAdmin) authorizedUsers.add(chatId);
-  // log user
+
+  // Log user info
   const { first_name, last_name, username } = msg.from;
   const fullName = [first_name, last_name].filter(Boolean).join(' ');
   console.log(`User started: ${fullName} (@${username||'N/A'}) [${chatId}]`);
+
   const welcome = isAdmin
     ? 'Welcome back, admin. You manage deployments.'
     : 'Welcome! Deploy and manage your WhatsApp bot here.';
+
   await bot.sendMessage(chatId, welcome, {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
@@ -282,21 +295,27 @@ bot.on('message', async msg => {
   const lc = text.toLowerCase();
   const isAdmin = chatId === ADMIN_ID;
 
-  // Admin buttons
-  if (text === 'Apps' && isAdmin) return sendAppList(chatId);
+  // Button handlers
+  if (text === 'Deploy') {
+    if (!isAdmin && !authorizedUsers.has(chatId)) {
+      userStates[chatId] = { step: 'AWAITING_KEY', data: {} };
+      return bot.sendMessage(chatId, 'Enter your deploy key:');
+    }
+    userStates[chatId] = { step: 'SESSION_ID', data: {} };
+    return bot.sendMessage(chatId, 'Send your session ID:');
+  }
+
+  if (text === 'Apps' && isAdmin) {
+    return sendAppList(chatId);
+  }
+
   if (text === 'Generate Key' && isAdmin) {
     const key = generateKey();
     validKeys.add(key);
     return bot.sendMessage(chatId, `Deploy key:\n\`${key}\``, { parse_mode: 'Markdown' });
   }
 
-  // Support
-  if (text === 'Support' || lc === 'support') {
-    return bot.sendMessage(chatId, 'Contact admin for support.');
-  }
-
-  // Get Session instructions
-  if (text === 'Get Session' || lc === 'get session') {
+  if (text === 'Get Session') {
     userStates[chatId] = { step: 'SESSION_ID', data: {} };
     try {
       await bot.sendPhoto(chatId, 'https://files.catbox.moe/an2cc1.jpeg', {
@@ -323,20 +342,11 @@ bot.on('message', async msg => {
     );
   }
 
-  // Deploy flow
-  if (text === 'Deploy' || lc === 'deploy') {
-    if (!isAdmin && !authorizedUsers.has(chatId)) {
-      userStates[chatId] = { step: 'AWAITING_KEY', data: {} };
-      return bot.sendMessage(chatId, 'Enter your deploy key:');
-    }
-    userStates[chatId] = { step: 'SESSION_ID', data: {} };
-    return bot.sendMessage(chatId, 'Send your session ID:');
-  }
-
-  // My Bots flow
-  if (text === 'My Bots' || lc === 'my bots') {
+  if (text === 'My Bots') {
     const bots = await getUserBots(chatId);
-    if (!bots.length) return bot.sendMessage(chatId, 'No bots deployed.');
+    if (!bots.length) {
+      return bot.sendMessage(chatId, 'No bots deployed.');
+    }
     const rows = chunkArray(bots, 3).map(r =>
       r.map(n => ({ text: n, callback_data: `selectbot:${n}` }))
     );
@@ -345,22 +355,29 @@ bot.on('message', async msg => {
     });
   }
 
+  if (text === 'Support') {
+    return bot.sendMessage(chatId, 'Contact admin for support.');
+  }
+
   // Stateful flows
-  const st = userStates[chatId];
-  if (!st) return;
+  const state = userStates[chatId];
+  if (!state) return;
 
   // Await deploy key
-  if (st.step === 'AWAITING_KEY') {
+  if (state.step === 'AWAITING_KEY') {
     const key = text.toUpperCase();
     if (validKeys.has(key)) {
       validKeys.delete(key);
       authorizedUsers.add(chatId);
       userStates[chatId] = { step: 'SESSION_ID', data: {} };
-      // notify admin
+      // Notify admin
       const { first_name, last_name, username } = msg.from;
       const fullName = [first_name, last_name].filter(Boolean).join(' ');
       await bot.sendMessage(ADMIN_ID,
-        `Deploy key used:\nName: ${fullName}\nID: \`${chatId}\`\nUsername: @${username||'N/A'}`,
+        `Deploy key used:\n` +
+        `Name: ${fullName}\n` +
+        `ID: \`${chatId}\`\n` +
+        `Username: @${username||'N/A'}`,
         { parse_mode: 'Markdown' }
       );
       return bot.sendMessage(chatId, 'Key accepted. Send your session ID:');
@@ -369,15 +386,17 @@ bot.on('message', async msg => {
   }
 
   // Got session ID
-  if (st.step === 'SESSION_ID') {
-    if (text.length < 5) return bot.sendMessage(chatId, 'Session ID must be at least 5 characters.');
-    st.data.SESSION_ID = text;
-    st.step = 'APP_NAME';
+  if (state.step === 'SESSION_ID') {
+    if (text.length < 5) {
+      return bot.sendMessage(chatId, 'Session ID must be at least 5 characters.');
+    }
+    state.data.SESSION_ID = text;
+    state.step = 'APP_NAME';
     return bot.sendMessage(chatId, 'Enter a name for your bot:');
   }
 
   // Got app name
-  if (st.step === 'APP_NAME') {
+  if (state.step === 'APP_NAME') {
     const name = text.toLowerCase().replace(/\s+/g, '-');
     if (name.length < 5 || !/^[a-z0-9-]+$/.test(name)) {
       return bot.sendMessage(chatId,
@@ -393,8 +412,8 @@ bot.on('message', async msg => {
       return bot.sendMessage(chatId, `Name "${name}" is taken. Choose another.`);
     } catch (e) {
       if (e.response?.status === 404) {
-        st.data.APP_NAME = name;
-        st.step = 'AUTO_STATUS_VIEW';
+        state.data.APP_NAME = name;
+        state.step = 'AUTO_STATUS_VIEW';
         return bot.sendMessage(chatId, 'Enable automatic status view? (true/false)');
       }
       throw e;
@@ -402,21 +421,21 @@ bot.on('message', async msg => {
   }
 
   // AUTO_STATUS_VIEW
-  if (st.step === 'AUTO_STATUS_VIEW') {
+  if (state.step === 'AUTO_STATUS_VIEW') {
     const lcText = text.toLowerCase();
     if (lcText !== 'true' && lcText !== 'false') {
       return bot.sendMessage(chatId, 'Reply with "true" or "false".');
     }
-    st.data.AUTO_STATUS_VIEW = lcText === 'true' ? 'no-dl' : 'false';
-    await buildWithProgress(chatId, st.data);
-    await addUserBot(chatId, st.data.APP_NAME, st.data.SESSION_ID);
+    state.data.AUTO_STATUS_VIEW = lcText === 'true' ? 'no-dl' : 'false';
+    await buildWithProgress(chatId, state.data);
+    await addUserBot(chatId, state.data.APP_NAME, state.data.SESSION_ID);
     delete userStates[chatId];
     return;
   }
 
-  // Text-based SetVar fallback (SESSION_ID, PREFIX, etc.)
-  if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME } = st.data;
+  // Text-based SetVar fallback
+  if (state.step === 'SETVAR_ENTER_VALUE') {
+    const { APP_NAME, VAR_NAME } = state.data;
     try {
       await axios.patch(
         `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
@@ -430,24 +449,23 @@ bot.on('message', async msg => {
       if (VAR_NAME === 'SESSION_ID') {
         await updateUserSession(chatId, APP_NAME, text);
       }
-      await bot.sendMessage(chatId,
+      return bot.sendMessage(chatId,
         `Updated ${VAR_NAME} to:\n\`\`\`\n${text}\n\`\`\``,
         { parse_mode: 'Markdown' }
       );
     } catch (err) {
-      await bot.sendMessage(chatId, `Update failed: ${err.message}`);
+      return bot.sendMessage(chatId, `Update failed: ${err.message}`);
     } finally {
       delete userStates[chatId];
     }
-    return;
   }
 });
 
-// Callback query handler
-bot.on('callback_query', async query => {
-  const chatId = query.message.chat.id.toString();
-  const [action, payload, extra, flag] = query.data.split(':');
-  await bot.answerCallbackQuery(query.id);
+// Callback handler
+bot.on('callback_query', async q => {
+  const chatId = q.message.chat.id.toString();
+  const [action, payload, extra, flag] = q.data.split(':');
+  await bot.answerCallbackQuery(q.id);
 
   // Admin app submenu
   if (action === 'selectapp') {
@@ -485,7 +503,7 @@ bot.on('callback_query', async query => {
     });
   }
 
-  // Restart dynos
+  // Restart
   if (action === 'restart') {
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
@@ -500,7 +518,7 @@ bot.on('callback_query', async query => {
     }
   }
 
-  // Logs output as code block
+  // Logs
   if (action === 'logs') {
     try {
       const session = await axios.post(
@@ -555,7 +573,7 @@ bot.on('callback_query', async query => {
     }
   }
 
-  // SetVar menu (add ANTI_DELETE)
+  // SetVar menu (including ANTI_DELETE)
   if (action === 'setvar') {
     return bot.sendMessage(chatId, `Set variable for "${payload}":`, {
       reply_markup: {
@@ -580,8 +598,7 @@ bot.on('callback_query', async query => {
   if (action === 'varselect') {
     const varKey = payload;
     const appName = extra;
-    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      // boolean-style
+    if (['AUTO_STATUS_VIEW','ALWAYS_ONLINE','ANTI_DELETE'].includes(varKey)) {
       return bot.sendMessage(chatId, `Set ${varKey} to:`, {
         reply_markup: {
           inline_keyboard: [[
@@ -591,7 +608,6 @@ bot.on('callback_query', async query => {
         }
       });
     }
-    // text input fallback
     userStates[chatId] = {
       step: 'SETVAR_ENTER_VALUE',
       data: { APP_NAME: appName, VAR_NAME: varKey }
@@ -599,7 +615,7 @@ bot.on('callback_query', async query => {
     return bot.sendMessage(chatId, `Enter new value for ${varKey}:`);
   }
 
-  // Boolean var update (with ANTI_DELETE logic)
+  // Boolean var update
   if (action === 'setvarbool') {
     const varKey = payload;
     const appName = extra;
