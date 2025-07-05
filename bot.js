@@ -53,6 +53,13 @@ const pool = new Pool({
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  // Table for "Free Trial" cooldowns
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS temp_deploys (
+      user_id       TEXT PRIMARY KEY,
+      last_deploy_at TIMESTAMP NOT NULL
+    );
+  `);
 })().catch(console.error);
 
 // 5) DB helper functions
@@ -102,6 +109,28 @@ async function useDeployKey(key) {
   }
   return left;
 }
+// --- MODIFIED: Functions for "Free Trial" deployments (14-day cooldown) ---
+async function canDeployFreeTrial(userId) {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
+    const res = await pool.query(
+        'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
+        [userId]
+    );
+    if (res.rows.length === 0) return { can: true };
+    const lastDeploy = new Date(res.rows[0].last_deploy_at);
+    if (lastDeploy < fourteenDaysAgo) return { can: true };
+    
+    const nextAvailable = new Date(lastDeploy.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days
+    return { can: false, cooldown: nextAvailable };
+}
+async function recordFreeTrialDeploy(userId) {
+    await pool.query(
+        `INSERT INTO temp_deploys (user_id, last_deploy_at) VALUES ($1, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW()`,
+        [userId]
+    );
+}
+
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
@@ -116,20 +145,21 @@ function generateKey() {
     .join('');
 }
 
+// --- MODIFIED: Keyboard with "Free Trial" button ---
 function buildKeyboard(isAdmin) {
-  if (isAdmin) {
-    return [
-      ['Deploy', 'Apps'],
-      ['Generate Key', 'Get Session'],
-      ['Support']
-    ];
-  } else {
-    return [
+  const baseMenu = [
       ['Get Session', 'Deploy'],
-      ['My Bots'],
+      ['Free Trial', 'My Bots'], // Changed "Deploy Temp" to "Free Trial"
       ['Support']
-    ];
+  ];
+  if (isAdmin) {
+      return [
+          ['Deploy', 'Apps'],
+          ['Generate Key', 'Get Session'],
+          ['Support']
+      ];
   }
+  return baseMenu;
 }
 
 function chunkArray(arr, size) {
@@ -173,10 +203,12 @@ async function sendAppList(chatId) {
 }
 
 // 9) Build & deploy helper
-async function buildWithProgress(chatId, vars) {
+async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
 
   try {
+    // Stage 1: Create App
+    const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -184,6 +216,8 @@ async function buildWithProgress(chatId, vars) {
       }
     });
 
+    // Stage 2: Add-ons and Buildpacks
+    await bot.editMessageText('⚙️ Configuring resources...', { chat_id: chatId, message_id: createMsg.message_id });
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
@@ -214,6 +248,8 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
+    // Stage 3: Config Vars
+    await bot.editMessageText('🔧 Setting environment variables...', { chat_id: chatId, message_id: createMsg.message_id });
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
@@ -229,6 +265,8 @@ async function buildWithProgress(chatId, vars) {
       }
     );
 
+    // Stage 4: Build
+    await bot.editMessageText('🛠️ Starting build process...', { chat_id: chatId, message_id: createMsg.message_id });
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -243,7 +281,8 @@ async function buildWithProgress(chatId, vars) {
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let status = 'pending';
-    const progMsg = await bot.sendMessage(chatId, 'Building... 0%');
+    const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
+
     for (let i = 1; i <= 20; i++) { 
       await new Promise(r => setTimeout(r, 5000));
       try {
@@ -269,9 +308,26 @@ async function buildWithProgress(chatId, vars) {
 
     if (status === 'succeeded') {
       await bot.editMessageText(
-        `✅ Build complete! Your bot is live at https://${name}.herokuapp.com`,
-        { chat_id: chatId, message_id: progMsg.message_id }
+        `✅ Build complete! **Wait for your bot to start...**\n\nIt will be live at: https://${name}.herokuapp.com`,
+        { chat_id: chatId, message_id: progMsg.message_id, parse_mode: 'Markdown' }
       );
+      
+      if (isFreeTrial) {
+        // Schedule deletion after 30 minutes
+        setTimeout(async () => {
+            try {
+                await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 30-minute runtime has ended.`);
+                await axios.delete(`https://api.heroku.com/apps/${name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                await deleteUserBot(chatId, name);
+                await bot.sendMessage(chatId, `✅ Free Trial app "${name}" successfully deleted.`);
+            } catch (e) {
+                console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
+                await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+            }
+        }, 30 * 60 * 1000); // 30 minutes in milliseconds
+      }
       return true; // Indicate success
     } else {
       await bot.editMessageText(
@@ -332,12 +388,22 @@ bot.on('message', async msg => {
   // --- Button Handlers ---
   if (text === 'Deploy') {
     if (isAdmin) {
-      userStates[cid] = { step: 'SESSION_ID', data: {} };
-      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID:');
+      userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
+      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID for a permanent deployment:');
     } else {
-      userStates[cid] = { step: 'AWAITING_KEY', data: {} };
-      return bot.sendMessage(cid, 'Enter your deploy key:');
+      userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
+      return bot.sendMessage(cid, 'Enter your deploy key for a permanent deployment:');
     }
+  }
+
+  // --- MODIFIED: "Free Trial" Handler ---
+  if (text === 'Free Trial') {
+    const check = await canDeployFreeTrial(cid);
+    if (!check.can) {
+        return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
+    }
+    userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
+    return bot.sendMessage(cid, '✅ Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -404,11 +470,10 @@ bot.on('message', async msg => {
     const keyAttempt = text.toUpperCase();
     const usesLeft = await useDeployKey(keyAttempt);
     if (usesLeft === null) {
-      // FIX: Tell user to contact admin for a key if their input is wrong
       return bot.sendMessage(cid, `❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`);
     }
     authorizedUsers.add(cid);
-    userStates[cid] = { step: 'SESSION_ID', data: {} };
+    st.step = 'SESSION_ID'; // Keep data, just change step
 
     const { first_name, last_name, username } = msg.from;
     const userDetails = [
@@ -462,16 +527,22 @@ bot.on('message', async msg => {
       return bot.sendMessage(cid, 'Please reply with either "true" or "false".');
     }
     st.data.AUTO_STATUS_VIEW = lc === 'true' ? 'no-dl' : 'false';
-    const { APP_NAME, SESSION_ID } = st.data;
+    const { APP_NAME, SESSION_ID, isFreeTrial } = st.data;
     if (!APP_NAME || !SESSION_ID) {
       delete userStates[cid];
       return bot.sendMessage(cid, '❌ Critical error: Missing app name or session ID. Please start over.');
     }
     
-    const buildSuccessful = await buildWithProgress(cid, st.data);
+    const buildSuccessful = await buildWithProgress(cid, st.data, isFreeTrial);
 
     if (buildSuccessful) {
         await addUserBot(cid, APP_NAME, SESSION_ID);
+
+        // Record the free trial deployment if it was one
+        if (isFreeTrial) {
+            await recordFreeTrialDeploy(cid);
+            bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+        }
         
         const { first_name, last_name, username } = msg.from;
         const appUrl = `https://${APP_NAME}.herokuapp.com`;
@@ -481,7 +552,8 @@ bot.on('message', async msg => {
           `*Chat ID:* \`${cid}\``
         ].join('\n');
         
-        const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\``;
+        // --- MODIFIED: Admin message specifies "Free Trial" or "Permanent" ---
+        const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
         await bot.sendMessage(ADMIN_ID, 
             `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
@@ -523,7 +595,7 @@ bot.on('message', async msg => {
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
   const [action, payload, extra, flag] = q.data.split(':');
-  await bot.answerCallbackQuery(q.id);
+  await bot.answerCallbackQuery(q.id).catch(() => {});
 
   if (action === 'genkeyuses') {
     const uses = parseInt(payload, 10);
@@ -693,3 +765,5 @@ bot.on('callback_query', async q => {
     }
   }
 });
+
+console.log('Bot is running...');
