@@ -307,8 +307,8 @@ bot.on('message', async msg => {
     '- Use a modern browser (Chrome recommended)\n' +
     '- Skip any ads or popups\n' +
     '- Enter a custom session ID (e.g. your name or username)\n' +
-    '- Make sure to use Same name while rescannning so that bit can auto start\n\n' +
-    'Once you have it, tap "Deploy" to continue.'
+    '- Make sure to use Same name while rescannning so that bot can auto start\n\n' +
+    'Once you have it, tap "Deploy" to continu.'
   );
 }
   if (text === 'My Bots') {
