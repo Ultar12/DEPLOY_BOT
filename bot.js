@@ -397,12 +397,11 @@ if (st.step === 'SESSION_ID') {
   st.data.SESSION_ID = text;
   st.step = 'BOT_NAME';
   return bot.sendMessage(cid,
-  '🤖 Please enter a name for your bot.\n\n' +
-  '✅ Use only lowercase letters and numbers (no spaces or special characters).\n' +
-  '✅ Minimum length: 5 characters.'
-);
-
-// Got bot name (used as APP_NAME)
+    '🤖 Please enter a name for your bot.\n\n' +
+    '✅ Use only lowercase letters and numbers (no spaces or special characters).\n' +
+    '✅ Minimum length: 5 characters.'
+  );
+} // ✅ This was missing// Got bot name (used as APP_NAME)
 if (st.step === 'BOT_NAME') {
   const nm = text.toLowerCase().replace(/\s+/g, '-');
   if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
