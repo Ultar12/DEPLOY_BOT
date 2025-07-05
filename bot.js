@@ -390,13 +390,13 @@ bot.on('message', async msg => {
 
   // Got session ID
   if (st.step === 'SESSION_ID') {
-    if (text.length < 5) {
-      return bot.sendMessage(cid, 'Session ID must be at least 5 characters.');
-    }
-    st.data.SESSION_ID = text;
-    st.step = 'APP_NAME';
-    return bot.sendMessage(cid, 'Enter a name for your bot:');
+  if (text.length < 5) {
+    return bot.sendMessage(cid, 'Session ID must be at least 5 characters.');
   }
+  st.data.SESSION_ID = text.trim();
+  st.step = 'APP_NAME';
+  return bot.sendMessage(cid, 'Enter a name for your bot:');
+}
 
   // Got app name
   if (st.step === 'APP_NAME') {
