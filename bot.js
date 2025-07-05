@@ -205,20 +205,17 @@ async function buildWithProgress(chatId, vars) {
   await axios.patch(
   `https://api.heroku.com/apps/${name}/config-vars`,
   {
-    SESSION_ID: vars.SESSION_ID?.trim() || 'INVALID_SESSION_ID',
-    APP_NAME: vars.APP_NAME?.trim() || name,
-    AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW || 'false',
+    APP_NAME: name,
+    SESSION_ID: vars.SESSION_ID,
+    AUTO_STATUS_VIEW: vars.AUTO_STATUS_VIEW,
     ...defaultEnvVars
   },
-  {
-    headers: {
+  { headers: {
       Authorization: `Bearer ${HEROKU_API_KEY}`,
       Accept: 'application/vnd.heroku+json; version=3',
       'Content-Type': 'application/json'
-    }
-  }
-);
-  // Start build
+  }}
+);  // Start build
   const bres = await axios.post(
     `https://api.heroku.com/apps/${name}/builds`,
     { source_blob:{ url:`${GITHUB_REPO_URL}/tarball/main` }},
@@ -369,27 +366,27 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, `Need help? Contact the admin:\n${SUPPORT_USERNAME}`);
   }
 
-  // Stateful flows
-  const st = userStates[cid];
-  if (!st) return;
+// Stateful flows
+const st = userStates[cid];
+if (!st) return;
 
-  // Awaiting deploy key
-  if (st.step === 'AWAITING_KEY') {
-    const keyAttempt = text.toUpperCase();
-    const usesLeft = await useDeployKey(keyAttempt);
-    if (usesLeft === null) {
-      return bot.sendMessage(cid, 'Invalid or expired key.');
-    }
-    authorizedUsers.add(cid);
-    userStates[cid] = { step: 'SESSION_ID', data: {} };
-    await bot.sendMessage(ADMIN_ID,
-      `🔑 Key used by ${cid}. Uses left: ${usesLeft}`
-    );
-    return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
+// Awaiting deploy key
+if (st.step === 'AWAITING_KEY') {
+  const keyAttempt = text.toUpperCase();
+  const usesLeft = await useDeployKey(keyAttempt);
+  if (usesLeft === null) {
+    return bot.sendMessage(cid, 'Invalid or expired key.');
   }
+  authorizedUsers.add(cid);
+  userStates[cid] = { step: 'SESSION_ID', data: {} };
+  await bot.sendMessage(ADMIN_ID,
+    `🔑 Key used by ${cid}. Uses left: ${usesLeft}`
+  );
+  return bot.sendMessage(cid, 'Key accepted. Enter your session ID:');
+}
 
-  // Got session ID
-  if (st.step === 'SESSION_ID') {
+// SESSION_ID
+if (st.step === 'SESSION_ID') {
   if (text.length < 5) {
     return bot.sendMessage(cid, 'Session ID must be at least 5 characters.');
   }
@@ -398,69 +395,77 @@ bot.on('message', async msg => {
   return bot.sendMessage(cid, 'Enter a name for your bot:');
 }
 
-  // Got app name
-  if (st.step === 'APP_NAME') {
-    const nm = text.toLowerCase().replace(/\s+/g,'-');
-    if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-      return bot.sendMessage(cid,
-        'Invalid name. Use at least 5 characters: lowercase letters, numbers or hyphens.'
-      );
-    }
-    try {
-      await axios.get(`https://api.heroku.com/apps/${nm}`, {
-        headers:{
-          Authorization:`Bearer ${HEROKU_API_KEY}`,
-          Accept:'application/vnd.heroku+json; version=3'
-        }
-      });
-      return bot.sendMessage(cid, `The name "${nm}" is already taken.`);
-    } catch(e) {
-      if (e.response?.status === 404) {
-        st.data.APP_NAME = nm;
-        st.step = 'AUTO_STATUS_VIEW';
-        return bot.sendMessage(cid, 'Enable automatic status view? (true/false)');
-      }
-      throw e;
-    }
+// APP_NAME
+if (st.step === 'APP_NAME') {
+  const nm = text.toLowerCase().replace(/\s+/g, '-');
+  if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
+    return bot.sendMessage(cid,
+      'Invalid name. Use at least 5 characters: lowercase letters, numbers or hyphens.'
+    );
   }
-
-  // AUTO_STATUS_VIEW
-  if (st.step === 'AUTO_STATUS_VIEW') {
-    if (lc !== 'true' && lc !== 'false') {
-      return bot.sendMessage(cid, 'Reply "true" or "false".');
+  try {
+    await axios.get(`https://api.heroku.com/apps/${nm}`, {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+    return bot.sendMessage(cid, `❌ The name "${nm}" is already taken.`);
+  } catch (e) {
+    if (e.response?.status === 404) {
+      st.data.APP_NAME = nm;
+      st.step = 'AUTO_STATUS_VIEW';
+      return bot.sendMessage(cid, 'Enable automatic status view? (true/false)');
     }
-    st.data.AUTO_STATUS_VIEW = lc==='true'?'no-dl':'false';
-    await buildWithProgress(cid, st.data);
-    await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
+    throw e;
+  }
+}
+
+// AUTO_STATUS_VIEW
+if (st.step === 'AUTO_STATUS_VIEW') {
+  if (lc !== 'true' && lc !== 'false') {
+    return bot.sendMessage(cid, 'Reply "true" or "false".');
+  }
+  st.data.AUTO_STATUS_VIEW = lc === 'true' ? 'no-dl' : 'false';
+
+  // ✅ ENSURE APP_NAME & SESSION_ID are not missing
+  const { APP_NAME, SESSION_ID } = st.data;
+  if (!APP_NAME || !SESSION_ID) {
     delete userStates[cid];
-    return;
+    return bot.sendMessage(cid, '❌ Missing APP_NAME or SESSION_ID during deploy. Please start over.');
   }
 
-  // Set variable new value (SESSION_ID, PREFIX etc)
-  if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME } = st.data;
-    const newVal = text;
-    try {
-      await axios.patch(
-        `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
-        { [VAR_NAME]: newVal },
-        { headers: {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3',
-            'Content-Type': 'application/json'
-        }}
-      );
-      if (VAR_NAME === 'SESSION_ID') {
-        await updateUserSession(cid, APP_NAME, newVal);
+  await buildWithProgress(cid, st.data); // ⬅ Make sure this uses `st.data`
+  await addUserBot(cid, APP_NAME, SESSION_ID);
+  delete userStates[cid];
+  return;
+}
+
+// SETVAR flow
+if (st.step === 'SETVAR_ENTER_VALUE') {
+  const { APP_NAME, VAR_NAME } = st.data;
+  const newVal = text.trim();
+  try {
+    await axios.patch(
+      `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+      { [VAR_NAME]: newVal },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
       }
-      delete userStates[cid];
-      return bot.sendMessage(cid, `${VAR_NAME} updated successfully.`);
-    } catch (e) {
-      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    );
+    if (VAR_NAME === 'SESSION_ID') {
+      await updateUserSession(cid, APP_NAME, newVal);
     }
+    delete userStates[cid];
+    return bot.sendMessage(cid, `${VAR_NAME} updated successfully.`);
+  } catch (e) {
+    return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
   }
-});
-
+}
 // 13) Callback query handler
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
