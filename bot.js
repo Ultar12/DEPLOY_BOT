@@ -300,13 +300,18 @@ bot.on('message', async msg => {
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
 
-  // Button: Deploy
-  if (text === 'Deploy') {
-    // Always ask for deploy key (one-time use per deploy)
+// Button: Deploy
+if (text === 'Deploy') {
+  if (cid === ADMIN_ID) {
+    // Skip key for admin
+    authorizedUsers.add(cid);
+    userStates[cid] = { step: 'SESSION_ID', data: {} };
+    return bot.sendMessage(cid, '🔐 Admin access granted. Enter your session ID:');
+  } else {
     userStates[cid] = { step: 'AWAITING_KEY', data: {} };
     return bot.sendMessage(cid, 'Enter your deploy key:');
   }
-
+}
   // Button: Apps
   if (text === 'Apps' && isAdmin) {
     return sendAppList(cid);
