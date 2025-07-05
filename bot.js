@@ -288,24 +288,29 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, `Key:\n\`${key}\``, { parse_mode: 'Markdown' });
   }
   if (text === 'Get Session') {
-    userStates[cid] = { step: 'SESSION_ID', data: {} };
-    try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
-        caption:
-          'How to get your session ID:\n' +
-          '1. Open the link\n' +
-          '2. Click "Session"\n' +
-          '3. Enter a custom ID\n\n' +
-          'https://levanter-delta.vercel.app/',
-        parse_mode: 'Markdown'
-      });
-    } catch {
-      await bot.sendMessage(cid, 'https://levanter-delta.vercel.app/');
-    }
-    return bot.sendMessage(cid,
-      'Note:\n- Use a modern browser\n- Skip ads/popups\n- Enter a custom session ID\n\nThen tap "Deploy".'
-    );
+  userStates[cid] = { step: 'SESSION_ID', data: {} };
+  try {
+    await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+      caption:
+        'How to get your session ID:\n\n' +
+        '1. Open the link below\n' +
+        '2. Click "Session" on the left\n' +
+        '3. Enter a custom session ID (e.g. your name)\n\n' +
+        'Link: https://levanter-delta.vercel.app/',
+      parse_mode: 'Markdown'
+    });
+  } catch {
+    await bot.sendMessage(cid, 'Visit this link to get your session ID:\nhttps://levanter-delta.vercel.app/');
   }
+  return bot.sendMessage(cid,
+    'Note:\n' +
+    '- Use a modern browser (Chrome recommended)\n' +
+    '- Skip any ads or popups\n' +
+    '- Enter a custom session ID (e.g. your name or username)\n' +
+    '- Make sure to use Same name while rescannning so that bit can auto start\n\n' +
+    'Once you have it, tap "Deploy" to continue.'
+  );
+}
   if (text === 'My Bots') {
     const bots = await getUserBots(cid);
     if (!bots.length) return bot.sendMessage(cid, 'No bots deployed.');
@@ -317,8 +322,8 @@ bot.on('message', async msg => {
     });
   }
   if (text === 'Support') {
-    return bot.sendMessage(cid, 'Contact admin for support.');
-  }
+  return bot.sendMessage(cid, 'Need help? Contact the admin for assistance\n@star_ies1');
+}
 
   // Stateful
   const st = userStates[cid];
