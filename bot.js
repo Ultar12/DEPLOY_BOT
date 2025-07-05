@@ -118,30 +118,35 @@ async function sendAppList(cid) {
 bot.on('polling_error', console.error);
 
 // /start and /menu handlers
-bot.onText(/^\/start$/, msg => {
-  const cid     = msg.chat.id.toString();
+bot.onText(/^\/start(?:\s+(.+))?/, async (msg, match) => {
+  const cid = msg.chat.id.toString();
+  const payload = match[1]; // this will be "start" if launched via link
   const isAdmin = cid === ADMIN_ID;
+
   delete userStates[cid];
   if (isAdmin) authorizedUsers.add(cid);
-  bot.sendMessage(cid, `👋 Welcome${isAdmin ? ' Admin' : ''}!`, {
-    reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
-  });
-});
-bot.onText(/^\/menu$/, msg => {
-  const cid     = msg.chat.id.toString();
-  const isAdmin = cid === ADMIN_ID;
-  bot.sendMessage(cid, '📲 Choose an option:', {
-    reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
-  });
-});
 
-// Admin: generate one-time key
-bot.onText(/^\/generate$/, msg => {
-  const cid = msg.chat.id.toString();
-  if (cid !== ADMIN_ID) return bot.sendMessage(cid, '❌ Only admin can generate keys.');
-  const key = generateKey();
-  validKeys.add(key);
-  bot.sendMessage(cid, `🔑 One-time Key: \`${key}\``, { parse_mode:'Markdown' });
+  if (payload) {
+    await bot.sendMessage(cid, `👋 Welcome! You launched the bot with: \`${payload}\``, {
+      parse_mode: 'Markdown',
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    });
+
+    // Optional: trigger something automatically
+    if (payload === 'start') {
+      await bot.sendMessage(cid, '🚀 Ready to deploy your bot? Tap below:', {
+        reply_markup: {
+          keyboard: buildKeyboard(isAdmin),
+          resize_keyboard: true
+        }
+      });
+    }
+
+  } else {
+    await bot.sendMessage(cid, `👋 Welcome${isAdmin ? ' Admin' : ''}!`, {
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    });
+  }
 });
 
 // Admin: /apps command
