@@ -608,24 +608,23 @@ if (action === 'setvarbool') {
   else newVal = flagVal ? 'true' : 'false';
 
   try {
-    await axios.patch(
-      `https://api.heroku.com/apps/${appName}/config-vars`,
-      { [varKey]: newVal },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKUAPIKEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
+  await axios.patch(
+    `https://api.heroku.com/apps/${appName}/config-vars`,
+    { [varKey]: newVal },
+    {
+      headers: {
+        Authorization: `Bearer ${HEROKUAPIKEY}`,
+        Accept: 'application/vnd.heroku+json; version=3',
+        'Content-Type': 'application/json'
       }
-    );
-
-    if (varKey === 'SESSION_ID') {
-      await updateUserSession(cid, appName, newVal);
     }
+  );
 
-    return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
-  } catch (e) {
-    return bot.sendMessage(cid, `Error: ${e.message}`);
+  if (varKey === 'SESSION_ID') {
+    await updateUserSession(cid, appName, newVal);
   }
-});
+
+  return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
+} catch (e) {
+  return bot.sendMessage(cid, `Error: ${e.message}`);
+}
