@@ -109,7 +109,7 @@ async function useDeployKey(key) {
   }
   return left;
 }
-// --- MODIFIED: Functions for "Free Trial" deployments (14-day cooldown) ---
+
 async function canDeployFreeTrial(userId) {
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
     const res = await pool.query(
@@ -145,11 +145,10 @@ function generateKey() {
     .join('');
 }
 
-// --- MODIFIED: Keyboard with "Free Trial" button ---
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
-      ['Free Trial', 'My Bots'], // Changed "Deploy Temp" to "Free Trial"
+      ['Free Trial', 'My Bots'], // "Free Trial" button
       ['Support']
   ];
   if (isAdmin) {
@@ -202,7 +201,7 @@ async function sendAppList(chatId) {
   }
 }
 
-// 9) Build & deploy helper
+// 9) Build & deploy helper with animated countdown
 async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
 
@@ -307,9 +306,28 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     }
 
     if (status === 'succeeded') {
+      // Animated Countdown Logic
+      await bot.editMessageText('✅ Build complete!', {
+        chat_id: chatId,
+        message_id: progMsg.message_id
+      });
+
+      const totalSteps = 12; // 12 steps for a 60-second countdown (5 seconds per step)
+      for (let i = 1; i <= totalSteps; i++) {
+          await new Promise(r => setTimeout(r, 5000)); // Wait 5 seconds
+          const secondsLeft = 60 - (i * 5);
+          const filled = '■'.repeat(i);
+          const empty = '□'.repeat(totalSteps - i);
+          const countdownMessage = `[${filled}${empty}] Wait for your bot to start ... (${secondsLeft}s left)`;
+          await bot.editMessageText(countdownMessage, {
+              chat_id: chatId,
+              message_id: progMsg.message_id
+          }).catch(() => {}); // Ignore errors if user deletes message
+      }
+
       await bot.editMessageText(
-        `✅ Build complete! **Wait for your bot to start...**\n\nIt will be live at: https://${name}.herokuapp.com`,
-        { chat_id: chatId, message_id: progMsg.message_id, parse_mode: 'Markdown' }
+        `✅ Your bot is now live at:\nhttps://${name}.herokuapp.com`,
+        { chat_id: chatId, message_id: progMsg.message_id }
       );
       
       if (isFreeTrial) {
@@ -389,14 +407,13 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID for a permanent deployment:');
+      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID');
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Enter your deploy key for a permanent deployment:');
+      return bot.sendMessage(cid, 'Enter your Deploy key');
     }
   }
 
-  // --- MODIFIED: "Free Trial" Handler ---
   if (text === 'Free Trial') {
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
@@ -538,7 +555,6 @@ bot.on('message', async msg => {
     if (buildSuccessful) {
         await addUserBot(cid, APP_NAME, SESSION_ID);
 
-        // Record the free trial deployment if it was one
         if (isFreeTrial) {
             await recordFreeTrialDeploy(cid);
             bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
@@ -552,7 +568,6 @@ bot.on('message', async msg => {
           `*Chat ID:* \`${cid}\``
         ].join('\n');
         
-        // --- MODIFIED: Admin message specifies "Free Trial" or "Permanent" ---
         const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
         await bot.sendMessage(ADMIN_ID, 
