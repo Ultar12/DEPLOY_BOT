@@ -231,7 +231,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-// User specified fixed daily cost per app
+// User specified fixed daily cost per app for usage estimation
 const FIXED_DAILY_APP_COST = 0.08; 
 
 // Helper function to calculate days between two Date objects (inclusive of start day)
