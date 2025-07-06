@@ -233,20 +233,20 @@ async function startRestartCountdown(chatId, appName, messageId) {
 
 /**
  * Calculates the estimated daily cost for a given dyno size.
- * Based on the user's input: Hobby/Basic dyno is $0.06 per day.
+ * Based on the user's input: Hobby/Basic dyno is $0.08 per day.
  * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
  * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x', 'basic').
  * @returns {number} Estimated daily cost in USD.
  */
 function getEstimatedDailyCost(dynoSize) {
-    const baseDailyCost = 0.06; // User specified base for Hobby/Basic dyno
+    const baseDailyCost = 0.08; // User specified base: $0.08 per day for Hobby/Basic dyno
 
     // Scaling factors relative to the base daily cost
     const scalingFactors = {
-        'eco': 0.7, // Eco is typically cheaper, adjust as per Heroku's $5/month for 1000 hours
+        'eco': 0.7, // Eco is typically cheaper
         'hobby': 1,
-        'basic': 1, // Explicitly set Basic to the base daily cost (0.06)
-        'standard-1x': 3.5, // Standard-1X is usually around $25/month, (25/30) / 0.06 ~ 13.88 -> Adjusting for general feel
+        'basic': 1, // Explicitly set Basic to the base daily cost (0.08)
+        'standard-1x': 3.5, // Standard-1X is typically significantly more expensive than hobby
         'standard-2x': 7,   // Standard-2X is double Standard-1X
         'performance-m': 35, // Performance dynos are significantly more
         'performance-l': 70,
@@ -1285,7 +1285,7 @@ bot.on('callback_query', async q => {
         const appData = appRes.data;
         const dynos = dynoRes.data;
 
-        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`;
+        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`; // Concise title
         let currentDailyCost = 0; // This will hold the daily cost for *all* active dynos
 
         if (dynos.length > 0) {
@@ -1312,14 +1312,12 @@ bot.on('callback_query', async q => {
 
             const estimatedTotalCost = currentDailyCost * daysDeployed; // Total cost based on summed daily cost
 
-            // usageMessage += `\n*Daily Cost (Estimated):* $${currentDailyCost.toFixed(2)}\n`; // Hidden as per request
-            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Corrected total cost calculation and label
+            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Corrected total cost calculation and label, Daily cost line removed
             usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
 
         } else {
             usageMessage += `No active dynos found for this app.\n`;
-            // usageMessage += `*Daily Cost (Estimated):* $0.00\n`; // Hidden as per request
-            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`;
+            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`; // Corrected total cost calculation and label, Daily cost line removed
             usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
         }
 
