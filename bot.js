@@ -232,6 +232,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
 }
 
 // User specified fixed daily cost per app for usage estimation
+// This constant is no longer used for a specific command, but remains if other future features need a fixed cost.
 const FIXED_DAILY_APP_COST = 0.08; 
 
 // Helper function to calculate days between two Date objects (inclusive of start day)
@@ -924,8 +925,7 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
-          // Add the new "Usage" button here
-          [{ text: '📊 Usage', callback_data: `usage:${payload}` }], 
+          // Removed the Usage button as per your request
           [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
@@ -1244,73 +1244,7 @@ bot.on('callback_query', async q => {
     }
   }
 
-  if (action === 'usage') {
-    const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-    }
-    const appName = payload;
-    const messageId = st.data.messageId;
-
-    await bot.editMessageText(`📊 Calculating usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
-
-    try {
-        // Retrieve deployment date from user_bots table
-        const res = await pool.query(
-            'SELECT created_at FROM user_bots WHERE user_id = $1 AND bot_name = $2',
-            [cid, appName]
-        );
-
-        if (res.rows.length === 0) {
-            // App not found in bot's database (e.g., deployed manually or very old bot entry)
-            return bot.editMessageText(
-                `📊 App: ${appName} Usage Estimate\n\n` +
-                `Deployment record not found in bot's database. Cannot estimate cost.\n\n` +
-                `_(This usually happens if the app was not deployed via this bot, or its record was manually removed.)_`,
-                {
-                    chat_id: cid,
-                    message_id: messageId,
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-                    }
-                }
-            );
-        }
-
-        const deploymentDate = new Date(res.rows[0].created_at);
-        const now = new Date();
-        const daysDeployed = calculateDaysBetween(deploymentDate, now);
-
-        const estimatedTotalCost = FIXED_DAILY_APP_COST * daysDeployed;
-
-        const usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n` +
-                             `*Days Deployed:* ${daysDeployed} days\n` +
-                             `*Total Cost (Estimated):* $${estimatedTotalCost.toFixed(2)}\n\n` +
-                             `_(Estimate based on fixed rate of $${FIXED_DAILY_APP_COST.toFixed(2)}/day. Excludes addons. Exact billing may vary.)_`; // Simplified disclaimer
-
-        return bot.editMessageText(usageMessage, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            disable_web_page_preview: true,
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-
-    } catch (e) {
-        console.error(`Error calculating usage for ${appName}:`, e.message);
-        return bot.editMessageText(`Error calculating usage: ${e.message}\n\n(Could not retrieve deployment date from database. Please try again.)`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-    }
-  }
+  // Removed the 'usage' callback entirely as per your request
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
