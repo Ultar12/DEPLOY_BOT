@@ -1,0 +1,73 @@
+// delete-expired-apps.js
+require('dotenv').config();
+const axios = require('axios');
+const { Pool } = require('pg');
+
+const { DATABASE_URL, HEROKU_API_KEY } = process.env;
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+async function deleteExpiredApps() {
+  console.log('Running scheduled job: Checking for expired free trial apps...');
+
+  if (!HEROKU_API_KEY) {
+    console.error('HEROKU_API_KEY is not set. Cannot perform deletions.');
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    // Find free trial bots older than 1 hour
+    const res = await client.query(
+      `SELECT user_id, bot_name FROM user_bots 
+       WHERE is_free_trial = true AND created_at < NOW() - INTERVAL '1 hour'`
+    );
+
+    if (res.rows.length === 0) {
+      console.log('No expired apps to delete.');
+      return;
+    }
+
+    console.log(`Found ${res.rows.length} expired app(s) to delete.`);
+
+    for (const app of res.rows) {
+      const { user_id, bot_name } = app;
+      console.log(`Attempting to delete Heroku app: ${bot_name}`);
+
+      try {
+        // 1. Delete the app from Heroku
+        await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3',
+          },
+        });
+        console.log(`Successfully deleted Heroku app: ${bot_name}`);
+
+        // 2. Delete the record from the database
+        await client.query('DELETE FROM user_bots WHERE bot_name = $1', [bot_name]);
+        console.log(`Successfully removed ${bot_name} from the database.`);
+
+      } catch (error) {
+        // Handle cases where the app might already be deleted on Heroku
+        if (error.response && error.response.status === 404) {
+          console.warn(`Heroku app ${bot_name} not found. It was likely already deleted. Removing from DB.`);
+          await client.query('DELETE FROM user_bots WHERE bot_name = $1', [bot_name]);
+        } else {
+          console.error(`Failed to delete app ${bot_name}:`, error.response?.data?.message || error.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('An error occurred during the deletion process:', err);
+  } finally {
+    client.release();
+    await pool.end();
+    console.log('Scheduler job finished.');
+  }
+}
+
+deleteExpiredApps();
