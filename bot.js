@@ -239,17 +239,14 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               if (minutesLeft > 0) {
                   const countdownMessage = `✅ Your bot is live!\nhttps://${name}.herokuapp.com\n\n⏳ *Trial time left: ${minutesLeft} minutes*`;
                   bot.editMessageText(countdownMessage, { chat_id: chatId, message_id: liveMessage.message_id, parse_mode: 'Markdown' }).catch(() => {
-                      clearInterval(countdownInterval); // Stop if message is deleted
+                      clearInterval(countdownInterval);
                   });
               } else {
-                  // Time's up
                   clearInterval(countdownInterval);
-                  await bot.editMessageText(`⌛️ Trial period for *${name}* has ended. The app is now offline.`, { chat_id: chatId, message_id: liveMessage.message_id, parse_mode: 'Markdown' });
+                  await bot.editMessageText(`⌛️ Trial period for *${name}* has ended. The app is now offline.`, { chat_id: chatId, message_id: liveMessage.message_id, parse_mode: 'Markdown' }).catch(()=>{});
                   
-                  // Turn off the dyno
                   await turnOffDyno(name);
 
-                  // Send notification to admin for deletion
                   const adminMessage = `*Trial Expired & Dyno Off*\n\nApp Name: \`${name}\`\nUser ID: \`${chatId}\`\n\nThe app has been turned off. Please delete it.`;
                   bot.sendMessage(ADMIN_ID, adminMessage, {
                       parse_mode: 'Markdown',
@@ -258,9 +255,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
                       }
                   }).catch(err => console.error("Failed to send deletion request to admin:", err));
               }
-          }, 5 * 60 * 1000); // Update every 5 minutes
+          }, 5 * 60 * 1000);
       }
-
       return true;
     } else {
       await bot.editMessageText(`❌ Build status: ${status}. Check your Heroku dashboard for logs.`, { chat_id: chatId, message_id: progMsg.message_id });
@@ -272,7 +268,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     return false;
   }
 }
-
 
 // 10) Polling error handler
 bot.on('polling_error', console.error);
@@ -295,7 +290,6 @@ bot.onText(/^\/apps$/i, msg => {
   if (msg.chat.id.toString() === ADMIN_ID) sendAppList(msg.chat.id.toString());
 });
 
-
 // 12) Message handler for buttons & state machine
 bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
@@ -308,29 +302,37 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
     bot.sendMessage(cid, 'Enter your Deploy key');
-    return; // <-- FIX: Stop further processing
+    return;
   }
+
+  // --- FIX STARTS HERE ---
   if (text === 'Free Trial') {
-    const check = await canDeployFreeTrial(cid);
-    if (!check.can) {
-      bot.sendMessage(cid, `⏳ You have a cooldown. You can use the free trial again after:\n\n${check.cooldown.toLocaleString()}`);
-    } else {
-      userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-      bot.sendMessage(cid, `✅ Free Trial (1 hour runtime, ${FREE_TRIAL_COOLDOWN_DAYS}-day cooldown) initiated.\n\nPlease enter your session ID:`);
+    try {
+        const check = await canDeployFreeTrial(cid);
+        if (check.can) {
+            userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
+            bot.sendMessage(cid, `✅ Free Trial (1 hour runtime, ${FREE_TRIAL_COOLDOWN_DAYS}-day cooldown) initiated.\n\nPlease enter your session ID:`);
+        } else {
+            bot.sendMessage(cid, `⏳ You have a cooldown. You can use the free trial again after:\n\n${check.cooldown.toLocaleString()}`);
+        }
+    } catch (e) {
+        console.error("Error in Free Trial check:", e);
+        bot.sendMessage(cid, "❌ An error occurred while checking your trial status. Please contact support.");
     }
-    return; // <-- FIX: Stop further processing
+    return;
   }
+  // --- FIX ENDS HERE ---
+
   if (text === 'Apps' && isAdmin) {
     sendAppList(cid);
-    return; // <-- FIX: Stop further processing
+    return;
   }
   if (text === 'Generate Key' && isAdmin) {
     const buttons = [[1, 2, 3, 4, 5].map(n => ({ text: String(n), callback_data: `genkeyuses:${n}` }))];
     bot.sendMessage(cid, 'How many uses for this key?', { reply_markup: { inline_keyboard: buttons } });
-    return; // <-- FIX: Stop further processing
+    return;
   }
   if (text === 'Get Session') {
-    // <-- FIX: Restored full guide text
     const guideCaption = 
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link*\n" +
@@ -344,14 +346,11 @@ bot.on('message', async msg => {
         "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
 
     try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
-        caption: guideCaption,
-        parse_mode: 'Markdown'
-      });
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', { caption: guideCaption, parse_mode: 'Markdown' });
     } catch {
       await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
-    return; // <-- FIX: Stop further processing
+    return;
   }
   if (text === 'My Bots') {
     const bots = await getUserBots(cid);
@@ -361,11 +360,11 @@ bot.on('message', async msg => {
         const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
         bot.sendMessage(cid, 'Your deployed bots:', { reply_markup: { inline_keyboard: rows } });
     }
-    return; // <-- FIX: Stop further processing
+    return;
   }
   if (text === 'Support') {
     bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
-    return; // <-- FIX: Stop further processing
+    return;
   }
 
   // --- Stateful flows ---
@@ -444,7 +443,6 @@ bot.on('callback_query', async q => {
     await addDeployKey(key, uses, cid);
     return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
   }
-  // ... rest of your callback query logic for info, restart, logs, etc. can go here
 });
 
 console.log('Bot is running...');
