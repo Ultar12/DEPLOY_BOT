@@ -53,6 +53,7 @@ const pool = new Pool({
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  // Table for "Free Trial" cooldowns
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_deploys (
       user_id       TEXT PRIMARY KEY,
@@ -144,60 +145,21 @@ function generateKey() {
     .join('');
 }
 
-// --- NEW --- Menu Definitions
-const getMainMenu = (isAdmin) => {
-    const text = "👋 *Welcome!* I'm your Heroku deployment assistant.\n\nSelect an option below to get started.";
-    let keyboard = [
-        [{ text: '🚀 Deploy New Bot', callback_data: 'deploy' }],
-        [{ text: '🤖 My Bots', callback_data: 'navigate:my_bots' }],
-        [{ text: '🎁 Free Trial', callback_data: 'deploy_trial' }],
-        [{ text: 'ℹ️ Get Session', callback_data: 'get_session' }, { text: '📞 Support', callback_data: 'support' }]
-    ];
-    if (isAdmin) {
-        keyboard = [
-            [{ text: '🚀 Deploy New Bot', callback_data: 'deploy' }],
-            [{ text: '⚙️ Admin: All Apps', callback_data: 'admin:apps' }, { text: '🔑 Admin: Generate Key', callback_data: 'admin:genkey' }],
-            [{ text: '📞 Support', callback_data: 'support' }]
-        ];
-    }
-    return { text, keyboard };
-};
-
-const getMyBotsMenu = async (userId) => {
-    const userBots = await getUserBots(userId);
-    const text = userBots.length > 0 ? '🤖 Here are your deployed bots. Select one to manage it.' : "You haven't deployed any bots yet.";
-    const botButtons = userBots.map(botName => ([{ text: botName, callback_data: `app_menu:${botName}` }]));
-    const keyboard = [
-        ...botButtons,
-        [{ text: '« Back to Main Menu', callback_data: 'navigate:main' }]
-    ];
-    return { text, keyboard };
-};
-
-const getAppMenu = (appName, isUserBot) => {
-    const text = `🛠️ *Managing App: \`${appName}\`*\n\nWhat would you like to do?`;
-    let backButton;
-    if (isUserBot) {
-        backButton = { text: '« Back to My Bots', callback_data: 'navigate:my_bots' };
-    } else {
-        backButton = { text: '« Back to All Apps', callback_data: 'admin:apps' };
-    }
-
-    const keyboard = [
-        [
-            { text: 'ℹ️ Info', callback_data: `info:${appName}` },
-            { text: '🔄 Restart', callback_data: `restart:${appName}` },
-            { text: '📋 Logs', callback_data: `logs:${appName}` }
-        ],
-        [
-            { text: '✏️ Set Variable', callback_data: `setvar:${appName}` },
-            { text: '❌ Delete', callback_data: `delete:${appName}:${isUserBot ? 'user' : 'admin'}` }
-        ],
-        [backButton]
-    ];
-    return { text, keyboard };
-};
-
+function buildKeyboard(isAdmin) {
+  const baseMenu = [
+      ['Get Session', 'Deploy'],
+      ['Free Trial', 'My Bots'], // "Free Trial" button
+      ['Support']
+  ];
+  if (isAdmin) {
+      return [
+          ['Deploy', 'Apps'],
+          ['Generate Key', 'Get Session'],
+          ['Support']
+      ];
+  }
+  return baseMenu;
+}
 
 function chunkArray(arr, size) {
   const out = [];
@@ -214,31 +176,32 @@ async function sendAnimatedMessage(chatId, baseText) {
 }
 
 
-// 8) Send Heroku apps list (for Admin)
-async function sendAppList(chatId, messageId) {
-    try {
-        const res = await axios.get('https://api.heroku.com/apps', {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        const apps = res.data.map(a => a.name);
-        const text = apps.length ? `Found ${apps.length} apps. Select one to manage:` : 'No apps found on your Heroku account.';
-        const appButtons = apps.map(name => ([{ text: name, callback_data: `app_menu:${name}:admin` }]));
-        const keyboard = [
-            ...appButtons,
-            [{ text: '« Back to Main Menu', callback_data: 'navigate:main' }]
-        ];
-        
-        await bot.editMessageText(text, {
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: { inline_keyboard: keyboard }
-        });
-    } catch (e) {
-        await bot.editMessageText(`Error fetching apps: ${e.message}`, { chatId, message_id: messageId });
+// 8) Send Heroku apps list
+async function sendAppList(chatId) {
+  try {
+    const res = await axios.get('https://api.heroku.com/apps', {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+    const apps = res.data.map(a => a.name);
+    if (!apps.length) {
+      return bot.sendMessage(chatId, 'No apps found.');
     }
+    const rows = chunkArray(apps, 3).map(r =>
+      r.map(name => ({ text: name, callback_data: `selectapp:${name}` }))
+    );
+    await bot.sendMessage(chatId,
+      `Total apps: ${apps.length}\nSelect an app:`,
+      { reply_markup: { inline_keyboard: rows } }
+    );
+  } catch (e) {
+    bot.sendMessage(chatId, `Error fetching apps: ${e.message}`);
+  }
 }
 
-// ... (buildWithProgress function remains the same)
+// 9) Build & deploy helper with animated countdown
 async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
 
@@ -406,165 +369,518 @@ bot.on('polling_error', console.error);
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  const { text, keyboard } = getMainMenu(isAdmin);
+  delete userStates[cid];
+  const { first_name, last_name, username } = msg.from;
+  console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
+  await bot.sendMessage(cid,
+    isAdmin ? 'Welcome, Admin! Here is your menu:' : 'Welcome! Please select an option:', {
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    }
+  );
+});
 
-  await bot.sendMessage(cid, text, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: keyboard }
+bot.onText(/^\/menu$/i, msg => {
+  const cid = msg.chat.id.toString();
+  const isAdmin = cid === ADMIN_ID;
+  bot.sendMessage(cid, 'Menu:', {
+    reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
 });
 
-// 12) Message handler for TEXT INPUT (for deployment flow)
+bot.onText(/^\/apps$/i, msg => {
+  const cid = msg.chat.id.toString();
+  if (cid === ADMIN_ID) {
+    sendAppList(cid);
+  }
+});
+
+// 12) Message handler for buttons & state machine
 bot.on('message', async msg => {
-    const cid = msg.chat.id.toString();
-    const text = msg.text?.trim();
+  const cid = msg.chat.id.toString();
+  const text = msg.text?.trim();
+  if (!text) return;
 
-    // This handler is now ONLY for the stateful deployment flow
-    const st = userStates[cid];
-    if (!st || !text) return;
+  const lc = text.toLowerCase();
+  const isAdmin = cid === ADMIN_ID;
 
-    if (st.step === 'AWAITING_KEY') {
-        const keyAttempt = text.toUpperCase();
-        const usesLeft = await useDeployKey(keyAttempt);
-        if (usesLeft === null) {
-            return bot.sendMessage(cid, `❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`);
-        }
-        authorizedUsers.add(cid);
-        st.step = 'SESSION_ID';
-        await bot.sendMessage(ADMIN_ID, `🔑 Key Used By: @${msg.from.username || cid}. Uses Left: ${usesLeft}`, { parse_mode: 'Markdown' });
-        return bot.sendMessage(cid, '✅ Key accepted. Now, please enter your session ID:');
+  // --- Button Handlers ---
+  if (text === 'Deploy') {
+    if (isAdmin) {
+      userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
+      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID');
+    } else {
+      userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
+      return bot.sendMessage(cid, 'Enter your Deploy key');
     }
+  }
 
-    if (st.step === 'SESSION_ID') {
-        if (text.length < 5) return bot.sendMessage(cid, 'Session ID must be at least 5 characters long.');
-        st.data.SESSION_ID = text.trim();
-        st.step = 'APP_NAME';
-        return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot):');
+  if (text === 'Free Trial') {
+    const check = await canDeployFreeTrial(cid);
+    if (!check.can) {
+        return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
+    userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
+    return bot.sendMessage(cid, '✅ Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+  }
 
-    if (st.step === 'APP_NAME') {
-        const nm = text.toLowerCase().replace(/\s+/g, '-');
-        if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-            return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
+  if (text === 'Apps' && isAdmin) {
+    return sendAppList(cid);
+  }
+
+  if (text === 'Generate Key' && isAdmin) {
+    const buttons = [
+      [1, 2, 3, 4, 5].map(n => ({
+        text: String(n),
+        callback_data: `genkeyuses:${n}`
+      }))
+    ];
+    return bot.sendMessage(cid, 'How many uses for this key?', {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }
+
+  if (text === 'Get Session') {
+    const guideCaption =
+        "To get your session ID, please follow these steps carefully:\n\n" +
+        "1️⃣ *Open the Link*\n" +
+        "Visit: https://levanter-delta.vercel.app/\n\n" +
+        "2️⃣ *Important for iPhone Users*\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "3️⃣ *Skip Advertisements*\n" +
+        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
+        "4️⃣ *Use a CUSTOM ID*\n" +
+        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
+        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
+
+    try {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+        caption: guideCaption,
+        parse_mode: 'Markdown'
+      });
+    } catch {
+      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+    }
+    return;
+  }
+
+  if (text === 'My Bots') {
+    const bots = await getUserBots(cid);
+    if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
+    const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+      text: n,
+      callback_data: `selectbot:${n}`
+    })));
+    return bot.sendMessage(cid, 'Your deployed bots:', {
+      reply_markup: { inline_keyboard: rows }
+    });
+  }
+
+  if (text === 'Support') {
+    return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
+  }
+
+  // --- Stateful flows ---
+  const st = userStates[cid];
+  if (!st) return;
+
+  if (st.step === 'AWAITING_KEY') {
+    const keyAttempt = text.toUpperCase();
+    const usesLeft = await useDeployKey(keyAttempt);
+    if (usesLeft === null) {
+      return bot.sendMessage(cid, `❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`);
+    }
+    authorizedUsers.add(cid);
+    st.step = 'SESSION_ID'; // Keep data, just change step
+
+    const { first_name, last_name, username } = msg.from;
+    const userDetails = [
+      `*Name:* ${first_name || ''} ${last_name || ''}`,
+      `*Username:* @${username || 'N/A'}`,
+      `*Chat ID:* \`${cid}\``
+    ].join('\n');
+
+    await bot.sendMessage(ADMIN_ID,
+      `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
+      { parse_mode: 'Markdown' }
+    );
+    return bot.sendMessage(cid, '✅ Key accepted. Now, please enter your session ID:');
+  }
+
+  if (st.step === 'SESSION_ID') {
+    if (text.length < 5) {
+      return bot.sendMessage(cid, 'Session ID must be at least 5 characters long.');
+    }
+    st.data.SESSION_ID = text.trim();
+    st.step = 'APP_NAME';
+    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot):');
+  }
+
+  if (st.step === 'APP_NAME') {
+    const nm = text.toLowerCase().replace(/\s+/g, '-');
+    if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
+      return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
+    }
+    try {
+      await axios.get(`https://api.heroku.com/apps/${nm}`, {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3'
         }
-        try {
-            await axios.get(`https://api.heroku.com/apps/${nm}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            return bot.sendMessage(cid, `❌ The name "${nm}" is already taken. Please choose another.`);
-        } catch (e) {
-            if (e.response?.status === 404) {
-                st.data.APP_NAME = nm;
-                st.data.AUTO_STATUS_VIEW = 'no-dl'; // Default value, can be changed if needed
-                delete userStates[cid];
-                const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
-                if (buildSuccessful) {
-                    await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
-                    if (st.data.isFreeTrial) await recordFreeTrialDeploy(cid);
-                }
-            } else {
-                return bot.sendMessage(cid, '❌ Could not verify app name. The Heroku API might be down.');
+      });
+      return bot.sendMessage(cid, `❌ The name "${nm}" is already taken. Please choose another.`);
+    } catch (e) {
+      if (e.response?.status === 404) {
+        st.data.APP_NAME = nm;
+        
+        // --- INTERACTIVE WIZARD START ---
+        // Instead of asking for the next step via text, we now send an interactive message.
+        st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
+        
+        const wizardText = `✅ App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
+        const wizardKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ Yes (Recommended)', callback_data: `setup:autostatus:true` },
+                        { text: '❌ No', callback_data: `setup:autostatus:false` }
+                    ]
+                ]
             }
+        };
+        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
+        st.message_id = wizardMsg.message_id; // Store message_id to edit it later
+        // --- INTERACTIVE WIZARD END ---
+
+      } else {
+        console.error(`Error checking app name "${nm}":`, e.message);
+        return bot.sendMessage(cid, `❌ Could not verify app name. The Heroku API might be down. Please try again later.`);
+      }
+    }
+  }
+
+  // --- INTERACTIVE WIZARD NOTE ---
+  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
+  // We can remove it from here.
+
+  if (st.step === 'SETVAR_ENTER_VALUE') {
+    const { APP_NAME, VAR_NAME } = st.data;
+    const newVal = text.trim();
+    try {
+      await axios.patch(
+        `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+        { [VAR_NAME]: newVal },
+        {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3',
+            'Content-Type': 'application/json'
+          }
         }
+      );
+      if (VAR_NAME === 'SESSION_ID') {
+        await updateUserSession(cid, APP_NAME, newVal);
+      }
+      delete userStates[cid];
+      return bot.sendMessage(cid, `✅ ${VAR_NAME} updated successfully.`);
+    } catch (e) {
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
-    
-    if (st.step === 'SETVAR_ENTER_VALUE') {
-        // ... (this part remains the same)
-    }
+  }
 });
 
-
-// 13) Callback query handler for INLINE BUTTONS
+// 13) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
-    const cid = q.message.chat.id.toString();
-    const messageId = q.message.message_id;
-    const [action, payload, extra] = q.data.split(':');
-    const isAdmin = cid === ADMIN_ID;
+  const cid = q.message.chat.id.toString();
+  const [action, payload, extra, flag] = q.data.split(':');
+  await bot.answerCallbackQuery(q.id).catch(() => {});
 
-    await bot.answerCallbackQuery(q.id); // Acknowledge the button press
+  // --- INTERACTIVE WIZARD HANDLER ---
+  if (action === 'setup') {
+      const st = userStates[cid];
+      // Ensure the user session is still active
+      if (!st || !st.message_id || q.message.message_id !== st.message_id) {
+          return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      }
 
-    // --- Navigation ---
-    if (action === 'navigate') {
-        if (payload === 'main') {
-            const { text, keyboard } = getMainMenu(isAdmin);
-            await bot.editMessageText(text, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
-        }
-        if (payload === 'my_bots') {
-            const { text, keyboard } = await getMyBotsMenu(cid);
-            await bot.editMessageText(text, { chat_id: cid, message_id: messageId, reply_markup: { inline_keyboard: keyboard } });
-        }
-    }
-    
-    // --- App Menu ---
-    if (action === 'app_menu') {
-        const isUserBot = extra !== 'admin';
-        const { text, keyboard } = getAppMenu(payload, isUserBot);
-        await bot.editMessageText(text, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
-    }
+      const [step, value] = [payload, extra];
 
-    // --- Admin Actions ---
-    if (action === 'admin') {
-        if (payload === 'apps') {
-            await sendAppList(cid, messageId);
-        }
-        if (payload === 'genkey') {
-            // Logic to generate key (can send a new message or edit)
-            const key = generateKey();
-            const uses = 5; // Default uses
-            await addDeployKey(key, uses, cid);
-            await bot.sendMessage(cid, `🔑 New key generated:\n\`${key}\`\n\nThis key has ${uses} uses.`);
-        }
+      if (step === 'autostatus') {
+          // Store the user's choice
+          st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
+
+          // Edit the message to show a confirmation and the final "Deploy" button
+          const confirmationText = `⚙️ *Deployment Configuration*\n\n` +
+                                   `*App Name:* \`${st.data.APP_NAME}\`\n` +
+                                   `*Session ID:* \`${st.data.SESSION_ID.slice(0, 15)}...\`\n` +
+                                   `*Auto Status:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
+                                   `Ready to proceed?`;
+          
+          const confirmationKeyboard = {
+              reply_markup: {
+                  inline_keyboard: [
+                      [{ text: '🚀 Yes, Deploy Now', callback_data: 'setup:startbuild' }],
+                      [{ text: '❌ Cancel', callback_data: 'setup:cancel' }]
+                  ]
+              }
+          };
+
+          await bot.editMessageText(confirmationText, {
+              chat_id: cid,
+              message_id: st.message_id,
+              parse_mode: 'Markdown',
+              ...confirmationKeyboard
+          });
+      }
+
+      if (step === 'startbuild') {
+          // User confirmed deployment, start the build process
+          await bot.editMessageText('✅ Configuration confirmed. Initiating deployment...', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+
+          const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
+
+          if (buildSuccessful) {
+              await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
+
+              if (st.data.isFreeTrial) {
+                  await recordFreeTrialDeploy(cid);
+                  bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+              }
+
+              const { first_name, last_name, username } = q.from;
+              const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
+              const userDetails = [
+                `*Name:* ${first_name || ''} ${last_name || ''}`,
+                `*Username:* @${username || 'N/A'}`,
+                `*Chat ID:* \`${cid}\``
+              ].join('\n');
+      
+              const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      
+              await bot.sendMessage(ADMIN_ID,
+                  `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+                  { parse_mode: 'Markdown', disable_web_page_preview: true }
+              );
+          }
+          // Clean up the user state after completion or failure
+          delete userStates[cid];
+      }
+
+      if (step === 'cancel') {
+          await bot.editMessageText('❌ Deployment cancelled.', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+          delete userStates[cid];
+      }
+      return; // Stop further processing
+  }
+  // --- END WIZARD HANDLER ---
+
+
+  if (action === 'genkeyuses') {
+    const uses = parseInt(payload, 10);
+    const key = generateKey();
+    await addDeployKey(key, uses, cid);
+    return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
+  }
+
+  if (action === 'selectapp' || action === 'selectbot') {
+    const isUserBot = action === 'selectbot';
+    return bot.sendMessage(cid, `Manage app "${payload}":`, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Info', callback_data: `info:${payload}` },
+            { text: 'Restart', callback_data: `restart:${payload}` },
+            { text: 'Logs', callback_data: `logs:${payload}` }
+          ],
+          [
+            { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
+            { text: 'Set Variable', callback_data: `setvar:${payload}` }
+          ]
+        ]
+      }
+    });
+  }
+
+  if (action === 'info') {
+    const animMsg = await sendAnimatedMessage(cid, 'Fetching app info');
+    try {
+      const apiHeaders = {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      };
+
+      // Perform API calls in parallel
+      const [appRes, configRes, dynoRes] = await Promise.all([
+        axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
+      ]);
+
+      const appData = appRes.data;
+      const configData = configRes.data;
+      const dynoData = dynoRes.data;
+
+      // --- App Age Calculation ---
+      const createdAt = new Date(appData.created_at);
+      const now = new Date();
+      const diffTime = Math.abs(now - createdAt);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      // --- Dyno Status Logic ---
+      let dynoStatus = 'No dynos found.';
+      let statusEmoji = '❓';
+      if (dynoData.length > 0) {
+          const webDyno = dynoData.find(d => d.type === 'web');
+          if (webDyno) {
+              const state = webDyno.state;
+              if (state === 'up') statusEmoji = '🟢';
+              else if (state === 'crashed') statusEmoji = '🔴';
+              else if (state === 'idle') statusEmoji = '🟡';
+              else if (state === 'starting' || state === 'restarting') statusEmoji = '⏳';
+              else statusEmoji = '❓';
+              dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
+          }
+      }
+
+      // --- Construct the final message ---
+      const info = `*ℹ️ App Info: ${appData.name}*\n\n` +
+                   `*Dyno Status:* ${dynoStatus}\n` +
+                   `*URL:* [${appData.web_url}](${appData.web_url})\n` +
+                   `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
+                   `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
+                   `*Stack:* ${appData.stack.name}\n\n` +
+                   `*🔧 Key Config Vars:*\n` +
+                   `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
+                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+
+      return bot.editMessageText(info, { chat_id: cid, message_id: animMsg.message_id, parse_mode: 'Markdown', disable_web_page_preview: true });
+    } catch (e) {
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error fetching info: ${errorMsg}`, { chat_id: cid, message_id: animMsg.message_id });
     }
-    
-    // --- Deployment Triggers ---
-    if (action === 'deploy' || action === 'deploy_trial') {
-        const isFreeTrial = action === 'deploy_trial';
-        if (isFreeTrial) {
-            const check = await canDeployFreeTrial(cid);
-            if (!check.can) {
-                return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
-            }
-            userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-            return bot.sendMessage(cid, '✅ Free Trial initiated. Please enter your session ID to continue:');
-        } else if(isAdmin) {
-            userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-            return bot.sendMessage(cid, '🔐 Admin access. Please enter your session ID to continue:');
-        } else {
-            userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
-            return bot.sendMessage(cid, 'Please enter your Deploy Key to continue:');
-        }
+  }
+
+  if (action === 'restart') {
+    const animMsg = await sendAnimatedMessage(cid, 'Restarting app');
+    try {
+      await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+      });
+      return bot.editMessageText(`✅ "${payload}" restarted successfully.`, { chat_id: cid, message_id: animMsg.message_id });
+    } catch (e) {
+      return bot.editMessageText(`Error restarting: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
-    
-    // --- Standalone Actions ---
-    if (action === 'get_session' || action === 'support') {
-        // These send new messages, so they don't need to edit the menu.
-        if (action === 'get_session') {
-            const guideCaption = "To get your session ID, follow these steps:\n\n..."; // Your detailed guide text
-            try {
-                await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', { caption: guideCaption, parse_mode: 'Markdown' });
-            } catch {
-                await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
-            }
-        }
-        if (action === 'support') {
-            await bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
-        }
+  }
+
+  if (action === 'logs') {
+    const animMsg = await sendAnimatedMessage(cid, 'Fetching logs');
+    try {
+      const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
+        { tail: false, lines: 100 },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      const logRes = await axios.get(sess.data.logplex_url);
+      const logs = logRes.data.trim().slice(-4000);
+      await bot.deleteMessage(cid, animMsg.message_id);
+      return bot.sendMessage(cid, `Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, { parse_mode: 'Markdown' });
+    } catch (e) {
+      return bot.editMessageText(`Error fetching logs: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
-    
-    // --- App Management Actions ---
-    if (['info', 'restart', 'logs', 'delete', 'setvar'].includes(action)) {
-        // These can remain largely the same, but they might send new messages
-        // or you could have them edit the menu message with the result.
-        // For simplicity, we'll keep their current behavior.
-        if (action === 'info') {
-            // ... your info logic
+  }
+
+  if (action === 'delete' || action === 'userdelete') {
+      return bot.sendMessage(cid, `Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
+            { text: "❌ No, cancel", callback_data: 'canceldelete' }
+          ]]
         }
-        if (action === 'restart') {
-            // ... your restart logic
+      });
+  }
+
+  if (action === 'confirmdelete') {
+      const appToDelete = payload;
+      const originalAction = extra;
+      const animMsg = await sendAnimatedMessage(cid, `Deleting ${appToDelete}`);
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          if (originalAction === 'userdelete') {
+              await deleteUserBot(cid, appToDelete);
+          }
+          return bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: animMsg.message_id });
+      } catch (e) {
+          return bot.editMessageText(`Error deleting app: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
+      }
+  }
+
+  if (action === 'canceldelete') {
+      return bot.editMessageText('Deletion cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
+  }
+
+  if (action === 'setvar') {
+    return bot.sendMessage(cid, `Select a variable to set for "${payload}":`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
+          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
+          [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
+          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
+          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }]
+        ]
+      }
+    });
+  }
+
+  if (action === 'varselect') {
+    const [varKey, appName] = [payload, extra];
+    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
+      return bot.sendMessage(cid, `Set ${varKey} to:`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
+            { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
+          ]]
         }
-        // etc...
+      });
+    } else {
+      userStates[cid] = { step: 'SETVAR_ENTER_VALUE', data: { APP_NAME: appName, VAR_NAME: varKey } };
+      return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
     }
+  }
+
+  if (action === 'setvarbool') {
+    const [varKey, appName, valStr] = [payload, extra, flag];
+    const flagVal = valStr === 'true';
+    let newVal;
+    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+    else newVal = flagVal ? 'true' : 'false';
+
+    try {
+      await axios.patch(
+        `https://api.heroku.com/apps/${appName}/config-vars`,
+        { [varKey]: newVal },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      return bot.sendMessage(cid, `✅ ${varKey} updated to ${newVal}`);
+    } catch (e) {
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    }
+  }
 });
-
 
 console.log('Bot is running...');
