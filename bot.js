@@ -175,9 +175,49 @@ async function sendAnimatedMessage(chatId, baseText) {
     return msg;
 }
 
+async function startRestartCountdown(chatId, appName, messageId) {
+    const totalSeconds = 45; // 45 seconds for demonstration. Change to 45 * 60 for 45 minutes.
+    const intervalTime = 5; // Update every 5 seconds
+    const totalSteps = totalSeconds / intervalTime;
+
+    // Initial message
+    await bot.editMessageText(`🔄 Bot "${appName}" restarting...`, {
+        chat_id: chatId,
+        message_id: messageId
+    }).catch(() => {});
+
+    for (let i = 0; i <= totalSteps; i++) {
+        const secondsLeft = totalSeconds - (i * intervalTime);
+        const minutesLeft = Math.floor(secondsLeft / 60);
+        const remainingSeconds = secondsLeft % 60;
+
+        const filledBlocks = '█'.repeat(i);
+        const emptyBlocks = '░'.repeat(totalSteps - i);
+
+        let countdownMessage = `🔄 Bot "${appName}" restarting...\n\n`;
+        if (secondsLeft > 0) {
+            countdownMessage += `[${filledBlocks}${emptyBlocks}] ${minutesLeft}m ${remainingSeconds}s left`;
+        } else {
+            countdownMessage += `[${filledBlocks}] Restart complete!`;
+        }
+        
+        await bot.editMessageText(countdownMessage, {
+            chat_id: chatId,
+            message_id: messageId
+        }).catch(() => {}); // Ignore errors if message is deleted
+
+        if (secondsLeft <= 0) break; // Exit loop when countdown is done
+        await new Promise(r => setTimeout(r, intervalTime * 1000));
+    }
+    await bot.editMessageText(`✅ Bot "${appName}" has restarted successfully and is back online!`, {
+        chat_id: chatId,
+        message_id: messageId
+    });
+}
+
 
 // 8) Send Heroku apps list
-async function sendAppList(chatId) {
+async function sendAppList(chatId, messageId = null) {
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
       headers: {
@@ -187,17 +227,25 @@ async function sendAppList(chatId) {
     });
     const apps = res.data.map(a => a.name);
     if (!apps.length) {
+      if (messageId) return bot.editMessageText(chatId, 'No apps found.', { chat_id: chatId, message_id: messageId });
       return bot.sendMessage(chatId, 'No apps found.');
     }
     const rows = chunkArray(apps, 3).map(r =>
       r.map(name => ({ text: name, callback_data: `selectapp:${name}` }))
     );
-    await bot.sendMessage(chatId,
-      `Total apps: ${apps.length}\nSelect an app:`,
-      { reply_markup: { inline_keyboard: rows } }
-    );
+    const message = `Total apps: ${apps.length}\nSelect an app:`;
+    if (messageId) {
+        await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: rows } });
+    } else {
+        await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
+    }
   } catch (e) {
-    bot.sendMessage(chatId, `Error fetching apps: ${e.message}`);
+    const errorMsg = `Error fetching apps: ${e.message}`;
+    if (messageId) {
+        bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+    } else {
+        bot.sendMessage(chatId, errorMsg);
+    }
   }
 }
 
@@ -566,6 +614,7 @@ bot.on('message', async msg => {
     const { APP_NAME, VAR_NAME } = st.data;
     const newVal = text.trim();
     try {
+      const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
       await axios.patch(
         `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
         { [VAR_NAME]: newVal },
@@ -581,7 +630,8 @@ bot.on('message', async msg => {
         await updateUserSession(cid, APP_NAME, newVal);
       }
       delete userStates[cid];
-      return bot.sendMessage(cid, ` ${VAR_NAME} updated successfully.`);
+      // Start the restart countdown after the variable is successfully set
+      await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
@@ -692,7 +742,13 @@ bot.on('callback_query', async q => {
 
   if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
-    return bot.sendMessage(cid, `Manage app "${payload}":`, {
+    // Store the message_id for later editing
+    const messageId = q.message.message_id; 
+    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: payload, messageId: messageId, isUserBot: isUserBot } };
+    
+    return bot.editMessageText(`Manage app "${payload}":`, { // Use editMessageText
+      chat_id: cid,
+      message_id: messageId, // Use the stored messageId
       reply_markup: {
         inline_keyboard: [
           [
@@ -703,21 +759,28 @@ bot.on('callback_query', async q => {
           [
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
-          ]
+          ],
+          [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
     });
   }
 
   if (action === 'info') {
-    const animMsg = await sendAnimatedMessage(cid, 'Fetching app info');
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) { // Ensure state is valid for this app
+        // Fallback if state is lost or user clicks old button
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId; // Get the stored message ID
+
+    await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
       const apiHeaders = {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
       };
 
-      // Perform API calls in parallel
       const [appRes, configRes, dynoRes] = await Promise.all([
         axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
         axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
@@ -728,13 +791,11 @@ bot.on('callback_query', async q => {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      // --- App Age Calculation ---
       const createdAt = new Date(appData.created_at);
       const now = new Date();
       const diffTime = Math.abs(now - createdAt);
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-      // --- Dyno Status Logic ---
       let dynoStatus = 'No dynos found.';
       let statusEmoji = '❓';
       if (dynoData.length > 0) {
@@ -750,7 +811,6 @@ bot.on('callback_query', async q => {
           }
       }
 
-      // --- Construct the final message ---
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
                    `*URL:* [${appData.web_url}](${appData.web_url})\n` +
@@ -761,27 +821,66 @@ bot.on('callback_query', async q => {
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
-      return bot.editMessageText(info, { chat_id: cid, message_id: animMsg.message_id, parse_mode: 'Markdown', disable_web_page_preview: true });
+      // Edit the message with the info and add a back button
+      return bot.editMessageText(info, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+        }
+      });
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error fetching info: ${errorMsg}`, { chat_id: cid, message_id: animMsg.message_id });
+      return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
     }
   }
 
   if (action === 'restart') {
-    const animMsg = await sendAnimatedMessage(cid, 'Restarting app');
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
+    await bot.editMessageText('🔄 Restarting app...', { chat_id: cid, message_id: messageId });
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      return bot.editMessageText(`"${payload}" restarted successfully.`, { chat_id: cid, message_id: animMsg.message_id });
+      return bot.editMessageText(`"${payload}" restarted successfully.`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
     } catch (e) {
-      return bot.editMessageText(`Error restarting: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
+      return bot.editMessageText(`Error restarting: ${e.message}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
     }
   }
 
   if (action === 'logs') {
-    const animMsg = await sendAnimatedMessage(cid, 'Fetching logs');
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
+    await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
         { tail: false, lines: 100 },
@@ -789,19 +888,41 @@ bot.on('callback_query', async q => {
       );
       const logRes = await axios.get(sess.data.logplex_url);
       const logs = logRes.data.trim().slice(-4000);
-      await bot.deleteMessage(cid, animMsg.message_id);
-      return bot.sendMessage(cid, `Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, { parse_mode: 'Markdown' });
+      
+      // Edit the message to show logs
+      return bot.editMessageText(`Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
     } catch (e) {
-      return bot.editMessageText(`Error fetching logs: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
+      return bot.editMessageText(`Error fetching logs: ${e.message}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
     }
   }
 
   if (action === 'delete' || action === 'userdelete') {
-      return bot.sendMessage(cid, `Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
+      return bot.editMessageText(`Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+        chat_id: cid,
+        message_id: messageId,
         reply_markup: {
           inline_keyboard: [[
             { text: "Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
-            { text: "No, cancel", callback_data: 'canceldelete' }
+            { text: "No, cancel", callback_data: `selectapp:${payload}` } // Back to app management on cancel
           ]]
         }
       });
@@ -810,7 +931,13 @@ bot.on('callback_query', async q => {
   if (action === 'confirmdelete') {
       const appToDelete = payload;
       const originalAction = extra;
-      const animMsg = await sendAnimatedMessage(cid, `Deleting ${appToDelete}`);
+      const st = userStates[cid];
+      if (!st || st.data.appName !== appToDelete) {
+          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      }
+      const messageId = st.data.messageId;
+
+      await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -818,13 +945,33 @@ bot.on('callback_query', async q => {
           if (originalAction === 'userdelete') {
               await deleteUserBot(cid, appToDelete);
           }
-          return bot.editMessageText(`App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: animMsg.message_id });
+          await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
+          // After deletion, take them back to their list of bots or main menu
+          if (originalAction === 'userdelete') {
+              const bots = await getUserBots(cid);
+              if (bots.length > 0) {
+                  const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                  return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+              } else {
+                  return bot.sendMessage(cid, "You no longer have any deployed bots.");
+              }
+          } else { // Admin delete
+            return sendAppList(cid); // Admin sees all apps
+          }
       } catch (e) {
-          return bot.editMessageText(`Error deleting app: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
+          return bot.editMessageText(`Error deleting app: ${e.message}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appToDelete}` }]]
+            }
+          });
       }
   }
 
   if (action === 'canceldelete') {
+      // This handler might not be strictly needed if `selectapp` is used for "No, cancel"
+      // But keeping it just in case for older messages or alternative flows.
       return bot.editMessageText('Deletion cancelled.', {
           chat_id: q.message.chat.id,
           message_id: q.message.message_id
@@ -832,14 +979,24 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'setvar') {
-    return bot.sendMessage(cid, `Select a variable to set for "${payload}":`, {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+    
+    // Edit the current message to show variable selection
+    return bot.editMessageText(`Select a variable to set for "${payload}":`, {
+      chat_id: cid,
+      message_id: messageId,
       reply_markup: {
         inline_keyboard: [
           [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
           [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
-          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }]
+          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
+          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }] // Back to app management
         ]
       }
     });
@@ -847,17 +1004,28 @@ bot.on('callback_query', async q => {
 
   if (action === 'varselect') {
     const [varKey, appName] = [payload, extra];
+    const st = userStates[cid];
+    if (!st || st.data.appName !== appName) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      return bot.sendMessage(cid, `Set ${varKey} to:`, {
+      return bot.editMessageText(`Set ${varKey} to:`, {
+        chat_id: cid,
+        message_id: messageId,
         reply_markup: {
           inline_keyboard: [[
             { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
             { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
-          ]]
+          ],
+          [{ text: '◀️ Back', callback_data: `setvar:${appName}` }]] // Back to variable selection
         }
       });
     } else {
-      userStates[cid] = { step: 'SETVAR_ENTER_VALUE', data: { APP_NAME: appName, VAR_NAME: varKey } };
+      userStates[cid].step = 'SETVAR_ENTER_VALUE'; // Update step for message handler
+      userStates[cid].data.VAR_NAME = varKey; // Store VAR_NAME
+      // When asking for value, send a new message as direct input is expected
       return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
     }
   }
@@ -871,14 +1039,40 @@ bot.on('callback_query', async q => {
     else newVal = flagVal ? 'true' : 'false';
 
     try {
+      const updateMsg = await bot.sendMessage(cid, `Updating ${varKey} for "${appName}"...`); // Send immediate feedback
       await axios.patch(
         `https://api.heroku.com/apps/${appName}/config-vars`,
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
+      await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    }
+  }
+
+  if (action === 'back_to_app_list') {
+    const isAdmin = cid === ADMIN_ID;
+    const currentMessageId = q.message.message_id; // Get the ID of the message to edit
+
+    if (isAdmin) {
+      // If admin, show all apps
+      return sendAppList(cid, currentMessageId); // Use existing sendAppList for admin
+    } else {
+      // If regular user, show only their bots
+      const bots = await getUserBots(cid);
+      if (!bots.length) {
+        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      }
+      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+        text: n,
+        callback_data: `selectbot:${n}`
+      })));
+      return bot.editMessageText('Your deployed bots:', {
+        chat_id: cid,
+        message_id: currentMessageId,
+        reply_markup: { inline_keyboard: rows }
+      });
     }
   }
 });
