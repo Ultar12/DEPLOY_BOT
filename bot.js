@@ -232,19 +232,21 @@ async function startRestartCountdown(chatId, appName, messageId) {
 }
 
 /**
- * Calculates the estimated daily cost for a given dyno size based on $0.06/day for Hobby.
+ * Calculates the estimated daily cost for a given dyno size.
+ * Based on the user's input: Hobby/Basic dyno is $0.06 per day.
  * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
- * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x').
+ * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x', 'basic').
  * @returns {number} Estimated daily cost in USD.
  */
 function getEstimatedDailyCost(dynoSize) {
-    const baseHobbyDailyCost = 0.06; // $0.06 per day for a Hobby dyno
+    const baseDailyCost = 0.06; // User specified base for Hobby/Basic dyno
 
-    // Scaling factors relative to Hobby dyno cost
+    // Scaling factors relative to the base daily cost
     const scalingFactors = {
-        'eco': 0.7, // Eco is cheaper than Hobby
+        'eco': 0.7, // Eco is typically cheaper
         'hobby': 1,
-        'standard-1x': 3.5, // Standard-1X is usually much more expensive than Hobby
+        'basic': 1, // Explicitly set Basic to the base daily cost
+        'standard-1x': 3.5, // Standard-1X is usually much more expensive
         'standard-2x': 7,   // Standard-2X is double Standard-1X
         'performance-m': 35, // Performance dynos are significantly more
         'performance-l': 70,
@@ -252,9 +254,9 @@ function getEstimatedDailyCost(dynoSize) {
 
     const factor = scalingFactors[dynoSize.toLowerCase()];
     if (factor !== undefined) {
-        return baseHobbyDailyCost * factor;
+        return baseDailyCost * factor;
     }
-    return 0; // Unknown dyno size
+    return 0; // Unknown dyno size, assume no cost
 }
 
 
@@ -1142,7 +1144,7 @@ bot.on('callback_query', async q => {
                   return bot.sendMessage(cid, "You no longer have any deployed bots.");
               }
           } else { // If admin delete, or admin deleting a user bot
-            return sendAppList(cid); // Admin sees all apps
+            return sendAppList(cid, messageId); // Admin sees all apps. Pass messageId to edit.
           }
 
       } catch (e) {
@@ -1283,24 +1285,25 @@ bot.on('callback_query', async q => {
         const appData = appRes.data;
         const dynos = dynoRes.data;
 
-        let usageMessage = `*📊 Usage Estimate for ${appName}:*\n\n`;
+        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`; // Concise title
         let currentDailyCost = 0;
         
         if (dynos.length > 0) {
+            usageMessage += `*Dynos:*\n`;
             const dynoCounts = {}; // To count dynos of each type and size
             for (const dyno of dynos) {
-                const key = `${dyno.type} (${dyno.size})`;
+                const key = `${dyno.type} (\`${dyno.size}\`)`; // Use backticks for dyno size
                 dynoCounts[key] = (dynoCounts[key] || 0) + 1;
             }
 
             for (const key in dynoCounts) {
-                const [type, sizeMatch] = key.split(' (');
-                const size = sizeMatch.slice(0, -1);
+                const [type, sizeWithParens] = key.split(' (');
+                const size = sizeWithParens.slice(0, -1); // Remove trailing ')'
                 const count = dynoCounts[key];
                 const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
                 currentDailyCost += estimatedDailyCostPerDyno * count;
 
-                usageMessage += `  - ${count} x \`${type}\` dyno (\`${size}\`)\n`;
+                usageMessage += `  - ${count} x ${type} dyno ${sizeWithParens}\n`; 
             }
 
             const createdAt = new Date(appData.created_at);
@@ -1309,14 +1312,15 @@ bot.on('callback_query', async q => {
 
             const estimatedTotalCost = currentDailyCost * daysDeployed;
 
-            usageMessage += `\n*Estimated Current Daily Cost:* $${currentDailyCost.toFixed(2)}\n`;
-            usageMessage += `*Days Deployed:* ${daysDeployed} days\n`;
-            usageMessage += `*Estimated Total Cost (since deployment):* $${estimatedTotalCost.toFixed(2)}\n\n`;
-            usageMessage += `_Note: This is an estimate based on current dyno configuration and app creation date. Exact billing may vary and includes only dyno costs, not addons._`;
+            usageMessage += `\n*Daily Cost (Estimated):* $${currentDailyCost.toFixed(2)}\n`; // Concise label
+            usageMessage += `*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Concise label
+            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
 
         } else {
-            usageMessage += 'No active dynos found for this app. Estimated daily cost: $0.00\n';
-            usageMessage += '_Note: This estimate only covers dyno costs and may not reflect any past usage or addon charges._';
+            usageMessage += `No active dynos found for this app.\n`;
+            usageMessage += `*Daily Cost (Estimated):* $0.00\n`;
+            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`;
+            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
         }
 
         return bot.editMessageText(usageMessage, {
