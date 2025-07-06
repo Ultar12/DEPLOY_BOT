@@ -6,7 +6,6 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 
 require('dotenv').config();
 const fs = require('fs');
-const MediaDownloader = require('@totallynotdavid/downloader');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
@@ -69,29 +68,6 @@ async function addUserBot(u, b, s) {
     'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
     [u, b, s]
   );
-}
-
-async function downloadImgurVideo(imgurUrl, outputPath) {
-  try {
-    const result = await MediaDownloader(imgurUrl);
-    if (!result.urls || result.urls.length === 0) {
-      throw new Error("No downloadable video URL found.");
-    }
-
-    const videoUrl = result.urls[0];
-    const response = await axios.get(videoUrl, { responseType: 'stream' });
-
-    const writer = fs.createWriteStream(outputPath);
-    response.data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-  } catch (err) {
-    console.error("Error downloading video:", err.message);
-    throw err;
-  }
 }
 async function getUserBots(u) {
   const r = await pool.query(
@@ -462,35 +438,30 @@ bot.on('message', async msg => {
       reply_markup: { inline_keyboard: buttons }
     });
   }
-  
-  // ...
 
   if (text === 'Get Session') {
-  const guideCaption =
-    "1. iPhone users should use Chrome\n" +
-    "2. Skip ads if u see any\n" +
-    "3. Make sure you use the custom session id button";
+    const guideCaption =
+        "To get your session ID, please follow these steps carefully:\n\n" +
+        "1️⃣ *Open the Link*\n" +
+        "Visit: https://levanter-delta.vercel.app/\n\n" +
+        "2️⃣ *Important for iPhone Users*\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "3️⃣ *Skip Advertisements*\n" +
+        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
+        "4️⃣ *Use a CUSTOM ID*\n" +
+        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
+        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
 
-  const videoPath = './guide.mp4';
-  const imgurLink = 'https://imgur.com/a/oOa32i5';
-
-  try {
-    if (!fs.existsSync(videoPath)) {
-      await downloadImgurVideo(imgurLink, videoPath);
+    try {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+        caption: guideCaption,
+        parse_mode: 'Markdown'
+      });
+    } catch {
+      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
-
-    const videoStream = fs.createReadStream(videoPath);
-    await bot.sendVideo(cid, videoStream, {
-      caption: guideCaption,
-      parse_mode: 'Markdown'
-    });
-  } catch (error) {
-    console.error("Failed to send video guide:", error.message);
-    await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+    return;
   }
-  return;
-}
-  
 
   if (text === 'My Bots') {
     const bots = await getUserBots(cid);
