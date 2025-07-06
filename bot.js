@@ -439,17 +439,20 @@ bot.on('message', async msg => {
     });
   }
   
+  // ...
+
   if (text === 'Get Session') {
     const guideCaption =
         "1. iPhone users should use Chrome\n" +
         "2. Skip ads if u see any\n" +
         "3. Make sure you use the custom session id button";
 
-    // ✅ Change: We are now sending the local file directly.
-    const localVideoPath = './j0s062.mp4'; 
-
     try {
-      await bot.sendVideo(cid, localVideoPath, {
+      // ✅ Change: Read the file into a stream before sending.
+      // This tells the bot to upload the file content directly.
+      const videoStream = fs.createReadStream('./j0s062.mp4');
+
+      await bot.sendVideo(cid, videoStream, {
         caption: guideCaption,
         parse_mode: 'Markdown'
       });
@@ -459,6 +462,8 @@ bot.on('message', async msg => {
     }
     return;
   }
+
+// ...
   
 
   if (text === 'My Bots') {
