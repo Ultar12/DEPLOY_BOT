@@ -232,26 +232,27 @@ async function startRestartCountdown(chatId, appName, messageId) {
 }
 
 /**
- * Calculates the estimated hourly cost for a given dyno size.
- * Prices are approximate based on common Heroku dyno tiers.
+ * Calculates the estimated daily cost for a given dyno size based on $0.06/day for Hobby.
+ * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
  * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x').
- * @returns {number} Estimated hourly cost in USD.
+ * @returns {number} Estimated daily cost in USD.
  */
-function getEstimatedHourlyCost(dynoSize) {
-    // Monthly prices divided by (30 days * 24 hours/day) to get hourly
-    const monthlyPrices = {
-        'eco': 5, // Eco Dyno (newer tier, was similar to free/hobby for small usage)
-        'hobby': 7,
-        'standard-1x': 25,
-        'standard-2x': 50,
-        'performance-m': 250,
-        'performance-l': 500,
-        // Add more dyno types/sizes as needed
+function getEstimatedDailyCost(dynoSize) {
+    const baseHobbyDailyCost = 0.06; // $0.06 per day for a Hobby dyno
+
+    // Scaling factors relative to Hobby dyno cost
+    const scalingFactors = {
+        'eco': 0.7, // Eco is cheaper than Hobby
+        'hobby': 1,
+        'standard-1x': 3.5, // Standard-1X is usually much more expensive than Hobby
+        'standard-2x': 7,   // Standard-2X is double Standard-1X
+        'performance-m': 35, // Performance dynos are significantly more
+        'performance-l': 70,
     };
 
-    const price = monthlyPrices[dynoSize.toLowerCase()];
-    if (price !== undefined) {
-        return price / (30 * 24); // Convert monthly price to hourly
+    const factor = scalingFactors[dynoSize.toLowerCase()];
+    if (factor !== undefined) {
+        return baseHobbyDailyCost * factor;
     }
     return 0; // Unknown dyno size
 }
@@ -1267,18 +1268,23 @@ bot.on('callback_query', async q => {
     const appName = payload;
     const messageId = st.data.messageId;
 
-    await bot.editMessageText(`📊 Fetching dyno information for "${appName}"...`, { chat_id: cid, message_id: messageId });
+    await bot.editMessageText(`📊 Fetching usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
     try {
         const apiHeaders = {
             Authorization: `Bearer ${HEROKU_API_KEY}`,
             Accept: 'application/vnd.heroku+json; version=3'
         };
 
-        const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders });
+        const [appRes, dynoRes] = await Promise.all([
+            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }), // Get app info for created_at
+            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders }) // Get current dynos
+        ]);
+
+        const appData = appRes.data;
         const dynos = dynoRes.data;
 
-        let usageMessage = `*📊 Dyno Usage for ${appName}:*\n\n`;
-        let totalEstimatedHourlyCost = 0;
+        let usageMessage = `*📊 Usage Estimate for ${appName}:*\n\n`;
+        let currentDailyCost = 0;
         
         if (dynos.length > 0) {
             const dynoCounts = {}; // To count dynos of each type and size
@@ -1288,27 +1294,36 @@ bot.on('callback_query', async q => {
             }
 
             for (const key in dynoCounts) {
-                // key example: "web (hobby)", "worker (standard-1x)"
-                const [type, sizeMatch] = key.split(' ('); // Split "web" and "hobby)"
-                const size = sizeMatch.slice(0, -1); // Remove trailing ')' from "hobby)"
+                const [type, sizeMatch] = key.split(' (');
+                const size = sizeMatch.slice(0, -1);
                 const count = dynoCounts[key];
-                const estimatedHourlyCostPerDyno = getEstimatedHourlyCost(size);
-                const totalDynoTypeCost = estimatedHourlyCostPerDyno * count;
-                totalEstimatedHourlyCost += totalDynoTypeCost;
+                const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
+                currentDailyCost += estimatedDailyCostPerDyno * count;
 
                 usageMessage += `  - ${count} x \`${type}\` dyno (\`${size}\`)\n`;
             }
-            usageMessage += `\n*Estimated Current Hourly Cost:* $${totalEstimatedHourlyCost.toFixed(4)}\n`;
-            usageMessage += `(Based on active dynos, excludes addons and exact monthly billing may vary.)`;
+
+            const createdAt = new Date(appData.created_at);
+            const now = new Date();
+            const daysDeployed = Math.ceil(Math.abs(now - createdAt) / (1000 * 60 * 60 * 24)); // Calculate days deployed
+
+            const estimatedTotalCost = currentDailyCost * daysDeployed;
+
+            usageMessage += `\n*Estimated Current Daily Cost:* $${currentDailyCost.toFixed(2)}\n`;
+            usageMessage += `*Days Deployed:* ${daysDeployed} days\n`;
+            usageMessage += `*Estimated Total Cost (since deployment):* $${estimatedTotalCost.toFixed(2)}\n\n`;
+            usageMessage += `_Note: This is an estimate based on current dyno configuration and app creation date. Exact billing may vary and includes only dyno costs, not addons._`;
 
         } else {
-            usageMessage += 'No active dynos found for this app. Estimated current hourly cost: $0.00';
+            usageMessage += 'No active dynos found for this app. Estimated daily cost: $0.00\n';
+            usageMessage += '_Note: This estimate only covers dyno costs and may not reflect any past usage or addon charges._';
         }
 
         return bot.editMessageText(usageMessage, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown',
+            disable_web_page_preview: true, // Prevent URL previews
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
             }
@@ -1316,7 +1331,8 @@ bot.on('callback_query', async q => {
 
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
-        return bot.editMessageText(`Error fetching dyno usage: ${errorMsg}\n\n(Please ensure your Heroku API Key has "Read" permissions for "Dynos".)`, {
+        console.error(`Error in usage for ${appName}:`, e.response?.status, errorMsg);
+        return bot.editMessageText(`Error fetching usage: ${errorMsg}\n\n(Please ensure your Heroku API Key has "Read" permissions for "Dynos" and "Apps".)`, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown',
