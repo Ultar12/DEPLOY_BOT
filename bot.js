@@ -440,24 +440,21 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
+    // Change: The caption has been updated to your new instructions.
     const guideCaption =
-        "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link*\n" +
-        "Visit: https://levanter-delta.vercel.app/\n\n" +
-        "2️⃣ *Important for iPhone Users*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
-        "3️⃣ *Skip Advertisements*\n" +
-        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Use a CUSTOM ID*\n" +
-        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
-        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
+        "1. iPhone users should use Chrome\n" +
+        "2. Skip ads if u see any\n" +
+        "3. Make sure you use the custom session id button";
 
     try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+      // This part remains the same, sending the video with the new caption.
+      await bot.sendVideo(cid, 'https://files.catbox.moe/j0s062.mp4', {
         caption: guideCaption,
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown' // Keeping markdown in case you add formatting later
       });
-    } catch {
+    } catch (error) {
+      // Fallback in case sending the video fails
+      console.error("Failed to send video guide:", error.message);
       await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
     return;
