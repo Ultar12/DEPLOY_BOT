@@ -134,7 +134,7 @@ async function recordFreeTrialDeploy(userId) {
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-const userStates = {}; // chatId -> { step, data }
+const userStates = {}; // chatId -> { step, data, message_id }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
 // 7) Utilities
@@ -531,54 +531,36 @@ bot.on('message', async msg => {
     } catch (e) {
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
-        st.step = 'AUTO_STATUS_VIEW';
-        return bot.sendMessage(cid, 'Enable automatic status view? (Reply true or false)');
+        
+        // --- INTERACTIVE WIZARD START ---
+        // Instead of asking for the next step via text, we now send an interactive message.
+        st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
+        
+        const wizardText = `✅ App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
+        const wizardKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ Yes (Recommended)', callback_data: `setup:autostatus:true` },
+                        { text: '❌ No', callback_data: `setup:autostatus:false` }
+                    ]
+                ]
+            }
+        };
+        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
+        st.message_id = wizardMsg.message_id; // Store message_id to edit it later
+        // --- INTERACTIVE WIZARD END ---
+
+      } else {
+        console.error(`Error checking app name "${nm}":`, e.message);
+        return bot.sendMessage(cid, `❌ Could not verify app name. The Heroku API might be down. Please try again later.`);
       }
-      console.error(`Error checking app name "${nm}":`, e.message);
-      return bot.sendMessage(cid, `❌ Could not verify app name. The Heroku API might be down. Please try again later.`);
     }
   }
 
-  if (st.step === 'AUTO_STATUS_VIEW') {
-    if (lc !== 'true' && lc !== 'false') {
-      return bot.sendMessage(cid, 'Please reply with either "true" or "false".');
-    }
-    st.data.AUTO_STATUS_VIEW = lc === 'true' ? 'no-dl' : 'false';
-    const { APP_NAME, SESSION_ID, isFreeTrial } = st.data;
-    if (!APP_NAME || !SESSION_ID) {
-      delete userStates[cid];
-      return bot.sendMessage(cid, '❌ Critical error: Missing app name or session ID. Please start over.');
-    }
-
-    const buildSuccessful = await buildWithProgress(cid, st.data, isFreeTrial);
-
-    if (buildSuccessful) {
-        await addUserBot(cid, APP_NAME, SESSION_ID);
-
-        if (isFreeTrial) {
-            await recordFreeTrialDeploy(cid);
-            bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
-        }
-
-        const { first_name, last_name, username } = msg.from;
-        const appUrl = `https://${APP_NAME}.herokuapp.com`;
-        const userDetails = [
-          `*Name:* ${first_name || ''} ${last_name || ''}`,
-          `*Username:* @${username || 'N/A'}`,
-          `*Chat ID:* \`${cid}\``
-        ].join('\n');
-
-        const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-
-        await bot.sendMessage(ADMIN_ID,
-            `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-            { parse_mode: 'Markdown', disable_web_page_preview: true }
-        );
-    }
-
-    delete userStates[cid];
-    return;
-  }
+  // --- INTERACTIVE WIZARD NOTE ---
+  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
+  // We can remove it from here.
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME } = st.data;
@@ -611,6 +593,95 @@ bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
   const [action, payload, extra, flag] = q.data.split(':');
   await bot.answerCallbackQuery(q.id).catch(() => {});
+
+  // --- INTERACTIVE WIZARD HANDLER ---
+  if (action === 'setup') {
+      const st = userStates[cid];
+      // Ensure the user session is still active
+      if (!st || !st.message_id || q.message.message_id !== st.message_id) {
+          return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      }
+
+      const [step, value] = [payload, extra];
+
+      if (step === 'autostatus') {
+          // Store the user's choice
+          st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
+
+          // Edit the message to show a confirmation and the final "Deploy" button
+          const confirmationText = `⚙️ *Deployment Configuration*\n\n` +
+                                   `*App Name:* \`${st.data.APP_NAME}\`\n` +
+                                   `*Session ID:* \`${st.data.SESSION_ID.slice(0, 15)}...\`\n` +
+                                   `*Auto Status:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
+                                   `Ready to proceed?`;
+          
+          const confirmationKeyboard = {
+              reply_markup: {
+                  inline_keyboard: [
+                      [{ text: '🚀 Yes, Deploy Now', callback_data: 'setup:startbuild' }],
+                      [{ text: '❌ Cancel', callback_data: 'setup:cancel' }]
+                  ]
+              }
+          };
+
+          await bot.editMessageText(confirmationText, {
+              chat_id: cid,
+              message_id: st.message_id,
+              parse_mode: 'Markdown',
+              ...confirmationKeyboard
+          });
+      }
+
+      if (step === 'startbuild') {
+          // User confirmed deployment, start the build process
+          await bot.editMessageText('✅ Configuration confirmed. Initiating deployment...', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+
+          const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
+
+          if (buildSuccessful) {
+              await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
+
+              if (st.data.isFreeTrial) {
+                  await recordFreeTrialDeploy(cid);
+                  bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+              }
+
+              const { first_name, last_name, username } = q.from;
+              const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
+              const userDetails = [
+                `*Name:* ${first_name || ''} ${last_name || ''}`,
+                `*Username:* @${username || 'N/A'}`,
+                `*Chat ID:* \`${cid}\``
+              ].join('\n');
+      
+              const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      
+              await bot.sendMessage(ADMIN_ID,
+                  `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+                  { parse_mode: 'Markdown', disable_web_page_preview: true }
+              );
+          }
+          // Clean up the user state after completion or failure
+          delete userStates[cid];
+      }
+
+      if (step === 'cancel') {
+          await bot.editMessageText('❌ Deployment cancelled.', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+          delete userStates[cid];
+      }
+      return; // Stop further processing
+  }
+  // --- END WIZARD HANDLER ---
+
 
   if (action === 'genkeyuses') {
     const uses = parseInt(payload, 10);
