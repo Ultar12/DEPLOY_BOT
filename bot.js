@@ -1096,16 +1096,18 @@ bot.on('callback_query', async q => {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
-          if (originalAction === 'userdelete') {
-              await deleteUserBot(cid, appToDelete);
-              await deleteTrialDeployEntry(appToDelete); // Also remove from trial table if it was a trial
-          }
+          // --- START OF FIX ---
+          // Always delete from user_bots table upon successful Heroku deletion
+          await deleteUserBot(cid, appToDelete);
+          // Also delete from temp_deploys table if it was a trial app
+          await deleteTrialDeployEntry(appToDelete); 
+          // --- END OF FIX ---
+
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
           
-          // --- START OF MODIFICATION ---
-          // After deletion, if a user bot was deleted by a non-admin user
-          if (originalAction === 'userdelete' && cid !== ADMIN_ID) {
-              const bots = await getUserBots(cid);
+          // After deletion, take them back to their list of bots or main menu
+          if (originalAction === 'userdelete' && cid !== ADMIN_ID) { // User deleting their own bot, and they are not admin
+              const bots = await getUserBots(cid); // Re-fetch their bots
               if (bots.length > 0) {
                   const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
                   return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
@@ -1116,7 +1118,6 @@ bot.on('callback_query', async q => {
           } else { // If admin delete, or admin deleting a user bot
             return sendAppList(cid); // Admin sees all apps
           }
-          // --- END OF MODIFICATION ---
 
       } catch (e) {
           return bot.editMessageText(`Error deleting app: ${e.message}`, {
