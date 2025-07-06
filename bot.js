@@ -445,7 +445,7 @@ bot.on('message', async msg => {
         "2. Skip ads if u see any\n" +
         "3. Make sure you use the custom session id button";
 
-    // ✅ PASTE THE ID YOU COPIED HERE
+    // ✅ Use this ID now that your bot is an admin
     const videoFileId = 'BAACAgQAAxkBAAE3VbJoamWWi2ejr92LnPFFnVTBnFgLLAACLRoAAoYPUFNzfI8WbzZ-HjYE';
 
     try {
