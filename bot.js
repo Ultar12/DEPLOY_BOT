@@ -914,6 +914,9 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
+          // --- START OF ADDED BUTTON ---
+          [{ text: '📊 Usage', callback_data: `usage:${payload}` }],
+          // --- END OF ADDED BUTTON ---
           [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
@@ -1096,12 +1099,10 @@ bot.on('callback_query', async q => {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
-          // --- START OF FIX ---
           // Always delete from user_bots table upon successful Heroku deletion
           await deleteUserBot(cid, appToDelete);
           // Also delete from temp_deploys table if it was a trial app
           await deleteTrialDeployEntry(appToDelete); 
-          // --- END OF FIX ---
 
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
           
@@ -1231,6 +1232,56 @@ bot.on('callback_query', async q => {
       await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    }
+  }
+
+  if (action === 'usage') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const appName = payload;
+    const messageId = st.data.messageId;
+
+    await bot.editMessageText(`📊 Fetching usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
+    try {
+        const usageRes = await axios.get(`https://api.heroku.com/accounts/resources-usage`, {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3',
+                Range: 'date=current_month' // Get usage for current month
+            }
+        });
+
+        const appUsageData = usageRes.data.find(item => item.app_name === appName);
+
+        let usageMessage = `*📊 Usage for ${appName} (Current Month):*\n\n`;
+        if (appUsageData) {
+            const dynoHours = (appUsageData.dyno_units / 60).toFixed(2); // Heroku API gives dyno units in minutes
+            usageMessage += `*Dyno Hours Used:* ${dynoHours} hours\n`;
+            usageMessage += `*Price (approx):* $${(appUsageData.price_cents / 100).toFixed(2)}\n`; // Price is in cents
+        } else {
+            usageMessage += 'No usage data found for this app this month, or app not in current billing cycle.';
+        }
+
+        return bot.editMessageText(usageMessage, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        return bot.editMessageText(`Error fetching usage: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
     }
   }
 
