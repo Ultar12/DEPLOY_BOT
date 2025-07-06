@@ -119,7 +119,7 @@ async function canDeployFreeTrial(userId) {
     if (res.rows.length === 0) return { can: true };
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
     if (lastDeploy < fourteenDaysAgo) return { can: true };
-    
+
     const nextAvailable = new Date(lastDeploy.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days
     return { can: false, cooldown: nextAvailable };
 }
@@ -282,7 +282,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     let status = 'pending';
     const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
 
-    for (let i = 1; i <= 20; i++) { 
+    for (let i = 1; i <= 20; i++) {
       await new Promise(r => setTimeout(r, 5000));
       try {
         const poll = await axios.get(statusUrl, {
@@ -301,7 +301,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         chat_id: chatId,
         message_id: progMsg.message_id
       }).catch(() => {});
-      
+
       if (status !== 'pending') break;
     }
 
@@ -329,7 +329,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         `✅ Your bot is now live at:\nhttps://${name}.herokuapp.com`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
-      
+
       if (isFreeTrial) {
         // Schedule deletion after 30 minutes
         setTimeout(async () => {
@@ -440,7 +440,7 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    const guideCaption = 
+    const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link*\n" +
         "Visit: https://levanter-delta.vercel.app/\n\n" +
@@ -549,7 +549,7 @@ bot.on('message', async msg => {
       delete userStates[cid];
       return bot.sendMessage(cid, '❌ Critical error: Missing app name or session ID. Please start over.');
     }
-    
+
     const buildSuccessful = await buildWithProgress(cid, st.data, isFreeTrial);
 
     if (buildSuccessful) {
@@ -559,7 +559,7 @@ bot.on('message', async msg => {
             await recordFreeTrialDeploy(cid);
             bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
         }
-        
+
         const { first_name, last_name, username } = msg.from;
         const appUrl = `https://${APP_NAME}.herokuapp.com`;
         const userDetails = [
@@ -567,15 +567,15 @@ bot.on('message', async msg => {
           `*Username:* @${username || 'N/A'}`,
           `*Chat ID:* \`${cid}\``
         ].join('\n');
-        
+
         const appDetails = `*App Name:* \`${APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
-        await bot.sendMessage(ADMIN_ID, 
+        await bot.sendMessage(ADMIN_ID,
             `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
             { parse_mode: 'Markdown', disable_web_page_preview: true }
         );
     }
-    
+
     delete userStates[cid];
     return;
   }
@@ -641,28 +641,59 @@ bot.on('callback_query', async q => {
   if (action === 'info') {
     const animMsg = await sendAnimatedMessage(cid, 'Fetching app info');
     try {
-      const appRes = await axios.get(`https://api.heroku.com/apps/${payload}`, {
-        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-      });
-      const configRes = await axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, {
-        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-      });
+      const apiHeaders = {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      };
+
+      // Perform API calls in parallel
+      const [appRes, configRes, dynoRes] = await Promise.all([
+        axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
+      ]);
 
       const appData = appRes.data;
       const configData = configRes.data;
+      const dynoData = dynoRes.data;
 
+      // --- App Age Calculation ---
+      const createdAt = new Date(appData.created_at);
+      const now = new Date();
+      const diffTime = Math.abs(now - createdAt);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      // --- Dyno Status Logic ---
+      let dynoStatus = 'No dynos found.';
+      let statusEmoji = '❓';
+      if (dynoData.length > 0) {
+          const webDyno = dynoData.find(d => d.type === 'web');
+          if (webDyno) {
+              const state = webDyno.state;
+              if (state === 'up') statusEmoji = '🟢';
+              else if (state === 'crashed') statusEmoji = '🔴';
+              else if (state === 'idle') statusEmoji = '🟡';
+              else if (state === 'starting' || state === 'restarting') statusEmoji = '⏳';
+              else statusEmoji = '❓';
+              dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
+          }
+      }
+
+      // --- Construct the final message ---
       const info = `*ℹ️ App Info: ${appData.name}*\n\n` +
+                   `*Dyno Status:* ${dynoStatus}\n` +
                    `*URL:* [${appData.web_url}](${appData.web_url})\n` +
+                   `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
-                   `*Stack:* ${appData.stack.name}\n` +
-                   `*Region:* ${appData.region.name}\n\n` +
+                   `*Stack:* ${appData.stack.name}\n\n` +
                    `*🔧 Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
       return bot.editMessageText(info, { chat_id: cid, message_id: animMsg.message_id, parse_mode: 'Markdown', disable_web_page_preview: true });
     } catch (e) {
-      return bot.editMessageText(`Error fetching info: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error fetching info: ${errorMsg}`, { chat_id: cid, message_id: animMsg.message_id });
     }
   }
 
@@ -704,7 +735,7 @@ bot.on('callback_query', async q => {
         }
       });
   }
-  
+
   if (action === 'confirmdelete') {
       const appToDelete = payload;
       const originalAction = extra;
