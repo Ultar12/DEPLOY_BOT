@@ -9,6 +9,8 @@ const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
+// --- NEW --- Import the Google Generative AI library
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
@@ -27,9 +29,34 @@ const {
   HEROKU_API_KEY,
   GITHUB_REPO_URL,
   ADMIN_ID,
-  DATABASE_URL
+  DATABASE_URL,
+  // --- NEW --- Get the Gemini API Key from environment variables
+  GEMINI_API_KEY
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
+
+
+// --- NEW --- Initialize the Gemini client and define the AI's personality and context
+if (!GEMINI_API_KEY) {
+    console.warn("GEMINI_API_KEY is not set. AI features will be disabled.");
+}
+const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
+
+const BOT_CONTEXT_PROMPT = `You are a friendly and expert assistant for a Telegram bot that helps users deploy applications to Heroku.
+Your purpose is to answer user questions about how to use this bot.
+
+Here are the bot's key features:
+- The bot's main function is to deploy applications using the 'Deploy' button.
+- To deploy, a regular user needs a 'Deploy Key'. They can get one from the admin.
+- Alternatively, users can use a 'Free Trial' which has a 30-minute runtime and a 14-day cooldown period.
+- All deployments require a 'Session ID'. Users can get this by pressing the 'Get Session' button and following the instructions.
+- After deploying, users can manage their apps using the 'My Bots' button. This lets them view info, restart, see logs, or delete their apps.
+- The admin (${SUPPORT_USERNAME}) has special permissions, like generating deploy keys for users.
+
+When answering, be clear, concise, and friendly. Use emojis to make your explanations easy to understand.
+Always answer from the perspective of being the bot's built-in helper.`;
+
 
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
@@ -145,21 +172,22 @@ function generateKey() {
     .join('');
 }
 
+// --- UPDATED --- Keyboard now includes an 'AI Helper' button
 function buildKeyboard(isAdmin) {
-  const baseMenu = [
-      ['Get Session', 'Deploy'],
-      ['Free Trial', 'My Bots'], // "Free Trial" button
-      ['Support']
-  ];
-  if (isAdmin) {
-      return [
-          ['Deploy', 'Apps'],
-          ['Generate Key', 'Get Session'],
-          ['Support']
-      ];
-  }
-  return baseMenu;
+    const baseMenu = [
+        ['🚀 Deploy', '🤖 My Bots'],
+        ['🎁 Free Trial', '🤖 AI Helper'],
+        ['ℹ️ Get Session', '📞 Support']
+    ];
+    if (isAdmin) {
+        return [
+            ['⚙️ Apps', '🚀 Deploy', '🔑 Generate Key'],
+            ['🤖 AI Helper', '📞 Support']
+        ];
+    }
+    return baseMenu;
 }
+
 
 function chunkArray(arr, size) {
   const out = [];
@@ -370,10 +398,10 @@ bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid];
-  const { first_name, last_name, username } = msg.from;
-  console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
+  const { first_name } = msg.from;
+  console.log(`User: ${first_name} (@${msg.from.username || 'N/A'}) [${cid}]`);
   await bot.sendMessage(cid,
-    isAdmin ? 'Welcome, Admin! Here is your menu:' : 'Welcome! Please select an option:', {
+    isAdmin ? `Welcome, Admin ${first_name}! Here is your menu:` : `Welcome, ${first_name}! Please select an option:`, {
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     }
   );
@@ -394,17 +422,53 @@ bot.onText(/^\/apps$/i, msg => {
   }
 });
 
+
+// --- NEW --- Context-aware Gemini AI command handler
+bot.onText(/^\/ask (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const userQuestion = match[1];
+
+    if (!geminiModel) {
+        return bot.sendMessage(chatId, "Sorry, the AI Helper is currently offline. Please try again later.");
+    }
+
+    const thinkingMsg = await bot.sendMessage(chatId, '🤔 Thinking...', {
+        reply_to_message_id: msg.message_id
+    });
+
+    try {
+        const chat = geminiModel.startChat({
+            history: [{ role: "user", parts: [{ text: BOT_CONTEXT_PROMPT }] }],
+        });
+        const result = await chat.sendMessage(userQuestion);
+        const response = await result.response;
+        const text = response.text();
+        
+        bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: thinkingMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    } catch (error) {
+        console.error("Gemini API Error:", error);
+        bot.editMessageText('❌ Sorry, I had trouble understanding that. Could you try rephrasing your question?', {
+            chat_id: chatId,
+            message_id: thinkingMsg.message_id
+        });
+    }
+});
+
+
 // 12) Message handler for buttons & state machine
 bot.on('message', async msg => {
-  const cid = msg.chat.id.toString();
-  const text = msg.text?.trim();
-  if (!text) return;
+    const cid = msg.chat.id.toString();
+    const text = msg.text?.trim();
+    if (!text || text.startsWith('/ask')) return; // Ignore /ask commands in this handler
 
-  const lc = text.toLowerCase();
-  const isAdmin = cid === ADMIN_ID;
+    const isAdmin = cid === ADMIN_ID;
 
   // --- Button Handlers ---
-  if (text === 'Deploy') {
+  if (text.includes('Deploy')) {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID');
@@ -414,7 +478,7 @@ bot.on('message', async msg => {
     }
   }
 
-  if (text === 'Free Trial') {
+  if (text.includes('Free Trial')) {
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
@@ -423,11 +487,16 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, '✅ Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
-  if (text === 'Apps' && isAdmin) {
+  // --- NEW --- AI Helper button handler
+  if (text.includes('AI Helper')) {
+    return bot.sendMessage(cid, "I'm here to help! What would you like to know about using this bot?\n\n*For example:*\n`/ask how do I deploy my first bot?`\n`/ask what is a session id?`", {parse_mode: 'Markdown'});
+  }
+
+  if (text.includes('Apps') && isAdmin) {
     return sendAppList(cid);
   }
 
-  if (text === 'Generate Key' && isAdmin) {
+  if (text.includes('Generate Key') && isAdmin) {
     const buttons = [
       [1, 2, 3, 4, 5].map(n => ({
         text: String(n),
@@ -439,7 +508,7 @@ bot.on('message', async msg => {
     });
   }
 
-  if (text === 'Get Session') {
+  if (text.includes('Get Session')) {
     const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link*\n" +
@@ -463,7 +532,7 @@ bot.on('message', async msg => {
     return;
   }
 
-  if (text === 'My Bots') {
+  if (text.includes('My Bots')) {
     const bots = await getUserBots(cid);
     if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
@@ -475,7 +544,7 @@ bot.on('message', async msg => {
     });
   }
 
-  if (text === 'Support') {
+  if (text.includes('Support')) {
     return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
   }
 
@@ -533,8 +602,7 @@ bot.on('message', async msg => {
         st.data.APP_NAME = nm;
         
         // --- INTERACTIVE WIZARD START ---
-        // Instead of asking for the next step via text, we now send an interactive message.
-        st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
+        st.step = 'AWAITING_WIZARD_CHOICE';
         
         const wizardText = `✅ App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
         const wizardKeyboard = {
@@ -548,7 +616,7 @@ bot.on('message', async msg => {
             }
         };
         const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
-        st.message_id = wizardMsg.message_id; // Store message_id to edit it later
+        st.message_id = wizardMsg.message_id;
         // --- INTERACTIVE WIZARD END ---
 
       } else {
@@ -557,10 +625,6 @@ bot.on('message', async msg => {
       }
     }
   }
-
-  // --- INTERACTIVE WIZARD NOTE ---
-  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
-  // We can remove it from here.
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME } = st.data;
