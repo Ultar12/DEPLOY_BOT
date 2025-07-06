@@ -1292,13 +1292,15 @@ bot.on('callback_query', async q => {
             usageMessage += `*Dynos:*\n`;
             const dynoCounts = {}; // To count dynos of each type and size
             for (const dyno of dynos) {
-                const key = `${dyno.type} (\`${dyno.size}\`)`; // Use backticks for dyno size
+                // Ensure dyno.size is clean before passing to getEstimatedDailyCost
+                const cleanedSize = dyno.size ? dyno.size.replace(/\(|\)/g, '') : 'unknown'; // Remove parentheses if present
+                const key = `${dyno.type} (\`${cleanedSize}\`)`; // Use backticks for dyno size
                 dynoCounts[key] = (dynoCounts[key] || 0) + 1;
             }
 
             for (const key in dynoCounts) {
                 const [type, sizeWithParens] = key.split(' (');
-                const size = sizeWithParens.slice(0, -1); // Remove trailing ')'
+                const size = sizeWithParens.slice(0, -1); // Remove trailing ')' to get clean size like 'Basic'
                 const count = dynoCounts[key];
                 const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
                 currentDailyCost += estimatedDailyCostPerDyno * count; // Sum daily costs for all dynos
@@ -1312,12 +1314,13 @@ bot.on('callback_query', async q => {
 
             const estimatedTotalCost = currentDailyCost * daysDeployed; // Total cost based on summed daily cost
 
-            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Corrected total cost calculation and label, Daily cost line removed
-            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
+            // Only show total cost and days deployed
+            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`;
+            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
 
         } else {
             usageMessage += `No active dynos found for this app.\n`;
-            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`; // Corrected total cost calculation and label, Daily cost line removed
+            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`;
             usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
         }
 
