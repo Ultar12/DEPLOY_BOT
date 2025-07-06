@@ -307,7 +307,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     if (status === 'succeeded') {
       // Animated Countdown Logic
-      await bot.editMessageText('✅ Build complete!', {
+      await bot.editMessageText('Build complete!', {
         chat_id: chatId,
         message_id: progMsg.message_id
       });
@@ -326,7 +326,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       }
 
       await bot.editMessageText(
-        `✅ Your bot is now live at:\nhttps://${name}.herokuapp.com`,
+        `Your bot is now live at:\nhttps://${name}.herokuapp.com`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
 
@@ -339,7 +339,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
                     headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                 });
                 await deleteUserBot(chatId, name);
-                await bot.sendMessage(chatId, `✅ Free Trial app "${name}" successfully deleted.`);
+                await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
             } catch (e) {
                 console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                 await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
@@ -349,7 +349,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       return true; // Indicate success
     } else {
       await bot.editMessageText(
-        `❌ Build status: ${status}. Check your Heroku dashboard for logs.`,
+        `Build status: ${status}. Check your Heroku dashboard for logs.`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
       return false; // Indicate failure
@@ -407,7 +407,7 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, '🔐 Admin access granted. Please enter your session ID');
+      return bot.sendMessage(cid, 'Please enter your session ID');
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, 'Enter your Deploy key');
@@ -420,7 +420,7 @@ bot.on('message', async msg => {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, '✅ Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    return bot.sendMessage(cid, 'Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -503,16 +503,16 @@ bot.on('message', async msg => {
       `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
-    return bot.sendMessage(cid, '✅ Key accepted. Now, please enter your session ID:');
+    return bot.sendMessage(cid, 'Verified, please enter your session ID:');
   }
 
   if (st.step === 'SESSION_ID') {
-    if (text.length < 5) {
-      return bot.sendMessage(cid, 'Session ID must be at least 5 characters long.');
+    if (text.length < 10) {
+      return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
     st.data.SESSION_ID = text.trim();
     st.step = 'APP_NAME';
-    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot):');
+    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
   }
 
   if (st.step === 'APP_NAME') {
@@ -527,7 +527,7 @@ bot.on('message', async msg => {
           Accept: 'application/vnd.heroku+json; version=3'
         }
       });
-      return bot.sendMessage(cid, `❌ The name "${nm}" is already taken. Please choose another.`);
+      return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
     } catch (e) {
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
@@ -536,13 +536,13 @@ bot.on('message', async msg => {
         // Instead of asking for the next step via text, we now send an interactive message.
         st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
         
-        const wizardText = `✅ App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
+        const wizardText = `App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
         const wizardKeyboard = {
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: '✅ Yes (Recommended)', callback_data: `setup:autostatus:true` },
-                        { text: '❌ No', callback_data: `setup:autostatus:false` }
+                        { text: 'Yes (Recommended)', callback_data: `setup:autostatus:true` },
+                        { text: 'No', callback_data: `setup:autostatus:false` }
                     ]
                 ]
             }
@@ -553,7 +553,7 @@ bot.on('message', async msg => {
 
       } else {
         console.error(`Error checking app name "${nm}":`, e.message);
-        return bot.sendMessage(cid, `❌ Could not verify app name. The Heroku API might be down. Please try again later.`);
+        return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
       }
     }
   }
@@ -581,7 +581,7 @@ bot.on('message', async msg => {
         await updateUserSession(cid, APP_NAME, newVal);
       }
       delete userStates[cid];
-      return bot.sendMessage(cid, `✅ ${VAR_NAME} updated successfully.`);
+      return bot.sendMessage(cid, ` ${VAR_NAME} updated successfully.`);
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
@@ -612,7 +612,7 @@ bot.on('callback_query', async q => {
           st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
 
           // Edit the message to show a confirmation and the final "Deploy" button
-          const confirmationText = `⚙️ *Deployment Configuration*\n\n` +
+          const confirmationText = ` *Deployment Configuration*\n\n` +
                                    `*App Name:* \`${st.data.APP_NAME}\`\n` +
                                    `*Session ID:* \`${st.data.SESSION_ID.slice(0, 15)}...\`\n` +
                                    `*Auto Status:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
@@ -621,8 +621,8 @@ bot.on('callback_query', async q => {
           const confirmationKeyboard = {
               reply_markup: {
                   inline_keyboard: [
-                      [{ text: '🚀 Yes, Deploy Now', callback_data: 'setup:startbuild' }],
-                      [{ text: '❌ Cancel', callback_data: 'setup:cancel' }]
+                      [{ text: 'Yes, Deploy Now', callback_data: 'setup:startbuild' }],
+                      [{ text: 'Cancel', callback_data: 'setup:cancel' }]
                   ]
               }
           };
@@ -637,7 +637,7 @@ bot.on('callback_query', async q => {
 
       if (step === 'startbuild') {
           // User confirmed deployment, start the build process
-          await bot.editMessageText('✅ Configuration confirmed. Initiating deployment...', {
+          await bot.editMessageText('Configuration confirmed. Initiating deployment...', {
               chat_id: cid,
               message_id: st.message_id
           });
@@ -649,7 +649,7 @@ bot.on('callback_query', async q => {
 
               if (st.data.isFreeTrial) {
                   await recordFreeTrialDeploy(cid);
-                  bot.sendMessage(cid, `🔔 Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+                  bot.sendMessage(cid, `Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
               }
 
               const { first_name, last_name, username } = q.from;
@@ -663,7 +663,7 @@ bot.on('callback_query', async q => {
               const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
       
               await bot.sendMessage(ADMIN_ID,
-                  `🚀 *New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+                  `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
                   { parse_mode: 'Markdown', disable_web_page_preview: true }
               );
           }
@@ -751,7 +751,7 @@ bot.on('callback_query', async q => {
       }
 
       // --- Construct the final message ---
-      const info = `*ℹ️ App Info: ${appData.name}*\n\n` +
+      const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
                    `*URL:* [${appData.web_url}](${appData.web_url})\n` +
                    `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
@@ -774,7 +774,7 @@ bot.on('callback_query', async q => {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      return bot.editMessageText(`✅ "${payload}" restarted successfully.`, { chat_id: cid, message_id: animMsg.message_id });
+      return bot.editMessageText(`"${payload}" restarted successfully.`, { chat_id: cid, message_id: animMsg.message_id });
     } catch (e) {
       return bot.editMessageText(`Error restarting: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
     }
@@ -800,8 +800,8 @@ bot.on('callback_query', async q => {
       return bot.sendMessage(cid, `Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
         reply_markup: {
           inline_keyboard: [[
-            { text: "✅ Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
-            { text: "❌ No, cancel", callback_data: 'canceldelete' }
+            { text: "Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
+            { text: "No, cancel", callback_data: 'canceldelete' }
           ]]
         }
       });
@@ -818,7 +818,7 @@ bot.on('callback_query', async q => {
           if (originalAction === 'userdelete') {
               await deleteUserBot(cid, appToDelete);
           }
-          return bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: animMsg.message_id });
+          return bot.editMessageText(`App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: animMsg.message_id });
       } catch (e) {
           return bot.editMessageText(`Error deleting app: ${e.message}`, { chat_id: cid, message_id: animMsg.message_id });
       }
@@ -876,7 +876,7 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      return bot.sendMessage(cid, `✅ ${varKey} updated to ${newVal}`);
+      return bot.sendMessage(cid, `${varKey} updated to ${newVal}`);
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
