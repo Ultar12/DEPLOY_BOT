@@ -182,7 +182,7 @@ async function sendAppList(chatId) {
   }
 }
 
-// --- NEW: Function to turn off dynos ---
+// --- Function to turn off dynos ---
 async function turnOffDyno(appName) {
     try {
         await axios.patch(`https://api.heroku.com/apps/${appName}/formation/web`,
@@ -232,7 +232,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       const liveMessage = await bot.editMessageText(`✅ Your bot is now live at:\nhttps://${name}.herokuapp.com`, { chat_id: chatId, message_id: progMsg.message_id });
       
       if (isFreeTrial) {
-          // --- NEW: Live Countdown Logic ---
+          // --- Live Countdown Logic ---
           let minutesLeft = 60;
           const countdownInterval = setInterval(async () => {
               minutesLeft -= 5;
@@ -304,36 +304,71 @@ bot.on('message', async msg => {
 
   const isAdmin = cid === ADMIN_ID;
 
+  // --- Button Handlers ---
   if (text === 'Deploy') {
     userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
-    return bot.sendMessage(cid, 'Enter your Deploy key');
+    bot.sendMessage(cid, 'Enter your Deploy key');
+    return; // <-- FIX: Stop further processing
   }
   if (text === 'Free Trial') {
     const check = await canDeployFreeTrial(cid);
-    if (!check.can) return bot.sendMessage(cid, `⏳ You have a cooldown. You can use the free trial again after:\n\n${check.cooldown.toLocaleString()}`);
-    userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, `✅ Free Trial (1 hour runtime, ${FREE_TRIAL_COOLDOWN_DAYS}-day cooldown) initiated.\n\nPlease enter your session ID:`);
+    if (!check.can) {
+      bot.sendMessage(cid, `⏳ You have a cooldown. You can use the free trial again after:\n\n${check.cooldown.toLocaleString()}`);
+    } else {
+      userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
+      bot.sendMessage(cid, `✅ Free Trial (1 hour runtime, ${FREE_TRIAL_COOLDOWN_DAYS}-day cooldown) initiated.\n\nPlease enter your session ID:`);
+    }
+    return; // <-- FIX: Stop further processing
   }
-  // Other button handlers...
-  if (text === 'Apps' && isAdmin) return sendAppList(cid);
+  if (text === 'Apps' && isAdmin) {
+    sendAppList(cid);
+    return; // <-- FIX: Stop further processing
+  }
   if (text === 'Generate Key' && isAdmin) {
     const buttons = [[1, 2, 3, 4, 5].map(n => ({ text: String(n), callback_data: `genkeyuses:${n}` }))];
-    return bot.sendMessage(cid, 'How many uses for this key?', { reply_markup: { inline_keyboard: buttons } });
+    bot.sendMessage(cid, 'How many uses for this key?', { reply_markup: { inline_keyboard: buttons } });
+    return; // <-- FIX: Stop further processing
   }
   if (text === 'Get Session') {
-    const guideCaption = "To get your session ID, please follow the steps..."; // Truncated for brevity
-    try { await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', { caption: guideCaption, parse_mode: 'Markdown' }); } catch { await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' }); }
-    return;
+    // <-- FIX: Restored full guide text
+    const guideCaption = 
+        "To get your session ID, please follow these steps carefully:\n\n" +
+        "1️⃣ *Open the Link*\n" +
+        "Visit: https://levanter-delta.vercel.app/\n\n" +
+        "2️⃣ *Important for iPhone Users*\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "3️⃣ *Skip Advertisements*\n" +
+        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
+        "4️⃣ *Use a CUSTOM ID*\n" +
+        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
+        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
+
+    try {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+        caption: guideCaption,
+        parse_mode: 'Markdown'
+      });
+    } catch {
+      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+    }
+    return; // <-- FIX: Stop further processing
   }
   if (text === 'My Bots') {
     const bots = await getUserBots(cid);
-    if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
-    const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
-    return bot.sendMessage(cid, 'Your deployed bots:', { reply_markup: { inline_keyboard: rows } });
+    if (!bots.length) {
+        bot.sendMessage(cid, "You haven't deployed any bots yet.");
+    } else {
+        const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+        bot.sendMessage(cid, 'Your deployed bots:', { reply_markup: { inline_keyboard: rows } });
+    }
+    return; // <-- FIX: Stop further processing
   }
-  if (text === 'Support') return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
+  if (text === 'Support') {
+    bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
+    return; // <-- FIX: Stop further processing
+  }
 
-  // Stateful flows...
+  // --- Stateful flows ---
   const st = userStates[cid];
   if (!st) return;
   if (st.step === 'AWAITING_KEY') {
