@@ -6,6 +6,7 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 
 require('dotenv').config();
 const fs = require('fs');
+const MediaDownloader = require('@totallynotdavid/downloader');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
@@ -68,6 +69,29 @@ async function addUserBot(u, b, s) {
     'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
     [u, b, s]
   );
+}
+
+async function downloadImgurVideo(imgurUrl, outputPath) {
+  try {
+    const result = await MediaDownloader(imgurUrl);
+    if (!result.urls || result.urls.length === 0) {
+      throw new Error("No downloadable video URL found.");
+    }
+
+    const videoUrl = result.urls[0];
+    const response = await axios.get(videoUrl, { responseType: 'stream' });
+
+    const writer = fs.createWriteStream(outputPath);
+    response.data.pipe(writer);
+
+    return new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+  } catch (err) {
+    console.error("Error downloading video:", err.message);
+    throw err;
+  }
 }
 async function getUserBots(u) {
   const r = await pool.query(
@@ -442,28 +466,30 @@ bot.on('message', async msg => {
   // ...
 
   if (text === 'Get Session') {
-    const guideCaption =
-        "1. iPhone users should use Chrome\n" +
-        "2. Skip ads if u see any\n" +
-        "3. Make sure you use the custom session id button";
+  const guideCaption =
+    "1. iPhone users should use Chrome\n" +
+    "2. Skip ads if u see any\n" +
+    "3. Make sure you use the custom session id button";
 
-    try {
-      // ✅ Change: Read the file into a stream before sending.
-      // This tells the bot to upload the file content directly.
-      const videoStream = fs.createReadStream('./j0s062.mp4');
+  const videoPath = './guide.mp4';
+  const imgurLink = 'https://imgur.com/a/oOa32i5';
 
-      await bot.sendVideo(cid, videoStream, {
-        caption: guideCaption,
-        parse_mode: 'Markdown'
-      });
-    } catch (error) {
-      console.error("Failed to send video guide:", error.message);
-      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+  try {
+    if (!fs.existsSync(videoPath)) {
+      await downloadImgurVideo(imgurLink, videoPath);
     }
-    return;
-  }
 
-// ...
+    const videoStream = fs.createReadStream(videoPath);
+    await bot.sendVideo(cid, videoStream, {
+      caption: guideCaption,
+      parse_mode: 'Markdown'
+    });
+  } catch (error) {
+    console.error("Failed to send video guide:", error.message);
+    await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+  }
+  return;
+}
   
 
   if (text === 'My Bots') {
