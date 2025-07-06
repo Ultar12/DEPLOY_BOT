@@ -502,7 +502,7 @@ async function notifyAdminOfUpcomingTrialDeletions() {
     console.log('Checking for upcoming trial app deletions...');
     // Notify admin 1 hour before deletion
     const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000);
-    const oneHourAndFiveMinutesFromNow = new Date(Date.now() + (60 + 5) * 60 * 1000); // Check within a 5-minute window after 1 hour
+    const oneHourAndFiveMinutesFromNow = new Date(Date.now() + (60 + 5) * 60 * 1000); // Check within a 5-minute window
     const upcomingApps = await pool.query(
         `SELECT user_id, app_name FROM temp_deploys WHERE delete_at > NOW() AND delete_at <= $1`,
         [oneHourAndFiveMinutesFromNow] // Get apps due in the next 1 hour and 5 minutes
@@ -549,7 +549,7 @@ async function notifyAdminOfUpcomingTrialDeletions() {
 }
 
 // Check for upcoming deletions every 15 minutes (more appropriate for hourly notifications)
-setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000); // 15 minutes
+setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000);
 
 // 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
@@ -1102,18 +1102,22 @@ bot.on('callback_query', async q => {
           }
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
           
-          // After deletion, take them back to their list of bots or main menu
-          if (originalAction === 'userdelete') {
+          // --- START OF MODIFICATION ---
+          // After deletion, if a user bot was deleted by a non-admin user
+          if (originalAction === 'userdelete' && cid !== ADMIN_ID) {
               const bots = await getUserBots(cid);
               if (bots.length > 0) {
                   const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
                   return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
               } else {
+                  // User has no bots left, send a specific message
                   return bot.sendMessage(cid, "You no longer have any deployed bots.");
               }
-          } else { // Admin delete
+          } else { // If admin delete, or admin deleting a user bot
             return sendAppList(cid); // Admin sees all apps
           }
+          // --- END OF MODIFICATION ---
+
       } catch (e) {
           return bot.editMessageText(`Error deleting app: ${e.message}`, {
             chat_id: cid,
