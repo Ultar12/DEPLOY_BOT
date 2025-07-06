@@ -56,8 +56,10 @@ const pool = new Pool({
   // Table for "Free Trial" cooldowns
   await pool.query(`
     CREATE TABLE IF NOT EXISTS temp_deploys (
-      user_id       TEXT PRIMARY KEY,
-      last_deploy_at TIMESTAMP NOT NULL
+      user_id       TEXT NOT NULL,
+      app_name      TEXT PRIMARY KEY,
+      last_deploy_at TIMESTAMP NOT NULL,
+      delete_at     TIMESTAMP NOT NULL
     );
   `);
 })().catch(console.error);
@@ -123,11 +125,25 @@ async function canDeployFreeTrial(userId) {
     const nextAvailable = new Date(lastDeploy.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days
     return { can: false, cooldown: nextAvailable };
 }
-async function recordFreeTrialDeploy(userId) {
+async function recordFreeTrialDeploy(userId, appName) {
+    const deleteAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 1 day from now
     await pool.query(
-        `INSERT INTO temp_deploys (user_id, last_deploy_at) VALUES ($1, NOW())
-         ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW()`,
-        [userId]
+        `INSERT INTO temp_deploys (user_id, app_name, last_deploy_at, delete_at) VALUES ($1, $2, NOW(), $3)
+         ON CONFLICT (app_name) DO UPDATE SET last_deploy_at = NOW(), delete_at = $3, user_id = $1`, // Update user_id too on conflict if app existed
+        [userId, appName, deleteAt]
+    );
+}
+async function getDueTrialDeploys() {
+    const res = await pool.query(
+        `SELECT user_id, app_name FROM temp_deploys WHERE delete_at <= NOW()`
+    );
+    return res.rows;
+}
+
+async function deleteTrialDeployEntry(appName) {
+    await pool.query(
+        `DELETE FROM temp_deploys WHERE app_name = $1`,
+        [appName]
     );
 }
 
@@ -227,7 +243,7 @@ async function sendAppList(chatId, messageId = null) {
     });
     const apps = res.data.map(a => a.name);
     if (!apps.length) {
-      if (messageId) return bot.editMessageText(chatId, 'No apps found.', { chat_id: chatId, message_id: messageId });
+      if (messageId) return bot.editMessageText('No apps found.', { chat_id: chatId, message_id: messageId });
       return bot.sendMessage(chatId, 'No apps found.');
     }
     const rows = chunkArray(apps, 3).map(r =>
@@ -379,20 +395,51 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       );
 
       if (isFreeTrial) {
-        // Schedule deletion after 30 minutes
-        setTimeout(async () => {
-            try {
-                await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 30-minute runtime has ended.`);
-                await axios.delete(`https://api.heroku.com/apps/${name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                });
-                await deleteUserBot(chatId, name);
-                await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
-            } catch (e) {
-                console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
-            }
-        }, 30 * 60 * 1000); // 30 minutes in milliseconds
+          // Record the trial deploy for tracking deletion
+          await recordFreeTrialDeploy(chatId, name);
+
+          // Fetch user details for admin notification
+          let userDetails = `*User ID:* \`${chatId}\``;
+          try {
+              const userChat = await bot.getChat(chatId);
+              const { first_name, last_name, username } = userChat;
+              userDetails = [
+                `*Name:* ${first_name || ''} ${last_name || ''}`,
+                `*Username:* @${username || 'N/A'}`,
+                `*Chat ID:* \`${chatId}\``
+              ].join('\n');
+          } catch (e) {
+              console.error(`Could not fetch user details for ${chatId}:`, e.message);
+          }
+          
+          const appUrl = `https://${name}.herokuapp.com`;
+          const appDetails = `*App Name:* \`${name}\`\n*URL:* ${appUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* Free Trial (1 day)`;
+  
+          await bot.sendMessage(ADMIN_ID,
+              `*🚨 New Free Trial App Deployed 🚨*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}\n\nThis app will be auto-deleted in 1 day.`,
+              { parse_mode: 'Markdown', disable_web_page_preview: true }
+          );
+
+          // This timeout is now a fallback, the main deletion logic will be in `checkAndDeleteDueTrialApps`
+          // but we still send a user message at the time of deletion.
+          setTimeout(async () => {
+              try {
+                  // Re-check if it's still marked as a trial and due for deletion
+                  const res = await pool.query('SELECT * FROM temp_deploys WHERE app_name = $1 AND delete_at <= NOW()', [name]);
+                  if (res.rows.length > 0) {
+                      await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 1-day runtime has ended.`);
+                      await axios.delete(`https://api.heroku.com/apps/${name}`, {
+                          headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                      });
+                      await deleteUserBot(chatId, name);
+                      await deleteTrialDeployEntry(name); // Remove from temp_deploys table
+                      await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
+                  }
+              } catch (e) {
+                  console.error(`Failed to auto-delete free trial app ${name} via setTimeout:`, e.message);
+                  await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+              }
+          }, 24 * 60 * 60 * 1000 + 5000); // 1 day + a small buffer
       }
       return true; // Indicate success
     } else {
@@ -412,6 +459,97 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
 // 10) Polling error handler
 bot.on('polling_error', console.error);
+
+// --- Free Trial Auto-Deletion Scheduler ---
+async function checkAndDeleteDueTrialApps() {
+    console.log('Checking for due trial apps...');
+    const dueApps = await pool.query(`SELECT user_id, app_name FROM temp_deploys WHERE delete_at <= NOW()`);
+
+    for (const app of dueApps.rows) {
+        const { user_id, app_name } = app;
+        try {
+            console.log(`Attempting to delete trial app: ${app_name} for user: ${user_id}`);
+            // Attempt to delete from Heroku
+            await axios.delete(`https://api.heroku.com/apps/${app_name}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            // Remove from user_bots and temp_deploys tables
+            await deleteUserBot(user_id, app_name);
+            await deleteTrialDeployEntry(app_name);
+
+            // Notify user
+            await bot.sendMessage(user_id, `✅ Your Free Trial app "${app_name}" has been successfully deleted as its 1-day runtime expired.`);
+            // Notify admin (optional, as they get initial deployment notification)
+            if (user_id !== ADMIN_ID) { // Avoid double notification if admin is the user
+                await bot.sendMessage(ADMIN_ID, `🗑️ Free Trial app "${app_name}" (user: \`${user_id}\`) was auto-deleted successfully.`);
+            }
+            console.log(`Successfully auto-deleted ${app_name}`);
+        } catch (e) {
+            console.error(`Failed to auto-delete trial app ${app_name}:`, e.message);
+            // Notify user if deletion failed
+            await bot.sendMessage(user_id, `⚠️ Failed to auto-delete your Free Trial app "${app_name}". Please delete it manually from your Heroku dashboard if it's still active.`);
+            // Notify admin about failed deletion
+            await bot.sendMessage(ADMIN_ID, `❗ *Auto-deletion failed* for Free Trial app "${app_name}" (user: \`${user_id}\`). Error: ${e.message}\n\nPlease check manually.`, { parse_mode: 'Markdown' });
+        }
+    }
+}
+
+// Check every 5 minutes for due trial apps
+setInterval(checkAndDeleteDueTrialApps, 5 * 60 * 1000); // 5 minutes
+
+// Check for upcoming trial app deletions to notify admin
+async function notifyAdminOfUpcomingTrialDeletions() {
+    console.log('Checking for upcoming trial app deletions...');
+    // Notify admin 1 hour before deletion
+    const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000);
+    const oneHourAndFiveMinutesFromNow = new Date(Date.now() + (60 + 5) * 60 * 1000); // Check within a 5-minute window after 1 hour
+    const upcomingApps = await pool.query(
+        `SELECT user_id, app_name FROM temp_deploys WHERE delete_at > NOW() AND delete_at <= $1`,
+        [oneHourAndFiveMinutesFromNow] // Get apps due in the next 1 hour and 5 minutes
+    );
+
+    for (const app of upcomingApps.rows) {
+        const { user_id, app_name } = app;
+        try {
+            // Check if we've already notified for this app within a recent period
+            const notificationKey = `notified_admin_upcoming_${app_name}`;
+            if (userStates[notificationKey] && (Date.now() - userStates[notificationKey] < 30 * 60 * 1000)) { // Notified within last 30 mins
+                continue; // Skip if recently notified
+            }
+
+            let userName = `User \`${user_id}\``;
+            try {
+                const userChat = await bot.getChat(user_id);
+                userName = userChat.first_name || userChat.username || userName;
+            } catch (e) {
+                console.error(`Could not fetch user details for upcoming notification for ${user_id}:`, e.message);
+            }
+
+            await bot.sendMessage(ADMIN_ID,
+                `🔔 *Free Trial App Due Soon: "${app_name}"*\n` +
+                `This app, deployed by ${userName}, is due for deletion in approximately 1 hour.\n\n` +
+                `*Action:*\n`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🗑️ Delete Now', callback_data: `admin_delete_trial:${app_name}:${user_id}` }]
+                        ]
+                    }
+                }
+            );
+            userStates[notificationKey] = Date.now(); // Mark as notified with timestamp
+            // This flag will naturally clear from memory on bot restart, but DB check is primary.
+            // For long-running bots, we might want a more persistent flag or a more sophisticated notification logic.
+
+        } catch (e) {
+            console.error(`Failed to notify admin for upcoming deletion of ${app_name}:`, e.message);
+        }
+    }
+}
+
+// Check for upcoming deletions every 15 minutes (more appropriate for hourly notifications)
+setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000); // 15 minutes
 
 // 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
@@ -468,7 +606,7 @@ bot.on('message', async msg => {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    return bot.sendMessage(cid, 'Free Trial (1 day runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -606,10 +744,6 @@ bot.on('message', async msg => {
     }
   }
 
-  // --- INTERACTIVE WIZARD NOTE ---
-  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
-  // We can remove it from here.
-
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME } = st.data;
     const newVal = text.trim();
@@ -629,7 +763,7 @@ bot.on('message', async msg => {
       if (VAR_NAME === 'SESSION_ID') {
         await updateUserSession(cid, APP_NAME, newVal);
       }
-      delete userStates[cid];
+      delete userStates[cid]; // Clear user state after successful update
       // Start the restart countdown after the variable is successfully set
       await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
@@ -698,24 +832,23 @@ bot.on('callback_query', async q => {
               await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
 
               if (st.data.isFreeTrial) {
-                  await recordFreeTrialDeploy(cid);
-                  bot.sendMessage(cid, `Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+                  // Admin notification for new trial deployment handled in buildWithProgress
+              } else { // Admin notification for general app deployment (non-trial)
+                const { first_name, last_name, username } = q.from;
+                const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
+                const userDetails = [
+                  `*Name:* ${first_name || ''} ${last_name || ''}`,
+                  `*Username:* @${username || 'N/A'}`,
+                  `*Chat ID:* \`${cid}\``
+                ].join('\n');
+        
+                const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* Permanent`;
+        
+                await bot.sendMessage(ADMIN_ID,
+                    `*✨ New Permanent App Deployed ✨*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+                    { parse_mode: 'Markdown', disable_web_page_preview: true }
+                );
               }
-
-              const { first_name, last_name, username } = q.from;
-              const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
-              const userDetails = [
-                `*Name:* ${first_name || ''} ${last_name || ''}`,
-                `*Username:* @${username || 'N/A'}`,
-                `*Chat ID:* \`${cid}\``
-              ].join('\n');
-      
-              const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-      
-              await bot.sendMessage(ADMIN_ID,
-                  `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-                  { parse_mode: 'Markdown', disable_web_page_preview: true }
-              );
           }
           // Clean up the user state after completion or failure
           delete userStates[cid];
@@ -732,6 +865,27 @@ bot.on('callback_query', async q => {
   }
   // --- END WIZARD HANDLER ---
 
+  if (action === 'admin_delete_trial') {
+    const appToDelete = payload; // app_name
+    const userId = extra; // user_id
+    const messageId = q.message.message_id;
+
+    try {
+        await bot.editMessageText(`🗑️ Admin deleting trial app "${appToDelete}"...`, { chat_id: cid, message_id: messageId });
+        await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        await deleteUserBot(userId, appToDelete);
+        await deleteTrialDeployEntry(appToDelete); // Remove from temp_deploys table
+
+        await bot.editMessageText(`✅ Admin successfully deleted trial app "${appToDelete}" for user \`${userId}\`.`, { chat_id: cid, message_id: messageId });
+        await bot.sendMessage(userId, `✅ Your Free Trial app "${appToDelete}" has been deleted by the admin.`);
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        await bot.editMessageText(`❗ Admin failed to delete trial app "${appToDelete}": ${errorMsg}`, { chat_id: cid, message_id: messageId });
+    }
+    return;
+  }
 
   if (action === 'genkeyuses') {
     const uses = parseInt(payload, 10);
@@ -930,7 +1084,7 @@ bot.on('callback_query', async q => {
 
   if (action === 'confirmdelete') {
       const appToDelete = payload;
-      const originalAction = extra;
+      const originalAction = extra; // This indicates if it was 'userdelete' or 'delete'
       const st = userStates[cid];
       if (!st || st.data.appName !== appToDelete) {
           return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
@@ -944,8 +1098,10 @@ bot.on('callback_query', async q => {
           });
           if (originalAction === 'userdelete') {
               await deleteUserBot(cid, appToDelete);
+              await deleteTrialDeployEntry(appToDelete); // Also remove from trial table if it was a trial
           }
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
+          
           // After deletion, take them back to their list of bots or main menu
           if (originalAction === 'userdelete') {
               const bots = await getUserBots(cid);
@@ -969,39 +1125,61 @@ bot.on('callback_query', async q => {
       }
   }
 
-  if (action === 'canceldelete') {
-      // This handler might not be strictly needed if `selectapp` is used for "No, cancel"
-      // But keeping it just in case for older messages or alternative flows.
-      return bot.editMessageText('Deletion cancelled.', {
-          chat_id: q.message.chat.id,
-          message_id: q.message.message_id
-      });
-  }
-
   if (action === 'setvar') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
+    const appName = payload;
     const messageId = st.data.messageId;
     
-    // Edit the current message to show variable selection
-    return bot.editMessageText(`Select a variable to set for "${payload}":`, {
-      chat_id: cid,
-      message_id: messageId,
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
-          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
-          [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
-          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
-          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }] // Back to app management
-        ]
-      }
-    });
-  }
+    try {
+        const res = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        const configVars = res.data;
 
+        let varList = `*Current Config Vars for ${appName}:*\n\n`;
+        const varButtons = [];
+
+        // Define a list of variables you want to display and allow setting
+        const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
+
+        for (const key of commonVars) {
+            const value = configVars[key] !== undefined ? configVars[key] : 'Not Set';
+            varList += `\`${key}\`: \`${value}\`\n`;
+            varButtons.push({ text: key, callback_data: `varselect:${key}:${appName}` });
+        }
+        varList += `\nSelect a variable to change or type its name:`;
+
+        // Chunk buttons into rows of 2 or 3 for better display
+        const inlineKeyboardRows = chunkArray(varButtons, 2);
+        inlineKeyboardRows.push([{ text: '◀️ Back to App Management', callback_data: `selectapp:${appName}` }]);
+
+        await bot.editMessageText(varList, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: inlineKeyboardRows
+            }
+        });
+        // Set user state to allow typing a custom variable name
+        userStates[cid] = { step: 'SETVAR_PROMPT', data: { APP_NAME: appName, messageId: messageId } };
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        return bot.editMessageText(`Error fetching config vars: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    }
+    return;
+  }
+  
   if (action === 'varselect') {
     const [varKey, appName] = [payload, extra];
     const st = userStates[cid];
