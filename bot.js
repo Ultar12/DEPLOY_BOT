@@ -440,20 +440,20 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    // Change: The caption has been updated to your new instructions.
     const guideCaption =
         "1. iPhone users should use Chrome\n" +
         "2. Skip ads if u see any\n" +
         "3. Make sure you use the custom session id button";
 
+    // ✅ PASTE THE ID YOU COPIED HERE
+    const videoFileId = 'BAACAgQAAxkBAAE3VbJoamWWi2ejr92LnPFFnVTBnFgLLAACLRoAAoYPUFNzfI8WbzZ-HjYE';
+
     try {
-      // This part remains the same, sending the video with the new caption.
-      await bot.sendVideo(cid, 'https://files.catbox.moe/j0s062.mp4', {
+      await bot.sendVideo(cid, videoFileId, {
         caption: guideCaption,
-        parse_mode: 'Markdown' // Keeping markdown in case you add formatting later
+        parse_mode: 'Markdown'
       });
     } catch (error) {
-      // Fallback in case sending the video fails
       console.error("Failed to send video guide:", error.message);
       await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
