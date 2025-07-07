@@ -546,7 +546,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
-      const STATUS_CHECK_TIMEOUT = 120 * 1000; // 120 seconds (2 minutes) to wait for connection
+      // FIX: Increased timeout for buildWithProgress
+      const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
       let timeoutId;
 
       try {
@@ -554,7 +555,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) { // Only reject if still pending
-                  appPromise.reject(new Error('Bot did not report connected or logged out status within 2 minutes.'));
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.`));
                   appDeploymentPromises.delete(name); // Clean up
               }
           }, STATUS_CHECK_TIMEOUT);
@@ -952,24 +953,23 @@ bot.on('message', async msg => {
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
     // This part of the message handler is for when a *text* input is expected.
-    // It should NOT interfere with the /add command's flow, which uses button callbacks.
     const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data; // targetUserIdFromState might be undefined here.
     const newVal = text.trim();
     
     // Determine the actual user ID to associate the bot with.
-    // This logic ensures if it's not from an /add context, it uses the current chat ID.
     const finalUserId = targetUserIdFromState || cid;
     
     // This check is primarily for the normal deployment flow where SESSION_ID is provided by user.
-    if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) { // Keep this validation for *direct user input*
+    if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) { 
         return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
 
     try {
-      const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
+      const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); 
       
-      // Patch Heroku config vars - this applies to all direct text input scenarios (like changing an existing var)
-      await axios.patch(
+      // Perform the actual Heroku config var update
+      console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
+      const patchResponse = await axios.patch(
         `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
         { [VAR_NAME]: newVal },
         {
@@ -980,14 +980,15 @@ bot.on('message', async msg => {
           }
         }
       );
+      console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
       
       // Update session in DB. This will correctly use the new session ID if VAR_NAME is SESSION_ID,
       // otherwise it just updates the row with current session_id from DB for other config var changes.
       console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
-      await addUserBot(finalUserId, APP_NAME, newVal); // Use finalUserId here, newVal is the session_id or other var value!
+      await addUserBot(finalUserId, APP_NAME, newVal); 
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { 
           chat_id: cid,
           message_id: updateMsg.message_id
       });
@@ -995,10 +996,11 @@ bot.on('message', async msg => {
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId }); // Store intervalId
+          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId }); 
       });
 
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
+      // FIX: Increased timeout for SETVAR_ENTER_VALUE
+      const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
       let timeoutId;
 
       try {
@@ -1010,9 +1012,9 @@ bot.on('message', async msg => {
               }
           }, STATUS_CHECK_TIMEOUT);
 
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          await appStatusPromise; 
           clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
+          clearInterval(animateIntervalId); 
 
           await bot.editMessageText(`✅ ${VAR_NAME} for "${APP_NAME}" updated successfully and bot is back online!`, {
               chat_id: cid,
@@ -1022,7 +1024,7 @@ bot.on('message', async msg => {
 
       } catch (err) {
           clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
+          clearInterval(animateIntervalId); 
           console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${APP_NAME}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
@@ -1038,13 +1040,14 @@ bot.on('message', async msg => {
               }
           );
       } finally {
-          appDeploymentPromises.delete(APP_NAME); // Always clean up
+          appDeploymentPromises.delete(APP_NAME); 
       }
 
       delete userStates[cid];
 
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
+      const errorMsg = e.response?.data?.message || e.response?.data?.message || e.message; // More robust error message extraction
+      console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data); 
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
@@ -1315,7 +1318,7 @@ bot.on('callback_query', async q => {
         // Fallback if state is lost or user clicks old button
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = q.message.message_id; // Get the stored message ID
+    const messageId = q.message.message_id; // Use messageId from query
 
     await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
@@ -1608,11 +1611,14 @@ bot.on('callback_query', async q => {
 
     try {
       const updateMsg = await bot.sendMessage(cid, `Updating ${varKey} for "${appName}"...`); // Send immediate feedback
-      await axios.patch(
+      console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`); // Log for boolean
+      const patchResponse = await axios.patch(
         `https://api.heroku.com/apps/${appName}/config-vars`,
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
+      console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
+
 
       // Update session in DB immediately after config var update
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
@@ -1621,7 +1627,7 @@ bot.on('callback_query', async q => {
       await addUserBot(cid, appName, currentSessionId); // Keep current session_id, just update the row
 
       const baseWaitingText = `Updating ${varKey} for "${appName}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { 
           chat_id: cid,
           message_id: updateMsg.message_id
       });
@@ -1629,10 +1635,11 @@ bot.on('callback_query', async q => {
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); // Store intervalId
+          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); 
       });
 
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
+      // FIX: Increased timeout for setvarbool
+      const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
       let timeoutId;
 
       try {
@@ -1644,9 +1651,9 @@ bot.on('callback_query', async q => {
               }
           }, STATUS_CHECK_TIMEOUT);
 
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          await appStatusPromise; 
           clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
+          clearInterval(animateIntervalId); 
 
           await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
               chat_id: cid,
@@ -1659,11 +1666,11 @@ bot.on('callback_query', async q => {
 
       } catch (err) {
           clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
+          clearInterval(animateIntervalId); 
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
-              `The bot is in your "My Bots" list, but you may need to try changing the session ID if it became invalid.`,
+              `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
                   message_id: updateMsg.message_id,
@@ -1676,11 +1683,12 @@ bot.on('callback_query', async q => {
               }
           );
       } finally {
-          appDeploymentPromises.delete(appName); // Always clean up
+          appDeploymentPromises.delete(appName); 
       }
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
+      console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
@@ -1701,8 +1709,6 @@ bot.on('callback_query', async q => {
           data: {
               APP_NAME: appName,
               VAR_NAME: 'SESSION_ID',
-              // Note: When called via change_session, targetUserId is present, and isForUpdateCommand is false.
-              // In SETVAR_ENTER_VALUE, targetUserId will correctly become finalUserId.
               targetUserId: targetUserId 
           }
       };
@@ -1761,7 +1767,7 @@ bot.on('channel_post', async msg => {
     // --- Logout Message Handling ---
     // Sample: "User [hhhhhhhhh-hr-db] has logged out." or "User [botname] has logged out.\n[Some other text] invalid"
     // The regex needs to handle the bot name in brackets, followed by "has logged out."
-    // Using 's' (dotall) flag for '.' to match newlines, and 'i' for case-insensitivity
+    // Using 's' (dotall) flag to make '.' match newlines, and 'i' for case-insensitivity
     // IMPORTANT: Make sure the exact string "has logged out." is present.
     const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./si); 
     if (logoutMatch) {
