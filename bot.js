@@ -1134,9 +1134,8 @@ bot.on('callback_query', async q => {
 });
 
 ---
-### **14) Channel Post Handler**
-This is the core new feature to detect and react to messages from your Levanter app.
----
+// **14) Channel Post Handler**
+//This is the core new feature to detect and react to messages from your Levanter app.
 bot.on('channel_post', async msg => {
     const channelId = msg.chat.id.toString();
     const text = msg.text?.trim();
@@ -1200,10 +1199,8 @@ bot.on('channel_post', async msg => {
     }
 });
 
----
-### **15) Scheduled Task for Logout Reminders**
-This section will periodically check for bots that have been logged out for more than 24 hours.
----
+//### **15) Scheduled Task for Logout Reminders**
+//This section will periodically check for bots that have been logged out for more than 24 hours.
 async function checkAndRemindLoggedOutBots() {
     console.log('Running scheduled check for logged out bots...');
     const allBots = await getAllUserBots(); // Get all bots from your DB
