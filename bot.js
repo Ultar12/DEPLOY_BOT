@@ -87,6 +87,12 @@ async function getUserIdByBotName(botName) {
     );
     return r.rows.length > 0 ? r.rows[0].user_id : null;
 }
+// NEW: Function to get all bots from the database
+async function getAllUserBots() {
+    const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
+    return r.rows;
+}
+
 async function deleteUserBot(u, b) {
   await pool.query(
     'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2',
@@ -251,7 +257,7 @@ async function sendAppList(chatId, messageId = null) {
         await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
     }
   } catch (e) {
-    const errorMsg = `Error fetching apps: ${e.message}`;
+    const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
     if (messageId) {
         bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
     } else {
@@ -611,7 +617,7 @@ bot.on('message', async msg => {
         // --- INTERACTIVE WIZARD END ---
 
       } else {
-        console.error(`Error checking app name "${nm}":`, e.message);
+        console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
         return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
       }
     }
@@ -651,7 +657,8 @@ bot.on('message', async msg => {
       // Start the restart countdown after the variable is successfully set
       await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
-      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
 });
@@ -881,7 +888,8 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
-      return bot.editMessageText(`Error restarting: ${e.message}`, {
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error restarting: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
@@ -917,7 +925,8 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
-      return bot.editMessageText(`Error fetching logs: ${e.message}`, {
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
@@ -977,7 +986,8 @@ bot.on('callback_query', async q => {
             return sendAppList(cid); // Admin sees all apps
           }
       } catch (e) {
-          return bot.editMessageText(`Error deleting app: ${e.message}`, {
+          const errorMsg = e.response?.data?.message || e.message;
+          return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
@@ -1066,7 +1076,8 @@ bot.on('callback_query', async q => {
       );
       await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
     } catch (e) {
-      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
 
@@ -1121,7 +1132,6 @@ bot.on('callback_query', async q => {
     }
   }
 });
-
 
 ---
 ### **14) Channel Post Handler**
@@ -1189,5 +1199,75 @@ bot.on('channel_post', async msg => {
         return;
     }
 });
+
+---
+### **15) Scheduled Task for Logout Reminders**
+This section will periodically check for bots that have been logged out for more than 24 hours.
+---
+async function checkAndRemindLoggedOutBots() {
+    console.log('Running scheduled check for logged out bots...');
+    const allBots = await getAllUserBots(); // Get all bots from your DB
+
+    for (const botEntry of allBots) {
+        const { user_id, bot_name } = botEntry;
+        const herokuApp = bot_name; // Assuming bot_name is also the Heroku app name
+
+        try {
+            const apiHeaders = {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            };
+
+            // 1. Get app config vars to check LAST_LOGOUT_ALERT
+            const configRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/config-vars`, { headers: apiHeaders });
+            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT;
+
+            // 2. Get dyno status to check if the bot is currently "up"
+            const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
+            const webDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
+
+            const isBotRunning = webDyno && webDyno.state === 'up';
+
+            if (lastLogoutAlertStr && !isBotRunning) {
+                const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
+                const now = new Date();
+                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
+                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
+                if (timeSinceLogout > twentyFourHours) {
+                    const reminderMessage =
+                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
+                        `It appears to still be offline. Please update your session ID to bring it back online.`;
+                    
+                    await bot.sendMessage(user_id, reminderMessage, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
+                            ]
+                        }
+                    });
+                    console.log(`Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                }
+            }
+
+        } catch (error) {
+            // Ignore 404 errors (app not found/deleted), log others
+            if (error.response && error.response.status === 404) {
+                console.log(`App ${herokuApp} not found for reminder check, likely deleted.`);
+                // Optionally: Delete this bot from your user_bots table if it's not found on Heroku
+                // await deleteUserBot(user_id, herokuApp);
+            } else {
+                console.error(`Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+            }
+        }
+    }
+}
+
+// Schedule the check to run every hour (3600000 milliseconds)
+// For testing, you can make this interval shorter, e.g., 60000 (1 minute)
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour
+
 
 console.log('Bot is running...');
