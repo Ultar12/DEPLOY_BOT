@@ -37,42 +37,69 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 (async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS user_bots (
-      user_id    TEXT NOT NULL,
-      bot_name   TEXT NOT NULL,
-      session_id TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS deploy_keys (
-      key        TEXT PRIMARY KEY,
-      uses_left  INTEGER NOT NULL,
-      created_by TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  // Table for "Free Trial" cooldowns
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS temp_deploys (
-      user_id       TEXT NOT NULL,
-      app_name      TEXT PRIMARY KEY, /* Changed to app_name as PK for free trial tracking */
-      last_deploy_at TIMESTAMP NOT NULL,
-      delete_at     TIMESTAMP NOT NULL
-    );
-  `);
-  // New table for bot error notifications
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS bot_notifications (
-        app_name TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        error_type TEXT NOT NULL, -- e.g., 'INVALID_SESSION', 'CRASHED'
-        last_notified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (app_name, error_type) -- Unique constraint on app + error type
-    );
-  `);
-})().catch(console.error);
+  try {
+    // --- START: Database Schema Initialization/Correction ---
+    // IMPORTANT: Dropping tables will DELETE ALL DATA in them.
+    // We drop temp_deploys and bot_notifications to ensure the correct schema is always applied
+    // without manual intervention, especially after schema changes.
+    // user_bots and deploy_keys are NOT dropped as they contain persistent user data.
+
+    console.log('Ensuring database schema is up to date...');
+
+    // Drop and recreate temp_deploys to ensure 'app_name' column exists and is PK
+    await pool.query(`DROP TABLE IF EXISTS temp_deploys;`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS temp_deploys (
+        user_id       TEXT NOT NULL,
+        app_name      TEXT PRIMARY KEY,
+        last_deploy_at TIMESTAMP NOT NULL,
+        delete_at     TIMESTAMP NOT NULL
+      );
+    `);
+    console.log('Table temp_deploys ensured.');
+
+    // Drop and recreate bot_notifications to ensure correct schema
+    await pool.query(`DROP TABLE IF EXISTS bot_notifications;`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_notifications (
+          app_name TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          error_type TEXT NOT NULL,
+          last_notified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (app_name, error_type)
+      );
+    `);
+    console.log('Table bot_notifications ensured.');
+
+    // Ensure user_bots table exists (without dropping, to preserve data)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_bots (
+        user_id    TEXT NOT NULL,
+        bot_name   TEXT NOT NULL,
+        session_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table user_bots ensured.');
+
+    // Ensure deploy_keys table exists (without dropping, to preserve data)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deploy_keys (
+        key        TEXT PRIMARY KEY,
+        uses_left  INTEGER NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table deploy_keys ensured.');
+
+    // --- END: Database Schema Initialization/Correction ---
+
+  } catch (e) {
+    console.error('Error during database schema setup:', e);
+    process.exit(1); // Exit if DB setup fails, as bot won't function correctly
+  }
+})().catch(console.error); // Catch any unhandled promise rejections from the async IIFE
 
 // 5) DB helper functions
 async function addUserBot(u, b, s) {
@@ -301,6 +328,7 @@ async function sendAppList(chatId, messageId = null) {
 async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME; // This is the user-provided app name
   let fullAppUrl = `https://${name}.herokuapp.com`; // Default if Heroku doesn't return full URL immediately
+  let actualAppName = name; // Will be updated if Heroku assigns a hashed name
 
   try {
     // Stage 1: Create App
@@ -311,20 +339,14 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         Accept: 'application/vnd.heroku+json; version=3'
       }
     });
-    // --- FIX START: Get actual app name/URL after creation ---
-    // Heroku might return a generated name with a hash if the requested name isn't unique.
-    // The `web_url` property from the creation response is the most reliable.
-    const createdAppName = createRes.data.name;
+    actualAppName = createRes.data.name;
     fullAppUrl = createRes.data.web_url;
-    // Update the 'name' variable to the actual created name for consistency downstream
-    vars.APP_NAME = createdAppName;
-    // --- FIX END ---
-
+    vars.APP_NAME = actualAppName; // Update in vars for consistency downstream
 
     // Stage 2: Add-ons and Buildpacks
     await bot.editMessageText('⚙️ Configuring resources...', { chat_id: chatId, message_id: createMsg.message_id });
     await axios.post(
-      `https://api.heroku.com/apps/${createdAppName}/addons`, // Use createdAppName
+      `https://api.heroku.com/apps/${actualAppName}/addons`,
       { plan: 'heroku-postgresql' },
       {
         headers: {
@@ -336,7 +358,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     );
 
     await axios.put(
-      `https://api.heroku.com/apps/${createdAppName}/buildpack-installations`, // Use createdAppName
+      `https://api.heroku.com/apps/${actualAppName}/buildpack-installations`,
       {
         updates: [
           { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
@@ -356,7 +378,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     // Stage 3: Config Vars
     await bot.editMessageText('🔧 Setting environment variables...', { chat_id: chatId, message_id: createMsg.message_id });
     await axios.patch(
-      `https://api.heroku.com/apps/${createdAppName}/config-vars`, // Use createdAppName
+      `https://api.heroku.com/apps/${actualAppName}/config-vars`,
       {
         ...defaultEnvVars,
         ...vars
@@ -373,7 +395,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     // Stage 4: Build
     await bot.editMessageText('🛠️ Starting build process...', { chat_id: chatId, message_id: createMsg.message_id });
     const bres = await axios.post(
-      `https://api.heroku.com/apps/${createdAppName}/builds`, // Use createdAppName
+      `https://api.heroku.com/apps/${actualAppName}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
       {
         headers: {
@@ -384,7 +406,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       }
     );
 
-    const statusUrl = `https://api.heroku.com/apps/${createdAppName}/builds/${bres.data.id}`; // Use createdAppName
+    const statusUrl = `https://api.heroku.com/apps/${actualAppName}/builds/${bres.data.id}`;
     let status = 'pending';
     const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
 
@@ -430,14 +452,52 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           }).catch(() => {}); // Ignore errors if user deletes message
       }
       
-      // Use fullAppUrl here
-      await bot.editMessageText(
-        `Your bot is now working!\nlive at:${fullAppUrl}`,
-        { chat_id: chatId, message_id: progMsg.message_id }
-      );
+      // --- NEW FEATURE: Check logs after deployment for session errors ---
+      let sessionErrorFound = false;
+      try {
+          const logSessionRes = await axios.post(`https://api.heroku.com/apps/${actualAppName}/log-sessions`,
+              { tail: false, lines: 200 }, // Fetch recent logs
+              { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+          );
+          const logsUrl = logSessionRes.data.logplex_url;
+          const logRes = await axios.get(logsUrl);
+          const logs = logRes.data;
+
+          if (logs.match(/INVALID SESSION ID/i) || logs.match(/Invalid AuthState/i)) {
+              sessionErrorFound = true;
+          }
+      } catch (logError) {
+          console.error(`Error fetching post-deploy logs for ${actualAppName}:`, logError.message);
+          // Don't fail the deployment if logs can't be fetched, just proceed as if no immediate error.
+      }
+
+      if (sessionErrorFound) {
+          await bot.editMessageText(
+              `⚠️ Your bot "${actualAppName}" started but its *session is invalid*.\n\n` +
+              `Please update your SESSION_ID by rescanning or getting a new one.`,
+              {
+                  chat_id: chatId,
+                  message_id: progMsg.message_id,
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                      inline_keyboard: [[
+                          { text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${actualAppName}` },
+                          { text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${actualAppName}/logs` }
+                      ]]
+                  }
+              }
+          );
+      } else {
+          await bot.editMessageText(
+              `✅ Your bot is now working!\nlive at:${fullAppUrl}`,
+              { chat_id: chatId, message_id: progMsg.message_id }
+          );
+      }
+      // --- END NEW FEATURE ---
+
 
       if (isFreeTrial) {
-          await recordFreeTrialDeploy(chatId, createdAppName); // Use createdAppName
+          await recordFreeTrialDeploy(chatId, actualAppName); // Use actualAppName
           // Fetch user details for admin notification
           let userDetails = `*User ID:* \`${chatId}\``;
           try {
@@ -452,7 +512,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               console.error(`Could not fetch user details for ${chatId}:`, e.message);
           }
           
-          const appDetails = `*App Name:* \`${createdAppName}\`\n*URL:* ${fullAppUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* Free Trial (1 day)`;
+          const appDetails = `*App Name:* \`${actualAppName}\`\n*URL:* ${fullAppUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* Free Trial (1 day)`;
   
           await bot.sendMessage(ADMIN_ID,
               `*🚨 New Free Trial App Deployed 🚨*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}\n\nThis app will be auto-deleted in 1 day.`,
@@ -462,19 +522,19 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           // This timeout is now a fallback, the main deletion logic will be in `checkAndDeleteDueTrialApps`
           setTimeout(async () => {
               try {
-                  const res = await pool.query('SELECT * FROM temp_deploys WHERE app_name = $1 AND delete_at <= NOW()', [createdAppName]);
+                  const res = await pool.query('SELECT * FROM temp_deploys WHERE app_name = $1 AND delete_at <= NOW()', [actualAppName]);
                   if (res.rows.length > 0) {
-                      await bot.sendMessage(chatId, `⏳ Your Free Trial app "${createdAppName}" is being deleted now as its 1-day runtime has ended.`);
-                      await axios.delete(`https://api.heroku.com/apps/${createdAppName}`, {
+                      await bot.sendMessage(chatId, `⏳ Your Free Trial app "${actualAppName}" is being deleted now as its 1-day runtime has ended.`);
+                      await axios.delete(`https://api.heroku.com/apps/${actualAppName}`, {
                           headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                       });
-                      await deleteUserBot(chatId, createdAppName);
-                      await deleteTrialDeployEntry(createdAppName); // Remove from temp_deploys table
-                      await bot.sendMessage(chatId, `Free Trial app "${createdAppName}" successfully deleted.`);
+                      await deleteUserBot(chatId, actualAppName);
+                      await deleteTrialDeployEntry(actualAppName); // Remove from temp_deploys table
+                      await bot.sendMessage(chatId, `Free Trial app "${actualAppName}" successfully deleted.`);
                   }
               } catch (e) {
-                  console.error(`Failed to auto-delete free trial app ${createdAppName} via setTimeout:`, e.message);
-                  await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${createdAppName}". Please delete it manually from your Heroku dashboard.`);
+                  console.error(`Failed to auto-delete free trial app ${actualAppName} via setTimeout:`, e.message);
+                  await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${actualAppName}". Please delete it manually from your Heroku dashboard.`);
               }
           }, 24 * 60 * 60 * 1000 + 5000); // 1 day + a small buffer
       }
@@ -595,13 +655,12 @@ setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000);
 const BOT_ERROR_PATTERNS = [
     { regex: /INVALID SESSION ID/i, type: 'INVALID_SESSION' },
     { regex: /Invalid AuthState/i, type: 'INVALID_AUTHSTATE' },
-    // Add more patterns here if you identify other critical errors
     { regex: /Error: (.*)ECONNREFUSED/i, type: 'CONNECTION_REFUSED' }, // Example for connection errors
     { regex: /Error: Command failed with exit code/i, type: 'COMMAND_FAILED' }, // General command failures
     { regex: /code=H\d\d/i, type: 'HEROKU_ERROR_CODE' } // General Heroku runtime errors
 ];
 
-const NOTIFICATION_COOLDOWN_HOURS = 6; // How often to notify for the same error on the same app
+const NOTIFICATION_COOLDOWN_HOURS = 24; // How often to notify for the same error on the same app (24 hours)
 
 async function checkBotStatusAndNotify() {
     console.log('Checking bot statuses for errors...');
@@ -644,7 +703,7 @@ async function checkBotStatusAndNotify() {
                     continue; // Skip log parsing if dyno is clearly crashed
                 }
 
-                // 2. Fetch Logs for more specific errors
+                // 2. Fetch Logs for more specific errors (only if not already crashed)
                 const logSessionRes = await axios.post(`https://api.heroku.com/apps/${bot_name}/log-sessions`,
                     { tail: false, lines: 200 }, // Fetch more lines for better log analysis
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
@@ -663,12 +722,15 @@ async function checkBotStatusAndNotify() {
 
                         if (!lastNotified || (now.getTime() - lastNotified.getTime() > NOTIFICATION_COOLDOWN_HOURS * 60 * 60 * 1000)) {
                             let message = `🚨 Your bot "${bot_name}" is experiencing an issue!`;
-                            let actionButton = [{ text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` }];
+                            let actionButtons = [ // Use an array for buttons, then chunk it
+                                { text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` },
+                                { text: '🔄 Restart Bot', callback_data: `restart:${bot_name}` } // Always give restart option
+                            ];
 
                             if (errorType === 'INVALID_SESSION' || errorType === 'INVALID_AUTHSTATE') {
                                 message = `⚠️ Your bot "${bot_name}" has an *INVALID SESSION ID* or *INVALID AUTHSTATE*.\n\n` +
                                           `This means your session has expired or is incorrect. Please update your session ID immediately!`;
-                                actionButton.unshift({ text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }); // Prepend button
+                                actionButtons.unshift({ text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }); // Prepend button for session change
                             } else if (errorType === 'CONNECTION_REFUSED') {
                                 message = `🔌 Your bot "${bot_name}" is having trouble connecting to a service (Connection Refused).\n\n` +
                                           `This might be a temporary network issue or a problem with the service your bot connects to.`;
@@ -685,11 +747,11 @@ async function checkBotStatusAndNotify() {
                             await bot.sendMessage(user_id, message, {
                                 parse_mode: 'Markdown',
                                 reply_markup: {
-                                    inline_keyboard: chunkArray(actionButton, 2) // Ensure buttons are chunked
+                                    inline_keyboard: chunkArray(actionButtons, 2) // Chunk all action buttons
                                 }
                             });
                             await recordBotNotification(bot_name, user_id, errorType);
-                            notifiedForThisBot = true; // Mark as notified for this cycle
+                            notifiedForThisBot = true; 
                             break; // Stop checking patterns for this bot if one is found and notified
                         }
                     }
@@ -697,7 +759,7 @@ async function checkBotStatusAndNotify() {
 
             } catch (err) {
                 console.error(`Error checking status for app ${bot_name}:`, err.message);
-                // Optionally notify admin if the check itself fails consistently
+                // Log and continue, don't stop the whole check
             }
         }
     } catch (err) {
@@ -707,6 +769,7 @@ async function checkBotStatusAndNotify() {
 
 // Schedule the bot status check to run every 30 minutes
 setInterval(checkBotStatusAndNotify, 30 * 60 * 1000); // 30 minutes
+
 
 // 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
@@ -1089,7 +1152,6 @@ bot.on('callback_query', async q => {
       }
       return;
   }
-  // --- END WIZARD HANDLER ---
 
 
   if (action === 'genkeyuses') {
@@ -1298,6 +1360,7 @@ bot.on('callback_query', async q => {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
           await deleteUserBot(cid, appToDelete); // Delete from user_bots
+          // This line is the one causing 'column app_name does not exist' if schema is not fixed
           await deleteTrialDeployEntry(appToDelete); // Delete from temp_deploys
 
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
@@ -1322,7 +1385,8 @@ bot.on('callback_query', async q => {
           }
 
       } catch (e) {
-          return bot.editMessageText(`Error deleting app: ${e.message}`, {
+          console.error(`Error deleting app ${appToDelete}:`, e.message); // Log the actual error
+          return bot.editMessageText(`Error deleting app: ${e.message}\n\nIf the app no longer exists on Heroku, you might need to manually remove it from your bot's list using the /mybots feature (if it appears there).`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
