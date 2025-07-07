@@ -150,7 +150,8 @@ async function getUserBots(u) {
     );
     console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name)); // Debugging log
     return r.rows.map(x => x.bot_name);
-  } catch (error) {
+  }
+  catch (error) {
     console.error(`[DB] getUserBots: Failed to get bots for user "${u}":`, error.message);
     return [];
   }
@@ -168,7 +169,8 @@ async function getUserIdByBotName(botName) {
         const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
         console.log(`[DB] getUserIdByBotName: For bot "${botName}", found user_id: "${userId}".`);
         return userId;
-    } catch (error) {
+    }
+    catch (error) {
         console.error(`[DB] getUserIdByBotName: Failed to get user ID by bot name "${botName}":`, error.message);
         return null;
     }
@@ -179,7 +181,8 @@ async function getAllUserBots() {
         const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
         console.log(`[DB] getAllUserBots: Fetched all bots:`, r.rows.map(x => `"${x.user_id}" - "${x.bot_name}"`));
         return r.rows;
-    } catch (error) {
+    }
+    catch (error) {
         console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
         return [];
     }
@@ -270,6 +273,9 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     }
 
     // Delete the app from our internal user_bots database
+    // Note: We are deleting a specific (user_id, bot_name) pair.
+    // If a bot was moved with /add, it should have been deleted from old user's list.
+    // If it's a 404, it's missing on Heroku, so we remove from DB.
     await deleteUserBot(ownerUserId, appName); // This deletes the (ownerUserId, appName) pair
     console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots DB for user "${ownerUserId}".`);
 
@@ -684,11 +690,33 @@ bot.onText(/^\/start$/, async msg => {
   delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
-  await bot.sendMessage(cid,
-    isAdmin ? 'Welcome, Admin! Here is your menu:' : 'Welcome! Please select an option:', {
+  
+  if (isAdmin) {
+    await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
-    }
-  );
+    });
+  } else {
+    // FIX: Send image with professional caption and keyboard for regular users
+    const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg';
+    const welcomeCaption = `
+👋 Welcome to our Bot Deployment Service!
+
+To get started, please follow these simple steps:
+
+1️⃣  **Connect Your WhatsApp:**
+    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+
+2️⃣  **Deploy Your Bot:**
+    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+
+We're here to assist you every step of the way!
+`;
+    await bot.sendPhoto(cid, welcomeImageUrl, {
+      caption: welcomeCaption,
+      parse_mode: 'Markdown',
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    });
+  }
 });
 
 bot.onText(/^\/menu$/i, msg => {
