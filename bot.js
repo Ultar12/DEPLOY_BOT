@@ -964,7 +964,8 @@ bot.on('message', async msg => {
     if (cid === ADMIN_ID && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
         const pairingCode = text.trim();
         // Check if the pairing code has exactly 8 words (alphanumeric words separated by spaces)
-        const words = pairingCode.split(/\s+/).filter(word => word.length > 0); // Filter out empty strings from multiple spaces
+        // Also ensure words are not empty strings from multiple spaces
+        const words = pairingCode.split(/\s+/).filter(word => word.length > 0);
 
         if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
             return bot.sendMessage(ADMIN_ID, '❌ Invalid pairing code format. Please send exactly 8 alphanumeric words separated by spaces.');
@@ -972,18 +973,18 @@ bot.on('message', async msg => {
 
         const targetUserId = userStates[ADMIN_ID].data.target_user_id_for_pairing;
         if (targetUserId) {
-            // Stop the loading animation for the user
+            // Retrieve user's waiting message ID and interval ID
             const userStateWaiting = userStates[targetUserId];
             if (userStateWaiting && userStateWaiting.data.animateIntervalId) {
-                clearInterval(userStateWaiting.data.animateIntervalId);
-                // Immediately update user's message to reflect "received" status before sending code
-                await bot.editMessageText(`✅ Pairing code received! Sending now...`, {
+                clearInterval(userStateWaiting.data.animateIntervalId); // Stop the animation
+                // Try to edit the user's loading message to indicate success/receipt
+                await bot.editMessageText(`✅ Pairing code received! Sending to you now...`, {
                     chat_id: targetUserId,
                     message_id: userStateWaiting.data.messageId
-                }).catch(err => console.error(`Failed to edit user's waiting message: ${err.message}`));
+                }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
             }
 
-            // CRITICAL FIX: Ensure the code is sent to the target user.
+            // Send the actual pairing code to the target user
             await bot.sendMessage(targetUserId, 
                 `Your pairing code is:\n` +
                 `\`\`\`\n${pairingCode}\n\`\`\`\n` + // Code block for easy copying
@@ -1032,7 +1033,7 @@ bot.on('message', async msg => {
     );
     
     // Set user's state to acknowledge their request and show loading animation
-    // Send a NEW message for the loading state
+    // Send a NEW message for the loading state (as we can't edit the photo message)
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Wait for Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Wait for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
@@ -1272,10 +1273,10 @@ bot.on('callback_query', async q => {
 
   // --- NEW: Handle "Can't get code?" button click ---
   if (action === 'cant_get_code') {
-      delete userStates[cid]; // Clear any previous state
+      delete userStates[cid]; // Clear any previous state for the user
       userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // No messageId stored here as we send a new message
       
-      // Send a NEW message to ask for the WhatsApp number
+      // Send a NEW message to ask for the WhatsApp number (since editing message with photo fails)
       await bot.sendMessage(cid, 'Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { 
           parse_mode: 'Markdown' 
       });
@@ -1784,10 +1785,8 @@ bot.on('callback_query', async q => {
             return sendAppList(cid); // Admin sees all apps
           }
       } catch (e) {
-          // FIX: Handle 404 Not Found explicitly for delete actions
+          // FIX: Handle 404 if it was already deleted
           if (e.response && e.response.status === 404) {
-              // If it's a 404 during delete, it means it was already deleted from Heroku.
-              // Just clean up our DB and notify.
               await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete'); // Pass isUserFacing based on original action
               return; 
           }
