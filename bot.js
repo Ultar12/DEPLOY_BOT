@@ -282,13 +282,17 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     const message = `🗑️ App "*${appName}*" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
     
     // Determine where to send the primary notification
-    if (originalMessageId && q.message.chat.id === callingChatId) { // Only edit if the message belongs to the current interaction
+    // Check if q (callback_query object) exists and if q.message.chat.id is available
+    const isOriginalMessageEditable = originalMessageId && q && q.message && q.message.chat && q.message.chat.id && q.message.chat.id === callingChatId;
+
+    if (isOriginalMessageEditable) { 
         await bot.editMessageText(message, {
             chat_id: callingChatId,
             message_id: originalMessageId,
             parse_mode: 'Markdown'
         }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
     } else {
+        // If original message is not editable or not provided, send a new message
         await bot.sendMessage(callingChatId, message, { parse_mode: 'Markdown' })
             .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
@@ -576,7 +580,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
       const userDetails = [
         `*Name:* ${first_name || ''} ${last_name || ''}`,
-        `*Username:* @${username || 'N/A'}`,
+        `*Username:* ${username ? `@${username}` : (first_name || last_name ? `${[first_name, last_name].filter(Boolean).join(' ')} (No @username)` : 'N/A')}`, // FIX: Improved username display
         `*Chat ID:* \`${chatId}\``
       ].join('\n');
       const appDetails = `*App Name:* \`${name}\`\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
@@ -714,7 +718,7 @@ We're here to assist you every step of the way!
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
       parse_mode: 'Markdown',
-      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true } // buildKeyboard(isAdmin) correctly returns user keyboard
     });
   }
 });
@@ -884,12 +888,11 @@ bot.on('message', async msg => {
         "1️⃣ *Open the Link*\n" +
         "Visit: https://levanter-delta.vercel.app/\n\n" +
         "2️⃣ *Important for iPhone Users*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" + // FIX: Removed "for best results."
         "3️⃣ *Skip Advertisements*\n" +
         "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Use a CUSTOM ID*\n" +
-        "You **must** enter your own unique ID in the 'Custom Session' field. Do not use the default one. A good ID could be your name or username (e.g., `johnsmith`).\n\n" +
-        "Once you have copied your session ID, tap the 'Deploy' button here to continue.";
+        "4️⃣ *Copy Your Session ID*\n" + // FIX: Updated text for point 4 title
+        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n"; // FIX: Updated text for point 4 details
 
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
