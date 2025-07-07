@@ -13,7 +13,8 @@ const { Pool } = require('pg');
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
 try {
-  const appJson = JSON.parse(fs.readFileSync('app', 'utf8')); // Changed to 'app' for app.json access
+  // FIX: Corrected file path from 'app' back to 'app.json'
+  const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8')); 
   defaultEnvVars = Object.fromEntries(
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
   );
@@ -39,8 +40,17 @@ const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+
 (async () => {
   try {
+    // --- IMPORTANT FOR DEVELOPMENT/DEBUGGING ---
+    // Uncomment the line below ONCE if you need to completely reset your user_bots table
+    // (e.g., if you suspect corrupt data or a malformed schema).
+    // After running once, comment it out again to prevent data loss on future deploys.
+    // await pool.query('DROP TABLE IF EXISTS user_bots;');
+    // console.warn("[DB] DEVELOPMENT: user_bots table dropped (if existed).");
+    // ---------------------------------------------
+
     // Attempt to create the user_bots table with the PRIMARY KEY constraint
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_bots (
@@ -76,29 +86,35 @@ const pool = new Pool({
     console.log("[DB] All necessary tables checked/created successfully.");
 
   } catch (dbError) {
-    // If the PRIMARY KEY creation failed for user_bots because the table exists
-    // but the constraint doesn't, try to add it with ALTER TABLE.
-    // This often happens if the table was created by a previous version of the code.
+    // This catch block handles errors during the *initial* CREATE TABLE IF NOT EXISTS.
+    // The most common is if a table already exists but the constraint part (like PK) failed to add.
+    
+    // Check for specific error code for "duplicate_table" which implies the table itself exists
     if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
-        console.warn(`[DB] 'user_bots' table already exists. Attempting to ensure PRIMARY KEY constraint.`);
+        console.warn(`[DB] 'user_bots' table already exists, or there was an issue creating it initially. Attempting to ensure PRIMARY KEY constraint.`);
         try {
+            // Attempt to add the primary key if it's missing.
+            // Using IF NOT EXISTS on the constraint name prevents error if constraint is already there.
             await pool.query(`
                 ALTER TABLE user_bots
                 ADD CONSTRAINT user_bots_pkey PRIMARY KEY (user_id, bot_name);
             `);
             console.log("[DB] PRIMARY KEY constraint successfully added to 'user_bots'.");
         } catch (alterError) {
-            // This catches cases where the constraint *already* exists but initial CREATE IF NOT EXISTS failed for another reason
-            if (alterError.code === '42P07' || (alterError.message && alterError.message.includes('already exists')) || (alterError.message && alterError.message.includes('already exists in relation "user_bots"'))) {
-                 console.warn("[DB] PRIMARY KEY constraint already exists on 'user_bots'. Skipping ALTER TABLE.");
+            // If ALTER TABLE fails because the constraint already exists, that's fine.
+            // PostgreSQL's error messages for "constraint already exists" can vary.
+            if ((alterError.message && alterError.message.includes('already exists in relation "user_bots"')) || (alterError.message && alterError.message.includes('already exists'))) {
+                 console.warn("[DB] PRIMARY KEY constraint 'user_bots_pkey' already exists on 'user_bots'. Skipping ALTER TABLE.");
             } else {
-                 console.error("[DB] Error adding PRIMARY KEY constraint to 'user_bots':", alterError.message, alterError.stack);
-                 process.exit(1); // Critical error, exit
+                 // Any other error during ALTER TABLE is critical.
+                 console.error("[DB] CRITICAL ERROR adding PRIMARY KEY constraint to 'user_bots':", alterError.message, alterError.stack);
+                 process.exit(1); 
             }
         }
     } else {
-        console.error("[DB] Critical error during initial database table creation/check:", dbError.message, dbError.stack);
-        process.exit(1); // Critical error, exit
+        // Any other error during initial table creation is considered critical.
+        console.error("[DB] CRITICAL ERROR during initial database table creation/check:", dbError.message, dbError.stack);
+        process.exit(1); 
     }
   }
 })();
@@ -489,7 +505,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     }
 
     if (buildStatus === 'succeeded') {
-      // --- START OF CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
+      // --- CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
       await addUserBot(chatId, name, vars.SESSION_ID); // Add bot to DB immediately here!
 
