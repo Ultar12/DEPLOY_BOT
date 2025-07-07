@@ -31,6 +31,9 @@ const {
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
+// Add the channel ID the bot will listen to for specific messages
+const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here
+
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -75,6 +78,14 @@ async function getUserBots(u) {
     [u]
   );
   return r.rows.map(x => x.bot_name);
+}
+// NEW: Function to get user_id by bot_name
+async function getUserIdByBotName(botName) {
+    const r = await pool.query(
+        'SELECT user_id FROM user_bots WHERE bot_name=$1',
+        [botName]
+    );
+    return r.rows.length > 0 ? r.rows[0].user_id : null;
 }
 async function deleteUserBot(u, b) {
   await pool.query(
@@ -611,7 +622,7 @@ bot.on('message', async msg => {
   // We can remove it from here.
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME } = st.data;
+    const { APP_NAME, VAR_NAME, fromChannelBotName, fromChannelUserId } = st.data; // Capture original source
     const newVal = text.trim();
     try {
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
@@ -628,6 +639,13 @@ bot.on('message', async msg => {
       );
       if (VAR_NAME === 'SESSION_ID') {
         await updateUserSession(cid, APP_NAME, newVal);
+      }
+      // If this flow originated from a channel notification for this user's bot
+      if (fromChannelBotName && fromChannelUserId === cid && VAR_NAME === 'SESSION_ID') {
+          await bot.sendMessage(cid, `✅ Session ID for "${fromChannelBotName}" updated successfully! Restarting bot...`);
+          // Optionally, trigger a restart directly here if you want to ensure it restarts immediately
+          // and you are certain the Heroku API call below will handle the restart logic correctly.
+          // For now, relying on the 'startRestartCountdown' to imply a restart.
       }
       delete userStates[cid];
       // Start the restart countdown after the variable is successfully set
@@ -1025,6 +1043,7 @@ bot.on('callback_query', async q => {
     } else {
       userStates[cid].step = 'SETVAR_ENTER_VALUE'; // Update step for message handler
       userStates[cid].data.VAR_NAME = varKey; // Store VAR_NAME
+      userStates[cid].data.APP_NAME = appName; // Ensure APP_NAME is stored for this step
       // When asking for value, send a new message as direct input is expected
       return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
     }
@@ -1051,6 +1070,31 @@ bot.on('callback_query', async q => {
     }
   }
 
+  // NEW: Handler for initiating session change from channel notification
+  if (action === 'change_session') {
+      const appName = payload;
+      const targetUserId = extra; // The user ID that owns this bot
+
+      // Ensure the user initiating this action is the actual owner (optional but good for security)
+      if (cid !== targetUserId) {
+          await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+          return;
+      }
+      
+      userStates[cid] = {
+          step: 'SETVAR_ENTER_VALUE',
+          data: {
+              APP_NAME: appName,
+              VAR_NAME: 'SESSION_ID',
+              fromChannelBotName: appName, // Store context that this came from a channel alert
+              fromChannelUserId: targetUserId // Store context
+          }
+      };
+      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
+      return;
+  }
+
+
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
     const currentMessageId = q.message.message_id; // Get the ID of the message to edit
@@ -1061,20 +1105,89 @@ bot.on('callback_query', async q => {
     } else {
       // If regular user, show only their bots
       const bots = await getUserBots(cid);
-      if (!bots.length) {
-        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      if (bots.length > 0) {
+          const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+            text: n,
+            callback_data: `selectbot:${n}`
+          })));
+          return bot.editMessageText('Your remaining deployed bots:', {
+            chat_id: cid,
+            message_id: currentMessageId,
+            reply_markup: { inline_keyboard: rows }
+          });
+      } else {
+          return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
       }
-      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
-        text: n,
-        callback_data: `selectbot:${n}`
-      })));
-      return bot.editMessageText('Your deployed bots:', {
-        chat_id: cid,
-        message_id: currentMessageId,
-        reply_markup: { inline_keyboard: rows }
-      });
     }
   }
+});
+
+
+---
+### **14) Channel Post Handler**
+This is the core new feature to detect and react to messages from your Levanter app.
+---
+bot.on('channel_post', async msg => {
+    const channelId = msg.chat.id.toString();
+    const text = msg.text?.trim();
+
+    // Check if the message is from the designated listening channel
+    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
+        return; // Ignore messages from other channels
+    }
+
+    if (!text) {
+        return; // Ignore empty messages
+    }
+
+    // Regex for "logged out" message: User [bot_name] has logged out.
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./);
+    if (logoutMatch) {
+        const botName = logoutMatch[1];
+        console.log(`Detected logout for bot: ${botName}`);
+
+        const userId = await getUserIdByBotName(botName); // Get the owner's ID
+        if (userId) {
+            const warningMessage =
+                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
+                `Please update your session ID to get it back online.`;
+            
+            await bot.sendMessage(userId, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
+                    ]
+                }
+            });
+            console.log(`Sent logout notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.warn(`Could not find user for bot "${botName}" during logout alert.`);
+        }
+        return;
+    }
+
+    // Regex for "connected" message: ✅ [bot_name] connected.
+    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\./);
+    if (connectedMatch) {
+        const botName = connectedMatch[1];
+        console.log(`Detected connected status for bot: ${botName}`);
+
+        const userId = await getUserIdByBotName(botName); // Get the owner's ID
+        if (userId) {
+            const appUrl = `https://${botName}.herokuapp.com`; // Construct the URL
+            const liveMessage = `🎉 Your bot "*${botName}*" is now live at:\n${appUrl}`;
+            
+            await bot.sendMessage(userId, liveMessage, {
+                parse_mode: 'Markdown',
+                disable_web_page_preview: false // Allow link preview
+            });
+            console.log(`Sent live notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.warn(`Could not find user for bot "${botName}" during connected alert.`);
+        }
+        return;
+    }
 });
 
 console.log('Bot is running...');
