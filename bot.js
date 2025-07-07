@@ -592,7 +592,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           // This catch block handles both direct rejections from channel_post and the timeout
           await bot.editMessageText(
             `⚠️ Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
-            `It has been added to your "My Bots" list, but you may need to update the session ID.`,
+            `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`, // Updated message for clarity
             {
                 chat_id: chatId,
                 message_id: progMsg.message_id,
@@ -682,7 +682,7 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
     console.log(`[Admin] Admin ${cid} initiated /update for user ${targetUserId}. Prompting for app selection.`);
     
     try {
-        const sentMsg = await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`);
+        const sentMsg = await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`, { parse_mode: 'Markdown' }); // Added parse_mode
         userStates[cid] = {
             step: 'AWAITING_APP_FOR_UPDATE', // New state to signify this specific flow
             data: {
@@ -794,8 +794,6 @@ bot.on('message', async msg => {
   const st = userStates[cid];
   if (!st) return; // No active state, ignore message
 
-  // This block handles direct text input for session ID (normal deploy flow, etc.)
-  // It should NOT be triggered by the /update command's app selection (which uses callback_query).
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
@@ -901,7 +899,7 @@ bot.on('message', async msg => {
   if (st.step === 'SETVAR_ENTER_VALUE') {
     // This part of the message handler is for when a *text* input is expected.
     // It should NOT interfere with the /update command's flow, which uses button callbacks.
-    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate, isForUpdateCommand } = st.data; // targetUserIdForUpdate might be undefined here.
+    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate } = st.data; // targetUserIdForUpdate might be undefined here.
     const newVal = text.trim();
     
     // Determine the actual user ID to associate the bot with.
@@ -1221,30 +1219,31 @@ bot.on('callback_query', async q => {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      const createdAt = new Date(appData.created_at);
-      const now = new Date();
-      const diffTime = Math.abs(now - createdAt);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-      let dynoStatus = 'No dynos found.';
+      let dynoStatus = '❓ Status Unknown'; // Default
       let statusEmoji = '❓';
-      if (dynoData.length > 0) {
-          const workerDyno = dynoData.find(d => d.type === 'worker'); // Changed from 'web' to 'worker'
+
+      if (dynoData.length === 0) {
+          dynoStatus = 'No dynos found.'; // App is scaled to 0 or has no process types
+      } else {
+          const workerDyno = dynoData.find(d => d.type === 'worker'); // Try to find the worker dyno
           if (workerDyno) {
               const state = workerDyno.state;
               if (state === 'up') statusEmoji = '🟢';
               else if (state === 'crashed') statusEmoji = '🔴';
               else if (state === 'idle') statusEmoji = '🟡';
               else if (state === 'starting' || state === 'restarting') statusEmoji = '⏳';
-              else statusEmoji = '❓';
+              else statusEmoji = '❓'; // Fallback for unknown states
               dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
+          } else {
+              // Dynos exist, but no 'worker' dyno (e.g., only a 'web' dyno, or worker scaled to 0 after other dynos)
+              dynoStatus = '⚠️ Worker dyno not found or scaled to 0.';
           }
       }
 
       const info = `*App Info: ${appData.name}*\n\n` +
-                   `*Dyno Status:* ${dynoStatus}\n` +
+                   `*Dyno Status:* ${dynoStatus}\n` + // Updated status
                    // Removed URL from Info
-                   `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
+                   `*Created:* ${new Date(appData.created_at).toLocaleDateString()} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` + // Re-calculate days for robustness
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
                    `*🔧 Key Config Vars:*\n` +
@@ -1263,6 +1262,7 @@ bot.on('callback_query', async q => {
       });
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
+      console.error(`Error fetching info for ${payload}:`, errorMsg, e.stack);
       return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
@@ -1315,14 +1315,15 @@ bot.on('callback_query', async q => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId); // Stop animation
 
-          await bot.editMessageText(`✅ Bot "${payload}" restarted successfully and is back online!`, {
+          // FIX: Changed success message
+          await bot.editMessageText(`✅ Bot "${payload}" restarted successfully!`, {
               chat_id: cid,
               message_id: messageId,
               reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
               }
           });
-          console.log(`Sent "restarted and online" notification to user ${cid} for bot ${payload}`);
+          console.log(`Sent "restarted successfully" notification to user ${cid} for bot ${payload}`);
 
       } catch (err) {
           clearTimeout(timeoutId);
@@ -1330,7 +1331,7 @@ bot.on('callback_query', async q => {
           console.error(`App status check failed for ${payload} after restart:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
-              `The bot is in your "My Bots" list, but you may need to try changing the session ID if it became invalid.`,
+              `The bot is in your "My Bots" list, but you may need to change the session ID if it became invalid.`,
               {
                   chat_id: cid,
                   message_id: messageId,
