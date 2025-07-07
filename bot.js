@@ -904,29 +904,35 @@ bot.on('message', async msg => {
 
   if (text === 'Get Session') {
     // FIX: Updated guideCaption with exact words provided by user
-    const guideCaption = 
-       "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link:*\n" + // Changed title of point 1 for consistency
-        "Visit: <https://levanter-delta.vercel.app/>\n" + // FIX: Made link clickable using angle brackets
-        "Use the 'Custom Session ID' button if you prefer.\n\n" + // FIX: Added Custom Session ID detail to point 1
-        "2️⃣ *Important for iPhone Users:*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" + // FIX: Removed "for best results."
-        "3️⃣ *Skip Advertisements:*\n" +
-        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Copy Your Session ID:*\n" + // FIX: Updated title for point 4
-        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" + // FIX: Updated details for point 4
-        "5️⃣ *Final Step: Launch Your Bot:*\n" + // FIX: Added new point 5 title
-        "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin."; // FIX: Added new point 5 details'
-;
+    const guideCaption = `
+👋 Welcome to our Bot Deployment Service!
+
+To get started, please follow these simple steps:
+
+1️⃣  Connect Your WhatsApp:
+    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+
+2️⃣  Deploy Your Bot:
+    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+
+We're here to assist you every step of the way!
+`;
+
+    const getSessionKeyboard = { // This keyboard needs to be defined here if used with sendPhoto
+        inline_keyboard: [
+            [{ text: "Can't get code?", callback_data: 'cant_get_code_button' }]
+        ]
+    };
 
     try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/syx8uk.jpeg', {
         caption: guideCaption,
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown',
+        reply_markup: getSessionKeyboard
       });
-    } catch (e) { // Add catch block for sendPhoto
+    } catch (e) {
         console.error(`Error sending photo in Get Session: ${e.message}`);
-        await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+        await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown', reply_markup: getSessionKeyboard }); // Fallback with keyboard
     }
     return;
   }
