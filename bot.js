@@ -13,7 +13,6 @@ const { Pool } = require('pg');
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
 try {
-  // FIX: Corrected file path from 'app' back to 'app.json'
   const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8')); 
   defaultEnvVars = Object.fromEntries(
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
@@ -668,34 +667,43 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     const targetUserId = match[1]; // The user ID provided after /update
 
+    console.log(`[Admin] /update command received from ${cid}. Target user ID: ${targetUserId}`);
+
     if (cid !== ADMIN_ID) {
+        console.log(`[Admin] Unauthorized /update attempt by ${cid}.`);
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
     }
 
     // Clear any existing state for this admin before starting new flow
     delete userStates[cid];
+    console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
+
 
     console.log(`[Admin] Admin ${cid} initiated /update for user ${targetUserId}. Prompting for app selection.`);
-    // Use the sendAppList function but with a specific callback prefix for update action
-    // The message ID for editing will be derived from the sent message.
-    await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`)
-        .then(sentMsg => {
-            userStates[cid] = {
-                step: 'AWAITING_APP_FOR_UPDATE', // New state to signify this specific flow
-                data: {
-                    targetUserId: targetUserId,
-                    messageId: sentMsg.message_id
-                }
-            };
-            // Now send the app list, editing the message created above
-            // Use the sendAppList which takes chatId, messageId to edit, callbackPrefix, and targetUserIdForUpdate
-            sendAppList(cid, sentMsg.message_id, 'update_assign_app', targetUserId);
-        })
-        .catch(error => console.error("Error sending initial /update message:", error));
+    
+    try {
+        const sentMsg = await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`);
+        userStates[cid] = {
+            step: 'AWAITING_APP_FOR_UPDATE', // New state to signify this specific flow
+            data: {
+                targetUserId: targetUserId,
+                messageId: sentMsg.message_id
+            }
+        };
+        console.log(`[Admin] State set for ${cid}:`, userStates[cid]);
+        // Now send the app list, editing the message created above
+        // Use the sendAppList which takes chatId, messageId to edit, callbackPrefix, and targetUserIdForUpdate
+        sendAppList(cid, sentMsg.message_id, 'update_assign_app', targetUserId);
+    } catch (error) {
+        console.error("Error sending initial /update message or setting state:", error);
+        bot.sendMessage(cid, "An error occurred while starting the update process. Please try again.");
+    }
 });
 
 
 // 12) Message handler for buttons & state machine
+// This handler is for plain text messages, not callback queries (button clicks).
+// The logic for handling the /update command's app selection (button click) is in bot.on('callback_query').
 bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
@@ -704,7 +712,7 @@ bot.on('message', async msg => {
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
 
-  // --- Button Handlers ---
+  // --- Button Handlers (for keyboard buttons, not inline) ---
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
@@ -782,10 +790,12 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
   }
 
-  // --- Stateful flows ---
+  // --- Stateful flows (for text input) ---
   const st = userStates[cid];
-  if (!st) return;
+  if (!st) return; // No active state, ignore message
 
+  // This block handles direct text input for session ID (normal deploy flow, etc.)
+  // It should NOT be triggered by the /update command's app selection (which uses callback_query).
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
@@ -889,40 +899,40 @@ bot.on('message', async msg => {
   }
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate, isForUpdateCommand } = st.data; // Capture original source
+    // This part of the message handler is for when a *text* input is expected.
+    // It should NOT interfere with the /update command's flow, which uses button callbacks.
+    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate, isForUpdateCommand } = st.data; // targetUserIdForUpdate might be undefined here.
     const newVal = text.trim();
     
-    // Determine the actual user ID to associate the bot with
-    const finalUserId = isForUpdateCommand ? targetUserIdForUpdate : cid;
+    // Determine the actual user ID to associate the bot with.
+    // This logic ensures if it's not from an /update context, it uses the current chat ID.
+    const finalUserId = targetUserIdForUpdate || cid;
     
     // This check is primarily for the normal deployment flow where SESSION_ID is provided by user.
-    // For /update flow, newVal will already be the fetched session_id, so this check won't apply directly.
-    if (VAR_NAME === 'SESSION_ID' && newVal.length < 10 && !isForUpdateCommand) { // Only apply this validation for direct user input, not fetched IDs.
+    if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) { // Keep this validation for *direct user input*
         return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
 
     try {
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
       
-      // If it's a regular set variable operation, patch Heroku config vars
-      // We only patch if it's NOT the /update command assigning a SESSION_ID (which uses a fetched one)
-      if (!isForUpdateCommand || VAR_NAME !== 'SESSION_ID') {
-          await axios.patch(
-            `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
-            { [VAR_NAME]: newVal },
-            {
-              headers: {
-                Authorization: `Bearer ${HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3',
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-      }
+      // Patch Heroku config vars - this applies to all direct text input scenarios (like changing an existing var)
+      await axios.patch(
+        `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+        { [VAR_NAME]: newVal },
+        {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3',
+            'Content-Type': 'application/json'
+          }
+        }
+      );
       
-      // Update session in DB immediately after config var update (or just use fetched for /update)
+      // Update session in DB. This will correctly use the new session ID if VAR_NAME is SESSION_ID,
+      // otherwise it just updates the row with current session_id from DB for other config var changes.
       console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
-      await addUserBot(finalUserId, APP_NAME, newVal); // Use finalUserId here!
+      await addUserBot(finalUserId, APP_NAME, newVal); // Use finalUserId here, newVal is the session_id or other var value!
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
@@ -958,15 +968,12 @@ bot.on('message', async msg => {
           });
           console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
-          // The specific user notification for /update is now handled in the callback_query handler for update_assign_app
-          // This ensures the notification is sent only once after the whole assignment process is complete.
-
       } catch (err) {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
           await bot.editMessageText(
-              `⚠️ Bot "${APP_NAME}" failed to come online after session ID update: ${err.message}\n\n` +
+              `⚠️ Bot "${APP_NAME}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
@@ -994,8 +1001,17 @@ bot.on('message', async msg => {
 // 13) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
-  const [action, payload, extra, flag] = q.data.split(':');
+  // Ensure q.data is not null or undefined before splitting
+  const dataParts = q.data ? q.data.split(':') : [];
+  const action = dataParts[0];
+  const payload = dataParts[1];
+  const extra = dataParts[2];
+  const flag = dataParts[3];
+
   await bot.answerCallbackQuery(q.id).catch(() => {});
+
+  console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
+  console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
   // --- INTERACTIVE WIZARD HANDLER ---
   if (action === 'setup') {
@@ -1008,7 +1024,7 @@ bot.on('callback_query', async q => {
           });
       }
 
-      const [step, value] = [payload, extra];
+      const [step, value] = [payload, extra]; // payload is 'autostatus', extra is 'true'/'false'
 
       if (step === 'autostatus') {
           // Store the user's choice
@@ -1102,6 +1118,9 @@ bot.on('callback_query', async q => {
     const appName = payload;
     const targetUserId = extra; // The user ID passed from the /update command
 
+    console.log(`[CallbackQuery - update_assign_app] Received selection for app: ${appName} to assign to user: ${targetUserId}`);
+    console.log(`[CallbackQuery - update_assign_app] Current state for ${cid} is:`, userStates[cid]);
+
     // Ensure it's the admin interacting
     if (cid !== ADMIN_ID) {
         await bot.editMessageText("❌ You are not authorized to perform this action.", {
@@ -1114,17 +1133,19 @@ bot.on('callback_query', async q => {
     // Verify the state is correct for this operation
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_UPDATE' || st.data.targetUserId !== targetUserId) {
+        console.error(`[CallbackQuery - update_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_UPDATE for ${targetUserId}, got:`, st);
         await bot.editMessageText("This update session has expired or is invalid. Please start over with `/update <user_id>`.", {
             chat_id: cid,
             message_id: q.message.message_id
         });
+        delete userStates[cid]; // Clear corrupted state
         return;
     }
 
     await bot.editMessageText(`Assigning app "${appName}" to user \`${targetUserId}\`...`, {
         chat_id: cid,
         message_id: q.message.message_id,
-        parse_mode: 'Markdown' // Added parse_mode
+        parse_mode: 'Markdown' 
     });
 
     try {
@@ -1142,14 +1163,13 @@ bot.on('callback_query', async q => {
                 chat_id: cid,
                 message_id: q.message.message_id
             });
-            // Don't clear state immediately, allow them to pick another app perhaps or go back.
-            // For now, let's clear it to ensure a clean start if they retry.
             delete userStates[cid]; 
             return;
         }
 
         // Directly call addUserBot with the fetched session ID
         await addUserBot(targetUserId, appName, currentSessionId);
+        console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
 
         await bot.editMessageText(`✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
             chat_id: cid,
@@ -1159,16 +1179,18 @@ bot.on('callback_query', async q => {
 
         // Notify the target user
         await bot.sendMessage(targetUserId, `🎉 Your bot "*${appName}*" has been successfully assigned to your "My Bots" menu by the admin! You can now manage it.`, { parse_mode: 'Markdown' });
+        console.log(`[Admin] Sent success notification to target user ${targetUserId}.`);
 
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
-        console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg);
+        console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
         await bot.editMessageText(`❌ Failed to assign app "${appName}" to user \`${targetUserId}\`: ${errorMsg}`, {
             chat_id: cid,
             message_id: q.message.message_id
         });
     } finally {
         delete userStates[cid]; // Clear state regardless of success or failure
+        console.log(`[Admin] State cleared for ${cid} after update_assign_app flow.`);
     }
     return;
   }
@@ -1308,7 +1330,7 @@ bot.on('callback_query', async q => {
           console.error(`App status check failed for ${payload} after restart:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
-              `The bot is in your "My Bots" list, but you may need to change the session ID if it became invalid.`,
+              `The bot is in your "My Bots" list, but you may need to try changing the session ID if it became invalid.`,
               {
                   chat_id: cid,
                   message_id: messageId,
@@ -1599,8 +1621,9 @@ bot.on('callback_query', async q => {
           data: {
               APP_NAME: appName,
               VAR_NAME: 'SESSION_ID',
-              fromChannelBotName: appName, // Store context that this came from a channel alert
-              fromChannelUserId: targetUserId // Store context
+              // Note: When called via change_session, targetUserId is present, and isForUpdateCommand is false.
+              // In SETVAR_ENTER_VALUE, targetUserId will correctly become finalUserId.
+              targetUserId: targetUserId 
           }
       };
       await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
