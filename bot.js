@@ -707,13 +707,21 @@ bot.onText(/^\/start$/, async msg => {
 
 To get started, please follow these simple steps:
 
-1️⃣  **Connect Your WhatsApp:**
-    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+1️⃣  **Open the Link:**
+    Visit: ` + '`https://levanter-delta.vercel.app/`' + `
+    Use the 'Custom Session ID' button if you prefer.
 
-2️⃣  **Deploy Your Bot:**
-    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+2️⃣  **Important for iPhone Users:**
+    If you are on an iPhone, please open the link using the **Google Chrome** browser.
 
-We're here to assist you every step of the way!
+3️⃣  **Skip Advertisements:**
+    The website may show ads. Please close or skip any popups or advertisements to proceed.
+
+4️⃣  **Copy Your Session ID:**
+    Once you are done logging in, check your personal chat and copy the first message starting with ` + '`levanter_`' + `.
+
+5️⃣  **Final Step: Launch Your Bot:**
+    When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin.
 `;
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
@@ -885,14 +893,17 @@ bot.on('message', async msg => {
   if (text === 'Get Session') {
     const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link*\n" +
-        "Visit: https://levanter-delta.vercel.app/\n\n" +
-        "2️⃣ *Important for iPhone Users*\n" +
+        "1️⃣ *Open the Link:*\n" + // Changed title of point 1 for consistency
+        "Visit: `https://levanter-delta.vercel.app/`\n" +
+        "Use the 'Custom Session ID' button if you prefer.\n\n" + // FIX: Added Custom Session ID detail to point 1
+        "2️⃣ *Important for iPhone Users:*\n" +
         "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" + // FIX: Removed "for best results."
-        "3️⃣ *Skip Advertisements*\n" +
+        "3️⃣ *Skip Advertisements:*\n" +
         "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Copy Your Session ID*\n" + // FIX: Updated text for point 4 title
-        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n"; // FIX: Updated text for point 4 details
+        "4️⃣ *Copy Your Session ID:*\n" + // FIX: Updated title for point 4
+        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" + // FIX: Updated details for point 4
+        "5️⃣ *Final Step: Launch Your Bot:*\n" + // FIX: Added new point 5 title
+        "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin."; // FIX: Added new point 5 details
 
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
