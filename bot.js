@@ -231,34 +231,6 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-/**
- * Calculates the estimated daily cost for a given dyno size.
- * Based on the user's input: Hobby/Basic dyno is $0.08 per day.
- * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
- * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x', 'basic').
- * @returns {number} Estimated daily cost in USD.
- */
-function getEstimatedDailyCost(dynoSize) {
-    const baseDailyCost = 0.08; // User specified base: $0.08 per day for Hobby/Basic dyno
-
-    // Scaling factors relative to the base daily cost
-    const scalingFactors = {
-        'eco': 0.7, // Eco is typically cheaper
-        'hobby': 1,
-        'basic': 1, // Explicitly set Basic to the base daily cost (0.08)
-        'standard-1x': 3.5, // Standard-1X is typically significantly more expensive than hobby
-        'standard-2x': 7,   // Standard-2X is double Standard-1X
-        'performance-m': 35, // Performance dynos are significantly more
-        'performance-l': 70,
-    };
-
-    const factor = scalingFactors[dynoSize.toLowerCase()];
-    if (factor !== undefined) {
-        return baseDailyCost * factor;
-    }
-    return 0; // Unknown dyno size, assume no cost
-}
-
 
 // 8) Send Heroku apps list
 async function sendAppList(chatId, messageId = null) {
@@ -942,8 +914,6 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
-          // Add the new "Usage" button here
-          [{ text: '📊 Usage', callback_data: `usage:${payload}` }], 
           [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
@@ -1126,10 +1096,12 @@ bot.on('callback_query', async q => {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
+          // --- START OF FIX ---
           // Always delete from user_bots table upon successful Heroku deletion
           await deleteUserBot(cid, appToDelete);
           // Also delete from temp_deploys table if it was a trial app
           await deleteTrialDeployEntry(appToDelete); 
+          // --- END OF FIX ---
 
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
           
@@ -1144,7 +1116,7 @@ bot.on('callback_query', async q => {
                   return bot.sendMessage(cid, "You no longer have any deployed bots.");
               }
           } else { // If admin delete, or admin deleting a user bot
-            return sendAppList(cid, messageId); // Admin sees all apps. Pass messageId to edit.
+            return sendAppList(cid); // Admin sees all apps
           }
 
       } catch (e) {
@@ -1259,89 +1231,6 @@ bot.on('callback_query', async q => {
       await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
     } catch (e) {
       return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
-    }
-  }
-
-  if (action === 'usage') {
-    const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-    }
-    const appName = payload;
-    const messageId = st.data.messageId;
-
-    await bot.editMessageText(`📊 Fetching usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
-    try {
-        const apiHeaders = {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3'
-        };
-
-        const [appRes, dynoRes] = await Promise.all([
-            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }), // Get app info for created_at
-            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders }) // Get current dynos
-        ]);
-
-        const appData = appRes.data;
-        const dynos = dynoRes.data;
-
-        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`; // Concise title
-        let currentDailyCost = 0; // This will hold the daily cost for *all* active dynos
-
-        if (dynos.length > 0) {
-            usageMessage += `*Dynos:*\n`;
-            const dynoCounts = {}; // To count dynos of each type and size
-            for (const dyno of dynos) {
-                const key = `${dyno.type} (\`${dyno.size}\`)`; // Use backticks for dyno size
-                dynoCounts[key] = (dynoCounts[key] || 0) + 1;
-            }
-
-            for (const key in dynoCounts) {
-                const [type, sizeWithParens] = key.split(' (');
-                const size = sizeWithParens.slice(0, -1); // Remove trailing ')'
-                const count = dynoCounts[key];
-                const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
-                currentDailyCost += estimatedDailyCostPerDyno * count; // Sum daily costs for all dynos
-
-                usageMessage += `  - ${count} x ${type} dyno ${sizeWithParens}\n`; 
-            }
-
-            const createdAt = new Date(appData.created_at);
-            const now = new Date();
-            const daysDeployed = Math.ceil(Math.abs(now - createdAt) / (1000 * 60 * 60 * 24)); // Calculate days deployed
-
-            const estimatedTotalCost = currentDailyCost * daysDeployed; // Total cost based on summed daily cost
-
-            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Corrected total cost calculation and label, Daily cost line removed
-            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
-
-        } else {
-            usageMessage += `No active dynos found for this app.\n`;
-            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`; // Corrected total cost calculation and label, Daily cost line removed
-            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
-        }
-
-        return bot.editMessageText(usageMessage, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            disable_web_page_preview: true, // Prevent URL previews
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-
-    } catch (e) {
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error(`Error in usage for ${appName}:`, e.response?.status, errorMsg);
-        return bot.editMessageText(`Error fetching usage: ${errorMsg}\n\n(Please ensure your Heroku API Key has "Read" permissions for "Dynos" and "Apps".)`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
     }
   }
 
