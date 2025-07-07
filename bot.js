@@ -972,7 +972,7 @@ We're here to assist you every step of the way!
 
     if (usesLeft === null) {
       // FIX: Updated message and added button for key contact
-      const contactOwnerMessage = `Please contact the owner for a KEY.`;
+      const contactOwnerMessage = `Invalid, Please contact the owner for a KEY.`;
       const contactOwnerKeyboard = {
           inline_keyboard: [
               [{ text: 'Contact Owner', url: 'https://wa.me/message/JIIC2JFMHUPEM1' }]
