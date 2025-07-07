@@ -28,7 +28,7 @@ const {
   GITHUB_REPO_URL,
   ADMIN_ID,
   DATABASE_URL,
-  HEROKU_APP_DOMAIN // NEW: For building the correct live URL
+  HEROKU_APP_DOMAIN
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
@@ -80,7 +80,7 @@ async function getUserBots(u) {
   );
   return r.rows.map(x => x.bot_name);
 }
-// NEW: Function to get user_id by bot_name
+// Function to get user_id by bot_name
 async function getUserIdByBotName(botName) {
     const r = await pool.query(
         'SELECT user_id FROM user_bots WHERE bot_name=$1',
@@ -88,7 +88,7 @@ async function getUserIdByBotName(botName) {
     );
     return r.rows.length > 0 ? r.rows[0].user_id : null;
 }
-// NEW: Function to get all bots from the database
+// Function to get all bots from the database
 async function getAllUserBots() {
     const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
     return r.rows;
@@ -155,10 +155,38 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const userStates = {}; // chatId -> { step, data, message_id }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
-// NEW: Map to store Promises for app deployment status based on channel notifications
-const appDeploymentPromises = new Map(); // appName -> { resolve, reject }
+// Map to store Promises for app deployment status based on channel notifications
+const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
 
 // 7) Utilities
+
+// Animated emoji for loading states
+let emojiIndex = 0;
+const animatedEmojis = ['🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚', '🕛'];
+
+function getAnimatedEmoji() {
+    const emoji = animatedEmojis[emojiIndex];
+    emojiIndex = (emojiIndex + 1) % animatedEmojis.length;
+    return emoji;
+}
+
+// Function to animate a message
+async function animateMessage(chatId, messageId, baseText) {
+    const intervalId = setInterval(async () => {
+        try {
+            await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
+                chat_id: chatId,
+                message_id: messageId
+            }).catch(() => {}); // Catch potential errors if message is deleted
+        } catch (e) {
+            console.error(`Error animating message ${messageId}:`, e.message);
+            clearInterval(intervalId); // Stop animation on error
+        }
+    }, 800); // Update every 800ms for smooth animation
+    return intervalId;
+}
+
+
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 8 })
@@ -378,14 +406,17 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     }
 
     if (buildStatus === 'succeeded') {
-      await bot.editMessageText('Build complete! Waiting for bot to connect...', {
+      const baseWaitingText = `Build complete! Waiting for bot to connect...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
         chat_id: chatId,
         message_id: progMsg.message_id
       });
 
-      // --- NEW: Wait for channel notification for actual app status ---
+      // Start animation for waiting state
+      const animateIntervalId = await animateMessage(chatId, progMsg.message_id, baseWaitingText);
+
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(name, { resolve, reject });
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
       const STATUS_CHECK_TIMEOUT = 120 * 1000; // 120 seconds (2 minutes) to wait for connection
@@ -403,6 +434,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
           await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
           clearTimeout(timeoutId); // Clear the timeout if resolved/rejected
+          clearInterval(animateIntervalId); // Stop animation on success/failure
 
           // If resolved, it means "connected" was received
           await bot.editMessageText(
@@ -410,8 +442,45 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             { chat_id: chatId, message_id: progMsg.message_id, disable_web_page_preview: false }
           );
           buildResult = true; // Overall success
+
+          // --- ADDED/MOVED: addUserBot and admin notification here for overall success ---
+          await addUserBot(chatId, name, vars.SESSION_ID);
+
+          if (isFreeTrial) {
+            // Schedule deletion after 30 minutes
+            setTimeout(async () => {
+                try {
+                    await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 30-minute runtime has ended.`);
+                    await axios.delete(`https://api.heroku.com/apps/${name}`, {
+                        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                    });
+                    await deleteUserBot(chatId, name);
+                    await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
+                } catch (e) {
+                    console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
+                    await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+                }
+            }, 30 * 60 * 1000); // 30 minutes in milliseconds
+          }
+
+          const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {}; // Fetch user info to ensure it's up-to-date
+          const userDetails = [
+            `*Name:* ${first_name || ''} ${last_name || ''}`,
+            `*Username:* @${username || 'N/A'}`,
+            `*Chat ID:* \`${chatId}\``
+          ].join('\n');
+
+          const appDetails = `*App Name:* \`${name}\`\n*URL:* ${appUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+
+          await bot.sendMessage(ADMIN_ID,
+              `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+              { parse_mode: 'Markdown', disable_web_page_preview: true }
+          );
+          // --- End of ADDED/MOVED block ---
+
       } catch (err) {
           clearTimeout(timeoutId); // Ensure timeout is cleared on early exit
+          clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${name}:`, err.message);
           // This catch block handles both direct rejections from channel_post and the timeout
           await bot.editMessageText(
@@ -431,7 +500,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       } finally {
           appDeploymentPromises.delete(name); // Always clean up the promise from the map
       }
-      // --- END NEW: Wait for channel notification ---
 
     } else { // Heroku build failed
       await bot.editMessageText(
@@ -445,42 +513,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
-  }
-
-  // Handle post-deployment actions based on buildResult
-  if (buildResult) {
-      await addUserBot(chatId, name, vars.SESSION_ID);
-
-      if (isFreeTrial) {
-        // Schedule deletion after 30 minutes
-        setTimeout(async () => {
-            try {
-                await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 30-minute runtime has ended.`);
-                await axios.delete(`https://api.heroku.com/apps/${name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                });
-                await deleteUserBot(chatId, name);
-                await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
-            } catch (e) {
-                console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
-            }
-        }, 30 * 60 * 1000); // 30 minutes in milliseconds
-      }
-
-      const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {}; // Fetch user info to ensure it's up-to-date
-      const userDetails = [
-        `*Name:* ${first_name || ''} ${last_name || ''}`,
-        `*Username:* @${username || 'N/A'}`,
-        `*Chat ID:* \`${chatId}\``
-      ].join('\n');
-
-      const appDetails = `*App Name:* \`${name}\`\n*URL:* ${appUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-
-      await bot.sendMessage(ADMIN_ID,
-          `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-          { parse_mode: 'Markdown', disable_web_page_preview: true }
-      );
   }
   return buildResult; // Indicate overall deployment success (including app startup)
 }
@@ -608,10 +640,30 @@ bot.on('message', async msg => {
 
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
+
+    // NEW: Add animation for key verification
+    const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
+    const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
+
     const usesLeft = await useDeployKey(keyAttempt);
+
+    clearInterval(animateIntervalId); // Stop animation immediately after useDeployKey resolves
+
     if (usesLeft === null) {
-      return bot.sendMessage(cid, `❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`);
+      await bot.editMessageText(`❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`, {
+        chat_id: cid,
+        message_id: verificationMsg.message_id
+      });
+      return; // Exit if key is invalid
     }
+    
+    // Add a slight delay for "Verified" message to be visible
+    await bot.editMessageText(`✅ Verified!`, {
+        chat_id: cid,
+        message_id: verificationMsg.message_id
+    });
+    await new Promise(r => setTimeout(r, 1500)); // Show "Verified!" for 1.5 seconds
+
     authorizedUsers.add(cid);
     st.step = 'SESSION_ID'; // Keep data, just change step
 
@@ -626,7 +678,8 @@ bot.on('message', async msg => {
       `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
-    return bot.sendMessage(cid, 'Verified, please enter your session ID:');
+    // Finally, prompt for session ID in the same message
+    return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
   if (st.step === 'SESSION_ID') {
@@ -701,15 +754,16 @@ bot.on('message', async msg => {
         await updateUserSession(cid, APP_NAME, newVal);
       }
 
-      // Instead of relying on this internal "success", we now wait for channel confirmation
-      await bot.editMessageText(`Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`, {
+      const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
           chat_id: cid,
           message_id: updateMsg.message_id
       });
+      // Start animation for waiting state after variable update
+      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
-      // --- NEW: Wait for channel notification for actual app status after variable update ---
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(APP_NAME, { resolve, reject });
+          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
       const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
@@ -726,6 +780,7 @@ bot.on('message', async msg => {
 
           await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
 
           await bot.editMessageText(`✅ Session ID for "${APP_NAME}" updated successfully and bot is back online!`, {
               chat_id: cid,
@@ -735,6 +790,7 @@ bot.on('message', async msg => {
 
       } catch (err) {
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${APP_NAME}" failed to come online after session ID update: ${err.message}\n\n` +
@@ -752,11 +808,8 @@ bot.on('message', async msg => {
       } finally {
           appDeploymentPromises.delete(APP_NAME); // Always clean up
       }
-      // --- END NEW: Wait for channel notification after variable update ---
 
       delete userStates[cid];
-      // Note: startRestartCountdown is now handled implicitly by the channel monitoring
-      // You might remove startRestartCountdown if it's purely for visual countdown post-deployment.
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
@@ -798,8 +851,8 @@ bot.on('callback_query', async q => {
           const confirmationKeyboard = {
               reply_markup: {
                   inline_keyboard: [
-                      [{ text: 'Yes, Deploy Now', callback_data: 'setup:startbuild' }],
-                      [{ text: 'Cancel', callback_data: 'setup:cancel' }]
+                      [{ text: 'Yes, Deploy Now', callback_data: `setup:startbuild` }],
+                      [{ text: 'Cancel', callback_data: `setup:cancel` }]
                   ]
               }
           };
@@ -822,10 +875,6 @@ bot.on('callback_query', async q => {
           // buildWithProgress now handles all post-build status updates to the user
           const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
 
-          if (buildSuccessful) {
-              // addUserBot and admin notification are now moved inside buildWithProgress for success case
-              // because buildWithProgress determines the ultimate success (including app startup)
-          }
           // Clean up the user state after completion or failure
           delete userStates[cid];
       }
@@ -958,7 +1007,14 @@ bot.on('callback_query', async q => {
     }
     const messageId = st.data.messageId;
 
-    await bot.editMessageText('🔄 Restarting app...', { chat_id: cid, message_id: messageId });
+    const baseRestartText = `🔄 Restarting app "${payload}"...`;
+    await bot.editMessageText(`${getAnimatedEmoji()} ${baseRestartText}`, { // Initial message with emoji
+        chat_id: cid,
+        message_id: messageId
+    });
+    const animateIntervalId = await animateMessage(cid, messageId, baseRestartText);
+
+
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -967,7 +1023,7 @@ bot.on('callback_query', async q => {
       // Instead of immediate success, wait for channel confirmation of restart/startup
       // This ensures that after a restart, the bot actually comes online.
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(payload, { resolve, reject });
+          appDeploymentPromises.set(payload, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
       const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after restart
@@ -984,15 +1040,20 @@ bot.on('callback_query', async q => {
 
           await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
 
           await bot.editMessageText(`✅ Bot "${payload}" restarted successfully and is back online!`, {
               chat_id: cid,
-              message_id: messageId
+              message_id: messageId,
+              reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+              }
           });
           console.log(`Sent "restarted and online" notification to user ${cid} for bot ${payload}`);
 
       } catch (err) {
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${payload} after restart:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
@@ -1002,7 +1063,8 @@ bot.on('callback_query', async q => {
                   message_id: messageId,
                   reply_markup: {
                       inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${payload}:${cid}` }]
+                          [{ text: 'Change Session ID', callback_data: `change_session:${payload}:${cid}` }],
+                          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]
                       ]
                   }
               }
@@ -1198,9 +1260,16 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      // Wait for channel confirmation after variable update as well
+      const baseWaitingText = `Updating ${varKey} for "${appName}". Waiting for bot status confirmation...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
+          chat_id: cid,
+          message_id: updateMsg.message_id
+      });
+      // Start animation for waiting state after variable update
+      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
+
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(appName, { resolve, reject });
+          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
       const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
@@ -1217,15 +1286,20 @@ bot.on('callback_query', async q => {
 
           await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
 
           await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
               chat_id: cid,
-              message_id: updateMsg.message_id
+              message_id: updateMsg.message_id,
+              reply_markup: {
+                  inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+              }
           });
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
 
       } catch (err) {
           clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
               `⚠️ Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
@@ -1235,7 +1309,8 @@ bot.on('callback_query', async q => {
                   message_id: updateMsg.message_id,
                   reply_markup: {
                       inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }]
+                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
+                          [{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]
                       ]
                   }
               }
@@ -1250,7 +1325,7 @@ bot.on('callback_query', async q => {
     }
   }
 
-  // NEW: Handler for initiating session change from channel notification
+  // Handler for initiating session change from channel notification
   if (action === 'change_session') {
       const appName = payload;
       const targetUserId = extra; // The user ID that owns this bot
@@ -1326,6 +1401,7 @@ bot.on('channel_post', async msg => {
         // If there's an ongoing deployment or var update for this app, resolve its promise as failure
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId); // Stop animation
             pendingPromise.reject(new Error('Invalid session ID detected on startup.'));
             appDeploymentPromises.delete(botName); // Clean up
         }
@@ -1360,13 +1436,13 @@ bot.on('channel_post', async msg => {
         // If there's an ongoing deployment or var update for this app, resolve its promise as success
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId); // Stop animation
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(botName); // Clean up
         }
         
         // This notification is now primarily handled by the buildWithProgress or SETVAR_ENTER_VALUE flow
         // so this block might become redundant for the user, but still useful for admin channel.
-        // If you want to send it here for *all* connected events (even those not initiated by the bot), keep it.
         const userId = await getUserIdByBotName(botName);
         if (userId) {
              const appUrl = `${HEROKU_APP_DOMAIN}/${botName}`; // Use the new HEROKU_APP_DOMAIN
