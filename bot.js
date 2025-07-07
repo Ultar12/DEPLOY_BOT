@@ -122,6 +122,8 @@ const pool = new Pool({
 async function addUserBot(u, b, s) {
   try {
     // Use ON CONFLICT to update if it already exists, or insert if new
+    // With PRIMARY KEY (user_id, bot_name), this will update if the specific user-bot pair exists.
+    // For transferring ownership, we will handle deletion of old entry in the calling function.
     const result = await pool.query(
       `INSERT INTO user_bots(user_id, bot_name, session_id)
        VALUES($1, $2, $3)
@@ -156,8 +158,11 @@ async function getUserBots(u) {
 // Function to get user_id by bot_name
 async function getUserIdByBotName(botName) {
     try {
+        // FIX: Added ORDER BY created_at DESC LIMIT 1 to ensure the LATEST owner is retrieved
+        // if multiple entries for the same bot_name (but different user_ids) exist due to past issues.
+        // Once the /add fix is in place, only one entry per bot_name should exist.
         const r = await pool.query(
-            'SELECT user_id FROM user_bots WHERE bot_name=$1',
+            'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1',
             [botName]
         );
         const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
@@ -546,8 +551,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId }); // Store intervalId
       });
 
-      // FIX: Increased timeout for buildWithProgress
-      const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
+      const STATUS_CHECK_TIMEOUT = 120 * 1000; // 120 seconds (2 minutes) to wait for connection
       let timeoutId;
 
       try {
@@ -1204,6 +1208,22 @@ bot.on('callback_query', async q => {
     });
 
     try {
+        // FIX: Start of ownership transfer logic
+        // 1. Find existing owner (if any) for this bot_name
+        const existingEntry = await pool.query('SELECT user_id FROM user_bots WHERE bot_name=$1', [appName]);
+        if (existingEntry.rows.length > 0) {
+            const oldUserId = existingEntry.rows[0].user_id;
+            if (oldUserId !== targetUserId) {
+                console.log(`[Admin] Transferring ownership for bot "${appName}" from ${oldUserId} to ${targetUserId}. Deleting old entry.`);
+                await pool.query('DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2', [oldUserId, appName]);
+                // Optionally notify old user that their bot has been reassigned
+                // await bot.sendMessage(oldUserId, `ℹ️ Your bot "*${appName}*" has been unassigned from your dashboard by the admin and assigned to another user.`, { parse_mode: 'Markdown' });
+            } else {
+                console.log(`[Admin] Bot "${appName}" is already owned by ${targetUserId}. Proceeding with update.`);
+            }
+        }
+        // FIX: End of ownership transfer logic
+
         // Fetch the existing SESSION_ID from the Heroku app's config vars
         const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
             headers: {
@@ -1222,7 +1242,7 @@ bot.on('callback_query', async q => {
             return;
         }
 
-        // Directly call addUserBot with the fetched session ID
+        // Directly call addUserBot with the fetched session ID (this will insert/update the new ownership)
         await addUserBot(targetUserId, appName, currentSessionId);
         console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
 
@@ -1383,7 +1403,7 @@ bot.on('callback_query', async q => {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
         }
       });
     } catch (e) {
@@ -1393,7 +1413,7 @@ bot.on('callback_query', async q => {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     }
@@ -1433,7 +1453,7 @@ bot.on('callback_query', async q => {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     } finally {
@@ -1463,7 +1483,7 @@ bot.on('callback_query', async q => {
         message_id: messageId,
         parse_mode: 'Markdown',
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     } catch (e) {
@@ -1472,7 +1492,7 @@ bot.on('callback_query', async q => {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     }
@@ -1533,7 +1553,7 @@ bot.on('callback_query', async q => {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appToDelete}` }]]
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
             }
           });
       }
@@ -1566,7 +1586,7 @@ bot.on('callback_query', async q => {
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
           [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️ Back', callback_data: `setvar:${payload}` }] // Back to app management
+          [{ text: '◀️️ Back', callback_data: `setvar:${payload}` }] // Back to app management
         ]
       }
     });
@@ -1589,7 +1609,7 @@ bot.on('callback_query', async q => {
             { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
             { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
           ],
-          [{ text: '◀️ Back', callback_data: `setvar:${appName}` }]] // Back to variable selection
+          [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]] // Back to variable selection
         }
       });
     } else {
@@ -1659,7 +1679,7 @@ bot.on('callback_query', async q => {
               chat_id: cid,
               message_id: updateMsg.message_id,
               reply_markup: {
-                  inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+                  inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
               }
           });
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
@@ -1677,7 +1697,7 @@ bot.on('callback_query', async q => {
                   reply_markup: {
                       inline_keyboard: [
                           [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
-                          [{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]
+                          [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
                       ]
                   }
               }
