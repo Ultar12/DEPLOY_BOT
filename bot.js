@@ -1446,13 +1446,6 @@ bot.on('callback_query', async q => {
   }
 });
 
----
-
-### **Refined Channel Post Handler**
-
-This section is crucial for listening to the bot's status messages.
-
-```javascript
 // 14) Channel Post Handler
 // This is the core new feature to detect and react to messages from your Levanter app.
 bot.on('channel_post', async msg => {
@@ -1476,8 +1469,8 @@ bot.on('channel_post', async msg => {
     // --- Logout Message Handling ---
     // Sample: "User [hhhhhhhhh-hr-db] has logged out.\n[Ggggggggggvvvvvvvv] invalid\n🕒 Time: 07/07/2025, 16:44:53"
     // The regex needs to handle the bot name in brackets, followed by "has logged out."
-    // And allow for anything else on subsequent lines using the 's' (dotall) flag for multiline match
-    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./s); 
+    // We will use the 's' (dotall) flag to make '.' match newlines, and 'i' for case-insensitivity
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./si); 
     if (logoutMatch) {
         const botName = logoutMatch[1];
         console.log(`[Channel Post] Detected LOGOUT for bot: ${botName}`);
@@ -1517,7 +1510,8 @@ bot.on('channel_post', async msg => {
     // --- Connected Message Handling ---
     // Sample: "✅ [hhhhhbbvvcvvvvvvvcccgvvvvvv] connected.\n🔐 levanter_7dd859633e5ac4e7ca50baced3d060542\n🕒 07/07/2025, 16:34:25"
     // The regex needs to match "connected." and allow for anything after it, including newlines.
-    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/s); 
+    // Using 's' (dotall) flag for '.' to match newlines, and 'i' for case-insensitivity
+    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/si); 
     if (connectedMatch) {
         const botName = connectedMatch[1];
         console.log(`[Channel Post] Detected CONNECTED status for bot: ${botName}`);
