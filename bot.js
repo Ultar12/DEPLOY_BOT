@@ -176,12 +176,12 @@ async function sendAnimatedMessage(chatId, baseText) {
 }
 
 async function startRestartCountdown(chatId, appName, messageId) {
-    const totalSeconds = 45; // 45 seconds for demonstration. Change to 45 * 60 for 45 minutes.
+    const totalSeconds = 60; // 45 seconds for demonstration. Change to 45 * 60 for 45 minutes.
     const intervalTime = 5; // Update every 5 seconds
     const totalSteps = totalSeconds / intervalTime;
 
     // Initial message
-    await bot.editMessageText(`🔄 Bot "${appName}" restarting...`, {
+    await bot.editMessageText(`Bot "${appName}" restarting...`, {
         chat_id: chatId,
         message_id: messageId
     }).catch(() => {});
@@ -194,7 +194,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
-        let countdownMessage = `🔄 Bot "${appName}" restarting...\n\n`;
+        let countdownMessage = `Bot "${appName}" restarting...\n\n`;
         if (secondsLeft > 0) {
             countdownMessage += `[${filledBlocks}${emptyBlocks}] ${minutesLeft}m ${remainingSeconds}s left`;
         } else {
@@ -209,7 +209,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         if (secondsLeft <= 0) break; // Exit loop when countdown is done
         await new Promise(r => setTimeout(r, intervalTime * 1000));
     }
-    await bot.editMessageText(`✅ Bot "${appName}" has restarted successfully and is back online!`, {
+    await bot.editMessageText(`Bot "${appName}" has restarted successfully and is back online!`, {
         chat_id: chatId,
         message_id: messageId
     });
