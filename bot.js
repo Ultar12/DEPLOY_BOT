@@ -959,28 +959,44 @@ bot.on('message', async msg => {
   // --- Stateful flows (for text input) ---
   const st = userStates[cid];
   if (!st) {
-    // Admin handling for pairing code
+    // Admin handling for pairing code. This block only runs if the *admin* sends a message
+    // AND is in the specific state of awaiting a pairing code for a user.
     if (cid === ADMIN_ID && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
         const pairingCode = text.trim();
-        const words = pairingCode.split(/\s+/);
+        // Check if the pairing code has exactly 8 words (alphanumeric words separated by spaces)
+        const words = pairingCode.split(/\s+/).filter(word => word.length > 0); // Filter out empty strings from multiple spaces
 
-        if (words.length !== 8) {
-            return bot.sendMessage(ADMIN_ID, '❌ Invalid pairing code format. Please send exactly 8 words.');
+        if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
+            return bot.sendMessage(ADMIN_ID, '❌ Invalid pairing code format. Please send exactly 8 alphanumeric words separated by spaces.');
         }
 
         const targetUserId = userStates[ADMIN_ID].data.target_user_id_for_pairing;
         if (targetUserId) {
-            await bot.sendMessage(targetUserId, `Your pairing code is:\n\`\`\`\n${pairingCode}\n\`\`\`\nGo to your linked device and paste it ASAP!`, { parse_mode: 'Markdown' });
-            await bot.sendMessage(ADMIN_ID, `✅ Pairing code sent to user \`${targetUserId}\`.`);
-            delete userStates[ADMIN_ID]; // Clear admin's state
-            // It's crucial to also clear the user's state if it was waiting for this
-            if (userStates[targetUserId] && userStates[targetUserId].step === 'AWAITING_PAIRING_CODE_FROM_ADMIN_REPLY') {
-                delete userStates[targetUserId]; 
+            // Stop the loading animation for the user
+            const userStateWaiting = userStates[targetUserId];
+            if (userStateWaiting && userStateWaiting.data.animateIntervalId) {
+                clearInterval(userStateWaiting.data.animateIntervalId);
+                // Immediately update user's message to reflect "received" status before sending code
+                await bot.editMessageText(`✅ Pairing code received! Sending now...`, {
+                    chat_id: targetUserId,
+                    message_id: userStateWaiting.data.messageId
+                }).catch(err => console.error(`Failed to edit user's waiting message: ${err.message}`));
             }
+
+            await bot.sendMessage(targetUserId, 
+                `Your pairing code is:\n` +
+                `\`\`\`\n${pairingCode}\n\`\`\`\n` + // Code block for easy copying
+                `Go to your linked device and paste it ASAP!`, 
+                { parse_mode: 'Markdown' }
+            );
+            await bot.sendMessage(ADMIN_ID, `✅ Pairing code sent to user \`${targetUserId}\`.`);
+            
+            // Clear states for both admin and the user
+            delete userStates[ADMIN_ID]; 
+            delete userStates[targetUserId]; 
             console.log(`[Admin] Pairing code sent to user ${targetUserId} and states cleared.`);
         } else {
-            // This should not happen if state is managed correctly
-            console.error(`[Admin] Admin tried to send pairing code but target user ID was missing from state.`);
+            console.error(`[Admin] Admin tried to send pairing code but target user ID was missing from state. Admin chat ID: ${cid}`);
             await bot.sendMessage(ADMIN_ID, `Error: Target user for pairing code not found in state. Please try again.`);
             delete userStates[ADMIN_ID];
         }
@@ -1006,20 +1022,20 @@ bot.on('message', async msg => {
         data: { target_user_id_for_pairing: cid }
     };
 
-    // Set user's state to acknowledge their request and wait for admin's action
-    userStates[cid] = {
-        step: 'AWAITING_PAIRING_CODE_FROM_ADMIN_REPLY', // New state for the user waiting for admin
-        data: {} // No specific data needed here for the user's state, just acknowledgement
-    };
-
+    // Notify admin with the phone number (copyable)
     await bot.sendMessage(ADMIN_ID, 
         `📞 User \`${cid}\` (\`${msg.from.username || msg.from.first_name || 'N/A'}\`) needs a pairing code.\n` +
-        `*Phone:* \`${phoneNumber}\`\n\n` +
+        `*Phone:* \`\`\`${phoneNumber}\`\`\`\n\n` + // Make phone number copyable
         `*Please reply to this message with the 8-word pairing code for this user.*`, 
         { parse_mode: 'Markdown' }
     );
-    await bot.sendMessage(cid, '✅ Your request has been sent to the admin. Please wait while they generate a pairing code for you.');
     
+    // Set user's state to acknowledge their request and show loading animation
+    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
+    const waitingMsg = await bot.sendMessage(cid, `⚙️ Wait for Pairing-code...`);
+    const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Wait for Pairing-code');
+    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId };
+
     return; // Exit after handling phone number
   }
 
@@ -1254,8 +1270,8 @@ bot.on('callback_query', async q => {
   // --- NEW: Handle "Can't get code?" button click ---
   if (action === 'cant_get_code') {
       delete userStates[cid]; // Clear any previous state
-      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: { messageId: q.message.message_id } };
-      await bot.editMessageText('Please send your WhatsApp number in the format `+2349163XXXXXX` (13 digits), e.g., `+2349163000000`:', { 
+      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: { messageId: q.message.message_id } }; // Store messageId to edit later
+      await bot.editMessageText('Please send your WhatsApp number in the full international format `+2349163XXXXXX` (13 digits, including the `+`):', { 
           chat_id: cid, 
           message_id: q.message.message_id, 
           parse_mode: 'Markdown' 
