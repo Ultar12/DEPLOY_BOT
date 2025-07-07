@@ -721,26 +721,19 @@ bot.onText(/^\/start$/, async msg => {
   } else {
     // FIX: Send image with professional caption and keyboard for regular users
     const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg';
+    // FIX: Updated welcomeCaption with exact words provided by user
     const welcomeCaption = `
 👋 Welcome to our Bot Deployment Service!
 
 To get started, please follow these simple steps:
 
-1️⃣  **Open the Link:**
-    Visit: <https://levanter-delta.vercel.app/>
-    Use the 'Custom Session ID' button if you prefer.
+1️⃣  Connect Your WhatsApp:
+    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
 
-2️⃣  **Important for iPhone Users:**
-    If you are on an iPhone, please open the link using the **Google Chrome** browser.
+2️⃣  Deploy Your Bot:
+    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
 
-3️⃣  **Skip Advertisements:**
-    The website may show ads. Please close or skip any popups or advertisements to proceed.
-
-4️⃣  **Copy Your Session ID:**
-    Once you are done logging in, check your personal chat and copy the first message starting with ` + '`levanter_`' + `.
-
-5️⃣  **Final Step: Launch Your Bot:**
-    When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin.
+We're here to assist you every step of the way!
 `;
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
@@ -910,27 +903,29 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    const guideCaption =
-        "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link:*\n" + // Changed title of point 1 for consistency
-        "Visit: <https://levanter-delta.vercel.app/>\n" + // FIX: Made link clickable using angle brackets
-        "Use the 'Custom Session ID' button if you prefer.\n\n" + // FIX: Added Custom Session ID detail to point 1
-        "2️⃣ *Important for iPhone Users:*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" + // FIX: Removed "for best results."
-        "3️⃣ *Skip Advertisements:*\n" +
-        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Copy Your Session ID:*\n" + // FIX: Updated title for point 4
-        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" + // FIX: Updated details for point 4
-        "5️⃣ *Final Step: Launch Your Bot:*\n" + // FIX: Added new point 5 title
-        "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin."; // FIX: Added new point 5 details
+    // FIX: Updated guideCaption with exact words provided by user
+    const guideCaption = `
+👋 Welcome to our Bot Deployment Service!
+
+To get started, please follow these simple steps:
+
+1️⃣  Connect Your WhatsApp:
+    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+
+2️⃣  Deploy Your Bot:
+    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+
+We're here to assist you every step of the way!
+`;
 
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
         caption: guideCaption,
         parse_mode: 'Markdown'
       });
-    } catch {
-      await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
+    } catch (e) { // Add catch block for sendPhoto
+        console.error(`Error sending photo in Get Session: ${e.message}`);
+        await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown' });
     }
     return;
   }
@@ -1107,7 +1102,6 @@ bot.on('message', async msg => {
           appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId }); 
       });
 
-      // FIX: Increased timeout for SETVAR_ENTER_VALUE
       const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
       let timeoutId;
 
