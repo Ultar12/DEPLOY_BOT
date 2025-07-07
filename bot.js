@@ -400,7 +400,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       
       // --- FIX START: Use fullAppUrl here ---
       await bot.editMessageText(
-        `Your bot is now live at:\n${fullAppUrl}`,
+        `Your bot is now working!\nlive at:${fullAppUrl}`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
       // --- FIX END ---
@@ -1052,7 +1052,7 @@ bot.on('callback_query', async q => {
                    `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
-                   `*🔧 Key Config Vars:*\n` +
+                   `*Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n` +
                    `  \`ALWAYS_ONLINE\`: \`${configData.ALWAYS_ONLINE || 'Not Set'}\`\n` +
@@ -1081,7 +1081,7 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'restart') {
-    await bot.editMessageText('🔄 Restarting app...', { chat_id: cid, message_id: messageId });
+    await bot.editMessageText('Restarting app...', { chat_id: cid, message_id: messageId });
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
