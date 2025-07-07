@@ -27,7 +27,8 @@ const {
   HEROKU_API_KEY,
   GITHUB_REPO_URL,
   ADMIN_ID,
-  DATABASE_URL
+  DATABASE_URL,
+  HEROKU_APP_DOMAIN // NEW: For building the correct live URL
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
@@ -154,6 +155,9 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const userStates = {}; // chatId -> { step, data, message_id }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
+// NEW: Map to store Promises for app deployment status based on channel notifications
+const appDeploymentPromises = new Map(); // appName -> { resolve, reject }
+
 // 7) Utilities
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -269,10 +273,13 @@ async function sendAppList(chatId, messageId = null) {
 // 9) Build & deploy helper with animated countdown
 async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
+  const appUrl = `${HEROKU_APP_DOMAIN}/${name}`; // Use the new HEROKU_APP_DOMAIN
+
+  let buildResult = false; // Flag to track overall success
+  const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
 
   try {
     // Stage 1: Create App
-    const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -344,7 +351,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     );
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
-    let status = 'pending';
+    let buildStatus = 'pending';
     const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
 
     for (let i = 1; i <= 20; i++) {
@@ -356,9 +363,9 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             Accept: 'application/vnd.heroku+json; version=3'
           }
         });
-        status = poll.data.status;
+        buildStatus = poll.data.status;
       } catch {
-        status = 'error';
+        buildStatus = 'error';
         break;
       }
       const pct = Math.min(100, i * 5);
@@ -367,33 +374,82 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         message_id: progMsg.message_id
       }).catch(() => {});
 
-      if (status !== 'pending') break;
+      if (buildStatus !== 'pending') break;
     }
 
-    if (status === 'succeeded') {
-      // Animated Countdown Logic
-      await bot.editMessageText('Build complete!', {
+    if (buildStatus === 'succeeded') {
+      await bot.editMessageText('Build complete! Waiting for bot to connect...', {
         chat_id: chatId,
         message_id: progMsg.message_id
       });
 
-      const totalSteps = 12; // 12 steps for a 60-second countdown (5 seconds per step)
-      for (let i = 1; i <= totalSteps; i++) {
-          await new Promise(r => setTimeout(r, 5000)); // Wait 5 seconds
-          const secondsLeft = 60 - (i * 5);
-          const filled = '■'.repeat(i);
-          const empty = '□'.repeat(totalSteps - i);
-          const countdownMessage = `[${filled}${empty}] Wait for your bot to start ... (${secondsLeft}s left)`;
-          await bot.editMessageText(countdownMessage, {
-              chat_id: chatId,
-              message_id: progMsg.message_id
-          }).catch(() => {}); // Ignore errors if user deletes message
-      }
+      // --- NEW: Wait for channel notification for actual app status ---
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(name, { resolve, reject });
+      });
 
+      const STATUS_CHECK_TIMEOUT = 120 * 1000; // 120 seconds (2 minutes) to wait for connection
+      let timeoutId;
+
+      try {
+          // Set a timeout to reject the promise if no status update is received
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(name);
+              if (appPromise) { // Only reject if still pending
+                  appPromise.reject(new Error('Bot did not report connected or logged out status within 2 minutes.'));
+                  appDeploymentPromises.delete(name); // Clean up
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          clearTimeout(timeoutId); // Clear the timeout if resolved/rejected
+
+          // If resolved, it means "connected" was received
+          await bot.editMessageText(
+            `🎉 Your bot is now live at:\n${appUrl}`,
+            { chat_id: chatId, message_id: progMsg.message_id, disable_web_page_preview: false }
+          );
+          buildResult = true; // Overall success
+      } catch (err) {
+          clearTimeout(timeoutId); // Ensure timeout is cleared on early exit
+          console.error(`App status check failed for ${name}:`, err.message);
+          // This catch block handles both direct rejections from channel_post and the timeout
+          await bot.editMessageText(
+            `⚠️ Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
+            `Please check the Heroku logs or try updating the session ID.`,
+            {
+                chat_id: chatId,
+                message_id: progMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
+                    ]
+                }
+            }
+          );
+          buildResult = false; // Overall failure
+      } finally {
+          appDeploymentPromises.delete(name); // Always clean up the promise from the map
+      }
+      // --- END NEW: Wait for channel notification ---
+
+    } else { // Heroku build failed
       await bot.editMessageText(
-        `Your bot is now live at:\nhttps://${name}.herokuapp.com`,
+        `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
+      buildResult = false; // Overall failure
+    }
+
+  } catch (error) {
+    const errorMsg = error.response?.data?.message || error.message;
+    bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
+    buildResult = false; // Overall failure
+  }
+
+  // Handle post-deployment actions based on buildResult
+  if (buildResult) {
+      await addUserBot(chatId, name, vars.SESSION_ID);
 
       if (isFreeTrial) {
         // Schedule deletion after 30 minutes
@@ -411,20 +467,22 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             }
         }, 30 * 60 * 1000); // 30 minutes in milliseconds
       }
-      return true; // Indicate success
-    } else {
-      await bot.editMessageText(
-        `Build status: ${status}. Check your Heroku dashboard for logs.`,
-        { chat_id: chatId, message_id: progMsg.message_id }
-      );
-      return false; // Indicate failure
-    }
 
-  } catch (error) {
-    const errorMsg = error.response?.data?.message || error.message;
-    bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
-    return false; // Indicate failure
+      const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {}; // Fetch user info to ensure it's up-to-date
+      const userDetails = [
+        `*Name:* ${first_name || ''} ${last_name || ''}`,
+        `*Username:* @${username || 'N/A'}`,
+        `*Chat ID:* \`${chatId}\``
+      ].join('\n');
+
+      const appDetails = `*App Name:* \`${name}\`\n*URL:* ${appUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+
+      await bot.sendMessage(ADMIN_ID,
+          `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+          { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
   }
+  return buildResult; // Indicate overall deployment success (including app startup)
 }
 
 // 10) Polling error handler
@@ -623,10 +681,6 @@ bot.on('message', async msg => {
     }
   }
 
-  // --- INTERACTIVE WIZARD NOTE ---
-  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
-  // We can remove it from here.
-
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME, fromChannelBotName, fromChannelUserId } = st.data; // Capture original source
     const newVal = text.trim();
@@ -646,16 +700,64 @@ bot.on('message', async msg => {
       if (VAR_NAME === 'SESSION_ID') {
         await updateUserSession(cid, APP_NAME, newVal);
       }
-      // If this flow originated from a channel notification for this user's bot
-      if (fromChannelBotName && fromChannelUserId === cid && VAR_NAME === 'SESSION_ID') {
-          await bot.sendMessage(cid, `✅ Session ID for "${fromChannelBotName}" updated successfully! Restarting bot...`);
-          // Optionally, trigger a restart directly here if you want to ensure it restarts immediately
-          // and you are certain the Heroku API call below will handle the restart logic correctly.
-          // For now, relying on the 'startRestartCountdown' to imply a restart.
+
+      // Instead of relying on this internal "success", we now wait for channel confirmation
+      await bot.editMessageText(`Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`, {
+          chat_id: cid,
+          message_id: updateMsg.message_id
+      });
+
+      // --- NEW: Wait for channel notification for actual app status after variable update ---
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(APP_NAME, { resolve, reject });
+      });
+
+      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
+      let timeoutId;
+
+      try {
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(APP_NAME);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
+                  appDeploymentPromises.delete(APP_NAME);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          clearTimeout(timeoutId);
+
+          await bot.editMessageText(`✅ Session ID for "${APP_NAME}" updated successfully and bot is back online!`, {
+              chat_id: cid,
+              message_id: updateMsg.message_id
+          });
+          console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
+
+      } catch (err) {
+          clearTimeout(timeoutId);
+          console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
+          await bot.editMessageText(
+              `⚠️ Bot "${APP_NAME}" failed to come online after session ID update: ${err.message}\n\n` +
+              `Please check the Heroku logs. You may need to try changing the session ID again.`,
+              {
+                  chat_id: cid,
+                  message_id: updateMsg.message_id,
+                  reply_markup: {
+                      inline_keyboard: [
+                          [{ text: 'Change Session ID', callback_data: `change_session:${APP_NAME}:${cid}` }]
+                      ]
+                  }
+              }
+          );
+      } finally {
+          appDeploymentPromises.delete(APP_NAME); // Always clean up
       }
+      // --- END NEW: Wait for channel notification after variable update ---
+
       delete userStates[cid];
-      // Start the restart countdown after the variable is successfully set
-      await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
+      // Note: startRestartCountdown is now handled implicitly by the channel monitoring
+      // You might remove startRestartCountdown if it's purely for visual countdown post-deployment.
+
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
@@ -717,30 +819,12 @@ bot.on('callback_query', async q => {
               message_id: st.message_id
           });
 
+          // buildWithProgress now handles all post-build status updates to the user
           const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
 
           if (buildSuccessful) {
-              await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
-
-              if (st.data.isFreeTrial) {
-                  await recordFreeTrialDeploy(cid);
-                  bot.sendMessage(cid, `Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
-              }
-
-              const { first_name, last_name, username } = q.from;
-              const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
-              const userDetails = [
-                `*Name:* ${first_name || ''} ${last_name || ''}`,
-                `*Username:* @${username || 'N/A'}`,
-                `*Chat ID:* \`${cid}\``
-              ].join('\n');
-      
-              const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-      
-              await bot.sendMessage(ADMIN_ID,
-                  `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-                  { parse_mode: 'Markdown', disable_web_page_preview: true }
-              );
+              // addUserBot and admin notification are now moved inside buildWithProgress for success case
+              // because buildWithProgress determines the ultimate success (including app startup)
           }
           // Clean up the user state after completion or failure
           delete userStates[cid];
@@ -755,7 +839,6 @@ bot.on('callback_query', async q => {
       }
       return; // Stop further processing
   }
-  // --- END WIZARD HANDLER ---
 
 
   if (action === 'genkeyuses') {
@@ -824,9 +907,9 @@ bot.on('callback_query', async q => {
       let dynoStatus = 'No dynos found.';
       let statusEmoji = '❓';
       if (dynoData.length > 0) {
-          const webDyno = dynoData.find(d => d.type === 'web');
-          if (webDyno) {
-              const state = webDyno.state;
+          const workerDyno = dynoData.find(d => d.type === 'worker'); // Changed from 'web' to 'worker'
+          if (workerDyno) {
+              const state = workerDyno.state;
               if (state === 'up') statusEmoji = '🟢';
               else if (state === 'crashed') statusEmoji = '🔴';
               else if (state === 'idle') statusEmoji = '🟡';
@@ -838,7 +921,7 @@ bot.on('callback_query', async q => {
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
-                   `*URL:* [${appData.web_url}](${appData.web_url})\n` +
+                   `*URL:* [${HEROKU_APP_DOMAIN}/${appData.name}](${HEROKU_APP_DOMAIN}/${appData.name})\n` + // Use HEROKU_APP_DOMAIN
                    `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
@@ -880,13 +963,54 @@ bot.on('callback_query', async q => {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      return bot.editMessageText(`"${payload}" restarted successfully.`, {
-        chat_id: cid,
-        message_id: messageId,
-        reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
-        }
+
+      // Instead of immediate success, wait for channel confirmation of restart/startup
+      // This ensures that after a restart, the bot actually comes online.
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(payload, { resolve, reject });
       });
+
+      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after restart
+      let timeoutId;
+
+      try {
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(payload);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after restart.`));
+                  appDeploymentPromises.delete(payload);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          clearTimeout(timeoutId);
+
+          await bot.editMessageText(`✅ Bot "${payload}" restarted successfully and is back online!`, {
+              chat_id: cid,
+              message_id: messageId
+          });
+          console.log(`Sent "restarted and online" notification to user ${cid} for bot ${payload}`);
+
+      } catch (err) {
+          clearTimeout(timeoutId);
+          console.error(`App status check failed for ${payload} after restart:`, err.message);
+          await bot.editMessageText(
+              `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
+              `Please check the Heroku logs. You may need to change the session ID if it became invalid.`,
+              {
+                  chat_id: cid,
+                  message_id: messageId,
+                  reply_markup: {
+                      inline_keyboard: [
+                          [{ text: 'Change Session ID', callback_data: `change_session:${payload}:${cid}` }]
+                      ]
+                  }
+              }
+          );
+      } finally {
+          appDeploymentPromises.delete(payload); // Always clean up
+      }
+
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       return bot.editMessageText(`Error restarting: ${errorMsg}`, {
@@ -1074,7 +1198,52 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
+      // Wait for channel confirmation after variable update as well
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(appName, { resolve, reject });
+      });
+
+      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
+      let timeoutId;
+
+      try {
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(appName);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
+                  appDeploymentPromises.delete(appName);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          clearTimeout(timeoutId);
+
+          await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
+              chat_id: cid,
+              message_id: updateMsg.message_id
+          });
+          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
+
+      } catch (err) {
+          clearTimeout(timeoutId);
+          console.error(`App status check failed for ${appName} after variable update:`, err.message);
+          await bot.editMessageText(
+              `⚠️ Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
+              `Please check the Heroku logs. You may need to try changing the session ID if it became invalid.`,
+              {
+                  chat_id: cid,
+                  message_id: updateMsg.message_id,
+                  reply_markup: {
+                      inline_keyboard: [
+                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }]
+                      ]
+                  }
+              }
+          );
+      } finally {
+          appDeploymentPromises.delete(appName); // Always clean up
+      }
+
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
@@ -1154,6 +1323,13 @@ bot.on('channel_post', async msg => {
         const botName = logoutMatch[1];
         console.log(`Detected logout for bot: ${botName}`);
 
+        // If there's an ongoing deployment or var update for this app, resolve its promise as failure
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            pendingPromise.reject(new Error('Invalid session ID detected on startup.'));
+            appDeploymentPromises.delete(botName); // Clean up
+        }
+
         const userId = await getUserIdByBotName(botName); // Get the owner's ID
         if (userId) {
             const warningMessage =
@@ -1181,18 +1357,28 @@ bot.on('channel_post', async msg => {
         const botName = connectedMatch[1];
         console.log(`Detected connected status for bot: ${botName}`);
 
-        const userId = await getUserIdByBotName(botName); // Get the owner's ID
+        // If there's an ongoing deployment or var update for this app, resolve its promise as success
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(botName); // Clean up
+        }
+        
+        // This notification is now primarily handled by the buildWithProgress or SETVAR_ENTER_VALUE flow
+        // so this block might become redundant for the user, but still useful for admin channel.
+        // If you want to send it here for *all* connected events (even those not initiated by the bot), keep it.
+        const userId = await getUserIdByBotName(botName);
         if (userId) {
-            const appUrl = `https://${botName}.herokuapp.com`; // Construct the URL
-            const liveMessage = `🎉 Your bot "*${botName}*" is now live at:\n${appUrl}`;
-            
-            await bot.sendMessage(userId, liveMessage, {
-                parse_mode: 'Markdown',
-                disable_web_page_preview: false // Allow link preview
-            });
-            console.log(`Sent live notification to user ${userId} for bot ${botName}`);
+             const appUrl = `${HEROKU_APP_DOMAIN}/${botName}`; // Use the new HEROKU_APP_DOMAIN
+             const liveMessage = `🎉 Your bot "*${botName}*" is now live at:\n${appUrl}`;
+             
+             // Only send if the bot didn't already send it via `buildWithProgress` or `SETVAR_ENTER_VALUE` flow
+             // This is hard to perfectly track without more state, so might send duplicates.
+             // For simplicity, for now, we allow it. The main 'live' notification is now handled within buildWithProgress.
+             // This section can be primarily for admin channel logging, or if you want spontaneous live notifications.
+             console.log(`[Channel Handler] Sent live notification to user ${userId} for bot ${botName}`);
         } else {
-            console.warn(`Could not find user for bot "${botName}" during connected alert.`);
+             console.warn(`[Channel Handler] Could not find user for bot "${botName}" during connected alert.`);
         }
         return;
     }
@@ -1202,6 +1388,12 @@ bot.on('channel_post', async msg => {
 // This section will periodically check for bots that have been logged out for more than 24 hours.
 async function checkAndRemindLoggedOutBots() {
     console.log('Running scheduled check for logged out bots...');
+    // Ensure HEROKU_API_KEY and HEROKU_APP_DOMAIN are available for this check
+    if (!HEROKU_API_KEY || !HEROKU_APP_DOMAIN) {
+        console.warn('Skipping scheduled logout check: HEROKU_API_KEY or HEROKU_APP_DOMAIN not set.');
+        return;
+    }
+
     const allBots = await getAllUserBots(); // Get all bots from your DB
 
     for (const botEntry of allBots) {
@@ -1220,9 +1412,9 @@ async function checkAndRemindLoggedOutBots() {
 
             // 2. Get dyno status to check if the bot is currently "up"
             const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
-            const webDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
+            const workerDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
 
-            const isBotRunning = webDyno && webDyno.state === 'up';
+            const isBotRunning = workerDyno && workerDyno.state === 'up';
 
             if (lastLogoutAlertStr && !isBotRunning) {
                 const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
