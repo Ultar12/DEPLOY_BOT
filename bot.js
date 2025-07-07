@@ -231,15 +231,32 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-// User specified fixed daily cost per app for usage estimation
-// This constant is no longer used for a specific command, but remains if other future features need a fixed cost.
-const FIXED_DAILY_APP_COST = 0.08; 
+/**
+ * Calculates the estimated daily cost for a given dyno size.
+ * Based on the user's input: Hobby/Basic dyno is $0.08 per day.
+ * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
+ * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x', 'basic').
+ * @returns {number} Estimated daily cost in USD.
+ */
+function getEstimatedDailyCost(dynoSize) {
+    const baseDailyCost = 0.08; // User specified base: $0.08 per day for Hobby/Basic dyno
 
-// Helper function to calculate days between two Date objects (inclusive of start day)
-function calculateDaysBetween(startDate, endDate) {
-    const oneDay = 24 * 60 * 60 * 1000; // milliseconds in one day
-    const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
-    return Math.ceil(diffTime / oneDay); // Use Math.ceil to round up, counting part of a day as a full day
+    // Scaling factors relative to the base daily cost
+    const scalingFactors = {
+        'eco': 0.7, // Eco is typically cheaper
+        'hobby': 1,
+        'basic': 1, // Explicitly set Basic to the base daily cost (0.08)
+        'standard-1x': 3.5, // Standard-1X is typically significantly more expensive than hobby
+        'standard-2x': 7,   // Standard-2X is double Standard-1X
+        'performance-m': 35, // Performance dynos are significantly more
+        'performance-l': 70,
+    };
+
+    const factor = scalingFactors[dynoSize.toLowerCase()];
+    if (factor !== undefined) {
+        return baseDailyCost * factor;
+    }
+    return 0; // Unknown dyno size, assume no cost
 }
 
 
@@ -566,7 +583,7 @@ setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000);
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear previous state on /start
+  delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
   await bot.sendMessage(cid,
@@ -579,7 +596,6 @@ bot.onText(/^\/start$/, async msg => {
 bot.onText(/^\/menu$/i, msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear previous state on /menu
   bot.sendMessage(cid, 'Menu:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
@@ -588,7 +604,6 @@ bot.onText(/^\/menu$/i, msg => {
 bot.onText(/^\/apps$/i, msg => {
   const cid = msg.chat.id.toString();
   if (cid === ADMIN_ID) {
-    delete userStates[cid]; // Clear state
     sendAppList(cid);
   }
 });
@@ -604,8 +619,6 @@ bot.on('message', async msg => {
 
   // --- Button Handlers ---
   if (text === 'Deploy') {
-    // Clear existing state before starting a new flow
-    delete userStates[cid]; 
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, 'Please enter your session ID');
@@ -616,7 +629,6 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Free Trial') {
-    delete userStates[cid]; // Clear existing state
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
@@ -626,12 +638,10 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Apps' && isAdmin) {
-    delete userStates[cid]; // Clear existing state
     return sendAppList(cid);
   }
 
   if (text === 'Generate Key' && isAdmin) {
-    delete userStates[cid]; // Clear existing state
     const buttons = [
       [1, 2, 3, 4, 5].map(n => ({
         text: String(n),
@@ -644,7 +654,6 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    delete userStates[cid]; // Clear existing state
     const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link*\n" +
@@ -669,7 +678,6 @@ bot.on('message', async msg => {
   }
 
   if (text === 'My Bots') {
-    delete userStates[cid]; // Clear existing state
     const bots = await getUserBots(cid);
     if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
@@ -682,18 +690,12 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    delete userStates[cid]; // Clear existing state
     return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
   }
 
   // --- Stateful flows ---
   const st = userStates[cid];
-  if (!st) {
-      // If no state, it means the user sent a message outside of a flow, or the state expired.
-      // You could optionally send a "Please use /start or /menu" message here.
-      return bot.sendMessage(cid, "Please use the provided buttons or type /start to begin.");
-  }
-
+  if (!st) return;
 
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
@@ -770,48 +772,9 @@ bot.on('message', async msg => {
     }
   }
 
-  // **** IMPORTANT FIX HERE FOR SETVAR_PROMPT ****
-  if (st.step === 'SETVAR_PROMPT') {
-    const appName = st.data.APP_NAME;
-    const varKey = text.trim().toUpperCase(); // Assume user types the var name
-    
-    // Validate if the variable name is reasonable or known
-    const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
-    if (!commonVars.includes(varKey) && !/^[A-Z_]+$/.test(varKey)) {
-        // You might want a more robust check for valid Heroku config var names
-        return bot.sendMessage(cid, `Invalid variable name. Please select from the buttons or type a valid Heroku config var name (uppercase letters and underscores only).`);
-    }
-
-    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-        // Offer boolean choices for these
-        st.step = 'SETVAR_ENTER_VALUE'; // Set this to the *next* step for direct input, not a choice
-        st.data.VAR_NAME = varKey; // Store the variable name
-        return bot.sendMessage(cid, `Set ${varKey} to:`, {
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
-                    { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
-                ],
-                [{ text: '◀️ Back', callback_data: `setvar:${appName}` }]]
-            }
-        });
-    } else {
-        // For other variables (like SESSION_ID, PREFIX), ask for the value directly
-        st.step = 'SETVAR_ENTER_VALUE';
-        st.data.VAR_NAME = varKey;
-        return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
-    }
-  }
-  // **** END IMPORTANT FIX ****
-
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME } = st.data;
     const newVal = text.trim();
-    if (!APP_NAME || !VAR_NAME) { // Added a check to ensure essential data exists
-        delete userStates[cid];
-        return bot.sendMessage(cid, "It looks like the previous operation was interrupted. Please select an app again from 'My Bots' or 'Apps'.");
-    }
-
     try {
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
       await axios.patch(
@@ -832,8 +795,7 @@ bot.on('message', async msg => {
       // Start the restart countdown after the variable is successfully set
       await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
-      console.error("Error updating variable:", e.response?.data?.message || e.message);
-      return bot.sendMessage(cid, `Error updating variable: ${e.response?.data?.message || e.message}\n\nPlease try again or contact support.`);
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
   }
 });
@@ -841,20 +803,18 @@ bot.on('message', async msg => {
 // 13) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
-  // Ensure the user's current message object is available for replies/edits
-  const currentMessage = q.message; 
   const [action, payload, extra, flag] = q.data.split(':');
   await bot.answerCallbackQuery(q.id).catch(() => {});
 
   // --- INTERACTIVE WIZARD HANDLER ---
   if (action === 'setup') {
       const st = userStates[cid];
-      // Ensure the user session is still active and this query is for the *current* wizard message
+      // Ensure the user session is still active
       if (!st || !st.message_id || q.message.message_id !== st.message_id) {
-          // Send a new message, as editing an old one might cause issues or not be visible.
-          await bot.sendMessage(cid, 'This menu has expired or is invalid. Please start over by tapping /menu.');
-          delete userStates[cid]; // Clear any stale state
-          return;
+          return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
       }
 
       const [step, value] = [payload, extra];
@@ -959,32 +919,18 @@ bot.on('callback_query', async q => {
     const uses = parseInt(payload, 10);
     const key = generateKey();
     await addDeployKey(key, uses, cid);
-    // Edit the message that generated the key selection to confirm
-    await bot.editMessageText(`Generated key: \`${key}\`\nUses: ${uses}`, { 
-        chat_id: cid, 
-        message_id: q.message.message_id, 
-        parse_mode: 'Markdown' 
-    });
-    return;
+    return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
   }
 
   if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
-    // Always store the message_id for later editing when entering this state
+    // Store the message_id for later editing
     const messageId = q.message.message_id; 
-    // Re-initialize or update the userState for this app management flow
-    userStates[cid] = { 
-        step: 'APP_MANAGEMENT', 
-        data: { 
-            appName: payload, 
-            messageId: messageId, 
-            isUserBot: isUserBot 
-        } 
-    };
+    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: payload, messageId: messageId, isUserBot: isUserBot } };
     
-    return bot.editMessageText(`Manage app "${payload}":`, {
+    return bot.editMessageText(`Manage app "${payload}":`, { // Use editMessageText
       chat_id: cid,
-      message_id: messageId,
+      message_id: messageId, // Use the stored messageId
       reply_markup: {
         inline_keyboard: [
           [
@@ -996,25 +942,22 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
-          [{ text: '◀️ Back', callback_data: 'back_to_app_list' }]
+          // Add the new "Usage" button here
+          [{ text: '📊 Usage', callback_data: `usage:${payload}` }], 
+          [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
     });
   }
 
-  // Ensure 'st' (userState) and appName match current operation
-  const st = userStates[cid];
-  if (!st || st.data.appName !== payload) { // payload here should be the appName from the button
-      // If state is invalid or mismatched, clear it and ask to select again.
-      delete userStates[cid];
-      return bot.editMessageText("This operation has expired or is invalid. Please select an app again from 'My Bots' or 'Apps'.", {
-          chat_id: cid,
-          message_id: q.message.message_id // Edit the message that triggered the invalid state
-      });
-  }
-  const messageId = st.data.messageId; // Use the messageId stored in the state
-
   if (action === 'info') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) { // Ensure state is valid for this app
+        // Fallback if state is lost or user clicks old button
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId; // Get the stored message ID
+
     await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
       const apiHeaders = {
@@ -1060,18 +1003,16 @@ bot.on('callback_query', async q => {
                    `*Stack:* ${appData.stack.name}\n\n` +
                    `*🔧 Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
-                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n` +
-                   `  \`ALWAYS_ONLINE\`: \`${configData.ALWAYS_ONLINE || 'Not Set'}\`\n` + // Added for completeness
-                   `  \`PREFIX\`: \`${configData.PREFIX || 'Not Set'}\`\n` + // Added for completeness
-                   `  \`ANTI_DELETE\`: \`${configData.ANTI_DELETE || 'Not Set'}\`\n`; // Added for completeness
+                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
+      // Edit the message with the info and add a back button
       return bot.editMessageText(info, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
         reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
         }
       });
     } catch (e) {
@@ -1087,6 +1028,12 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'restart') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
     await bot.editMessageText('🔄 Restarting app...', { chat_id: cid, message_id: messageId });
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
@@ -1111,6 +1058,12 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'logs') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
     await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
@@ -1120,4 +1073,302 @@ bot.on('callback_query', async q => {
       const logRes = await axios.get(sess.data.logplex_url);
       const logs = logRes.data.trim().slice(-4000);
       
+      // Edit the message to show logs
       return bot.editMessageText(`Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    } catch (e) {
+      return bot.editMessageText(`Error fetching logs: ${e.message}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    }
+  }
+
+  if (action === 'delete' || action === 'userdelete') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
+      return bot.editMessageText(`Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
+            { text: "No, cancel", callback_data: `selectapp:${payload}` } // Back to app management on cancel
+          ]]
+        }
+      });
+  }
+
+  if (action === 'confirmdelete') {
+      const appToDelete = payload;
+      const originalAction = extra; // This indicates if it was 'userdelete' or 'delete'
+      const st = userStates[cid];
+      if (!st || st.data.appName !== appToDelete) {
+          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      }
+      const messageId = st.data.messageId;
+
+      await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          // Always delete from user_bots table upon successful Heroku deletion
+          await deleteUserBot(cid, appToDelete);
+          // Also delete from temp_deploys table if it was a trial app
+          await deleteTrialDeployEntry(appToDelete); 
+
+          await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
+          
+          // After deletion, take them back to their list of bots or main menu
+          if (originalAction === 'userdelete' && cid !== ADMIN_ID) { // User deleting their own bot, and they are not admin
+              const bots = await getUserBots(cid); // Re-fetch their bots
+              if (bots.length > 0) {
+                  const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                  return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+              } else {
+                  // User has no bots left, send a specific message
+                  return bot.sendMessage(cid, "You no longer have any deployed bots.");
+              }
+          } else { // If admin delete, or admin deleting a user bot
+            return sendAppList(cid, messageId); // Admin sees all apps. Pass messageId to edit.
+          }
+
+      } catch (e) {
+          return bot.editMessageText(`Error deleting app: ${e.message}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appToDelete}` }]]
+            }
+          });
+      }
+  }
+
+  if (action === 'setvar') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const appName = payload;
+    const messageId = st.data.messageId;
+    
+    try {
+        const res = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        const configVars = res.data;
+
+        let varList = `*Current Config Vars for ${appName}:*\n\n`;
+        const varButtons = [];
+
+        // Define a list of variables you want to display and allow setting
+        const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
+
+        for (const key of commonVars) {
+            const value = configVars[key] !== undefined ? configVars[key] : 'Not Set';
+            varList += `\`${key}\`: \`${value}\`\n`;
+            varButtons.push({ text: key, callback_data: `varselect:${key}:${appName}` });
+        }
+        varList += `\nSelect a variable to change or type its name:`;
+
+        // Chunk buttons into rows of 2 or 3 for better display
+        const inlineKeyboardRows = chunkArray(varButtons, 2);
+        inlineKeyboardRows.push([{ text: '◀️ Back to App Management', callback_data: `selectapp:${appName}` }]);
+
+        await bot.editMessageText(varList, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: inlineKeyboardRows
+            }
+        });
+        // Set user state to allow typing a custom variable name
+        userStates[cid] = { step: 'SETVAR_PROMPT', data: { APP_NAME: appName, messageId: messageId } };
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        return bot.editMessageText(`Error fetching config vars: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    }
+    return;
+  }
+  
+  if (action === 'varselect') {
+    const [varKey, appName] = [payload, extra];
+    const st = userStates[cid];
+    if (!st || st.data.appName !== appName) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = st.data.messageId;
+
+    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
+      return bot.editMessageText(`Set ${varKey} to:`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
+            { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
+          ],
+          [{ text: '◀️ Back', callback_data: `setvar:${appName}` }]] // Back to variable selection
+        }
+      });
+    } else {
+      userStates[cid].step = 'SETVAR_ENTER_VALUE'; // Update step for message handler
+      userStates[cid].data.VAR_NAME = varKey; // Store VAR_NAME
+      // When asking for value, send a new message as direct input is expected
+      return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
+    }
+  }
+
+  if (action === 'setvarbool') {
+    const [varKey, appName, valStr] = [payload, extra, flag];
+    const flagVal = valStr === 'true';
+    let newVal;
+    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+    else newVal = flagVal ? 'true' : 'false';
+
+    try {
+      const updateMsg = await bot.sendMessage(cid, `Updating ${varKey} for "${appName}"...`); // Send immediate feedback
+      await axios.patch(
+        `https://api.heroku.com/apps/${appName}/config-vars`,
+        { [varKey]: newVal },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
+    } catch (e) {
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
+    }
+  }
+
+  if (action === 'usage') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const appName = payload;
+    const messageId = st.data.messageId;
+
+    await bot.editMessageText(`📊 Fetching usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
+    try {
+        const apiHeaders = {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+        };
+
+        const [appRes, dynoRes] = await Promise.all([
+            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }), // Get app info for created_at
+            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders }) // Get current dynos
+        ]);
+
+        const appData = appRes.data;
+        const dynos = dynoRes.data;
+
+        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`; // Concise title
+        let currentDailyCost = 0; // This will hold the daily cost for *all* active dynos
+
+        if (dynos.length > 0) {
+            usageMessage += `*Dynos:*\n`;
+            const dynoCounts = {}; // To count dynos of each type and size
+            for (const dyno of dynos) {
+                const key = `${dyno.type} (\`${dyno.size}\`)`; // Use backticks for dyno size
+                dynoCounts[key] = (dynoCounts[key] || 0) + 1;
+            }
+
+            for (const key in dynoCounts) {
+                const [type, sizeWithParens] = key.split(' (');
+                const size = sizeWithParens.slice(0, -1); // Remove trailing ')'
+                const count = dynoCounts[key];
+                const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
+                currentDailyCost += estimatedDailyCostPerDyno * count; // Sum daily costs for all dynos
+
+                usageMessage += `  - ${count} x ${type} dyno ${sizeWithParens}\n`; 
+            }
+
+            const createdAt = new Date(appData.created_at);
+            const now = new Date();
+            const daysDeployed = Math.ceil(Math.abs(now - createdAt) / (1000 * 60 * 60 * 24)); // Calculate days deployed
+
+            const estimatedTotalCost = currentDailyCost * daysDeployed; // Total cost based on summed daily cost
+
+            usageMessage += `\n*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Corrected total cost calculation and label, Daily cost line removed
+            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
+
+        } else {
+            usageMessage += `No active dynos found for this app.\n`;
+            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`; // Corrected total cost calculation and label, Daily cost line removed
+            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
+        }
+
+        return bot.editMessageText(usageMessage, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true, // Prevent URL previews
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`Error in usage for ${appName}:`, e.response?.status, errorMsg);
+        return bot.editMessageText(`Error fetching usage: ${errorMsg}\n\n(Please ensure your Heroku API Key has "Read" permissions for "Dynos" and "Apps".)`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    }
+  }
+
+  if (action === 'back_to_app_list') {
+    const isAdmin = cid === ADMIN_ID;
+    const currentMessageId = q.message.message_id; // Get the ID of the message to edit
+
+    if (isAdmin) {
+      // If admin, show all apps
+      return sendAppList(cid, currentMessageId); // Use existing sendAppList for admin
+    } else {
+      // If regular user, show only their bots
+      const bots = await getUserBots(cid);
+      if (!bots.length) {
+        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      }
+      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+        text: n,
+        callback_data: `selectbot:${n}`
+      })));
+      return bot.editMessageText('Your deployed bots:', {
+        chat_id: cid,
+        message_id: currentMessageId,
+        reply_markup: { inline_keyboard: rows }
+      });
+    }
+  }
+});
+
+console.log('Bot is running...');
