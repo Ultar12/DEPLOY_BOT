@@ -1304,4 +1304,70 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'setvarbool') {
-    const 
+    const [varKey, appName, valStr] = [payload, extra, flag];
+    
+    // Critical state validation for boolean variable setting
+    if (!st || st.data.appName !== appName || st.data.VAR_NAME !== varKey || st.step !== 'SETVAR_ENTER_VALUE' || st.data.messageId !== q.message.message_id) {
+        delete userStates[cid];
+        await bot.sendMessage(cid, "This operation has expired or is invalid. Please select an app again from 'My Bots' or 'Apps'.");
+        return;
+    }
+
+    const flagVal = valStr === 'true';
+    let newVal;
+    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+    else newVal = flagVal ? 'true' : 'false';
+
+    try {
+      // Always use the messageId from state for editing feedback
+      const updateMsg = await bot.editMessageText(`Updating ${varKey} for "${appName}" to \`${newVal}\`...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+      await axios.patch(
+        `https://api.heroku.com/apps/${appName}/config-vars`,
+        { [varKey]: newVal },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      await startRestartCountdown(cid, appName, updateMsg.message_id);
+      delete userStates[cid]; // Clear state after successful completion
+    } catch (e) {
+      console.error("Error setting boolean variable:", e.response?.data?.message || e.message);
+      // Try to edit the message again if it exists, otherwise send new.
+      const errorMessage = `Error updating variable: ${e.response?.data?.message || e.message}`;
+      await bot.editMessageText(errorMessage, {
+          chat_id: cid,
+          message_id: messageId,
+          reply_markup: {
+              inline_keyboard: [[{ text: '◀️ Back', callback_data: `setvar:${appName}` }]]
+          }
+      }).catch(() => bot.sendMessage(cid, errorMessage)); // Fallback if edit fails
+      delete userStates[cid]; // Clear state on error to prevent being stuck
+    }
+    return;
+  }
+
+  if (action === 'back_to_app_list') {
+    const isAdmin = cid === ADMIN_ID;
+    const currentMessageId = q.message.message_id; 
+    delete userStates[cid]; // Always clear user state when going back to list
+
+    if (isAdmin) {
+      return sendAppList(cid, currentMessageId);
+    } else {
+      const bots = await getUserBots(cid);
+      if (!bots.length) {
+        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      }
+      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+        text: n,
+        callback_data: `selectbot:${n}`
+      })));
+      return bot.editMessageText('Your deployed bots:', {
+        chat_id: cid,
+        message_id: currentMessageId,
+        reply_markup: { inline_keyboard: rows }
+      });
+    }
+  }
+});
+
+console.log('Bot is running...');
