@@ -62,6 +62,16 @@ const pool = new Pool({
       delete_at     TIMESTAMP NOT NULL
     );
   `);
+  // New table for bot error notifications
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_notifications (
+        app_name TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        error_type TEXT NOT NULL, -- e.g., 'INVALID_SESSION', 'CRASHED'
+        last_notified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (app_name, error_type) -- Unique constraint on app + error type
+    );
+  `);
 })().catch(console.error);
 
 // 5) DB helper functions
@@ -78,6 +88,12 @@ async function getUserBots(u) {
   );
   return r.rows.map(x => x.bot_name);
 }
+// New function to get user_id by bot_name
+async function getUserIdByBotName(botName) {
+    const res = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [botName]);
+    return res.rows.length > 0 ? res.rows[0].user_id : null;
+}
+
 async function deleteUserBot(u, b) {
   await pool.query(
     'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2',
@@ -147,6 +163,22 @@ async function deleteTrialDeployEntry(appName) {
     );
 }
 
+// New DB helpers for bot_notifications table
+async function recordBotNotification(appName, userId, errorType) {
+    await pool.query(
+        `INSERT INTO bot_notifications (app_name, user_id, error_type, last_notified) VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (app_name, error_type) DO UPDATE SET last_notified = NOW()`,
+        [appName, userId, errorType]
+    );
+}
+
+async function getLastNotificationTime(appName, errorType) {
+    const res = await pool.query(
+        'SELECT last_notified FROM bot_notifications WHERE app_name = $1 AND error_type = $2',
+        [appName, errorType]
+    );
+    return res.rows.length > 0 ? res.rows[0].last_notified : null;
+}
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
@@ -398,12 +430,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           }).catch(() => {}); // Ignore errors if user deletes message
       }
       
-      // --- FIX START: Use fullAppUrl here ---
+      // Use fullAppUrl here
       await bot.editMessageText(
         `Your bot is now working!\nlive at:${fullAppUrl}`,
         { chat_id: chatId, message_id: progMsg.message_id }
       );
-      // --- FIX END ---
 
       if (isFreeTrial) {
           await recordFreeTrialDeploy(chatId, createdAppName); // Use createdAppName
@@ -556,6 +587,126 @@ async function notifyAdminOfUpcomingTrialDeletions() {
 
 // Check for upcoming deletions every 15 minutes (more appropriate for hourly notifications)
 setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000);
+
+
+// --- NEW FEATURE: Bot Status Checking and User Notification ---
+
+// Error patterns to look for in logs and their corresponding error types
+const BOT_ERROR_PATTERNS = [
+    { regex: /INVALID SESSION ID/i, type: 'INVALID_SESSION' },
+    { regex: /Invalid AuthState/i, type: 'INVALID_AUTHSTATE' },
+    // Add more patterns here if you identify other critical errors
+    { regex: /Error: (.*)ECONNREFUSED/i, type: 'CONNECTION_REFUSED' }, // Example for connection errors
+    { regex: /Error: Command failed with exit code/i, type: 'COMMAND_FAILED' }, // General command failures
+    { regex: /code=H\d\d/i, type: 'HEROKU_ERROR_CODE' } // General Heroku runtime errors
+];
+
+const NOTIFICATION_COOLDOWN_HOURS = 6; // How often to notify for the same error on the same app
+
+async function checkBotStatusAndNotify() {
+    console.log('Checking bot statuses for errors...');
+    try {
+        const allUserBots = await pool.query('SELECT user_id, bot_name FROM user_bots');
+
+        for (const botEntry of allUserBots.rows) {
+            const { user_id, bot_name } = botEntry;
+            try {
+                // 1. Check Dyno State First (quick check for obvious issues)
+                const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot_name}/dynos`, {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3'
+                    }
+                });
+                const webDyno = dynoRes.data.find(d => d.type === 'web');
+
+                if (webDyno && (webDyno.state === 'crashed' || webDyno.state === 'errored')) {
+                    const errorType = 'DYNO_CRASHED';
+                    const lastNotified = await getLastNotificationTime(bot_name, errorType);
+                    const now = new Date();
+
+                    if (!lastNotified || (now.getTime() - lastNotified.getTime() > NOTIFICATION_COOLDOWN_HOURS * 60 * 60 * 1000)) {
+                        await bot.sendMessage(user_id, 
+                            `🚨 Your bot "${bot_name}" appears to be *crashed* or in an *errored* state on Heroku.\n\n` +
+                            `Please check your bot's logs on Heroku Dashboard for more details. If it's a session issue, you might need to update your SESSION_ID.`,
+                            {
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '🔄 Restart Bot', callback_data: `restart:${bot_name}` }],
+                                        [{ text: '🔑 Set Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }], // New callback for direct session change
+                                        [{ text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` }]
+                                    ]
+                                }
+                            }
+                        );
+                        await recordBotNotification(bot_name, user_id, errorType);
+                    }
+                    continue; // Skip log parsing if dyno is clearly crashed
+                }
+
+                // 2. Fetch Logs for more specific errors
+                const logSessionRes = await axios.post(`https://api.heroku.com/apps/${bot_name}/log-sessions`,
+                    { tail: false, lines: 200 }, // Fetch more lines for better log analysis
+                    { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+                );
+                const logsUrl = logSessionRes.data.logplex_url;
+                const logRes = await axios.get(logsUrl);
+                const logs = logRes.data;
+
+                let notifiedForThisBot = false; // Flag to prevent multiple notifications for one bot in a single check cycle
+
+                for (const pattern of BOT_ERROR_PATTERNS) {
+                    if (logs.match(pattern.regex)) {
+                        const errorType = pattern.type;
+                        const lastNotified = await getLastNotificationTime(bot_name, errorType);
+                        const now = new Date();
+
+                        if (!lastNotified || (now.getTime() - lastNotified.getTime() > NOTIFICATION_COOLDOWN_HOURS * 60 * 60 * 1000)) {
+                            let message = `🚨 Your bot "${bot_name}" is experiencing an issue!`;
+                            let actionButton = [{ text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` }];
+
+                            if (errorType === 'INVALID_SESSION' || errorType === 'INVALID_AUTHSTATE') {
+                                message = `⚠️ Your bot "${bot_name}" has an *INVALID SESSION ID* or *INVALID AUTHSTATE*.\n\n` +
+                                          `This means your session has expired or is incorrect. Please update your session ID immediately!`;
+                                actionButton.unshift({ text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }); // Prepend button
+                            } else if (errorType === 'CONNECTION_REFUSED') {
+                                message = `🔌 Your bot "${bot_name}" is having trouble connecting to a service (Connection Refused).\n\n` +
+                                          `This might be a temporary network issue or a problem with the service your bot connects to.`;
+                            } else if (errorType === 'COMMAND_FAILED') {
+                                message = `❌ Your bot "${bot_name}" encountered a command execution failure.\n\n` +
+                                          `This indicates a problem during startup or operation. Please check logs.`;
+                            } else if (errorType === 'HEROKU_ERROR_CODE') {
+                                const herokuErrorCodeMatch = logs.match(/code=(H\d\d)/i);
+                                const herokuErrorCode = herokuErrorCodeMatch ? herokuErrorCodeMatch[1] : 'Unknown';
+                                message = `☁️ Your bot "${bot_name}" encountered a Heroku runtime error (Code: ${herokuErrorCode}).\n\n` +
+                                          `This often means your bot crashed. Check logs for details.`;
+                            }
+
+                            await bot.sendMessage(user_id, message, {
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: chunkArray(actionButton, 2) // Ensure buttons are chunked
+                                }
+                            });
+                            await recordBotNotification(bot_name, user_id, errorType);
+                            notifiedForThisBot = true; // Mark as notified for this cycle
+                            break; // Stop checking patterns for this bot if one is found and notified
+                        }
+                    }
+                }
+
+            } catch (err) {
+                console.error(`Error checking status for app ${bot_name}:`, err.message);
+                // Optionally notify admin if the check itself fails consistently
+            }
+        }
+    } catch (err) {
+        console.error('Error fetching all user bots for status check:', err.message);
+    }
+}
+
+// Schedule the bot status check to run every 30 minutes
+setInterval(checkBotStatusAndNotify, 30 * 60 * 1000); // 30 minutes
 
 // 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
@@ -737,7 +888,6 @@ bot.on('message', async msg => {
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
         
-        // --- INTERACTIVE WIZARD START ---
         st.step = 'AWAITING_WIZARD_CHOICE'; 
         
         const wizardText = `App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
@@ -753,8 +903,6 @@ bot.on('message', async msg => {
         };
         const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
         st.data.messageId = wizardMsg.message_id; // Store message_id for this specific interaction
-        // --- INTERACTIVE WIZARD END ---
-
       } else {
         console.error(`Error checking app name "${nm}":`, e.message);
         return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
@@ -898,9 +1046,7 @@ bot.on('callback_query', async q => {
           const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
 
           if (buildSuccessful) {
-              // --- FIX START: Use actual app name from buildWithProgress after creation ---
               await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID); 
-              // --- FIX END ---
 
               if (st.data.isFreeTrial) {
                   // This part of free trial logic will be fixed in a separate, more comprehensive review.
@@ -908,9 +1054,6 @@ bot.on('callback_query', async q => {
               }
 
               const { first_name, last_name, username } = q.from;
-              // --- FIX START: Use fullAppUrl from buildWithProgress result if available, or fetch ---
-              // Ideally, buildWithProgress should return the actual Heroku app object or at least its web_url
-              // For now, let's refetch it accurately after successful build.
               let actualAppUrl = `https://${st.data.APP_NAME}.herokuapp.com`; // Fallback
               try {
                   const appRes = await axios.get(`https://api.heroku.com/apps/${st.data.APP_NAME}`, {
@@ -920,7 +1063,6 @@ bot.on('callback_query', async q => {
               } catch (urlError) {
                   console.error(`Could not fetch actual app URL for ${st.data.APP_NAME}:`, urlError.message);
               }
-              // --- FIX END ---
 
               const userDetails = [
                 `*Name:* ${first_name || ''} ${last_name || ''}`,
