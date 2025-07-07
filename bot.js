@@ -365,7 +365,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
 
 
 // 8) Send Heroku apps list
-async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserIdForUpdate = null) {
+async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserIdForUpdate = null, isRemoval = false) {
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
       headers: {
@@ -379,13 +379,15 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
       return bot.sendMessage(chatId, 'No apps found.');
     }
 
-    // Adapt callback data based on whether it's for general selection or for /update command
+    // Adapt callback data based on whether it's for general selection, /update, or /remove
     const rows = chunkArray(apps, 3).map(r =>
       r.map(name => ({ 
         text: name, 
-        callback_data: targetUserIdForUpdate 
-            ? `${callbackPrefix}:${name}:${targetUserIdForUpdate}` 
-            : `${callbackPrefix}:${name}` 
+        callback_data: isRemoval
+            ? `${callbackPrefix}:${name}:${targetUserIdForUpdate}` // remove_assign_app:appName:targetUserId
+            : targetUserIdForUpdate 
+                ? `${callbackPrefix}:${name}:${targetUserIdForUpdate}` // update_assign_app:appName:targetUserId
+                : `${callbackPrefix}:${name}` // selectapp:appName (general info/management)
       }))
     );
 
@@ -697,6 +699,58 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
     } catch (error) {
         console.error("Error sending initial /update message or setting state:", error);
         bot.sendMessage(cid, "An error occurred while starting the update process. Please try again.");
+    }
+});
+
+// New /remove <user_id> command for admin
+bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const targetUserId = match[1]; // The user ID provided after /remove
+
+    console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
+
+    if (cid !== ADMIN_ID) {
+        console.log(`[Admin] Unauthorized /remove attempt by ${cid}.`);
+        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+    }
+
+    // Clear any existing state for this admin before starting new flow
+    delete userStates[cid];
+    console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
+
+    // Fetch bots specifically for the targetUserId
+    const userBots = await getUserBots(targetUserId);
+    if (!userBots.length) {
+        return bot.sendMessage(cid, `User \`${targetUserId}\` has no bots deployed via this system.`, { parse_mode: 'Markdown' });
+    }
+
+    console.log(`[Admin] Admin ${cid} initiated /remove for user ${targetUserId}. Prompting for app removal selection.`);
+    
+    try {
+        const sentMsg = await bot.sendMessage(cid, `Select app to remove from user \`${targetUserId}\`'s dashboard:`, { parse_mode: 'Markdown' });
+        
+        userStates[cid] = {
+            step: 'AWAITING_APP_FOR_REMOVAL', // New state for removal flow
+            data: {
+                targetUserId: targetUserId,
+                messageId: sentMsg.message_id
+            }
+        };
+        console.log(`[Admin] State set for ${cid} for removal:`, userStates[cid]);
+
+        const rows = chunkArray(userBots, 3).map(r => r.map(name => ({
+            text: name,
+            callback_data: `remove_app_from_user:${name}:${targetUserId}` // Callback for removal
+        })));
+        
+        await bot.editMessageReplyMarkup({ inline_keyboard: rows }, {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+
+    } catch (error) {
+        console.error("Error sending initial /remove message or setting state:", error);
+        bot.sendMessage(cid, "An error occurred while starting the removal process. Please try again.");
     }
 });
 
@@ -1193,6 +1247,67 @@ bot.on('callback_query', async q => {
     return;
   }
 
+  // Handle app selection from the /remove command
+  if (action === 'remove_app_from_user') {
+    const appName = payload;
+    const targetUserId = extra; // The user ID passed from the /remove command
+
+    console.log(`[CallbackQuery - remove_app_from_user] Received selection for app: ${appName} to remove from user: ${targetUserId}`);
+    console.log(`[CallbackQuery - remove_app_from_user] Current state for ${cid} is:`, userStates[cid]);
+
+    if (cid !== ADMIN_ID) {
+        await bot.editMessageText("❌ You are not authorized to perform this action.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        return;
+    }
+
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_APP_FOR_REMOVAL' || st.data.targetUserId !== targetUserId) {
+        console.error(`[CallbackQuery - remove_app_from_user] State mismatch for ${cid}. Expected AWAITING_APP_FOR_REMOVAL for ${targetUserId}, got:`, st);
+        await bot.editMessageText("This removal session has expired or is invalid. Please start over with `/remove <user_id>`.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        delete userStates[cid];
+        return;
+    }
+
+    await bot.editMessageText(`Removing app "${appName}" from user \`${targetUserId}\`'s dashboard...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        await deleteUserBot(targetUserId, appName);
+        console.log(`[Admin] Successfully called deleteUserBot for ${appName} from user ${targetUserId}.`);
+
+        await bot.editMessageText(`✅ App "*${appName}*" successfully removed from user \`${targetUserId}\`'s dashboard.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+
+        // Optionally notify the target user that an app was removed from their dashboard
+        await bot.sendMessage(targetUserId, `ℹ️ The admin has removed bot "*${appName}*" from your "My Bots" menu.`, { parse_mode: 'Markdown' });
+        console.log(`[Admin] Sent removal notification to target user ${targetUserId}.`);
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[Admin] Error removing app "${appName}" from user ${targetUserId}:`, errorMsg, e.stack);
+        await bot.editMessageText(`❌ Failed to remove app "${appName}" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    } finally {
+        delete userStates[cid];
+        console.log(`[Admin] State cleared for ${cid} after remove_app_from_user flow.`);
+    }
+    return;
+  }
+
 
   if (action === 'info') {
     const st = userStates[cid];
@@ -1219,30 +1334,37 @@ bot.on('callback_query', async q => {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      let dynoStatus = '❓ Status Unknown'; // Default
-      let statusEmoji = '❓';
+      let dynoStatus = '⚪️ Scaled to 0'; // Default to scaled to 0 if no active dyno
+      let statusEmoji = '⚪️'; // Grey circle for off/scaled to 0
 
-      if (dynoData.length === 0) {
-          dynoStatus = 'No dynos found.'; // App is scaled to 0 or has no process types
-      } else {
-          const workerDyno = dynoData.find(d => d.type === 'worker'); // Try to find the worker dyno
+      if (dynoData.length > 0) {
+          const workerDyno = dynoData.find(d => d.type === 'worker'); 
           if (workerDyno) {
               const state = workerDyno.state;
-              if (state === 'up') statusEmoji = '🟢';
-              else if (state === 'crashed') statusEmoji = '🔴';
-              else if (state === 'idle') statusEmoji = '🟡';
-              else if (state === 'starting' || state === 'restarting') statusEmoji = '⏳';
-              else statusEmoji = '❓'; // Fallback for unknown states
-              dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
-          } else {
-              // Dynos exist, but no 'worker' dyno (e.g., only a 'web' dyno, or worker scaled to 0 after other dynos)
-              dynoStatus = '⚠️ Worker dyno not found or scaled to 0.';
-          }
+              if (state === 'up') {
+                  statusEmoji = '🟢'; // Green for Up
+                  dynoStatus = `${statusEmoji} Up`;
+              } else if (state === 'crashed') {
+                  statusEmoji = '🔴'; // Red for Crashed
+                  dynoStatus = `${statusEmoji} Crashed`;
+              } else if (state === 'idle') {
+                  statusEmoji = '🟡'; // Yellow for Idle (though worker dynos usually aren't 'idle' in the web dyno sense)
+                  dynoStatus = `${statusEmoji} Idle`;
+              } else if (state === 'starting' || state === 'restarting') {
+                  statusEmoji = '⏳'; // Hourglass for transitional states
+                  dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
+              } else {
+                  statusEmoji = '❓'; // Unknown state
+                  dynoStatus = `${statusEmoji} Unknown State: ${state}`;
+              }
+          } 
+          // If dynoData has elements but no workerDyno, it remains '⚪️ Scaled to 0'
+          // unless you want to report other dyno types, which is generally not needed for a bot.
       }
+
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` + // Updated status
-                   // Removed URL from Info
                    `*Created:* ${new Date(appData.created_at).toLocaleDateString()} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` + // Re-calculate days for robustness
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
@@ -1280,82 +1402,38 @@ bot.on('callback_query', async q => {
     }
     const messageId = st.data.messageId;
 
-    const baseRestartText = `🔄 Restarting app "${payload}"...`;
-    await bot.editMessageText(`${getAnimatedEmoji()} ${baseRestartText}`, { // Initial message with emoji
+    await bot.editMessageText(`🔄 Restarting bot "${payload}"...`, { // Initial message without animation
         chat_id: cid,
         message_id: messageId
     });
-    const animateIntervalId = await animateMessage(cid, messageId, baseRestartText);
-
 
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
 
-      // Instead of immediate success, wait for channel confirmation of restart/startup
-      // This ensures that after a restart, the bot actually comes online.
-      const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(payload, { resolve, reject, animateIntervalId }); // Store intervalId
+      // FIX: Changed success message and removed waiting animation for restart
+      await bot.editMessageText(`✅ Bot "${payload}" restarted successfully!`, {
+          chat_id: cid,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+          }
       });
-
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after restart
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
-              const appPromise = appDeploymentPromises.get(payload);
-              if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after restart.`));
-                  appDeploymentPromises.delete(payload);
-              }
-          }, STATUS_CHECK_TIMEOUT);
-
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-
-          // FIX: Changed success message
-          await bot.editMessageText(`✅ Bot "${payload}" restarted successfully!`, {
-              chat_id: cid,
-              message_id: messageId,
-              reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
-              }
-          });
-          console.log(`Sent "restarted successfully" notification to user ${cid} for bot ${payload}`);
-
-      } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-          console.error(`App status check failed for ${payload} after restart:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
-              `The bot is in your "My Bots" list, but you may need to change the session ID if it became invalid.`,
-              {
-                  chat_id: cid,
-                  message_id: messageId,
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${payload}:${cid}` }],
-                          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]
-                      ]
-                  }
-              }
-          );
-      } finally {
-          appDeploymentPromises.delete(payload); // Always clean up
-      }
+      console.log(`Sent "restarted successfully" notification to user ${cid} for bot ${payload}`);
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error restarting: ${errorMsg}`, {
+      console.error(`Error restarting ${payload}:`, errorMsg, e.stack);
+      return bot.editMessageText(`❌ Error restarting bot: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
             inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
+    } finally {
+        delete userStates[cid]; // Clear state after restart attempt
     }
   }
 
