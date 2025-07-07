@@ -35,9 +35,6 @@ const SUPPORT_USERNAME = '@star_ies1';
 // Add the channel ID the bot will listen to for specific messages
 const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here
 
-// Removed: console.log for HEROKU_APP_DOMAIN as it's no longer used for URLs
-// Removed: getAppBaseUrl function as it's no longer needed for URLs
-
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -49,8 +46,8 @@ const pool = new Pool({
       user_id    TEXT NOT NULL,
       bot_name   TEXT NOT NULL,
       session_id TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (user_id, bot_name) -- Ensure composite primary key
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      -- Removed PRIMARY KEY (user_id, bot_name) based on your feedback that it was working before
     );
   `);
   await pool.query(`
@@ -71,18 +68,18 @@ const pool = new Pool({
 })().catch(console.error);
 
 // 5) DB helper functions
+// Reverted addUserBot to simple INSERT (as it was in your working code)
 async function addUserBot(u, b, s) {
   try {
-    // Use ON CONFLICT to update if it already exists, or insert if new
     await pool.query(
-      `INSERT INTO user_bots(user_id, bot_name, session_id)
-       VALUES($1, $2, $3)
-       ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP`,
+      'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
       [u, b, s]
     );
-    console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}".`);
+    console.log(`[DB] addUserBot: Successfully INSERTED bot "${b}" for user "${u}".`);
   } catch (error) {
-    console.error(`[DB] addUserBot: Failed to add/update bot "${b}" for user "${u}":`, error.message);
+    console.error(`[DB] addUserBot: Failed to INSERT bot "${b}" for user "${u}":`, error.message);
+    // This could happen if bot_name/user_id combo already exists without a PK.
+    // If you need to handle this as an update, you'd use ON CONFLICT.
   }
 }
 async function getUserBots(u) {
@@ -136,18 +133,17 @@ async function deleteUserBot(u, b) {
     console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
   }
 }
+// Reverted updateUserSession to simple UPDATE (as it was in your working code)
 async function updateUserSession(u, b, s) {
-  // This function is effectively replaced by the ON CONFLICT in addUserBot,
-  // but keeping it for explicit update calls if desired elsewhere.
-  // For now, it will simply perform an UPDATE.
   try {
     await pool.query(
       'UPDATE user_bots SET session_id=$1 WHERE user_id=$2 AND bot_name=$3',
       [s, u, b]
     );
-    console.log(`[DB] updateUserSession: Successfully updated session for bot "${b}" (user "${u}").`);
+    console.log(`[DB] updateUserSession: Successfully UPDATED session for bot "${b}" (user "${u}").`);
   } catch (error) {
-    console.error(`[DB] updateUserSession: Failed to update session for bot "${b}" (user "${u}"):`, error.message);
+    console.error(`[DB] updateUserSession: Failed to UPDATE session for bot "${b}" (user "${u}"):`, error.message);
+    // This could happen if the bot_name/user_id combo doesn't exist.
   }
 }
 async function addDeployKey(key, uses, createdBy) {
@@ -489,8 +485,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
           // --- ADDED/MOVED: addUserBot and admin notification here for overall success ---
           // NEW: Log user_id and bot_name before calling addUserBot
-          console.log(`[Flow] buildWithProgress: Attempting to add/update bot "${name}" for user "${chatId}".`);
-          await addUserBot(chatId, name, vars.SESSION_ID); // This will add new bot or update existing one
+          console.log(`[Flow] buildWithProgress (new deploy): Attempting to ADD bot "${name}" for user "${chatId}".`);
+          await addUserBot(chatId, name, vars.SESSION_ID); // Add new bot
 
           if (isFreeTrial) {
             // Schedule deletion after 30 minutes
@@ -764,7 +760,7 @@ bot.on('message', async msg => {
         st.data.APP_NAME = nm;
         
         // --- INTERACTIVE WIZARD START ---
-        // Instead of asking for the next step via text, we now send an interactive message.
+        // Instead of asking for the next step via text, we now send anT interactive message.
         st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
         
         const wizardText = `App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
@@ -783,14 +779,18 @@ bot.on('message', async msg => {
         // --- INTERACTIVE WIZARD END ---
 
       } else {
-        console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
+        console.error(`Error checking app name "${nm}":`, e.message);
         return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
       }
     }
   }
 
+  // --- INTERACTIVE WIZARD NOTE ---
+  // The 'AUTO_STATUS_VIEW' step is now handled entirely by the callback_query handler.
+  // We can remove it from here.
+
   if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME, fromChannelBotName, fromChannelUserId } = st.data; // Capture original source
+    const { APP_NAME, VAR_NAME } = st.data; // Removed fromChannelBotName, fromChannelUserId as they are not used here explicitly
     const newVal = text.trim();
     try {
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`); // Send immediate feedback
@@ -805,74 +805,16 @@ bot.on('message', async msg => {
           }
         }
       );
-      // No explicit updateUserSession call here. The logic is now within addUserBot
-      // to handle ON CONFLICT, ensuring bot is added/updated in database.
-
-      const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
-          chat_id: cid,
-          message_id: updateMsg.message_id
-      });
-      // Start animation for waiting state after variable update
-      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
-
-      const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId }); // Store intervalId
-      });
-
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
-              const appPromise = appDeploymentPromises.get(APP_NAME);
-              if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
-                  appDeploymentPromises.delete(APP_NAME);
-              }
-          }, STATUS_CHECK_TIMEOUT);
-
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-
-          await bot.editMessageText(`✅ Session ID for "${APP_NAME}" updated successfully and bot is back online!`, {
-              chat_id: cid,
-              message_id: updateMsg.message_id
-          });
-          console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
-
-          // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
-          // NEW: Log user_id and bot_name before calling addUserBot
-          console.log(`[Flow] SETVAR_ENTER_VALUE: Attempting to add/update bot "${APP_NAME}" for user "${cid}".`);
-          await addUserBot(cid, APP_NAME, newVal); // Pass the new session ID
-
-      } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-          console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "${APP_NAME}" failed to come online after session ID update: ${err.message}\n\n` +
-              `Please check the Heroku logs. You may need to try changing the session ID again.`,
-              {
-                  chat_id: cid,
-                  message_id: updateMsg.message_id,
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${APP_NAME}:${cid}` }]
-                      ]
-                  }
-              }
-          );
-      } finally {
-          appDeploymentPromises.delete(APP_NAME); // Always clean up
+      if (VAR_NAME === 'SESSION_ID') {
+        // NEW: Log user_id and bot_name before calling updateUserSession
+        console.log(`[Flow] SETVAR_ENTER_VALUE: Attempting to UPDATE session for bot "${APP_NAME}" for user "${cid}".`);
+        await updateUserSession(cid, APP_NAME, newVal); // Use original updateUserSession
       }
-
       delete userStates[cid];
-
+      // Start the restart countdown after the variable is successfully set
+      await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
   }
 });
@@ -931,9 +873,31 @@ bot.on('callback_query', async q => {
               message_id: st.message_id
           });
 
-          // buildWithProgress now handles all post-build status updates to the user
           const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
 
+          if (buildSuccessful) {
+              await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
+
+              if (st.data.isFreeTrial) {
+                  await recordFreeTrialDeploy(cid);
+                  bot.sendMessage(cid, `Reminder: This Free Trial app will be automatically deleted in 30 minutes.`);
+              }
+
+              const { first_name, last_name, username } = q.from;
+              const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
+              const userDetails = [
+                `*Name:* ${first_name || ''} ${last_name || ''}`,
+                `*Username:* @${username || 'N/A'}`,
+                `*Chat ID:* \`${cid}\``
+              ].join('\n');
+      
+              const appDetails = `*App Name:* \`${st.data.APP_NAME}\`\n*URL:* ${appUrl}\n*Session ID:* \`${st.data.SESSION_ID}\`\n*Type:* ${st.data.isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      
+              await bot.sendMessage(ADMIN_ID,
+                  `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+                  { parse_mode: 'Markdown', disable_web_page_preview: true }
+              );
+          }
           // Clean up the user state after completion or failure
           delete userStates[cid];
       }
@@ -947,6 +911,7 @@ bot.on('callback_query', async q => {
       }
       return; // Stop further processing
   }
+  // --- END WIZARD HANDLER ---
 
 
   if (action === 'genkeyuses') {
@@ -1015,9 +980,9 @@ bot.on('callback_query', async q => {
       let dynoStatus = 'No dynos found.';
       let statusEmoji = '❓';
       if (dynoData.length > 0) {
-          const workerDyno = dynoData.find(d => d.type === 'worker'); // Changed from 'web' to 'worker'
-          if (workerDyno) {
-              const state = workerDyno.state;
+          const webDyno = dynoData.find(d => d.type === 'web');
+          if (webDyno) {
+              const state = webDyno.state;
               if (state === 'up') statusEmoji = '🟢';
               else if (state === 'crashed') statusEmoji = '🔴';
               else if (state === 'idle') statusEmoji = '🟡';
@@ -1029,7 +994,7 @@ bot.on('callback_query', async q => {
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
-                   // Removed URL from Info
+                   `*URL:* [${appData.web_url}](${appData.web_url})\n` + // Re-added original URL for info
                    `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
@@ -1066,75 +1031,20 @@ bot.on('callback_query', async q => {
     }
     const messageId = st.data.messageId;
 
-    const baseRestartText = `🔄 Restarting app "${payload}"...`;
-    await bot.editMessageText(`${getAnimatedEmoji()} ${baseRestartText}`, { // Initial message with emoji
-        chat_id: cid,
-        message_id: messageId
-    });
-    const animateIntervalId = await animateMessage(cid, messageId, baseRestartText);
-
-
+    await bot.editMessageText('🔄 Restarting app...', { chat_id: cid, message_id: messageId });
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-
-      // Instead of immediate success, wait for channel confirmation of restart/startup
-      // This ensures that after a restart, the bot actually comes online.
-      const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(payload, { resolve, reject, animateIntervalId }); // Store intervalId
+      return bot.editMessageText(`"${payload}" restarted successfully.`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
+        }
       });
-
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after restart
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
-              const appPromise = appDeploymentPromises.get(payload);
-              if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after restart.`));
-                  appDeploymentPromises.delete(payload);
-              }
-          }, STATUS_CHECK_TIMEOUT);
-
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-
-          await bot.editMessageText(`✅ Bot "${payload}" restarted successfully and is back online!`, {
-              chat_id: cid,
-              message_id: messageId,
-              reply_markup: {
-                inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
-              }
-          });
-          console.log(`Sent "restarted and online" notification to user ${cid} for bot ${payload}`);
-
-      } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-          console.error(`App status check failed for ${payload} after restart:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "${payload}" failed to come online after restart: ${err.message}\n\n` +
-              `Please check the Heroku logs. You may need to change the session ID if it became invalid.`,
-              {
-                  chat_id: cid,
-                  message_id: messageId,
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${payload}:${cid}` }],
-                          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]
-                      ]
-                  }
-              }
-          );
-      } finally {
-          appDeploymentPromises.delete(payload); // Always clean up
-      }
-
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error restarting: ${errorMsg}`, {
+      return bot.editMessageText(`Error restarting: ${e.message}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
@@ -1170,8 +1080,7 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
+      return bot.editMessageText(`Error fetching logs: ${e.message}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
@@ -1231,8 +1140,7 @@ bot.on('callback_query', async q => {
             return sendAppList(cid); // Admin sees all apps
           }
       } catch (e) {
-          const errorMsg = e.response?.data?.message || e.message;
-          return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
+          return bot.editMessageText(`Error deleting app: ${e.message}`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
@@ -1268,8 +1176,8 @@ bot.on('callback_query', async q => {
           [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
-          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️ Back', callback_data: `selectapp:${payload}` }] // Back to app management
+          [{ text: 'ANTI_DELETE', callback_data: `ANTI_DELETE:${payload}` }],
+          [{ text: '◀️ Back', callback_data: `setvar:${payload}` }] // Back to app management
         ]
       }
     });
@@ -1298,7 +1206,6 @@ bot.on('callback_query', async q => {
     } else {
       userStates[cid].step = 'SETVAR_ENTER_VALUE'; // Update step for message handler
       userStates[cid].data.VAR_NAME = varKey; // Store VAR_NAME
-      userStates[cid].data.APP_NAME = appName; // Ensure APP_NAME is stored for this step
       // When asking for value, send a new message as direct input is expected
       return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
     }
@@ -1319,100 +1226,11 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      const baseWaitingText = `Updating ${varKey} for "${appName}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
-          chat_id: cid,
-          message_id: updateMsg.message_id
-      });
-      // Start animation for waiting state after variable update
-      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
-
-      const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); // Store intervalId
-      });
-
-      const STATUS_CHECK_TIMEOUT = 90 * 1000; // 90 seconds to wait for connection after update
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
-              const appPromise = appDeploymentPromises.get(appName);
-              if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
-                  appDeploymentPromises.delete(appName);
-              }
-          }, STATUS_CHECK_TIMEOUT);
-
-          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-
-          await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
-              chat_id: cid,
-              message_id: updateMsg.message_id,
-              reply_markup: {
-                  inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
-              }
-          });
-          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
-
-          // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
-          // NEW: Log user_id and bot_name before calling addUserBot
-          console.log(`[Flow] setvarbool: Attempting to add/update bot "${appName}" for user "${cid}".`);
-          await addUserBot(cid, appName, newVal); // Pass the new session ID, this handles upsert.
-
-      } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId); // Stop animation
-          console.error(`App status check failed for ${appName} after variable update:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
-              `Please check the Heroku logs. You may need to try changing the session ID if it became invalid.`,
-              {
-                  chat_id: cid,
-                  message_id: updateMsg.message_id,
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
-                          [{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]
-                      ]
-                  }
-              }
-          );
-      } finally {
-          appDeploymentPromises.delete(appName); // Always clean up
-      }
-
+      await startRestartCountdown(cid, appName, updateMsg.message_id); // Start countdown
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
-      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+      return bot.sendMessage(cid, `Error updating variable: ${e.message}`);
     }
   }
-
-  // Handler for initiating session change from channel notification
-  if (action === 'change_session') {
-      const appName = payload;
-      const targetUserId = extra; // The user ID that owns this bot
-
-      // Ensure the user initiating this action is the actual owner (optional but good for security)
-      if (cid !== targetUserId) {
-          await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
-          return;
-      }
-      
-      userStates[cid] = {
-          step: 'SETVAR_ENTER_VALUE',
-          data: {
-              APP_NAME: appName,
-              VAR_NAME: 'SESSION_ID',
-              fromChannelBotName: appName, // Store context that this came from a channel alert
-              fromChannelUserId: targetUserId // Store context
-          }
-      };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
-      return;
-  }
-
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
@@ -1424,178 +1242,20 @@ bot.on('callback_query', async q => {
     } else {
       // If regular user, show only their bots
       const bots = await getUserBots(cid);
-      if (bots.length > 0) {
-          const rows = chunkArray(bots, 3).map(r => r.map(n => ({
-            text: n,
-            callback_data: `selectbot:${n}`
-          })));
-          return bot.editMessageText('Your remaining deployed bots:', {
-            chat_id: cid,
-            message_id: currentMessageId,
-            reply_markup: { inline_keyboard: rows }
-          });
-      } else {
-          return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      if (!bots.length) {
+        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
       }
+      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+        text: n,
+        callback_data: `selectbot:${n}`
+      })));
+      return bot.editMessageText('Your deployed bots:', {
+        chat_id: cid,
+        message_id: currentMessageId,
+        reply_markup: { inline_keyboard: rows }
+      });
     }
   }
 });
-
-// 14) Channel Post Handler
-// This is the core new feature to detect and react to messages from your Levanter app.
-bot.on('channel_post', async msg => {
-    const channelId = msg.chat.id.toString();
-    const text = msg.text?.trim();
-
-    // Check if the message is from the designated listening channel
-    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
-        return; // Ignore messages from other channels
-    }
-
-    if (!text) {
-        return; // Ignore empty messages
-    }
-
-    // Regex for "logged out" message: User [bot_name] has logged out.
-    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./);
-    if (logoutMatch) {
-        const botName = logoutMatch[1];
-        console.log(`Detected logout for bot: ${botName}`);
-
-        // If there's an ongoing deployment or var update for this app, resolve its promise as failure
-        const pendingPromise = appDeploymentPromises.get(botName);
-        if (pendingPromise) {
-            clearInterval(pendingPromise.animateIntervalId); // Stop animation
-            pendingPromise.reject(new Error('Invalid session ID detected on startup.'));
-            appDeploymentPromises.delete(botName); // Clean up
-        }
-
-        const userId = await getUserIdByBotName(botName); // Get the owner's ID
-        if (userId) {
-            const warningMessage =
-                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
-                `Please update your session ID to get it back online.`;
-            
-            await bot.sendMessage(userId, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
-                    ]
-                }
-            });
-            console.log(`Sent logout notification to user ${userId} for bot ${botName}`);
-        } else {
-            console.warn(`Could not find user for bot "${botName}" during logout alert. (Bot not tracked by this bot's DB?)`);
-        }
-        return;
-    }
-
-    // Regex for "connected" message: ✅ [bot_name] connected.
-    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\./);
-    if (connectedMatch) {
-        const botName = connectedMatch[1];
-        console.log(`Detected connected status for bot: ${botName}`);
-
-        // If there's an ongoing deployment or var update for this app, resolve its promise as success
-        const pendingPromise = appDeploymentPromises.get(botName);
-        if (pendingPromise) {
-            clearInterval(pendingPromise.animateIntervalId); // Stop animation
-            pendingPromise.resolve('connected');
-            appDeploymentPromises.delete(botName); // Clean up
-        }
-        
-        // This notification is now primarily handled by the buildWithProgress or SETVAR_ENTER_VALUE flow
-        // so this block might become redundant for the user, but still useful for admin channel.
-        const userId = await getUserIdByBotName(botName);
-        if (userId) {
-             // Removed appUrl from live message
-             const liveMessage = `🎉 Your bot "*${botName}*" is now live!`;
-             
-             // Only send if the bot didn't already send it via `buildWithProgress` or `SETVAR_ENTER_VALUE` flow
-             // This is hard to perfectly track without more state, so might send duplicates.
-             // For simplicity, for now, we allow it. The main 'live' notification is now handled within buildWithProgress.
-             // This section can be primarily for admin channel logging, or if you want spontaneous live notifications.
-             console.log(`[Channel Handler] Sent live notification to user ${userId} for bot ${botName}`);
-        } else {
-             console.warn(`[Channel Handler] Could not find user for bot "${botName}" during connected alert. (Bot not tracked by this bot's DB?)`);
-        }
-        return;
-    }
-});
-
-// 15) Scheduled Task for Logout Reminders
-// This section will periodically check for bots that have been logged out for more than 24 hours.
-async function checkAndRemindLoggedOutBots() {
-    console.log('Running scheduled check for logged out bots...');
-    // Ensure HEROKU_API_KEY is available for this check
-    if (!HEROKU_API_KEY) {
-        console.warn('Skipping scheduled logout check: HEROKU_API_KEY not set.');
-        return;
-    }
-
-    const allBots = await getAllUserBots(); // Get all bots from your DB
-
-    for (const botEntry of allBots) {
-        const { user_id, bot_name } = botEntry;
-        const herokuApp = bot_name; // Assuming bot_name is also the Heroku app name
-
-        try {
-            const apiHeaders = {
-                Authorization: `Bearer ${HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3'
-            };
-
-            // 1. Get app config vars to check LAST_LOGOUT_ALERT
-            const configRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/config-vars`, { headers: apiHeaders });
-            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT;
-
-            // 2. Get dyno status to check if the bot is currently "up"
-            const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
-            const workerDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
-
-            const isBotRunning = workerDyno && workerDyno.state === 'up';
-
-            if (lastLogoutAlertStr && !isBotRunning) {
-                const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
-                const now = new Date();
-                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
-                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
-                if (timeSinceLogout > twentyFourHours) {
-                    const reminderMessage =
-                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
-                        `It appears to still be offline. Please update your session ID to bring it back online.`;
-                    
-                    await bot.sendMessage(user_id, reminderMessage, {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
-                            ]
-                        }
-                    });
-                    console.log(`Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
-                }
-            }
-
-        } catch (error) {
-            // Ignore 404 errors (app not found/deleted), log others
-            if (error.response && error.response.status === 404) {
-                console.log(`App ${herokuApp} not found for reminder check, likely deleted.`);
-                // Optionally: Delete this bot from your user_bots table if it's not found on Heroku
-                // await deleteUserBot(user_id, herokuApp);
-            } else {
-                console.error(`Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
-            }
-        }
-    }
-}
-
-// Schedule the check to run every hour (3600000 milliseconds)
-// For testing, you can make this interval shorter, e.g., 60000 (1 minute)
-setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour
-
 
 console.log('Bot is running...');
