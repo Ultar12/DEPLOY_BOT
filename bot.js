@@ -2274,6 +2274,7 @@ async function checkAndRemindLoggedOutBots() {
                         }
                     });
                     console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                }
                     
                     // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
                     // so it doesn't send repeatedly within the next hour or day.
