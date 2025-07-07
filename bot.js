@@ -283,18 +283,22 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     
     // Determine where to send the primary notification
     // Check if q (callback_query object) exists and if q.message.chat.id is available
-    const isOriginalMessageEditable = originalMessageId && q && q.message && q.message.chat && q.message.chat.id && q.message.chat.id === callingChatId;
+    // FIX: This section assumes `q` is in scope, which it isn't here in a global helper.
+    // We should rely purely on passed arguments.
+    // The previous original `q.message.chat.id` check was incorrect here.
+    const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId; // Send to calling user if message ID provided, else to the owner.
+    const messageToEditId = originalMessageId;
 
-    if (isOriginalMessageEditable) { 
+    if (messageToEditId) { 
         await bot.editMessageText(message, {
-            chat_id: callingChatId,
-            message_id: originalMessageId,
+            chat_id: messageTargetChatId,
+            message_id: messageToEditId,
             parse_mode: 'Markdown'
         }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
     } else {
         // If original message is not editable or not provided, send a new message
-        await bot.sendMessage(callingChatId, message, { parse_mode: 'Markdown' })
-            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
+        await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
+            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb (new msg): ${err.message}`));
     }
 
     // If the original action was user-facing (e.g., a regular user tried to restart THEIR bot)
@@ -629,20 +633,35 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           buildResult = true; // Overall success (including session connection)
 
           if (isFreeTrial) {
-            // Schedule deletion after 30 minutes
+            // FIX: Schedule 5-minute warning notification for admin
+            setTimeout(async () => {
+                const adminWarningMessage = `🔔 Free Trial App "${name}" has 5 minutes left until deletion!`;
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: `Delete "${name}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
+                    ]
+                };
+                await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
+                console.log(`[FreeTrial] Sent 5-min warning to admin for ${name}.`);
+            }, 55 * 60 * 1000); // 55 minutes
+
+            // FIX: Schedule deletion after 1 hour (formerly 30 minutes)
             setTimeout(async () => {
                 try {
-                    await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 30-minute runtime has ended.`);
+                    await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 1-hour runtime has ended.`);
                     await axios.delete(`https://api.heroku.com/apps/${name}`, {
                         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                     });
                     await deleteUserBot(chatId, name);
                     await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
+                    console.log(`[FreeTrial] Auto-deleted app ${name} after 1 hour.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                     await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+                    // Also notify admin if auto-delete fails
+                    bot.sendMessage(ADMIN_ID, `⚠️ Failed to auto-delete free trial app "${name}" for user ${chatId}: ${e.message}`);
                 }
-            }, 30 * 60 * 1000); // 30 minutes in milliseconds
+            }, 60 * 60 * 1000); // 1 hour
           }
 
       } catch (err) {
@@ -708,7 +727,7 @@ bot.onText(/^\/start$/, async msg => {
 To get started, please follow these simple steps:
 
 1️⃣  **Open the Link:**
-    Visit: ` + '`https://levanter-delta.vercel.app/`' + `
+    Visit: <https://levanter-delta.vercel.app/>
     Use the 'Custom Session ID' button if you prefer.
 
 2️⃣  **Important for iPhone Users:**
@@ -894,7 +913,7 @@ bot.on('message', async msg => {
     const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link:*\n" + // Changed title of point 1 for consistency
-        "Visit: `https://levanter-delta.vercel.app/`\n" +
+        "Visit: <https://levanter-delta.vercel.app/>\n" + // FIX: Made link clickable using angle brackets
         "Use the 'Custom Session ID' button if you prefer.\n\n" + // FIX: Added Custom Session ID detail to point 1
         "2️⃣ *Important for iPhone Users:*\n" +
         "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" + // FIX: Removed "for best results."
@@ -1248,6 +1267,7 @@ bot.on('callback_query', async q => {
             { text: 'Logs', callback_data: `logs:${payload}` }
           ],
           [
+            { text: 'Redeploy', callback_data: `redeploy_app:${payload}` }, // FIX: Added Redeploy button
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
@@ -1774,7 +1794,6 @@ bot.on('callback_query', async q => {
           appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); 
       });
 
-      // FIX: Increased timeout for setvarbool
       const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
       let timeoutId;
 
@@ -1850,6 +1869,145 @@ bot.on('callback_query', async q => {
       };
       await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
       return;
+  }
+
+  // FIX: New admin_delete_trial_app callback action
+  if (action === 'admin_delete_trial_app') {
+      const appToDelete = payload;
+      const messageId = q.message.message_id;
+
+      if (cid !== ADMIN_ID) {
+          await bot.editMessageText("❌ You are not authorized to perform this action.", { chat_id: cid, message_id: messageId });
+          return;
+      }
+
+      await bot.editMessageText(`🗑️ Admin deleting Free Trial app "${appToDelete}"...`, { chat_id: cid, message_id: messageId });
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          const ownerId = await getUserIdByBotName(appToDelete); // Find actual owner
+          if (ownerId) await deleteUserBot(ownerId, appToDelete); // Delete from DB for owner
+          
+          await bot.editMessageText(`✅ Free Trial app "${appToDelete}" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId });
+          // Optionally notify the user who owned this trial app
+          if (ownerId && ownerId !== cid) {
+              await bot.sendMessage(ownerId, `ℹ️ Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, { parse_mode: 'Markdown' });
+          }
+      } catch (e) {
+          // Handle 404 if it was already deleted
+          if (e.response && e.response.status === 404) {
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, false); // Admin initiated delete
+              return;
+          }
+          const errorMsg = e.response?.data?.message || e.message;
+          await bot.editMessageText(`❌ Failed to delete Free Trial app "${appToDelete}": ${errorMsg}`, {
+              chat_id: cid,
+              message_id: messageId
+          });
+      }
+      return;
+  }
+
+  // FIX: New redeploy_app callback action
+  if (action === 'redeploy_app') {
+    const appName = payload;
+    const messageId = q.message.message_id;
+
+    // Optional: Check if user is admin or owner of the app
+    const isOwner = (await getUserIdByBotName(appName)) === cid;
+    if (cid !== ADMIN_ID && !isOwner) {
+        await bot.editMessageText("❌ You are not authorized to redeploy this app.", { chat_id: cid, message_id: messageId });
+        return;
+    }
+
+    await bot.editMessageText(`🔄 Redeploying "${appName}" from GitHub...`, {
+        chat_id: cid,
+        message_id: messageId
+    });
+
+    let animateIntervalId = null; // Declare outside try for finally block
+    try {
+        const bres = await axios.post(
+            `https://api.heroku.com/apps/${appName}/builds`,
+            { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } }, // Uses your existing GitHub repo
+            {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
+        
+        await bot.editMessageText(`🛠️ Build initiated for "${appName}". Waiting for completion...`, {
+            chat_id: cid,
+            message_id: messageId
+        });
+        animateIntervalId = await animateMessage(cid, messageId, `Building "${appName}" from GitHub...`);
+
+        // Polling for build status (similar to buildWithProgress)
+        const BUILD_POLL_TIMEOUT = 300 * 1000; // 5 minutes for rebuilds
+        
+        const buildPromise = new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                clearInterval(checkBuildStatusInterval);
+                reject(new Error('Redeploy build process timed out.'));
+            }, BUILD_POLL_TIMEOUT);
+
+            const checkBuildStatusInterval = setInterval(async () => {
+                try {
+                    const poll = await axios.get(statusUrl, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+                    if (poll.data.status === 'succeeded') {
+                        clearInterval(checkBuildStatusInterval);
+                        clearTimeout(timeoutId);
+                        resolve('succeeded');
+                    } else if (poll.data.status === 'failed') {
+                        clearInterval(checkBuildStatusInterval);
+                        clearTimeout(timeoutId);
+                        reject(new Error(`Redeploy build failed: ${poll.data.slug?.id ? `https://dashboard.heroku.com/apps/${appName}/activity/build/${poll.data.id}` : 'Check Heroku logs.'}`));
+                    }
+                } catch (error) {
+                    clearInterval(checkBuildStatusInterval);
+                    clearTimeout(timeoutId);
+                    reject(new Error(`Error polling build status: ${error.message}`));
+                }
+            }, 10000); // Poll every 10 seconds
+        });
+        
+        await buildPromise; // Wait for build to complete
+        
+        await bot.editMessageText(`✅ App "${appName}" redeployed successfully!`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+        console.log(`App "${appName}" redeployed successfully for user ${cid}.`);
+
+    } catch (e) {
+        // FIX: Handle 404 Not Found explicitly for redeploy
+        if (e.response && e.response.status === 404) {
+            await handleAppNotFoundAndCleanDb(cid, appName, messageId, true); // User initiated redeploy
+            return; 
+        }
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`Error redeploying ${appName}:`, errorMsg, e.stack);
+        await bot.editMessageText(`❌ Failed to redeploy "${appName}": ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    } finally {
+        if (animateIntervalId) clearInterval(animateIntervalId); // Ensure animation stops
+        delete userStates[cid];
+    }
+    return;
   }
 
 
