@@ -917,7 +917,8 @@ bot.on('message', async msg => {
         "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" + // FIX: Updated details for point 4
         "5️⃣ *Final Step: Launch Your Bot:*\n" + // FIX: Added new point 5 title
         "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin."; // FIX: Added new point 5 details'
-;
+    
+    // Add the new "Can't get code?" button here
     const keyboard = {
         inline_keyboard: [
             [{ text: "Can't get code?", callback_data: "cant_get_code" }]
@@ -928,7 +929,7 @@ bot.on('message', async msg => {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
         caption: guideCaption,
         parse_mode: 'Markdown',
-        reply_markup: keyboard
+        reply_markup: keyboard // Attach the new keyboard
       });
     } catch (e) { // Add catch block for sendPhoto
         console.error(`Error sending photo in Get Session: ${e.message}`);
@@ -972,7 +973,10 @@ bot.on('message', async msg => {
             await bot.sendMessage(targetUserId, `Your pairing code is:\n\`\`\`\n${pairingCode}\n\`\`\`\nGo to your linked device and paste it ASAP!`, { parse_mode: 'Markdown' });
             await bot.sendMessage(ADMIN_ID, `✅ Pairing code sent to user \`${targetUserId}\`.`);
             delete userStates[ADMIN_ID]; // Clear admin's state
-            delete userStates[targetUserId]; // Clear the target user's state too
+            // It's crucial to also clear the user's state if it was waiting for this
+            if (userStates[targetUserId] && userStates[targetUserId].step === 'AWAITING_PAIRING_CODE_FROM_ADMIN_REPLY') {
+                delete userStates[targetUserId]; 
+            }
             console.log(`[Admin] Pairing code sent to user ${targetUserId} and states cleared.`);
         } else {
             // This should not happen if state is managed correctly
@@ -989,6 +993,7 @@ bot.on('message', async msg => {
   if (st.step === 'AWAITING_PHONE_NUMBER') {
     const phoneNumber = text;
     // Regex for + followed by exactly 12 digits (total 13 characters: +XXXXXXXXXXXX)
+    // Example: +2349163000000 (13 digits after '+')
     const phoneRegex = /^\+\d{12}$/; 
 
     if (!phoneRegex.test(phoneNumber)) {
@@ -1001,18 +1006,20 @@ bot.on('message', async msg => {
         data: { target_user_id_for_pairing: cid }
     };
 
+    // Set user's state to acknowledge their request and wait for admin's action
+    userStates[cid] = {
+        step: 'AWAITING_PAIRING_CODE_FROM_ADMIN_REPLY', // New state for the user waiting for admin
+        data: {} // No specific data needed here for the user's state, just acknowledgement
+    };
+
     await bot.sendMessage(ADMIN_ID, 
-        `📞 User \`${cid}\` (\`${msg.from.username || msg.from.first_name}\`) needs a pairing code.\n` +
+        `📞 User \`${cid}\` (\`${msg.from.username || msg.from.first_name || 'N/A'}\`) needs a pairing code.\n` +
         `*Phone:* \`${phoneNumber}\`\n\n` +
         `*Please reply to this message with the 8-word pairing code for this user.*`, 
         { parse_mode: 'Markdown' }
     );
     await bot.sendMessage(cid, '✅ Your request has been sent to the admin. Please wait while they generate a pairing code for you.');
     
-    // User's state should now be cleared or set to a "waiting for admin" state.
-    // For now, let's clear it assuming admin will provide the next action.
-    delete userStates[cid]; // User is now waiting for admin to reply directly.
-
     return; // Exit after handling phone number
   }
 
@@ -1284,4 +1291,992 @@ bot.on('callback_query', async q => {
           const confirmationKeyboard = {
               reply_markup: {
                   inline_keyboard: [
-                      [{ text
+                      [{ text: 'Yes, Deploy Now', callback_data: `setup:startbuild` }],
+                      [{ text: 'Cancel', callback_data: `setup:cancel` }]
+                  ]
+              }
+          };
+
+          await bot.editMessageText(confirmationText, {
+              chat_id: cid,
+              message_id: st.message_id,
+              parse_mode: 'Markdown',
+              ...confirmationKeyboard
+          });
+      }
+
+      if (step === 'startbuild') {
+          // User confirmed deployment, start the build process
+          await bot.editMessageText('Configuration confirmed. Initiating deployment...', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+
+          // buildWithProgress now handles all post-build status updates to the user
+          const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
+
+          // Clean up the user state after completion or failure (only if build was started)
+          // The state deletion logic inside buildWithProgress is sufficient.
+          // delete userStates[cid]; // This line might be redundant or cause issues if buildWithProgress handles it.
+      }
+
+      if (step === 'cancel') {
+          await bot.editMessageText('❌ Deployment cancelled.', {
+              chat_id: cid,
+              message_id: st.message_id
+          });
+          delete userStates[cid];
+      }
+      return; // Stop further processing
+  }
+
+
+  if (action === 'genkeyuses') {
+    const uses = parseInt(payload, 10);
+    const key = generateKey();
+    await addDeployKey(key, uses, cid);
+    return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
+  }
+
+  if (action === 'selectapp' || action === 'selectbot') {
+    const isUserBot = action === 'selectbot';
+    // Store the message_id for later editing
+    const messageId = q.message.message_id; 
+    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: payload, messageId: messageId, isUserBot: isUserBot } };
+    
+    return bot.editMessageText(`Manage app "${payload}":`, { // Use editMessageText
+      chat_id: cid,
+      message_id: messageId, // Use the stored messageId
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Info', callback_data: `info:${payload}` },
+            { text: 'Restart', callback_data: `restart:${payload}` },
+            { text: 'Logs', callback_data: `logs:${payload}` }
+          ],
+          [
+            { text: 'Redeploy', callback_data: `redeploy_app:${payload}` }, // FIX: Added Redeploy button
+            { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
+            { text: 'Set Variable', callback_data: `setvar:${payload}` }
+          ],
+          [{ text: '◀️️ Back', callback_data: 'back_to_app_list' }] // Add back button
+        ]
+      }
+    });
+  }
+
+  // Handle app selection from the /add command
+  if (action === 'add_assign_app') { // Renamed from update_assign_app
+    const appName = payload;
+    const targetUserId = extra; // The user ID passed from the /add command
+
+    console.log(`[CallbackQuery - add_assign_app] Received selection for app: ${appName} to assign to user: ${targetUserId}`);
+    console.log(`[CallbackQuery - add_assign_app] Current state for ${cid} is:`, userStates[cid]);
+
+    // Ensure it's the admin interacting
+    if (cid !== ADMIN_ID) {
+        await bot.editMessageText("❌ You are not authorized to perform this action.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        return;
+    }
+
+    // Verify the state is correct for this operation
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) { // State check changed
+        console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
+        await bot.editMessageText("This add session has expired or is invalid. Please start over with `/add <user_id>`.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        delete userStates[cid]; // Clear corrupted state
+        return;
+    }
+
+    await bot.editMessageText(`Assigning app "${appName}" to user \`${targetUserId}\`...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown' 
+    });
+
+    try {
+        // FIX: Start of ownership transfer logic
+        // 1. Find existing owner (if any) for this bot_name
+        const existingEntry = await pool.query('SELECT user_id FROM user_bots WHERE bot_name=$1', [appName]);
+        if (existingEntry.rows.length > 0) {
+            const oldUserId = existingEntry.rows[0].user_id;
+            if (oldUserId !== targetUserId) { // Only delete if changing ownership
+                console.log(`[Admin] Transferring ownership for bot "${appName}" from ${oldUserId} to ${targetUserId}. Deleting old entry.`);
+                await pool.query('DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2', [oldUserId, appName]);
+                // Optionally notify old user that their bot has been reassigned
+                // await bot.sendMessage(oldUserId, `ℹ️ Your bot "*${appName}*" has been unassigned from your dashboard by the admin and assigned to another user.`, { parse_mode: 'Markdown' });
+            } else {
+                console.log(`[Admin] Bot "${appName}" is already owned by ${targetUserId}. Proceeding with update.`);
+            }
+        }
+        // FIX: End of ownership transfer logic
+
+        // Fetch the existing SESSION_ID from the Heroku app's config vars
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            }
+        });
+        const currentSessionId = configRes.data.SESSION_ID;
+
+        if (!currentSessionId) {
+            await bot.editMessageText(`⚠️ Cannot assign "${appName}". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`, {
+                chat_id: cid,
+                message_id: q.message.message_id
+            });
+            delete userStates[cid]; 
+            return;
+        }
+
+        // Directly call addUserBot with the fetched session ID (this will insert/update the new ownership)
+        await addUserBot(targetUserId, appName, currentSessionId);
+        console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
+
+        await bot.editMessageText(`✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+
+        // Notify the target user
+        await bot.sendMessage(targetUserId, `🎉 Your bot "*${appName}*" has been successfully assigned to your "My Bots" menu by the admin! You can now manage it.`, { parse_mode: 'Markdown' });
+        console.log(`[Admin] Sent success notification to target user ${targetUserId}.`);
+
+    } catch (e) {
+        // FIX: Handle 404 Not Found explicitly for add_assign_app
+        if (e.response && e.response.status === 404) {
+            await handleAppNotFoundAndCleanDb(cid, appName, q.message.message_id, false); // Admin initiated, not user-facing
+            return; 
+        }
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
+        await bot.editMessageText(`❌ Failed to assign app "${appName}" to user \`${targetUserId}\`: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    } finally {
+        delete userStates[cid]; // Clear state regardless of success or failure
+        console.log(`[Admin] State cleared for ${cid} after add_assign_app flow.`);
+    }
+    return;
+  }
+
+  // Handle app selection from the /remove command
+  if (action === 'remove_app_from_user') {
+    const appName = payload;
+    const targetUserId = extra; // The user ID passed from the /remove command
+
+    console.log(`[CallbackQuery - remove_app_from_user] Received selection for app: ${appName} to remove from user: ${targetUserId}`);
+    console.log(`[CallbackQuery - remove_app_from_user] Current state for ${cid} is:`, userStates[cid]);
+
+    if (cid !== ADMIN_ID) {
+        await bot.editMessageText("❌ You are not authorized to perform this action.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        return;
+    }
+
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_APP_FOR_REMOVAL' || st.data.targetUserId !== targetUserId) {
+        console.error(`[CallbackQuery - remove_app_from_user] State mismatch for ${cid}. Expected AWAITING_APP_FOR_REMOVAL for ${targetUserId}, got:`, st);
+        await bot.editMessageText("This removal session has expired or is invalid. Please start over with `/remove <user_id>`.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        delete userStates[cid];
+        return;
+    }
+
+    await bot.editMessageText(`Removing app "${appName}" from user \`${targetUserId}\`'s dashboard...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        await deleteUserBot(targetUserId, appName);
+        console.log(`[Admin] Successfully called deleteUserBot for ${appName} from user ${targetUserId}.`);
+
+        await bot.editMessageText(`✅ App "*${appName}*" successfully removed from user \`${targetUserId}\`'s dashboard.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+
+        // Optionally notify the target user that an app was removed from their dashboard
+        await bot.sendMessage(targetUserId, `ℹ️ The admin has removed bot "*${appName}*" from your "My Bots" menu.`, { parse_mode: 'Markdown' });
+        console.log(`[Admin] Sent removal notification to target user ${targetUserId}.`);
+
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[Admin] Error removing app "${appName}" from user ${targetUserId}:`, errorMsg, e.stack);
+        await bot.editMessageText(`❌ Failed to remove app "${appName}" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    } finally {
+        delete userStates[cid];
+        console.log(`[Admin] State cleared for ${cid} after remove_app_from_user flow.`);
+    }
+    return;
+  }
+
+
+  if (action === 'info') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) { // Ensure state is valid for this app
+        // Fallback if state is lost or user clicks old button
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+
+    await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
+    try {
+      const apiHeaders = {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      };
+
+      const [appRes, configRes, dynoRes] = await Promise.all([
+        axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
+      ]);
+
+      const appData = appRes.data;
+      const configData = configRes.data;
+      const dynoData = dynoRes.data;
+
+      let dynoStatus = '⚪️ Scaled to 0 / Off'; // Default to scaled to 0 or off
+      let statusEmoji = '⚪️'; // Grey circle for off/scaled to 0
+
+      if (dynoData.length > 0) {
+          const workerDyno = dynoData.find(d => d.type === 'worker'); 
+          if (workerDyno) {
+              const state = workerDyno.state;
+              if (state === 'up') {
+                  statusEmoji = '🟢'; // Green for Up
+                  dynoStatus = `${statusEmoji} Up`;
+              } else if (state === 'crashed') {
+                  statusEmoji = '🔴'; // Red for Crashed
+                  dynoStatus = `${statusEmoji} Crashed`;
+              } else if (state === 'idle') {
+                  statusEmoji = '🟡'; // Yellow for Idle (though worker dynos usually aren't 'idle' in the web dyno sense)
+                  dynoStatus = `${statusEmoji} Idle`;
+              } else if (state === 'starting' || state === 'restarting') {
+                  statusEmoji = '⏳'; // Hourglass for transitional states
+                  dynoStatus = `${statusEmoji} ${state.charAt(0).toUpperCase() + state.slice(1)}`;
+              } else {
+                  statusEmoji = '❓'; // Unknown state
+                  dynoStatus = `${statusEmoji} Unknown State: ${state}`;
+              }
+          } else {
+              // Dynos exist, but no 'worker' dyno (e.g., only a 'web' dyno, or worker scaled to 0 after other dynos)
+              dynoStatus = '⚪️ Worker dyno not active/scaled to 0'; // More specific if other dynos exist but not worker
+          }
+      }
+
+
+      const info = `*App Info: ${appData.name}*\n\n` +
+                   `*Dyno Status:* ${dynoStatus}\n` + // Updated status
+                   `*Created:* ${new Date(appData.created_at).toLocaleDateString()} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` + // Re-calculate days for robustness
+                   `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
+                   `*Stack:* ${appData.stack.name}\n\n` +
+                   `*🔧 Key Config Vars:*\n` +
+                   `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
+                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+
+      // Edit the message with the info and add a back button
+      return bot.editMessageText(info, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+        }
+      });
+    } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for info
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated info
+          return; 
+      }
+      const errorMsg = e.response?.data?.message || e.message;
+      console.error(`Error fetching info for ${payload}:`, errorMsg, e.stack);
+      return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    }
+  }
+
+  if (action === 'restart') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+
+    await bot.editMessageText(`🔄 Restarting bot "${payload}"...`, { // Initial message without animation
+        chat_id: cid,
+        message_id: messageId
+    });
+
+    try {
+      await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+      });
+
+      // FIX: Changed success message and removed waiting animation for restart
+      await bot.editMessageText(`✅ Bot "${payload}" restarted successfully!`, {
+          chat_id: cid,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+          }
+      });
+      console.log(`Sent "restarted successfully" notification to user ${cid} for bot ${payload}`);
+
+    } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for restart
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated restart
+          return; 
+      }
+      const errorMsg = e.response?.data?.message || e.message;
+      console.error(`Error restarting ${payload}:`, errorMsg, e.stack);
+      return bot.editMessageText(`❌ Error restarting bot: ${errorMsg}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    } finally {
+        delete userStates[cid]; // Clear state after restart attempt
+    }
+  }
+
+  if (action === 'logs') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+
+    await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
+    try {
+      const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
+        { tail: false, lines: 100 },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      const logRes = await axios.get(sess.data.logplex_url);
+      const logs = logRes.data.trim().slice(-4000);
+      
+      // Edit the message to show logs
+      return bot.editMessageText(`Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for logs
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated logs
+          return; 
+      }
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
+        }
+      });
+    }
+  }
+
+  if (action === 'delete' || action === 'userdelete') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+
+      return bot.editMessageText(`Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
+            { text: "No, cancel", callback_data: `selectapp:${payload}` } // Back to app management on cancel
+          ]]
+        }
+      });
+  }
+
+  if (action === 'confirmdelete') {
+      const appToDelete = payload;
+      const originalAction = extra; // 'delete' (admin) or 'userdelete' (regular user)
+      const st = userStates[cid];
+      if (!st || st.data.appName !== appToDelete) {
+          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      }
+      const messageId = q.message.message_id; // Use messageId from query
+
+      await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          // After successful Heroku delete, delete from our DB
+          if (originalAction === 'userdelete') { // If it was a user deleting their own bot
+              await deleteUserBot(cid, appToDelete);
+          } else { // If it was an admin deleting
+              const ownerId = await getUserIdByBotName(appToDelete); // Find actual owner
+              if (ownerId) await deleteUserBot(ownerId, appToDelete);
+          }
+          await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
+          // After deletion, take them back to their list of bots or main menu
+          if (originalAction === 'userdelete') {
+              const bots = await getUserBots(cid);
+              if (bots.length > 0) {
+                  const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                  return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+              } else {
+                  return bot.sendMessage(cid, "You no longer have any deployed bots.");
+              }
+          } else { // Admin delete
+            return sendAppList(cid); // Admin sees all apps
+          }
+      } catch (e) {
+          // FIX: Handle 404 Not Found explicitly for delete actions
+          if (e.response && e.response.status === 404) {
+              // If it's a 404 during delete, it means it was already deleted from Heroku.
+              // Just clean up our DB and notify.
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete'); // Pass isUserFacing based on original action
+              return; 
+          }
+          const errorMsg = e.response?.data?.message || e.message;
+          return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
+            }
+          });
+      }
+  }
+
+  if (action === 'canceldelete') {
+      // This handler might not be strictly needed if `selectapp` is used for "No, cancel"
+      // But keeping it just in case for older messages or alternative flows.
+      return bot.editMessageText('Deletion cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
+  }
+
+  if (action === 'setvar') {
+    const st = userStates[cid];
+    if (!st || st.data.appName !== payload) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+    
+    // Edit the current message to show variable selection
+    return bot.editMessageText(`Select a variable to set for "${payload}":`, {
+      chat_id: cid,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
+          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
+          [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
+          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
+          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
+          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }] // Back to app management
+        ]
+      }
+    });
+  }
+
+  if (action === 'varselect') {
+    const [varKey, appName] = [payload, extra];
+    const st = userStates[cid];
+    if (!st || st.data.appName !== appName) {
+        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+    }
+    const messageId = q.message.message_id; // Use messageId from query
+
+    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
+      return bot.editMessageText(`Set ${varKey} to:`, {
+        chat_id: cid,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
+            { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
+          ],
+          [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]] // Back to variable selection
+        }
+      });
+    } else {
+      userStates[cid].step = 'SETVAR_ENTER_VALUE'; // Update step for message handler
+      userStates[cid].data.VAR_NAME = varKey; // Store VAR_NAME
+      userStates[cid].data.APP_NAME = appName; // Ensure APP_NAME is stored for this step
+      // When asking for value, send a new message as direct input is expected
+      return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
+    }
+  }
+
+  if (action === 'setvarbool') {
+    const [varKey, appName, valStr] = [payload, extra, flag];
+    const flagVal = valStr === 'true';
+    let newVal;
+    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
+    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+    else newVal = flagVal ? 'true' : 'false';
+
+    try {
+      const updateMsg = await bot.sendMessage(cid, `Updating ${varKey} for "${appName}"...`); // Send immediate feedback
+      console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`); // Log for boolean
+      const patchResponse = await axios.patch(
+        `https://api.heroku.com/apps/${appName}/config-vars`,
+        { [varKey]: newVal },
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+      );
+      console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
+
+
+      // Update session in DB immediately after config var update
+      console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
+      // For boolean setvar, we update the existing session_id which is still tied to 'cid'
+      const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
+      await addUserBot(cid, appName, currentSessionId); // Keep current session_id, just update the row
+
+      const baseWaitingText = `Updating ${varKey} for "${appName}". Waiting for bot status confirmation...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { 
+          chat_id: cid,
+          message_id: updateMsg.message_id
+      });
+      // Start animation for waiting state after variable update
+      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
+
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId }); 
+      });
+
+      const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes for connection status check
+      let timeoutId;
+
+      try {
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(appName);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
+                  appDeploymentPromises.delete(appName);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; 
+          clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); 
+
+          await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              reply_markup: {
+                  inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+              }
+          });
+          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
+
+      } catch (err) {
+          clearTimeout(timeoutId);
+          clearInterval(animateIntervalId); 
+          console.error(`App status check failed for ${appName} after variable update:`, err.message);
+          await bot.editMessageText(
+              `⚠️ Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
+              `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
+              {
+                  chat_id: cid,
+                  message_id: updateMsg.message_id,
+                  reply_markup: {
+                      inline_keyboard: [
+                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
+                          [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
+                      ]
+                  }
+              }
+          );
+      } finally {
+          appDeploymentPromises.delete(appName); 
+      }
+
+    } catch (e) {
+      const errorMsg = e.response?.data?.message || e.message;
+      console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
+      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+    }
+  }
+
+  // Handler for initiating session change from channel notification
+  if (action === 'change_session') {
+      const appName = payload;
+      const targetUserId = extra; // The user ID that owns this bot
+
+      // Ensure the user initiating this action is the actual owner (optional but good for security)
+      if (cid !== targetUserId) {
+          await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+          return;
+      }
+      
+      userStates[cid] = {
+          step: 'SETVAR_ENTER_VALUE',
+          data: {
+              APP_NAME: appName,
+              VAR_NAME: 'SESSION_ID',
+              targetUserId: targetUserId 
+          }
+      };
+      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
+      return;
+  }
+
+  // FIX: New admin_delete_trial_app callback action
+  if (action === 'admin_delete_trial_app') {
+      const appToDelete = payload;
+      const messageId = q.message.message_id;
+
+      if (cid !== ADMIN_ID) {
+          await bot.editMessageText("❌ You are not authorized to perform this action.", { chat_id: cid, message_id: messageId });
+          return;
+      }
+
+      await bot.editMessageText(`🗑️ Admin deleting Free Trial app "${appToDelete}"...`, { chat_id: cid, message_id: messageId });
+      try {
+          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+          });
+          const ownerId = await getUserIdByBotName(appToDelete); // Find actual owner
+          if (ownerId) await deleteUserBot(ownerId, appToDelete); // Delete from DB for owner
+          
+          await bot.editMessageText(`✅ Free Trial app "${appToDelete}" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId });
+          // Optionally notify the user who owned this trial app
+          if (ownerId && ownerId !== cid) {
+              await bot.sendMessage(ownerId, `ℹ️ Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, { parse_mode: 'Markdown' });
+          }
+      } catch (e) {
+          // Handle 404 if it was already deleted
+          if (e.response && e.response.status === 404) {
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, false); // Admin initiated delete
+              return;
+          }
+          const errorMsg = e.response?.data?.message || e.message;
+          await bot.editMessageText(`❌ Failed to delete Free Trial app "${appToDelete}": ${errorMsg}`, {
+              chat_id: cid,
+              message_id: messageId
+          });
+      }
+      return;
+  }
+
+  // FIX: New redeploy_app callback action
+  if (action === 'redeploy_app') {
+    const appName = payload;
+    const messageId = q.message.message_id;
+
+    // Optional: Check if user is admin or owner of the app
+    const isOwner = (await getUserIdByBotName(appName)) === cid;
+    if (cid !== ADMIN_ID && !isOwner) {
+        await bot.editMessageText("❌ You are not authorized to redeploy this app.", { chat_id: cid, message_id: messageId });
+        return;
+    }
+
+    await bot.editMessageText(`🔄 Redeploying "${appName}" from GitHub...`, {
+        chat_id: cid,
+        message_id: messageId
+    });
+
+    let animateIntervalId = null; // Declare outside try for finally block
+    try {
+        const bres = await axios.post(
+            `https://api.heroku.com/apps/${appName}/builds`,
+            { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } }, // Uses your existing GitHub repo
+            {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
+        
+        await bot.editMessageText(`🛠️ Build initiated for "${appName}". Waiting for completion...`, {
+            chat_id: cid,
+            message_id: messageId
+        });
+        animateIntervalId = await animateMessage(cid, messageId, `Building "${appName}" from GitHub...`);
+
+        // Polling for build status (similar to buildWithProgress)
+        const BUILD_POLL_TIMEOUT = 300 * 1000; // 5 minutes for rebuilds
+        
+        const buildPromise = new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                clearInterval(checkBuildStatusInterval);
+                reject(new Error('Redeploy build process timed out.'));
+            }, BUILD_POLL_TIMEOUT);
+
+            const checkBuildStatusInterval = setInterval(async () => {
+                try {
+                    const poll = await axios.get(statusUrl, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+                    if (poll.data.status === 'succeeded') {
+                        clearInterval(checkBuildStatusInterval);
+                        clearTimeout(timeoutId);
+                        resolve('succeeded');
+                    } else if (poll.data.status === 'failed') {
+                        clearInterval(checkBuildStatusInterval);
+                        clearTimeout(timeoutId);
+                        reject(new Error(`Redeploy build failed: ${poll.data.slug?.id ? `https://dashboard.heroku.com/apps/${appName}/activity/build/${poll.data.id}` : 'Check Heroku logs.'}`));
+                    }
+                } catch (error) {
+                    clearInterval(checkBuildStatusInterval);
+                    clearTimeout(timeoutId);
+                    reject(new Error(`Error polling build status: ${error.message}`));
+                }
+            }, 10000); // Poll every 10 seconds
+        });
+        
+        await buildPromise; // Wait for build to complete
+        
+        await bot.editMessageText(`✅ App "${appName}" redeployed successfully!`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+        console.log(`App "${appName}" redeployed successfully for user ${cid}.`);
+
+    } catch (e) {
+        // FIX: Handle 404 Not Found explicitly for redeploy
+        if (e.response && e.response.status === 404) {
+            await handleAppNotFoundAndCleanDb(cid, appName, messageId, true); // User initiated redeploy
+            return; 
+        }
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`Error redeploying ${appName}:`, errorMsg, e.stack);
+        await bot.editMessageText(`❌ Failed to redeploy "${appName}": ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    } finally {
+        if (animateIntervalId) clearInterval(animateIntervalId); // Ensure animation stops
+        delete userStates[cid];
+    }
+    return;
+  }
+
+
+  if (action === 'back_to_app_list') {
+    const isAdmin = cid === ADMIN_ID;
+    const currentMessageId = q.message.message_id; // Get the ID of the message to edit
+
+    if (isAdmin) {
+      // If admin, show all apps
+      return sendAppList(cid, currentMessageId); // Use existing sendAppList for admin
+    } else {
+      // If regular user, show only their bots
+      const bots = await getUserBots(cid);
+      if (bots.length > 0) {
+          const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+            text: n,
+            callback_data: `selectbot:${n}`
+          })));
+          return bot.editMessageText('Your remaining deployed bots:', {
+            chat_id: cid,
+            message_id: currentMessageId,
+            reply_markup: { inline_keyboard: rows }
+          });
+      } else {
+          return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+      }
+    }
+  }
+});
+
+// 14) Channel Post Handler
+// This is the core new feature to detect and react to messages from your Levanter app.
+bot.on('channel_post', async msg => {
+    const channelId = msg.chat.id.toString();
+    const text = msg.text?.trim();
+
+    // Always log the raw incoming message for debugging
+    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
+
+    // Check if the message is from the designated listening channel
+    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
+        console.log(`[Channel Post] Ignoring message from non-listening channel: ${channelId}`);
+        return; // Ignore messages from other channels
+    }
+
+    if (!text) {
+        console.log(`[Channel Post] Ignoring empty message.`);
+        return; // Ignore empty messages
+    }
+
+    // --- Logout Message Handling ---
+    // Sample: "User [hhhhhhhhh-hr-db] has logged out." or "User [botname] has logged out.\n[Some other text] invalid"
+    // The regex needs to handle the bot name in brackets, followed by "has logged out."
+    // Using 's' (dotall) flag to make '.' match newlines, and 'i' for case-insensitivity
+    // IMPORTANT: Make sure the exact string "has logged out." is present.
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./si); 
+    if (logoutMatch) {
+        const botName = logoutMatch[1];
+        console.log(`[Channel Post] Detected LOGOUT for bot: ${botName}`);
+
+        // If there's an ongoing deployment or var update for this app, resolve its promise as failure
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId); // Stop animation
+            pendingPromise.reject(new Error('Bot session became invalid on startup.'));
+            appDeploymentPromises.delete(botName); // Clean up
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, processing logout as an alert.`);
+        }
+
+        const userId = await getUserIdByBotName(botName); // Get the owner's ID from your DB
+        if (userId) {
+            const warningMessage =
+                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
+                `Please update your session ID to get it back online.`;
+            
+            await bot.sendMessage(userId, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
+                    ]
+                }
+            });
+            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
+            // Optionally notify admin if a bot logs out that isn't in your system.
+            bot.sendMessage(ADMIN_ID, `⚠️ Untracked bot "${botName}" logged out. User ID not found in DB.`);
+        }
+        return;
+    }
+
+    // --- Connected Message Handling ---
+    // Sample: "✅ [hhhhhbbvvcvvvvvvvcccgvvvvvv] connected.\n🔐 levanter_7dd859633e5ac4e7ca50baced3d060542\n🕒 07/07/2025, 16:34:25"
+    // The regex needs to match "connected." and allow for anything after it, including newlines.
+    // Using 's' (dotall) flag for '.' to match newlines, and 'i' for case-insensitivity
+    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/si); 
+    if (connectedMatch) {
+        const botName = connectedMatch[1];
+        console.log(`[Channel Post] Detected CONNECTED status for bot: ${botName}`);
+
+        // If there's an ongoing deployment or var update for this app, resolve its promise as success
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId); // Stop animation
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(botName); // Clean up
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, not sending duplicate "live" message.`);
+            // This case handles a bot connecting spontaneously (e.g., manual restart outside the bot's UI)
+            // If you want a "Your bot is live!" message every time, you could enable this:
+            // const userId = await getUserIdByBotName(botName);
+            // if (userId) {
+            //      await bot.sendMessage(userId, `🎉 Your bot "*${botName}*" is now live!`, { parse_mode: 'Markdown' });
+            // }
+        }
+        return;
+    }
+});
+
+// 15) Scheduled Task for Logout Reminders
+// This section will periodically check for bots that have been logged out for more than 24 hours.
+async function checkAndRemindLoggedOutBots() {
+    console.log('Running scheduled check for logged out bots...');
+    // Ensure HEROKU_API_KEY is available for this check
+    if (!HEROKU_API_KEY) {
+        console.warn('Skipping scheduled logout check: HEROKU_API_KEY not set.');
+        return;
+    }
+
+    const allBots = await getAllUserBots(); // Get all bots from your DB
+
+    for (const botEntry of allBots) {
+        const { user_id, bot_name } = botEntry;
+        const herokuApp = bot_name; // Assuming bot_name is also the Heroku app name
+
+        try {
+            const apiHeaders = {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            };
+
+            // 1. Get app config vars to check LAST_LOGOUT_ALERT
+            // Note: Your Levanter bot code would need to set LAST_LOGOUT_ALERT config var on Heroku
+            // when it detects a logout and sends the message to the channel.
+            const configRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/config-vars`, { headers: apiHeaders });
+            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT; // Levanter bot needs to set this variable.
+
+            // 2. Get dyno status to check if the bot is currently "up"
+            const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
+            const workerDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
+
+            const isBotRunning = workerDyno && workerDyno.state === 'up';
+
+            if (lastLogoutAlertStr && !isBotRunning) {
+                const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
+                const now = new Date();
+                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
+                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
+                if (timeSinceLogout > twentyFourHours) {
+                    const reminderMessage =
+                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
+                        `It appears to still be offline. Please update your session ID to bring it back online.`;
+                    
+                    await bot.sendMessage(user_id, reminderMessage, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
+                            ]
+                        }
+                    });
+                    console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                    
+                    // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
+                    // so it doesn't send repeatedly within the next hour or day.
+                    // This requires setting a config var on Heroku. Example:
+                    // await axios.patch(
+                    //     `https://api.heroku.com/apps/${herokuApp}/config-
