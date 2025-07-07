@@ -231,32 +231,14 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-/**
- * Calculates the estimated daily cost for a given dyno size.
- * Based on the user's input: Hobby/Basic dyno is $0.06 per day.
- * Other dyno sizes are scaled proportionally based on their general Heroku pricing.
- * @param {string} dynoSize - The size of the dyno (e.g., 'hobby', 'standard-1x', 'basic').
- * @returns {number} Estimated daily cost in USD.
- */
-function getEstimatedDailyCost(dynoSize) {
-    const baseDailyCost = 0.06; // User specified base for Hobby/Basic dyno
+// User specified fixed daily cost per app
+const FIXED_DAILY_APP_COST = 0.08; 
 
-    // Scaling factors relative to the base daily cost
-    const scalingFactors = {
-        'eco': 0.7, // Eco is typically cheaper
-        'hobby': 1,
-        'basic': 1, // Explicitly set Basic to the base daily cost
-        'standard-1x': 3.5, // Standard-1X is usually much more expensive
-        'standard-2x': 7,   // Standard-2X is double Standard-1X
-        'performance-m': 35, // Performance dynos are significantly more
-        'performance-l': 70,
-    };
-
-    const factor = scalingFactors[dynoSize.toLowerCase()];
-    if (factor !== undefined) {
-        return baseDailyCost * factor;
-    }
-    return 0; // Unknown dyno size, assume no cost
+// Helper function to calculate days between two Date objects (inclusive of start day)
+function calculateDaysBetween(startDate, endDate) {
+    const oneDay = 24 * 60 * 60 * 1000; // milliseconds in one day
+    const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+    return Math.ceil(diffTime / oneDay); // Use Math.ceil to round up, counting part of a day as a full day
 }
 
 
@@ -1119,7 +1101,7 @@ bot.on('callback_query', async q => {
       if (!st || st.data.appName !== appToDelete) {
           return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
       }
-      const messageId = st.data.messageId;
+      const messageId = st.data.message_id; // Use message_id from state, not q.message.message_id
 
       await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
       try {
@@ -1270,73 +1252,56 @@ bot.on('callback_query', async q => {
     const appName = payload;
     const messageId = st.data.messageId;
 
-    await bot.editMessageText(`📊 Fetching usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
+    await bot.editMessageText(`📊 Calculating usage for "${appName}"...`, { chat_id: cid, message_id: messageId });
+
     try {
-        const apiHeaders = {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3'
-        };
+        // Retrieve deployment date from user_bots table
+        const res = await pool.query(
+            'SELECT created_at FROM user_bots WHERE user_id = $1 AND bot_name = $2',
+            [cid, appName]
+        );
 
-        const [appRes, dynoRes] = await Promise.all([
-            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }), // Get app info for created_at
-            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders }) // Get current dynos
-        ]);
-
-        const appData = appRes.data;
-        const dynos = dynoRes.data;
-
-        let usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n`; // Concise title
-        let currentDailyCost = 0;
-        
-        if (dynos.length > 0) {
-            usageMessage += `*Dynos:*\n`;
-            const dynoCounts = {}; // To count dynos of each type and size
-            for (const dyno of dynos) {
-                const key = `${dyno.type} (\`${dyno.size}\`)`; // Use backticks for dyno size
-                dynoCounts[key] = (dynoCounts[key] || 0) + 1;
-            }
-
-            for (const key in dynoCounts) {
-                const [type, sizeWithParens] = key.split(' (');
-                const size = sizeWithParens.slice(0, -1); // Remove trailing ')'
-                const count = dynoCounts[key];
-                const estimatedDailyCostPerDyno = getEstimatedDailyCost(size);
-                currentDailyCost += estimatedDailyCostPerDyno * count;
-
-                usageMessage += `  - ${count} x ${type} dyno ${sizeWithParens}\n`; 
-            }
-
-            const createdAt = new Date(appData.created_at);
-            const now = new Date();
-            const daysDeployed = Math.ceil(Math.abs(now - createdAt) / (1000 * 60 * 60 * 24)); // Calculate days deployed
-
-            const estimatedTotalCost = currentDailyCost * daysDeployed;
-
-            usageMessage += `\n*Daily Cost (Estimated):* $${currentDailyCost.toFixed(2)}\n`; // Concise label
-            usageMessage += `*Total Cost (Estimated, ${daysDeployed} days):* $${estimatedTotalCost.toFixed(2)}\n\n`; // Concise label
-            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`; // Concise disclaimer
-
-        } else {
-            usageMessage += `No active dynos found for this app.\n`;
-            usageMessage += `*Daily Cost (Estimated):* $0.00\n`;
-            usageMessage += `*Total Cost (Estimated):* $0.00\n\n`;
-            usageMessage += `_(Estimate based on current dyno configuration. Excludes addons. Exact billing may vary.)_`;
+        if (res.rows.length === 0) {
+            // App not found in bot's database (e.g., deployed manually or very old bot entry)
+            return bot.editMessageText(
+                `📊 App: ${appName} Usage Estimate\n\n` +
+                `Deployment record not found in bot's database. Cannot estimate cost.\n\n` +
+                `_(This usually happens if the app was not deployed via this bot, or its record was manually removed.)_`,
+                {
+                    chat_id: cid,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
+                    }
+                }
+            );
         }
+
+        const deploymentDate = new Date(res.rows[0].created_at);
+        const now = new Date();
+        const daysDeployed = calculateDaysBetween(deploymentDate, now);
+
+        const estimatedTotalCost = FIXED_DAILY_APP_COST * daysDeployed;
+
+        const usageMessage = `*📊 App: ${appName} Usage Estimate*\n\n` +
+                             `*Days Deployed:* ${daysDeployed} days\n` +
+                             `*Total Cost (Estimated):* $${estimatedTotalCost.toFixed(2)}\n\n` +
+                             `_(Estimate based on fixed rate of $${FIXED_DAILY_APP_COST.toFixed(2)}/day. Excludes addons. Exact billing may vary.)_`; // Simplified disclaimer
 
         return bot.editMessageText(usageMessage, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown',
-            disable_web_page_preview: true, // Prevent URL previews
+            disable_web_page_preview: true,
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${appName}` }]]
             }
         });
 
     } catch (e) {
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error(`Error in usage for ${appName}:`, e.response?.status, errorMsg);
-        return bot.editMessageText(`Error fetching usage: ${errorMsg}\n\n(Please ensure your Heroku API Key has "Read" permissions for "Dynos" and "Apps".)`, {
+        console.error(`Error calculating usage for ${appName}:`, e.message);
+        return bot.editMessageText(`Error calculating usage: ${e.message}\n\n(Could not retrieve deployment date from database. Please try again.)`, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown',
