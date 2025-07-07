@@ -40,45 +40,59 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 (async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS user_bots (
-      user_id    TEXT NOT NULL,
-      bot_name   TEXT NOT NULL,
-      session_id TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (user_id, bot_name) -- Ensure composite primary key
-    );
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS deploy_keys (
-      key        TEXT PRIMARY KEY,
-      uses_left  INTEGER NOT NULL,
-      created_by TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  // Table for "Free Trial" cooldowns
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS temp_deploys (
-      user_id       TEXT PRIMARY KEY,
-      last_deploy_at TIMESTAMP NOT NULL
-    );
-  `);
-})().catch(console.error);
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_bots (
+        user_id    TEXT NOT NULL,
+        bot_name   TEXT NOT NULL,
+        session_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, bot_name) -- Ensure composite primary key
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deploy_keys (
+        key        TEXT PRIMARY KEY,
+        uses_left  INTEGER NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    // Table for "Free Trial" cooldowns
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS temp_deploys (
+        user_id       TEXT PRIMARY KEY,
+        last_deploy_at TIMESTAMP NOT NULL
+      );
+    `);
+    console.log("[DB] All necessary tables checked/created successfully.");
+  } catch (dbError) {
+    console.error("[DB] Error during initial database table creation/check:", dbError.message);
+    // Exit or take other action if essential tables can't be created
+    process.exit(1); 
+  }
+})();
 
 // 5) DB helper functions
 async function addUserBot(u, b, s) {
   try {
     // Use ON CONFLICT to update if it already exists, or insert if new
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO user_bots(user_id, bot_name, session_id)
        VALUES($1, $2, $3)
-       ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP`,
+       ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP
+       RETURNING *;`, // Return the row to confirm insertion/update
       [u, b, s]
     );
-    console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}".`);
+    if (result.rows.length > 0) {
+      console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}". Row:`, result.rows[0]);
+    } else {
+      console.warn(`[DB] addUserBot: Insert/update operation for bot "${b}" for user "${u}" did not return a row. This might indicate an issue.`);
+    }
   } catch (error) {
-    console.error(`[DB] addUserBot: Failed to add/update bot "${b}" for user "${u}":`, error.message);
+    console.error(`[DB] addUserBot: CRITICAL ERROR Failed to add/update bot "${b}" for user "${u}":`, error.message, error.stack);
+    // You might want to notify admin here if this is a persistent issue
+    bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL DB ERROR: Failed to add/update bot "${b}" for user "${u}". Check logs.`);
   }
 }
 async function getUserBots(u) {
@@ -445,9 +459,9 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     }
 
     if (buildStatus === 'succeeded') {
-      // --- START OF MODIFICATION: Add bot to DB immediately after successful build ---
-      console.log(`[Flow] buildWithProgress: Heroku build succeeded for "${name}". Adding bot to user dashboard.`);
-      await addUserBot(chatId, name, vars.SESSION_ID); // Add bot to DB immediately here
+      // --- START OF CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
+      await addUserBot(chatId, name, vars.SESSION_ID); // Add bot to DB immediately here!
 
       // Admin notification for successful build (even if bot isn't 'connected' yet)
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
@@ -459,10 +473,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       const appDetails = `*App Name:* \`${name}\`\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
       await bot.sendMessage(ADMIN_ID,
-          `*New App Deployed (Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+          `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
           { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
-      // --- END OF MODIFICATION ---
+      // --- END OF CRITICAL MODIFICATION ---
 
       const baseWaitingText = `Build complete! Waiting for bot to connect...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
@@ -1432,14 +1446,21 @@ bot.on('callback_query', async q => {
   }
 });
 
+---
+
+### **Refined Channel Post Handler**
+
+This section is crucial for listening to the bot's status messages.
+
+```javascript
 // 14) Channel Post Handler
 // This is the core new feature to detect and react to messages from your Levanter app.
 bot.on('channel_post', async msg => {
     const channelId = msg.chat.id.toString();
     const text = msg.text?.trim();
 
-    // Log the incoming message for debugging
-    console.log(`[Channel Post] Received message from channel ${channelId}:`, text);
+    // Always log the raw incoming message for debugging
+    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
 
     // Check if the message is from the designated listening channel
     if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
@@ -1452,22 +1473,27 @@ bot.on('channel_post', async msg => {
         return; // Ignore empty messages
     }
 
-    // Regex for "logged out" message: User [bot_name] has logged out.
-    // Ensure it matches if other text follows
-    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./);
+    // --- Logout Message Handling ---
+    // Sample: "User [hhhhhhhhh-hr-db] has logged out.\n[Ggggggggggvvvvvvvv] invalid\n🕒 Time: 07/07/2025, 16:44:53"
+    // The regex needs to handle the bot name in brackets, followed by "has logged out."
+    // And allow for anything else on subsequent lines using the 's' (dotall) flag for multiline match
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./s); 
     if (logoutMatch) {
         const botName = logoutMatch[1];
-        console.log(`[Channel Post] Detected logout for bot: ${botName}`);
+        console.log(`[Channel Post] Detected LOGOUT for bot: ${botName}`);
 
         // If there's an ongoing deployment or var update for this app, resolve its promise as failure
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
             clearInterval(pendingPromise.animateIntervalId); // Stop animation
-            pendingPromise.reject(new Error('Invalid session ID detected on startup.'));
+            pendingPromise.reject(new Error('Bot session became invalid on startup.'));
             appDeploymentPromises.delete(botName); // Clean up
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, processing logout as an alert.`);
         }
 
-        const userId = await getUserIdByBotName(botName); // Get the owner's ID
+        const userId = await getUserIdByBotName(botName); // Get the owner's ID from your DB
         if (userId) {
             const warningMessage =
                 `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
@@ -1488,12 +1514,13 @@ bot.on('channel_post', async msg => {
         return;
     }
 
-    // Regex for "connected" message: ✅ [bot_name] connected.
-    // **FIXED REGEX:** Added '.*' to match anything after "connected."
-    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/); 
+    // --- Connected Message Handling ---
+    // Sample: "✅ [hhhhhbbvvcvvvvvvvcccgvvvvvv] connected.\n🔐 levanter_7dd859633e5ac4e7ca50baced3d060542\n🕒 07/07/2025, 16:34:25"
+    // The regex needs to match "connected." and allow for anything after it, including newlines.
+    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/s); 
     if (connectedMatch) {
         const botName = connectedMatch[1];
-        console.log(`[Channel Post] Detected connected status for bot: ${botName}`);
+        console.log(`[Channel Post] Detected CONNECTED status for bot: ${botName}`);
 
         // If there's an ongoing deployment or var update for this app, resolve its promise as success
         const pendingPromise = appDeploymentPromises.get(botName);
@@ -1501,22 +1528,15 @@ bot.on('channel_post', async msg => {
             clearInterval(pendingPromise.animateIntervalId); // Stop animation
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(botName); // Clean up
-            console.log(`[Channel Post] Resolved pending promise for ${botName}.`);
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
         } else {
-            console.log(`[Channel Post] No pending promise found for ${botName}.`);
-        }
-        
-        // This notification is now primarily handled by the buildWithProgress or SETVAR_ENTER_VALUE flow
-        // so this block might become redundant for the user, but still useful for admin channel.
-        const userId = await getUserIdByBotName(botName);
-        if (userId) {
-             const liveMessage = `🎉 Your bot "*${botName}*" is now live!`;
-             // You might still want to send this if the user hasn't received it from the main flow
-             // or for admin logging.
-             // Example: if (pendingPromise === undefined) { await bot.sendMessage(userId, liveMessage, { parse_mode: 'Markdown' }); }
-             console.log(`[Channel Post] User ID found for bot ${botName}: ${userId}`);
-        } else {
-             console.warn(`[Channel Post] Could not find user for bot "${botName}" during connected alert. (Bot not tracked by this bot's DB?)`);
+            console.log(`[Channel Post] No active deployment promise for ${botName}, not sending duplicate "live" message.`);
+            // This case handles a bot connecting spontaneously (e.g., manual restart outside the bot's UI)
+            // If you want a "Your bot is live!" message every time, you could enable this:
+            // const userId = await getUserIdByBotName(botName);
+            // if (userId) {
+            //      await bot.sendMessage(userId, `🎉 Your bot "*${botName}*" is now live!`, { parse_mode: 'Markdown' });
+            // }
         }
         return;
     }
@@ -1545,8 +1565,10 @@ async function checkAndRemindLoggedOutBots() {
             };
 
             // 1. Get app config vars to check LAST_LOGOUT_ALERT
+            // Note: Your Levanter bot code would need to set LAST_LOGOUT_ALERT config var on Heroku
+            // when it detects a logout and sends the message to the channel.
             const configRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/config-vars`, { headers: apiHeaders });
-            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT;
+            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT; // Levanter bot needs to set this variable.
 
             // 2. Get dyno status to check if the bot is currently "up"
             const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
@@ -1575,6 +1597,15 @@ async function checkAndRemindLoggedOutBots() {
                         }
                     });
                     console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                    
+                    // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
+                    // so it doesn't send repeatedly within the next hour or day.
+                    // This requires setting a config var on Heroku. Example:
+                    // await axios.patch(
+                    //     `https://api.heroku.com/apps/${herokuApp}/config-vars`,
+                    //     { LAST_LOGOUT_ALERT: now.toISOString() },
+                    //     { headers: apiHeaders }
+                    // );
                 }
             }
 
