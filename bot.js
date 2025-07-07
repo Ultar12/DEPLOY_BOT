@@ -68,30 +68,53 @@ const pool = new Pool({
 
 // 5) DB helper functions
 async function addUserBot(u, b, s) {
-  await pool.query(
-    'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
-    [u, b, s]
-  );
+  try {
+    await pool.query(
+      'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
+      [u, b, s]
+    );
+    console.log(`[DB] Successfully added bot "${b}" for user "${u}".`);
+  } catch (error) {
+    console.error(`[DB] Failed to add bot "${b}" for user "${u}":`, error.message);
+    // If it's a duplicate key error (user_id, bot_name), it means it's already there, which is fine.
+    // For now, we just log.
+  }
 }
 async function getUserBots(u) {
-  const r = await pool.query(
-    'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at',
-    [u]
-  );
-  return r.rows.map(x => x.bot_name);
+  try {
+    const r = await pool.query(
+      'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at',
+      [u]
+    );
+    console.log(`[DB] Fetched bots for user "${u}":`, r.rows.map(x => x.bot_name)); // Debugging log
+    return r.rows.map(x => x.bot_name);
+  } catch (error) {
+    console.error(`[DB] Failed to get bots for user "${u}":`, error.message);
+    return [];
+  }
 }
 // Function to get user_id by bot_name
 async function getUserIdByBotName(botName) {
-    const r = await pool.query(
-        'SELECT user_id FROM user_bots WHERE bot_name=$1',
-        [botName]
-    );
-    return r.rows.length > 0 ? r.rows[0].user_id : null;
+    try {
+        const r = await pool.query(
+            'SELECT user_id FROM user_bots WHERE bot_name=$1',
+            [botName]
+        );
+        return r.rows.length > 0 ? r.rows[0].user_id : null;
+    } catch (error) {
+        console.error(`[DB] Failed to get user ID by bot name "${botName}":`, error.message);
+        return null;
+    }
 }
 // Function to get all bots from the database
 async function getAllUserBots() {
-    const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
-    return r.rows;
+    try {
+        const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
+        return r.rows;
+    } catch (error) {
+        console.error('[DB] Failed to get all user bots:', error.message);
+        return [];
+    }
 }
 
 async function deleteUserBot(u, b) {
@@ -160,9 +183,9 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 
 // 7) Utilities
 
-// Animated emoji for loading states
+// NEW: Animated emoji for loading states (five square boxes)
 let emojiIndex = 0;
-const animatedEmojis = ['🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚', '🕛'];
+const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜']; // Cycles through black square moving across white squares
 
 function getAnimatedEmoji() {
     const emoji = animatedEmojis[emojiIndex];
@@ -443,7 +466,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           );
           buildResult = true; // Overall success
 
-          // --- ADDED/MOVED: addUserBot and admin notification here for overall success ---
+          // --- Moved: addUserBot and admin notification here for overall success ---
           await addUserBot(chatId, name, vars.SESSION_ID);
 
           if (isFreeTrial) {
@@ -476,7 +499,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
               { parse_mode: 'Markdown', disable_web_page_preview: true }
           );
-          // --- End of ADDED/MOVED block ---
+          // --- End of Moved block ---
 
       } catch (err) {
           clearTimeout(timeoutId); // Ensure timeout is cleared on early exit
@@ -645,8 +668,15 @@ bot.on('message', async msg => {
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
+    // Wait for at least 5 seconds for the animation to play
+    const startTime = Date.now();
     const usesLeft = await useDeployKey(keyAttempt);
-
+    const elapsedTime = Date.now() - startTime;
+    const remainingDelay = 5000 - elapsedTime; // 5 seconds
+    if (remainingDelay > 0) {
+        await new Promise(r => setTimeout(r, remainingDelay));
+    }
+    
     clearInterval(animateIntervalId); // Stop animation immediately after useDeployKey resolves
 
     if (usesLeft === null) {
@@ -657,12 +687,12 @@ bot.on('message', async msg => {
       return; // Exit if key is invalid
     }
     
-    // Add a slight delay for "Verified" message to be visible
     await bot.editMessageText(`✅ Verified!`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
-    await new Promise(r => setTimeout(r, 1500)); // Show "Verified!" for 1.5 seconds
+    // Removed the explicit 1.5s delay here, as the next message comes immediately.
+    // The 5s minimum delay above provides enough time.
 
     authorizedUsers.add(cid);
     st.step = 'SESSION_ID'; // Keep data, just change step
