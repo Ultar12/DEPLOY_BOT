@@ -1968,4 +1968,57 @@ async function checkAndRemindLoggedOutBots() {
             if (lastLogoutAlertStr && !isBotRunning) {
                 const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
                 const now = new Date();
-                const timeSinceLogout = now.getTime() - lastLogoutAlert
+                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
+                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
+                if (timeSinceLogout > twentyFourHours) {
+                    const reminderMessage =
+                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
+                        `It appears to still be offline. Please update your session ID to bring it back online.`;
+                    
+                    await bot.sendMessage(user_id, reminderMessage, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
+                            ]
+                        }
+                    });
+                    console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                    
+                    // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
+                    // so it doesn't send repeatedly within the next hour or day.
+                    // This requires setting a config var on Heroku. Example:
+                    // await axios.patch(
+                    //     `https://api.heroku.com/apps/${herokuApp}/config-vars`,
+                    //     { LAST_LOGOUT_ALERT: now.toISOString() },
+                    //     { headers: apiHeaders }
+                    // );
+                }
+            }
+
+        } catch (error) {
+            // FIX: Handle 404 Not Found explicitly in scheduled task
+            if (error.response && error.response.status === 404) {
+                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
+                // We don't have the original message ID or calling chat ID here, so just clean DB.
+                // Notifications are handled when user tries to interact.
+                const currentOwnerId = await getUserIdByBotName(herokuApp);
+                if (currentOwnerId) {
+                    await deleteUserBot(currentOwnerId, herokuApp);
+                    await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                }
+                return; // Stop processing this app if it's not found on Heroku
+            }
+            console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+        }
+    }
+}
+
+// Schedule the check to run every hour (3600000 milliseconds)
+// For testing, you can make this interval shorter, e.g., 60000 (1 minute)
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour
+
+
+console.log('Bot is running...');
