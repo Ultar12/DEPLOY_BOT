@@ -150,7 +150,7 @@ async function deleteTrialDeployEntry(appName) {
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-const userStates = {}; // chatId -> { step, data, message_id }
+const userStates = {}; // chatId -> { step, data: { appName, messageId, ... } }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
 // 7) Utilities
@@ -251,6 +251,7 @@ async function sendAppList(chatId, messageId = null) {
     );
     const message = `Total apps: ${apps.length}\nSelect an app:`;
     if (messageId) {
+        // Only edit if a messageId is provided and valid (from previous interaction)
         await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: rows } });
     } else {
         await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
@@ -639,7 +640,7 @@ bot.on('message', async msg => {
         "1️⃣ *Open the Link*\n" +
         "Visit: https://levanter-delta.vercel.app/\n\n" +
         "2️⃣ *Important for iPhone Users*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results.\n\n" +
+        "If you are on an iPhone, please open the link using the **Google Chrome* browser for best results.\n\n" +
         "3️⃣ *Skip Advertisements*\n" +
         "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
         "4️⃣ *Use a CUSTOM ID*\n" +
@@ -679,7 +680,6 @@ bot.on('message', async msg => {
   const st = userStates[cid];
   if (!st) {
       // If no state, it means the user sent a message outside of a flow, or the state expired.
-      // You could optionally send a "Please use /start or /menu" message here.
       return bot.sendMessage(cid, "Please use the provided buttons or type /start to begin.");
   }
 
@@ -734,7 +734,6 @@ bot.on('message', async msg => {
         st.data.APP_NAME = nm;
         
         // --- INTERACTIVE WIZARD START ---
-        // Instead of asking for the next step via text, we now send an interactive message.
         st.step = 'AWAITING_WIZARD_CHOICE'; // A neutral state to wait for button click
         
         const wizardText = `App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
@@ -749,7 +748,7 @@ bot.on('message', async msg => {
             }
         };
         const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
-        st.message_id = wizardMsg.message_id; // Store message_id to edit it later
+        st.data.messageId = wizardMsg.message_id; // Store message_id for this specific interaction
         // --- INTERACTIVE WIZARD END ---
 
       } else {
@@ -759,27 +758,26 @@ bot.on('message', async msg => {
     }
   }
 
-  // **** IMPORTANT FIX HERE FOR SETVAR_PROMPT ****
+  // **** IMPORTANT FIX HERE FOR SETVAR_PROMPT (when user types var name) ****
   if (st.step === 'SETVAR_PROMPT') {
-    const appName = st.data.APP_NAME;
-    const messageId = st.data.messageId; // Get messageId from state for editing
-    const varKey = text.trim().toUpperCase(); // Assume user types the var name
+    const appName = st.data.appName;
+    const messageIdFromState = st.data.messageId; // Retrieve messageId from state
+    const varKey = text.trim().toUpperCase(); 
     
     // Validate if the variable name is reasonable or known
     const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
     if (!commonVars.includes(varKey) && !/^[A-Z_]+$/.test(varKey)) {
-        // You might want a more robust check for valid Heroku config var names
         return bot.sendMessage(cid, `Invalid variable name. Please select from the buttons or type a valid Heroku config var name (uppercase letters and underscores only).`);
     }
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-        // Offer boolean choices for these
-        st.step = 'SETVAR_ENTER_VALUE'; // Set this to the *next* step for direct input, not a choice
+        st.step = 'SETVAR_ENTER_VALUE'; // Next, they will pick true/false (which is effectively entering a value)
         st.data.VAR_NAME = varKey; // Store the variable name
-        // Edit the message to show the boolean options
+
+        // Edit the message that previously listed the variables to show the boolean options
         return bot.editMessageText(`Set *${varKey}* to:`, {
             chat_id: cid,
-            message_id: messageId, // Use the stored messageId to edit
+            message_id: messageIdFromState, // Use the stored messageId to edit
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[
@@ -790,33 +788,39 @@ bot.on('message', async msg => {
             }
         });
     } else {
-        // For other variables (like SESSION_ID, PREFIX), ask for the value directly
         st.step = 'SETVAR_ENTER_VALUE';
         st.data.VAR_NAME = varKey;
-        await bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
-        // It's good practice to clear the previous inline keyboard if a new message is sent
-        await bot.editMessageReplyMarkup(undefined, {
-            chat_id: cid,
-            message_id: messageId
-        }).catch(() => {}); // Ignore if message was already edited or deleted
+        // Send a new message for direct text input of the value
+        const newMessage = await bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
+        st.data.messageId = newMessage.message_id; // Update messageId in state to this new message
+        // Optionally, remove the inline keyboard from the *previous* message to avoid confusion
+        if (messageIdFromState) {
+            await bot.editMessageReplyMarkup(undefined, {
+                chat_id: cid,
+                message_id: messageIdFromState
+            }).catch(() => {}); 
+        }
     }
-    return; // Important: ensure we return after handling the state
+    return;
   }
   // **** END IMPORTANT FIX ****
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
-    const { APP_NAME, VAR_NAME, messageId } = st.data; // Also retrieve messageId from state
+    const { APP_NAME, VAR_NAME, messageId } = st.data; // Retrieve messageId from state
     const newVal = text.trim();
-    if (!APP_NAME || !VAR_NAME) { // Added a check to ensure essential data exists
+    if (!APP_NAME || !VAR_NAME || !messageId) { // Ensure all critical data is present
         delete userStates[cid];
         return bot.sendMessage(cid, "It looks like the previous operation was interrupted. Please select an app again from 'My Bots' or 'Apps'.");
     }
 
     try {
-      // Use the stored messageId if available, otherwise send a new one
-      const updateMsg = messageId ? 
-          await bot.editMessageText(`Updating ${VAR_NAME} for "${APP_NAME}"...`, { chat_id: cid, message_id: messageId }) :
-          await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`);
+      // Always try to edit the *last known interactive message*, which is messageId from state
+      // This is crucial. If it fails, then send a new message.
+      const updateMsg = await bot.editMessageText(`Updating ${VAR_NAME} for "${APP_NAME}"...`, { chat_id: cid, message_id: messageId })
+          .catch(async () => {
+              // Fallback to sending a new message if editing fails (e.g., message not found, too old)
+              return await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`);
+          });
 
       await axios.patch(
         `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
@@ -833,17 +837,18 @@ bot.on('message', async msg => {
         await updateUserSession(cid, APP_NAME, newVal);
       }
       delete userStates[cid]; // Clear user state after successful update
-      // Start the restart countdown after the variable is successfully set
+      // Start the restart countdown using the ID of the message that showed "Updating..."
       await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
       console.error("Error updating variable:", e.response?.data?.message || e.message);
-      // Try to edit the message, if not, send a new one
       const errorMessage = `Error updating variable: ${e.response?.data?.message || e.message}\n\nPlease try again or contact support.`;
+      // Try to edit the message again if it exists, otherwise send new.
       if (messageId) {
           await bot.editMessageText(errorMessage, { chat_id: cid, message_id: messageId }).catch(() => bot.sendMessage(cid, errorMessage));
       } else {
           await bot.sendMessage(cid, errorMessage);
       }
+      delete userStates[cid]; // Clear state on error to prevent being stuck
     }
   }
 });
@@ -854,12 +859,11 @@ bot.on('callback_query', async q => {
   const [action, payload, extra, flag] = q.data.split(':');
   await bot.answerCallbackQuery(q.id).catch(() => {});
 
-  // --- INTERACTIVE WIZARD HANDLER --- (No changes needed here for your specific problem)
+  // --- INTERACTIVE WIZARD HANDLER --- 
   if (action === 'setup') {
       const st = userStates[cid];
-      // Ensure the user session is still active
-      if (!st || !st.message_id || q.message.message_id !== st.message_id) {
-          await bot.sendMessage(cid, 'This menu has expired. Please start over by tapping /menu.');
+      if (!st || st.data.messageId !== q.message.message_id || st.step !== 'AWAITING_WIZARD_CHOICE') { // More strict check
+          await bot.sendMessage(cid, 'This menu has expired or is invalid. Please start over by tapping /menu.');
           delete userStates[cid];
           return;
       }
@@ -885,7 +889,7 @@ bot.on('callback_query', async q => {
 
           await bot.editMessageText(confirmationText, {
               chat_id: cid,
-              message_id: st.message_id,
+              message_id: st.data.messageId, // Use stored messageId
               parse_mode: 'Markdown',
               ...confirmationKeyboard
           });
@@ -894,14 +898,14 @@ bot.on('callback_query', async q => {
       if (step === 'startbuild') {
           await bot.editMessageText('Configuration confirmed. Initiating deployment...', {
               chat_id: cid,
-              message_id: st.message_id
+              message_id: st.data.messageId
           });
 
           const buildSuccessful = await buildWithProgress(cid, st.data, st.data.isFreeTrial);
 
           if (buildSuccessful) {
               await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID);
-              if (!st.data.isFreeTrial) { // Admin notification for general app deployment (non-trial)
+              if (!st.data.isFreeTrial) { 
                 const { first_name, last_name, username } = q.from;
                 const appUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
                 const userDetails = [
@@ -924,7 +928,7 @@ bot.on('callback_query', async q => {
       if (step === 'cancel') {
           await bot.editMessageText('❌ Deployment cancelled.', {
               chat_id: cid,
-              message_id: st.message_id
+              message_id: st.data.messageId
           });
           delete userStates[cid];
       }
@@ -935,7 +939,7 @@ bot.on('callback_query', async q => {
   if (action === 'admin_delete_trial') {
     const appToDelete = payload;
     const userId = extra;
-    const messageId = q.message.message_id;
+    const messageId = q.message.message_id; // For admin messages, use the query's messageId directly
 
     try {
         await bot.editMessageText(`🗑️ Admin deleting trial app "${appToDelete}"...`, { chat_id: cid, message_id: messageId });
@@ -966,15 +970,16 @@ bot.on('callback_query', async q => {
     return;
   }
 
+  // --- Select App / Bot Logic ---
   if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id; 
-    // Always (re)set the userState for this app management flow here
+    // Always (re)initialize the userState for app management here
     userStates[cid] = { 
         step: 'APP_MANAGEMENT', // Initial state for app-specific actions
         data: { 
             appName: payload, 
-            messageId: messageId, 
+            messageId: messageId, // This is the message that will be edited for subsequent actions
             isUserBot: isUserBot 
         } 
     };
@@ -999,21 +1004,20 @@ bot.on('callback_query', async q => {
     });
   }
 
-  // --- Common state validation for app-specific actions ---
+  // --- Common state validation for app-specific actions triggered by a button ---
+  // This block runs for 'info', 'restart', 'logs', 'delete', 'setvar', 'varselect', 'setvarbool'
+  // Ensure the state (`st`), the `appName` in state, and the `messageId` in state
+  // all match the current `q.message.message_id` and `payload`.
   const st = userStates[cid];
-  // This check applies to info, restart, logs, delete, setvar, varselect, setvarbool
   if (!st || st.data.appName !== payload || st.data.messageId !== q.message.message_id) {
-      // If the state doesn't match the current callback query's context (app or message),
-      // it means the user clicked an old button or the state was lost.
-      // Clear the state and prompt them to select an app again from the list.
-      delete userStates[cid];
+      delete userStates[cid]; // Clear any stale or invalid state
       await bot.editMessageText("This operation has expired or is invalid. Please select an app again from 'My Bots' or 'Apps'.", {
           chat_id: cid,
           message_id: q.message.message_id // Edit the message that triggered the invalid state
       });
-      return; // Stop further processing for this callback
+      return; // STOP processing this callback
   }
-  // Now we can safely assume st and st.data.messageId are valid for this interaction
+  // Now, we can safely use st.data.messageId for subsequent edits within this flow
   const messageId = st.data.messageId; 
 
 
@@ -1208,7 +1212,7 @@ bot.on('callback_query', async q => {
     userStates[cid].step = 'SETVAR_PROMPT'; 
     userStates[cid].data = { // Re-initialize data to ensure only relevant info is kept
         appName: appName, 
-        messageId: messageId 
+        messageId: messageId // Use the messageId from the current callback query (q.message.message_id)
     };
     
     try {
@@ -1234,7 +1238,7 @@ bot.on('callback_query', async q => {
 
         await bot.editMessageText(varList, {
             chat_id: cid,
-            message_id: messageId,
+            message_id: messageId, // Use the messageId from the current callback query
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: inlineKeyboardRows
@@ -1257,8 +1261,7 @@ bot.on('callback_query', async q => {
   if (action === 'varselect') {
     const [varKey, appName] = [payload, extra];
     
-    // This check is very important here: ensure that the state reflects a "SETVAR_PROMPT"
-    // and that the app matches, AND that the message ID is the one being currently interacted with.
+    // Validate that the current state is correct for this action
     if (!st || st.data.appName !== appName || st.step !== 'SETVAR_PROMPT' || st.data.messageId !== q.message.message_id) {
         delete userStates[cid];
         await bot.editMessageText("This variable selection has expired. Please select an app again from 'My Bots' or 'Apps'.", {
@@ -1273,9 +1276,10 @@ bot.on('callback_query', async q => {
     st.data.VAR_NAME = varKey; // Store the variable name to be set
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
+      // For boolean-like variables, present choices in the same message
       return bot.editMessageText(`Set *${varKey}* to:`, {
         chat_id: cid,
-        message_id: messageId,
+        message_id: messageId, // Still using the same message from setvar
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -1287,77 +1291,17 @@ bot.on('callback_query', async q => {
       });
     } else {
       // For other variables (like SESSION_ID, PREFIX), ask for the value directly in a new message
-      await bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
+      const newMessage = await bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
+      st.data.messageId = newMessage.message_id; // **Update messageId in state to this new message**
+      
       // Clear the inline keyboard from the message that listed the config vars
       await bot.editMessageReplyMarkup(undefined, {
           chat_id: cid,
-          message_id: messageId
+          message_id: messageId // This is the old messageId, the one with config vars
       }).catch(() => {}); 
     }
     return;
   }
 
   if (action === 'setvarbool') {
-    const [varKey, appName, valStr] = [payload, extra, flag];
-    
-    // Critical state validation for boolean variable setting
-    if (!st || st.data.appName !== appName || st.data.VAR_NAME !== varKey || st.step !== 'SETVAR_ENTER_VALUE' || st.data.messageId !== q.message.message_id) {
-        delete userStates[cid];
-        await bot.sendMessage(cid, "This operation has expired or is invalid. Please select an app again from 'My Bots' or 'Apps'.");
-        return;
-    }
-
-    const flagVal = valStr === 'true';
-    let newVal;
-    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
-    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
-    else newVal = flagVal ? 'true' : 'false';
-
-    try {
-      const updateMsg = await bot.editMessageText(`Updating ${varKey} for "${appName}" to \`${newVal}\`...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
-      await axios.patch(
-        `https://api.heroku.com/apps/${appName}/config-vars`,
-        { [varKey]: newVal },
-        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-      );
-      await startRestartCountdown(cid, appName, updateMsg.message_id);
-      delete userStates[cid]; // Clear state after successful completion
-    } catch (e) {
-      console.error("Error setting boolean variable:", e.response?.data?.message || e.message);
-      return bot.editMessageText(`Error updating variable: ${e.response?.data?.message || e.message}`, {
-          chat_id: cid,
-          message_id: messageId,
-          reply_markup: {
-              inline_keyboard: [[{ text: '◀️ Back', callback_data: `setvar:${appName}` }]]
-          }
-      });
-    }
-    return;
-  }
-
-  if (action === 'back_to_app_list') {
-    const isAdmin = cid === ADMIN_ID;
-    const currentMessageId = q.message.message_id; 
-    delete userStates[cid]; // Always clear user state when going back to list
-
-    if (isAdmin) {
-      return sendAppList(cid, currentMessageId);
-    } else {
-      const bots = await getUserBots(cid);
-      if (!bots.length) {
-        return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
-      }
-      const rows = chunkArray(bots, 3).map(r => r.map(n => ({
-        text: n,
-        callback_data: `selectbot:${n}`
-      })));
-      return bot.editMessageText('Your deployed bots:', {
-        chat_id: cid,
-        message_id: currentMessageId,
-        reply_markup: { inline_keyboard: rows }
-      });
-    }
-  }
-});
-
-console.log('Bot is running...');
+    const 
