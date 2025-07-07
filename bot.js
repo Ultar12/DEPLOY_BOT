@@ -28,12 +28,15 @@ const {
   GITHUB_REPO_URL,
   ADMIN_ID,
   DATABASE_URL,
-  HEROKU_APP_DOMAIN
+  // HEROKU_APP_DOMAIN is no longer needed if live URL is removed
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
 // Add the channel ID the bot will listen to for specific messages
 const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here
+
+// Removed: console.log for HEROKU_APP_DOMAIN as it's no longer used for URLs
+// Removed: getAppBaseUrl function as it's no longer needed for URLs
 
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
@@ -77,9 +80,9 @@ async function addUserBot(u, b, s) {
        ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP`,
       [u, b, s]
     );
-    console.log(`[DB] Successfully added/updated bot "${b}" for user "${u}".`);
+    console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}".`);
   } catch (error) {
-    console.error(`[DB] Failed to add/update bot "${b}" for user "${u}":`, error.message);
+    console.error(`[DB] addUserBot: Failed to add/update bot "${b}" for user "${u}":`, error.message);
   }
 }
 async function getUserBots(u) {
@@ -88,10 +91,10 @@ async function getUserBots(u) {
       'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at',
       [u]
     );
-    console.log(`[DB] Fetched bots for user "${u}":`, r.rows.map(x => x.bot_name)); // Debugging log
+    console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name)); // Debugging log
     return r.rows.map(x => x.bot_name);
   } catch (error) {
-    console.error(`[DB] Failed to get bots for user "${u}":`, error.message);
+    console.error(`[DB] getUserBots: Failed to get bots for user "${u}":`, error.message);
     return [];
   }
 }
@@ -102,9 +105,11 @@ async function getUserIdByBotName(botName) {
             'SELECT user_id FROM user_bots WHERE bot_name=$1',
             [botName]
         );
-        return r.rows.length > 0 ? r.rows[0].user_id : null;
+        const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
+        console.log(`[DB] getUserIdByBotName: For bot "${botName}", found user_id: "${userId}".`);
+        return userId;
     } catch (error) {
-        console.error(`[DB] Failed to get user ID by bot name "${botName}":`, error.message);
+        console.error(`[DB] getUserIdByBotName: Failed to get user ID by bot name "${botName}":`, error.message);
         return null;
     }
 }
@@ -112,9 +117,10 @@ async function getUserIdByBotName(botName) {
 async function getAllUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
+        console.log(`[DB] getAllUserBots: Fetched all bots:`, r.rows.map(x => `"${x.bot_name}" (user: "${x.user_id}")`));
         return r.rows;
     } catch (error) {
-        console.error('[DB] Failed to get all user bots:', error.message);
+        console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
         return [];
     }
 }
@@ -125,23 +131,23 @@ async function deleteUserBot(u, b) {
       'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2',
       [u, b]
     );
-    console.log(`[DB] Successfully deleted bot "${b}" for user "${u}".`);
+    console.log(`[DB] deleteUserBot: Successfully deleted bot "${b}" for user "${u}".`);
   } catch (error) {
-    console.error(`[DB] Failed to delete bot "${b}" for user "${u}":`, error.message);
+    console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
   }
 }
 async function updateUserSession(u, b, s) {
+  // This function is effectively replaced by the ON CONFLICT in addUserBot,
+  // but keeping it for explicit update calls if desired elsewhere.
+  // For now, it will simply perform an UPDATE.
   try {
-    // This function is effectively replaced by the ON CONFLICT in addUserBot,
-    // but keeping it for explicit update calls if desired elsewhere.
-    // For now, it will simply perform an UPDATE.
     await pool.query(
       'UPDATE user_bots SET session_id=$1 WHERE user_id=$2 AND bot_name=$3',
       [s, u, b]
     );
-    console.log(`[DB] Successfully updated session for bot "${b}" (user "${u}").`);
+    console.log(`[DB] updateUserSession: Successfully updated session for bot "${b}" (user "${u}").`);
   } catch (error) {
-    console.error(`[DB] Failed to update session for bot "${b}" (user "${u}"):`, error.message);
+    console.error(`[DB] updateUserSession: Failed to update session for bot "${b}" (user "${u}"):`, error.message);
   }
 }
 async function addDeployKey(key, uses, createdBy) {
@@ -198,7 +204,7 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 
 // 7) Utilities
 
-// NEW: Animated emoji for loading states (five square boxes)
+// Animated emoji for loading states (five square boxes)
 let emojiIndex = 0;
 const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜']; // Cycles through black square moving across white squares
 
@@ -339,7 +345,7 @@ async function sendAppList(chatId, messageId = null) {
 // 9) Build & deploy helper with animated countdown
 async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
-  const appUrl = `${HEROKU_APP_DOMAIN}/${name}`; // Use the new HEROKU_APP_DOMAIN
+  // Removed appUrl construction as it's no longer displayed
 
   let buildResult = false; // Flag to track overall success
   const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
@@ -476,13 +482,15 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
           // If resolved, it means "connected" was received
           await bot.editMessageText(
-            `🎉 Your bot is now live at:\n${appUrl}`,
-            { chat_id: chatId, message_id: progMsg.message_id, disable_web_page_preview: false }
+            `🎉 Your bot is now live!`, // Removed URL here
+            { chat_id: chatId, message_id: progMsg.message_id }
           );
           buildResult = true; // Overall success
 
           // --- ADDED/MOVED: addUserBot and admin notification here for overall success ---
-          await addUserBot(chatId, name, vars.SESSION_ID);
+          // NEW: Log user_id and bot_name before calling addUserBot
+          console.log(`[Flow] buildWithProgress: Attempting to add/update bot "${name}" for user "${chatId}".`);
+          await addUserBot(chatId, name, vars.SESSION_ID); // This will add new bot or update existing one
 
           if (isFreeTrial) {
             // Schedule deletion after 30 minutes
@@ -508,7 +516,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             `*Chat ID:* \`${chatId}\``
           ].join('\n');
 
-          const appDetails = `*App Name:* \`${name}\`\n*URL:* ${appUrl}\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+          // Removed appUrl from admin details
+          const appDetails = `*App Name:* \`${name}\`\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
           await bot.sendMessage(ADMIN_ID,
               `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
@@ -657,6 +666,8 @@ bot.on('message', async msg => {
   }
 
   if (text === 'My Bots') {
+    // NEW: Log the user_id before fetching bots
+    console.log(`[Flow] My Bots button clicked by user: ${cid}`);
     const bots = await getUserBots(cid);
     if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
@@ -679,7 +690,7 @@ bot.on('message', async msg => {
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
-    // NEW: Add animation for key verification
+    // Add animation for key verification
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
@@ -832,7 +843,8 @@ bot.on('message', async msg => {
           console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
           // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
-          // The addUserBot (with ON CONFLICT) is designed to handle this.
+          // NEW: Log user_id and bot_name before calling addUserBot
+          console.log(`[Flow] SETVAR_ENTER_VALUE: Attempting to add/update bot "${APP_NAME}" for user "${cid}".`);
           await addUserBot(cid, APP_NAME, newVal); // Pass the new session ID
 
       } catch (err) {
@@ -1017,7 +1029,7 @@ bot.on('callback_query', async q => {
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
-                   `*URL:* [${HEROKU_APP_DOMAIN}/${appData.name}](${HEROKU_APP_DOMAIN}/${appData.name})\n` + // Use HEROKU_APP_DOMAIN
+                   // Removed URL from Info
                    `*Created:* ${createdAt.toLocaleDateString()} (${diffDays} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
@@ -1345,7 +1357,8 @@ bot.on('callback_query', async q => {
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
 
           // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
-          // The addUserBot (with ON CONFLICT) is designed to handle this.
+          // NEW: Log user_id and bot_name before calling addUserBot
+          console.log(`[Flow] setvarbool: Attempting to add/update bot "${appName}" for user "${cid}".`);
           await addUserBot(cid, appName, newVal); // Pass the new session ID, this handles upsert.
 
       } catch (err) {
@@ -1473,7 +1486,7 @@ bot.on('channel_post', async msg => {
             });
             console.log(`Sent logout notification to user ${userId} for bot ${botName}`);
         } else {
-            console.warn(`Could not find user for bot "${botName}" during logout alert.`);
+            console.warn(`Could not find user for bot "${botName}" during logout alert. (Bot not tracked by this bot's DB?)`);
         }
         return;
     }
@@ -1496,8 +1509,8 @@ bot.on('channel_post', async msg => {
         // so this block might become redundant for the user, but still useful for admin channel.
         const userId = await getUserIdByBotName(botName);
         if (userId) {
-             const appUrl = `${HEROKU_APP_DOMAIN}/${botName}`; // Use the new HEROKU_APP_DOMAIN
-             const liveMessage = `🎉 Your bot "*${botName}*" is now live at:\n${appUrl}`;
+             // Removed appUrl from live message
+             const liveMessage = `🎉 Your bot "*${botName}*" is now live!`;
              
              // Only send if the bot didn't already send it via `buildWithProgress` or `SETVAR_ENTER_VALUE` flow
              // This is hard to perfectly track without more state, so might send duplicates.
@@ -1505,7 +1518,7 @@ bot.on('channel_post', async msg => {
              // This section can be primarily for admin channel logging, or if you want spontaneous live notifications.
              console.log(`[Channel Handler] Sent live notification to user ${userId} for bot ${botName}`);
         } else {
-             console.warn(`[Channel Handler] Could not find user for bot "${botName}" during connected alert.`);
+             console.warn(`[Channel Handler] Could not find user for bot "${botName}" during connected alert. (Bot not tracked by this bot's DB?)`);
         }
         return;
     }
@@ -1515,9 +1528,9 @@ bot.on('channel_post', async msg => {
 // This section will periodically check for bots that have been logged out for more than 24 hours.
 async function checkAndRemindLoggedOutBots() {
     console.log('Running scheduled check for logged out bots...');
-    // Ensure HEROKU_API_KEY and HEROKU_APP_DOMAIN are available for this check
-    if (!HEROKU_API_KEY || !HEROKU_APP_DOMAIN) {
-        console.warn('Skipping scheduled logout check: HEROKU_API_KEY or HEROKU_APP_DOMAIN not set.');
+    // Ensure HEROKU_API_KEY is available for this check
+    if (!HEROKU_API_KEY) {
+        console.warn('Skipping scheduled logout check: HEROKU_API_KEY not set.');
         return;
     }
 
