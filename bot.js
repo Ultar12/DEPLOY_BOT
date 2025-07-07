@@ -46,7 +46,8 @@ const pool = new Pool({
       user_id    TEXT NOT NULL,
       bot_name   TEXT NOT NULL,
       session_id TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, bot_name) -- Ensure composite primary key
     );
   `);
   await pool.query(`
@@ -69,15 +70,16 @@ const pool = new Pool({
 // 5) DB helper functions
 async function addUserBot(u, b, s) {
   try {
+    // Use ON CONFLICT to update if it already exists, or insert if new
     await pool.query(
-      'INSERT INTO user_bots(user_id,bot_name,session_id) VALUES($1,$2,$3)',
+      `INSERT INTO user_bots(user_id, bot_name, session_id)
+       VALUES($1, $2, $3)
+       ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP`,
       [u, b, s]
     );
-    console.log(`[DB] Successfully added bot "${b}" for user "${u}".`);
+    console.log(`[DB] Successfully added/updated bot "${b}" for user "${u}".`);
   } catch (error) {
-    console.error(`[DB] Failed to add bot "${b}" for user "${u}":`, error.message);
-    // If it's a duplicate key error (user_id, bot_name), it means it's already there, which is fine.
-    // For now, we just log.
+    console.error(`[DB] Failed to add/update bot "${b}" for user "${u}":`, error.message);
   }
 }
 async function getUserBots(u) {
@@ -118,16 +120,29 @@ async function getAllUserBots() {
 }
 
 async function deleteUserBot(u, b) {
-  await pool.query(
-    'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2',
-    [u, b]
-  );
+  try {
+    await pool.query(
+      'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2',
+      [u, b]
+    );
+    console.log(`[DB] Successfully deleted bot "${b}" for user "${u}".`);
+  } catch (error) {
+    console.error(`[DB] Failed to delete bot "${b}" for user "${u}":`, error.message);
+  }
 }
 async function updateUserSession(u, b, s) {
-  await pool.query(
-    'UPDATE user_bots SET session_id=$1 WHERE user_id=$2 AND bot_name=$3',
-    [s, u, b]
-  );
+  try {
+    // This function is effectively replaced by the ON CONFLICT in addUserBot,
+    // but keeping it for explicit update calls if desired elsewhere.
+    // For now, it will simply perform an UPDATE.
+    await pool.query(
+      'UPDATE user_bots SET session_id=$1 WHERE user_id=$2 AND bot_name=$3',
+      [s, u, b]
+    );
+    console.log(`[DB] Successfully updated session for bot "${b}" (user "${u}").`);
+  } catch (error) {
+    console.error(`[DB] Failed to update session for bot "${b}" (user "${u}"):`, error.message);
+  }
 }
 async function addDeployKey(key, uses, createdBy) {
   await pool.query(
@@ -466,7 +481,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           );
           buildResult = true; // Overall success
 
-          // --- Moved: addUserBot and admin notification here for overall success ---
+          // --- ADDED/MOVED: addUserBot and admin notification here for overall success ---
           await addUserBot(chatId, name, vars.SESSION_ID);
 
           if (isFreeTrial) {
@@ -499,7 +514,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
               { parse_mode: 'Markdown', disable_web_page_preview: true }
           );
-          // --- End of Moved block ---
+          // --- End of ADDED/MOVED block ---
 
       } catch (err) {
           clearTimeout(timeoutId); // Ensure timeout is cleared on early exit
@@ -670,14 +685,14 @@ bot.on('message', async msg => {
 
     // Wait for at least 5 seconds for the animation to play
     const startTime = Date.now();
-    const usesLeft = await useDeployKey(keyAttempt);
+    const usesLeft = await useDeployKey(keyAttempt); // This is where the actual work happens
     const elapsedTime = Date.now() - startTime;
-    const remainingDelay = 5000 - elapsedTime; // 5 seconds
+    const remainingDelay = 5000 - elapsedTime; // Minimum 5 seconds delay
     if (remainingDelay > 0) {
         await new Promise(r => setTimeout(r, remainingDelay));
     }
     
-    clearInterval(animateIntervalId); // Stop animation immediately after useDeployKey resolves
+    clearInterval(animateIntervalId); // Stop animation immediately after the delay
 
     if (usesLeft === null) {
       await bot.editMessageText(`❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`, {
@@ -691,8 +706,7 @@ bot.on('message', async msg => {
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
-    // Removed the explicit 1.5s delay here, as the next message comes immediately.
-    // The 5s minimum delay above provides enough time.
+    await new Promise(r => setTimeout(r, 1000)); // Short pause to show "Verified!" before next prompt
 
     authorizedUsers.add(cid);
     st.step = 'SESSION_ID'; // Keep data, just change step
@@ -708,7 +722,7 @@ bot.on('message', async msg => {
       `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
-    // Finally, prompt for session ID in the same message
+    // Finally, prompt for session ID in a new message
     return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
@@ -780,9 +794,8 @@ bot.on('message', async msg => {
           }
         }
       );
-      if (VAR_NAME === 'SESSION_ID') {
-        await updateUserSession(cid, APP_NAME, newVal);
-      }
+      // No explicit updateUserSession call here. The logic is now within addUserBot
+      // to handle ON CONFLICT, ensuring bot is added/updated in database.
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
@@ -817,6 +830,10 @@ bot.on('message', async msg => {
               message_id: updateMsg.message_id
           });
           console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
+
+          // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
+          // The addUserBot (with ON CONFLICT) is designed to handle this.
+          await addUserBot(cid, APP_NAME, newVal); // Pass the new session ID
 
       } catch (err) {
           clearTimeout(timeoutId);
@@ -1326,6 +1343,10 @@ bot.on('callback_query', async q => {
               }
           });
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
+
+          // IMPORTANT: If session is updated and bot is online, ensure it's in user_bots
+          // The addUserBot (with ON CONFLICT) is designed to handle this.
+          await addUserBot(cid, appName, newVal); // Pass the new session ID, this handles upsert.
 
       } catch (err) {
           clearTimeout(timeoutId);
