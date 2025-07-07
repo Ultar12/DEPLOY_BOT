@@ -13,7 +13,7 @@ const { Pool } = require('pg');
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
 try {
-  const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+  const appJson = JSON.parse(fs.readFileSync('app', 'utf8')); // Changed to 'app' for app.json access
   defaultEnvVars = Object.fromEntries(
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
   );
@@ -41,15 +41,19 @@ const pool = new Pool({
 });
 (async () => {
   try {
+    // Attempt to create the user_bots table with the PRIMARY KEY constraint
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_bots (
         user_id    TEXT NOT NULL,
         bot_name   TEXT NOT NULL,
         session_id TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, bot_name) -- Ensure composite primary key
+        PRIMARY KEY (user_id, bot_name)
       );
     `);
+    console.log("[DB] 'user_bots' table checked/created with PRIMARY KEY.");
+
+    // Add deploy_keys table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
         key        TEXT PRIMARY KEY,
@@ -58,18 +62,44 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    // Table for "Free Trial" cooldowns
+    console.log("[DB] 'deploy_keys' table checked/created.");
+
+    // Add temp_deploys table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
         user_id       TEXT PRIMARY KEY,
         last_deploy_at TIMESTAMP NOT NULL
       );
     `);
+    console.log("[DB] 'temp_deploys' table checked/created.");
+
     console.log("[DB] All necessary tables checked/created successfully.");
+
   } catch (dbError) {
-    console.error("[DB] Error during initial database table creation/check:", dbError.message);
-    // Exit or take other action if essential tables can't be created
-    process.exit(1); 
+    // If the PRIMARY KEY creation failed for user_bots because the table exists
+    // but the constraint doesn't, try to add it with ALTER TABLE.
+    // This often happens if the table was created by a previous version of the code.
+    if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
+        console.warn(`[DB] 'user_bots' table already exists. Attempting to ensure PRIMARY KEY constraint.`);
+        try {
+            await pool.query(`
+                ALTER TABLE user_bots
+                ADD CONSTRAINT user_bots_pkey PRIMARY KEY (user_id, bot_name);
+            `);
+            console.log("[DB] PRIMARY KEY constraint successfully added to 'user_bots'.");
+        } catch (alterError) {
+            // This catches cases where the constraint *already* exists but initial CREATE IF NOT EXISTS failed for another reason
+            if (alterError.code === '42P07' || (alterError.message && alterError.message.includes('already exists')) || (alterError.message && alterError.message.includes('already exists in relation "user_bots"'))) {
+                 console.warn("[DB] PRIMARY KEY constraint already exists on 'user_bots'. Skipping ALTER TABLE.");
+            } else {
+                 console.error("[DB] Error adding PRIMARY KEY constraint to 'user_bots':", alterError.message, alterError.stack);
+                 process.exit(1); // Critical error, exit
+            }
+        }
+    } else {
+        console.error("[DB] Critical error during initial database table creation/check:", dbError.message, dbError.stack);
+        process.exit(1); // Critical error, exit
+    }
   }
 })();
 
@@ -127,7 +157,7 @@ async function getUserIdByBotName(botName) {
 async function getAllUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
-        console.log(`[DB] getAllUserBots: Fetched all bots:`, r.rows.map(x => `"${x.bot_name}" (user: "${x.user_id}")`));
+        console.log(`[DB] getAllUserBots: Fetched all bots:`, r.rows.map(x => `"${x.user_id}" - "${x.bot_name}"`));
         return r.rows;
     } catch (error) {
         console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
