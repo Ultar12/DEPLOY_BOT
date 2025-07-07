@@ -971,9 +971,18 @@ We're here to assist you every step of the way!
     clearInterval(animateIntervalId); // Stop animation immediately after the delay
 
     if (usesLeft === null) {
-      await bot.editMessageText(`❌ Invalid or expired key.\n\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`, {
+      // FIX: Updated message and added button for key contact
+      const contactOwnerMessage = `Please contact the owner for a KEY.`;
+      const contactOwnerKeyboard = {
+          inline_keyboard: [
+              [{ text: 'Contact Owner', url: 'https://wa.me/message/JIIC2JFMHUPEM1' }]
+          ]
+      };
+      await bot.editMessageText(contactOwnerMessage, {
         chat_id: cid,
-        message_id: verificationMsg.message_id
+        message_id: verificationMsg.message_id,
+        reply_markup: contactOwnerKeyboard,
+        parse_mode: 'Markdown' 
       });
       return; // Exit if key is invalid
     }
