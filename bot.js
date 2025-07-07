@@ -983,6 +983,7 @@ bot.on('message', async msg => {
                 }).catch(err => console.error(`Failed to edit user's waiting message: ${err.message}`));
             }
 
+            // CRITICAL FIX: Ensure the code is sent to the target user.
             await bot.sendMessage(targetUserId, 
                 `Your pairing code is:\n` +
                 `\`\`\`\n${pairingCode}\n\`\`\`\n` + // Code block for easy copying
@@ -1008,12 +1009,12 @@ bot.on('message', async msg => {
   // Handle user's phone number input
   if (st.step === 'AWAITING_PHONE_NUMBER') {
     const phoneNumber = text;
-    // Regex for + followed by exactly 12 digits (total 13 characters: +XXXXXXXXXXXX)
-    // Example: +2349163000000 (13 digits after '+')
-    const phoneRegex = /^\+\d{12}$/; 
+    // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
+    // Example: +23491630000000
+    const phoneRegex = /^\+\d{13}$/; 
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the format `+2349163XXXXXX` (13 digits), e.g., `+2349163000000`.', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
     }
 
     // Set admin's state to know which user to send the pairing code to
@@ -1031,10 +1032,12 @@ bot.on('message', async msg => {
     );
     
     // Set user's state to acknowledge their request and show loading animation
-    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
+    // Send a NEW message for the loading state
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Wait for Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Wait for Pairing-code');
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId };
+    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
+    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
+
 
     return; // Exit after handling phone number
   }
@@ -1270,10 +1273,10 @@ bot.on('callback_query', async q => {
   // --- NEW: Handle "Can't get code?" button click ---
   if (action === 'cant_get_code') {
       delete userStates[cid]; // Clear any previous state
-      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: { messageId: q.message.message_id } }; // Store messageId to edit later
-      await bot.editMessageText('Please send your WhatsApp number in the full international format `+2349163XXXXXX` (13 digits, including the `+`):', { 
-          chat_id: cid, 
-          message_id: q.message.message_id, 
+      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // No messageId stored here as we send a new message
+      
+      // Send a NEW message to ask for the WhatsApp number
+      await bot.sendMessage(cid, 'Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { 
           parse_mode: 'Markdown' 
       });
       return;
