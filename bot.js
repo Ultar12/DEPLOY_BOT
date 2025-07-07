@@ -456,7 +456,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       let sessionErrorFound = false;
       try {
           const logSessionRes = await axios.post(`https://api.heroku.com/apps/${actualAppName}/log-sessions`,
-              { tail: false, lines: 200 }, // Fetch recent logs
+              { tail: false, lines: 9000 }, // Increased to 9000 lines
               { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
           );
           const logsUrl = logSessionRes.data.logplex_url;
@@ -705,7 +705,7 @@ async function checkBotStatusAndNotify() {
 
                 // 2. Fetch Logs for more specific errors (only if not already crashed)
                 const logSessionRes = await axios.post(`https://api.heroku.com/apps/${bot_name}/log-sessions`,
-                    { tail: false, lines: 200 }, // Fetch more lines for better log analysis
+                    { tail: false, lines: 9000 }, // Fetch more lines for better log analysis
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
                 const logsUrl = logSessionRes.data.logplex_url;
@@ -768,7 +768,7 @@ async function checkBotStatusAndNotify() {
 }
 
 // Schedule the bot status check to run every 30 minutes
-setInterval(checkBotStatusAndNotify, 30 * 60 * 1000); // 30 minutes
+setInterval(checkBotStatusAndNotify, 30 * 60 * 1000);
 
 
 // 11) Command handlers
@@ -1312,11 +1312,11 @@ bot.on('callback_query', async q => {
     await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail: false, lines: 100 },
+        { tail: false, lines: 9000 }, // Increased to 9000 lines
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
       const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim().slice(-4000);
+      const logs = logRes.data.trim().slice(-4000); // Telegram message limit is 4096 characters
       
       return bot.editMessageText(`Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
         chat_id: cid,
@@ -1455,10 +1455,7 @@ bot.on('callback_query', async q => {
     
     if (!st || st.data.appName !== appName || st.step !== 'SETVAR_PROMPT' || st.data.messageId !== q.message.message_id) {
         delete userStates[cid];
-        await bot.editMessageText("This variable selection has expired. Please select an app again from 'My Bots' or 'Apps'.", {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
+        await bot.sendMessage(cid, "This variable selection has expired. Please select an app again from 'My Bots' or 'Apps'.");
         return;
     }
 
