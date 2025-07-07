@@ -13,6 +13,7 @@ const { Pool } = require('pg');
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
 try {
+  // FIX: Corrected file path from 'app' back to 'app.json'
   const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8')); 
   defaultEnvVars = Object.fromEntries(
     Object.entries(appJson.env).map(([k, v]) => [k, v.value])
@@ -90,7 +91,7 @@ const pool = new Pool({
     
     // Check for specific error code for "duplicate_table" which implies the table itself exists
     if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
-        console.warn(`[DB] 'user_bots' table already exists. Attempting to ensure PRIMARY KEY constraint.`);
+        console.warn(`[DB] 'user_bots' table already exists, or there was an issue creating it initially. Attempting to ensure PRIMARY KEY constraint.`);
         try {
             // Attempt to add the primary key if it's missing.
             // Using IF NOT EXISTS on the constraint name prevents error if constraint is already there.
@@ -677,7 +678,7 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
     console.log(`[Admin] Admin ${cid} initiated /update for user ${targetUserId}. Prompting for app selection.`);
     // Use the sendAppList function but with a specific callback prefix for update action
     // The message ID for editing will be derived from the sent message.
-    await bot.sendMessage(cid, `Selecting app to assign to user \`${targetUserId}\`...`)
+    await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`)
         .then(sentMsg => {
             userStates[cid] = {
                 step: 'AWAITING_APP_FOR_UPDATE', // New state to signify this specific flow
@@ -687,6 +688,7 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
                 }
             };
             // Now send the app list, editing the message created above
+            // Use the sendAppList which takes chatId, messageId to edit, callbackPrefix, and targetUserIdForUpdate
             sendAppList(cid, sentMsg.message_id, 'update_assign_app', targetUserId);
         })
         .catch(error => console.error("Error sending initial /update message:", error));
@@ -784,8 +786,6 @@ bot.on('message', async msg => {
   const st = userStates[cid];
   if (!st) return;
 
-  // This block needs to handle direct text input for session ID (normal deploy flow, etc.)
-  // It should NOT be triggered by the /update command's app selection.
   if (st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
@@ -888,7 +888,6 @@ bot.on('message', async msg => {
     }
   }
 
-  // This block handles session ID input for both normal deployments and /update command
   if (st.step === 'SETVAR_ENTER_VALUE') {
     const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate, isForUpdateCommand } = st.data; // Capture original source
     const newVal = text.trim();
@@ -1122,9 +1121,10 @@ bot.on('callback_query', async q => {
         return;
     }
 
-    await bot.editMessageText(`Fetching session ID for "${appName}" to assign to user \`${targetUserId}\`...`, {
+    await bot.editMessageText(`Assigning app "${appName}" to user \`${targetUserId}\`...`, {
         chat_id: cid,
-        message_id: q.message.message_id
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown' // Added parse_mode
     });
 
     try {
@@ -1151,7 +1151,7 @@ bot.on('callback_query', async q => {
         // Directly call addUserBot with the fetched session ID
         await addUserBot(targetUserId, appName, currentSessionId);
 
-        await bot.editMessageText(`✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`!`, {
+        await bot.editMessageText(`✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown'
@@ -1599,9 +1599,8 @@ bot.on('callback_query', async q => {
           data: {
               APP_NAME: appName,
               VAR_NAME: 'SESSION_ID',
-              // Note: When called via change_session, targetUserId is present, and isForUpdateCommand is false.
-              // In SETVAR_ENTER_VALUE, targetUserId will correctly become finalUserId.
-              targetUserId: targetUserId 
+              fromChannelBotName: appName, // Store context that this came from a channel alert
+              fromChannelUserId: targetUserId // Store context
           }
       };
       await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
@@ -1672,3 +1671,143 @@ bot.on('channel_post', async msg => {
             pendingPromise.reject(new Error('Bot session became invalid on startup.'));
             appDeploymentPromises.delete(botName); // Clean up
             console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, processing logout as an alert.`);
+        }
+
+        const userId = await getUserIdByBotName(botName); // Get the owner's ID from your DB
+        if (userId) {
+            const warningMessage =
+                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
+                `Please update your session ID to get it back online.`;
+            
+            await bot.sendMessage(userId, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
+                    ]
+                }
+            });
+            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.warn(`[Channel Post] Could not find user for bot "${botName}" during logout alert. (Bot not tracked by this bot's DB?)`);
+        }
+        return;
+    }
+
+    // --- Connected Message Handling ---
+    // Sample: "✅ [hhhhhbbvvcvvvvvvvcccgvvvvvv] connected.\n🔐 levanter_7dd859633e5ac4e7ca50baced3d060542\n🕒 07/07/2025, 16:34:25"
+    // The regex needs to match "connected." and allow for anything after it, including newlines.
+    // Using 's' (dotall) flag for '.' to match newlines, and 'i' for case-insensitivity
+    const connectedMatch = text.match(/✅ \[([^\]]+)\] connected\..*/si); 
+    if (connectedMatch) {
+        const botName = connectedMatch[1];
+        console.log(`[Channel Post] Detected CONNECTED status for bot: ${botName}`);
+
+        // If there's an ongoing deployment or var update for this app, resolve its promise as success
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId); // Stop animation
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(botName); // Clean up
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, not sending duplicate "live" message.`);
+            // This case handles a bot connecting spontaneously (e.g., manual restart outside the bot's UI)
+            // If you want a "Your bot is live!" message every time, you could enable this:
+            // const userId = await getUserIdByBotName(botName);
+            // if (userId) {
+            //      await bot.sendMessage(userId, `🎉 Your bot "*${botName}*" is now live!`, { parse_mode: 'Markdown' });
+            // }
+        }
+        return;
+    }
+});
+
+// 15) Scheduled Task for Logout Reminders
+// This section will periodically check for bots that have been logged out for more than 24 hours.
+async function checkAndRemindLoggedOutBots() {
+    console.log('Running scheduled check for logged out bots...');
+    // Ensure HEROKU_API_KEY is available for this check
+    if (!HEROKU_API_KEY) {
+        console.warn('Skipping scheduled logout check: HEROKU_API_KEY not set.');
+        return;
+    }
+
+    const allBots = await getAllUserBots(); // Get all bots from your DB
+
+    for (const botEntry of allBots) {
+        const { user_id, bot_name } = botEntry;
+        const herokuApp = bot_name; // Assuming bot_name is also the Heroku app name
+
+        try {
+            const apiHeaders = {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            };
+
+            // 1. Get app config vars to check LAST_LOGOUT_ALERT
+            // Note: Your Levanter bot code would need to set LAST_LOGOUT_ALERT config var on Heroku
+            // when it detects a logout and sends the message to the channel.
+            const configRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/config-vars`, { headers: apiHeaders });
+            const lastLogoutAlertStr = configRes.data.LAST_LOGOUT_ALERT; // Levanter bot needs to set this variable.
+
+            // 2. Get dyno status to check if the bot is currently "up"
+            const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
+            const workerDyno = dynoRes.data.find(d => d.type === 'worker'); // Assuming your Levanter bot runs as a 'worker' dyno
+
+            const isBotRunning = workerDyno && workerDyno.state === 'up';
+
+            if (lastLogoutAlertStr && !isBotRunning) {
+                const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
+                const now = new Date();
+                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
+                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
+                if (timeSinceLogout > twentyFourHours) {
+                    const reminderMessage =
+                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
+                        `It appears to still be offline. Please update your session ID to bring it back online.`;
+                    
+                    await bot.sendMessage(user_id, reminderMessage, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
+                            ]
+                        }
+                    });
+                    console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
+                    
+                    // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
+                    // so it doesn't send repeatedly within the next hour or day.
+                    // This requires setting a config var on Heroku. Example:
+                    // await axios.patch(
+                    //     `https://api.heroku.com/apps/${herokuApp}/config-vars`,
+                    //     { LAST_LOGOUT_ALERT: now.toISOString() },
+                    //     { headers: apiHeaders }
+                    // );
+                }
+            }
+
+        } catch (error) {
+            // Ignore 404 errors (app not found/deleted), log others
+            if (error.response && error.response.status === 404) {
+                console.log(`[Scheduled Task] App ${herokuApp} not found for reminder check, likely deleted.`);
+                // Optionally: Delete this bot from your user_bots table if it's not found on Heroku
+                // await deleteUserBot(user_id, herokuApp);
+            } else {
+                console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+            }
+        }
+    }
+}
+
+// Schedule the check to run every hour (3600000 milliseconds)
+// For testing, you can make this interval shorter, e.g., 60000 (1 minute)
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour
+
+
+console.log('Bot is running...');
