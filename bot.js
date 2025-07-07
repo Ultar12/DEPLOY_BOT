@@ -215,7 +215,8 @@ const authorizedUsers = new Set(); // chatIds who've passed a key
 // 7) Utilities
 // Function to escape Markdown V2 special characters
 function escapeMarkdown(text) {
-    if (!text || typeof text !== 'string') return '';
+    if (text === null || text === undefined) return ''; // Handle null/undefined input
+    if (typeof text !== 'string') text = String(text); // Convert to string if not already
     const specials = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
     let escapedText = text;
     for (const char of specials) {
@@ -267,9 +268,10 @@ async function startRestartCountdown(chatId, appName, messageId) {
     const totalSteps = totalSeconds / intervalTime;
 
     // Initial message
-    await bot.editMessageText(`🔄 Bot "${appName}" restarting...`, {
+    await bot.editMessageText(`🔄 Bot "${escapeMarkdown(appName)}" restarting...`, { // Escaped appName
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        parse_mode: 'MarkdownV2'
     }).catch(() => {});
 
     for (let i = 0; i <= totalSteps; i++) {
@@ -280,7 +282,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
-        let countdownMessage = `🔄 Bot "${appName}" restarting...\n\n`;
+        let countdownMessage = `🔄 Bot "${escapeMarkdown(appName)}" restarting...\n\n`; // Escaped appName
         if (secondsLeft > 0) {
             countdownMessage += `[${filledBlocks}${emptyBlocks}] ${minutesLeft}m ${remainingSeconds}s left`;
         } else {
@@ -289,15 +291,17 @@ async function startRestartCountdown(chatId, appName, messageId) {
         
         await bot.editMessageText(countdownMessage, {
             chat_id: chatId,
-            message_id: messageId
+            message_id: messageId,
+            parse_mode: 'MarkdownV2'
         }).catch(() => {}); // Ignore errors if message is deleted
 
         if (secondsLeft <= 0) break; // Exit loop when countdown is done
         await new Promise(r => setTimeout(r, intervalTime * 1000));
     }
-    await bot.editMessageText(`✅ Bot "${appName}" has restarted successfully and is back online!`, {
+    await bot.editMessageText(`✅ Bot "${escapeMarkdown(appName)}" has restarted successfully and is back online!`, { // Escaped appName
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        parse_mode: 'MarkdownV2'
     });
 }
 
@@ -326,11 +330,11 @@ async function sendAppList(chatId, messageId = null) {
         await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
     }
   } catch (e) {
-    const errorMsg = `Error fetching apps: ${e.message}`;
+    const errorMsg = `Error fetching apps: ${escapeMarkdown(e.message)}`; // Escaped
     if (messageId) {
-        bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+        bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId, parse_mode: 'MarkdownV2' });
     } else {
-        bot.sendMessage(chatId, errorMsg);
+        bot.sendMessage(chatId, errorMsg, { parse_mode: 'MarkdownV2' });
     }
   }
 }
@@ -450,26 +454,29 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         message_id: progMsg.message_id
       });
 
-      const totalSteps = 12; // 12 steps for a 60-second countdown (5 seconds per step)
-      let sessionErrorFound = false; // Initialize here
+      const totalCountdownSeconds = 60; // Total countdown for bot startup
+      const countdownInterval = 5; // Update every 5 seconds
+      const totalCountdownSteps = totalCountdownSeconds / countdownInterval;
+      let sessionErrorFound = false;
 
-      for (let i = 1; i <= totalSteps; i++) {
-          const secondsLeft = 60 - (i * 5);
+      for (let i = 1; i <= totalCountdownSteps; i++) {
+          const secondsLeft = totalCountdownSeconds - (i * countdownInterval);
           const filled = '■'.repeat(i);
-          const empty = '□'.repeat(totalSteps - i);
+          const empty = '□'.repeat(totalCountdownSteps - i);
           const countdownMessage = `[${filled}${empty}] Wait for your bot to start ... (${secondsLeft}s left)`;
           
           await bot.editMessageText(countdownMessage, {
               chat_id: chatId,
-              message_id: progMsg.message_id
-          }).catch(() => {}); // Ignore errors if user deletes message
+              message_id: progMsg.message_id,
+              parse_mode: 'MarkdownV2'
+          }).catch(() => {});
 
-          // --- LOG READING TIMING CHANGE ---
-          // Read logs when 5 seconds are left in the countdown (i.e., on the last iteration)
-          if (secondsLeft === 5) { // Check logs just before the last 5-second wait
+          // --- LOG READING TIMING CHANGE: Check logs when 5 seconds are left ---
+          if (secondsLeft === 5) { 
+              console.log(`Checking logs for ${actualAppName} with 5 seconds left in countdown.`);
               try {
                   const logSessionRes = await axios.post(`https://api.heroku.com/apps/${actualAppName}/log-sessions`,
-                      { tail: false, lines: 9000 }, // Increased to 9000 lines
+                      { tail: false, lines: 9000 }, 
                       { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                   );
                   const logsUrl = logSessionRes.data.logplex_url;
@@ -480,11 +487,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
                       sessionErrorFound = true;
                   }
               } catch (logError) {
-                  console.error(`Error fetching post-deploy logs for ${actualAppName}:`, logError.message);
-                  // Don't fail the deployment if logs can't be fetched.
+                  console.error(`Error fetching post-deploy logs for ${actualAppName} at 5s mark:`, logError.message);
               }
           }
-          await new Promise(r => setTimeout(r, 5000)); // Wait 5 seconds
+          await new Promise(r => setTimeout(r, countdownInterval * 1000));
       }
       
       // --- Final message based on sessionErrorFound ---
@@ -495,7 +501,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               {
                   chat_id: chatId,
                   message_id: progMsg.message_id,
-                  parse_mode: 'MarkdownV2', // Changed to MarkdownV2 for stricter parsing and proper escaping
+                  parse_mode: 'MarkdownV2',
                   reply_markup: {
                       inline_keyboard: [[
                           { text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${actualAppName}` },
@@ -506,17 +512,15 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           );
       } else {
           await bot.editMessageText(
-              `✅ Your bot is now working!\nlive at: ${escapeMarkdown(fullAppUrl)}`, // Escaping fullAppUrl
-              { chat_id: chatId, message_id: progMsg.message_id, parse_mode: 'MarkdownV2' } // Ensure MarkdownV2 here too
+              `✅ Your bot is now working!\nlive at: ${escapeMarkdown(fullAppUrl)}`,
+              { chat_id: chatId, message_id: progMsg.message_id, parse_mode: 'MarkdownV2' }
           );
       }
-      // --- END NEW FEATURE ---
 
 
       if (isFreeTrial) {
-          await recordFreeTrialDeploy(chatId, actualAppName); // Use actualAppName
-          // Fetch user details for admin notification
-          let userDetails = `*User ID:* \`${chatId}\``;
+          await recordFreeTrialDeploy(chatId, actualAppName);
+          let userDetails = `*User ID:* \`${escapeMarkdown(chatId)}\``; // Escaped
           try {
               const userChat = await bot.getChat(chatId);
               const { first_name, last_name, username } = userChat;
@@ -536,7 +540,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
               { parse_mode: 'MarkdownV2', disable_web_page_preview: true }
           );
 
-          // This timeout is now a fallback, the main deletion logic will be in `checkAndDeleteDueTrialApps`
           setTimeout(async () => {
               try {
                   const res = await pool.query('SELECT * FROM temp_deploys WHERE app_name = $1 AND delete_at <= NOW()', [actualAppName]);
@@ -546,28 +549,28 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
                           headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                       });
                       await deleteUserBot(chatId, actualAppName);
-                      await deleteTrialDeployEntry(actualAppName); // Remove from temp_deploys table
+                      await deleteTrialDeployEntry(actualAppName);
                       await bot.sendMessage(chatId, `✅ Free Trial app "${escapeMarkdown(actualAppName)}" successfully deleted\\.`, { parse_mode: 'MarkdownV2' });
                   }
               } catch (e) {
                   console.error(`Failed to auto-delete free trial app ${actualAppName} via setTimeout:`, e.message);
                   await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${escapeMarkdown(actualAppName)}"\. Please delete it manually from your Heroku dashboard\\.`, { parse_mode: 'MarkdownV2' });
               }
-          }, 24 * 60 * 60 * 1000 + 5000); // 1 day + a small buffer
+          }, 24 * 60 * 60 * 1000 + 5000);
       }
-      return true; // Indicate success
+      return true;
     } else {
       await bot.editMessageText(
         `Build status: ${escapeMarkdown(status)}\\. Check your Heroku dashboard for logs\\.`,
         { chat_id: chatId, message_id: progMsg.message_id, parse_mode: 'MarkdownV2' }
       );
-      return false; // Indicate failure
+      return false;
     }
 
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${escapeMarkdown(errorMsg)}\\n\\nPlease check the Heroku dashboard or try again\\.`, { parse_mode: 'MarkdownV2' });
-    return false; // Indicate failure
+    return false;
   }
 }
 
@@ -594,7 +597,7 @@ async function checkAndDeleteDueTrialApps() {
             // Notify user
             await bot.sendMessage(user_id, `✅ Your Free Trial app "${escapeMarkdown(app_name)}" has been successfully deleted as its 1-day runtime expired\\.`, { parse_mode: 'MarkdownV2' });
             // Notify admin (optional, as they get initial deployment notification)
-            if (user_id !== ADMIN_ID) { // Avoid double notification if admin is the user
+            if (user_id !== ADMIN_ID) {
                 await bot.sendMessage(ADMIN_ID, `🗑️ Free Trial app "${escapeMarkdown(app_name)}" \\(user: \`${escapeMarkdown(user_id)}\`\\) was auto-deleted successfully\\.`, { parse_mode: 'MarkdownV2' });
             }
             console.log(`Successfully auto-deleted ${app_name}`);
@@ -609,26 +612,24 @@ async function checkAndDeleteDueTrialApps() {
 }
 
 // Check every 5 minutes for due trial apps
-setInterval(checkAndDeleteDueTrialApps, 5 * 60 * 1000); // 5 minutes
+setInterval(checkAndDeleteDueTrialApps, 5 * 60 * 1000);
 
 // Check for upcoming trial app deletions to notify admin
 async function notifyAdminOfUpcomingTrialDeletions() {
     console.log('Checking for upcoming trial app deletions...');
-    // Notify admin 1 hour before deletion
     const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000);
-    const oneHourAndFiveMinutesFromNow = new Date(Date.now() + (60 + 5) * 60 * 1000); // Check within a 5-minute window
+    const oneHourAndFiveMinutesFromNow = new Date(Date.now() + (60 + 5) * 60 * 1000);
     const upcomingApps = await pool.query(
         `SELECT user_id, app_name FROM temp_deploys WHERE delete_at > NOW() AND delete_at <= $1`,
-        [oneHourAndFiveMinutesFromNow] // Get apps due in the next 1 hour and 5 minutes
+        [oneHourAndFiveMinutesFromNow]
     );
 
     for (const app of upcomingApps.rows) {
         const { user_id, app_name } = app;
         try {
-            // Check if we've already notified for this app within a recent period
             const notificationKey = `notified_admin_upcoming_${app_name}`;
-            if (userStates[notificationKey] && (Date.now() - userStates[notificationKey] < 30 * 60 * 1000)) { // Notified within last 30 mins
-                continue; // Skip if recently notified
+            if (userStates[notificationKey] && (Date.now() - userStates[notificationKey] < 30 * 60 * 1000)) {
+                continue;
             }
 
             let userName = `User \`${escapeMarkdown(user_id)}\``;
@@ -652,9 +653,7 @@ async function notifyAdminOfUpcomingTrialDeletions() {
                     }
                 }
             );
-            userStates[notificationKey] = Date.now(); // Mark as notified with timestamp
-            // This flag will naturally clear from memory on bot restart, but DB check is primary.
-            // For long-running bots, we might want a more persistent flag or a more sophisticated notification logic.
+            userStates[notificationKey] = Date.now();
 
         } catch (e) {
             console.error(`Failed to notify admin for upcoming deletion of ${app_name}:`, e.message);
@@ -662,22 +661,20 @@ async function notifyAdminOfUpcomingTrialDeletions() {
     }
 }
 
-// Check for upcoming deletions every 15 minutes (more appropriate for hourly notifications)
 setInterval(notifyAdminOfUpcomingTrialDeletions, 15 * 60 * 1000);
 
 
 // --- NEW FEATURE: Bot Status Checking and User Notification ---
 
-// Error patterns to look for in logs and their corresponding error types
 const BOT_ERROR_PATTERNS = [
     { regex: /INVALID SESSION ID/i, type: 'INVALID_SESSION' },
     { regex: /Invalid AuthState/i, type: 'INVALID_AUTHSTATE' },
-    { regex: /Error: (.*)ECONNREFUSED/i, type: 'CONNECTION_REFUSED' }, // Example for connection errors
-    { regex: /Error: Command failed with exit code/i, type: 'COMMAND_FAILED' }, // General command failures
-    { regex: /code=H\d\d/i, type: 'HEROKU_ERROR_CODE' } // General Heroku runtime errors
+    { regex: /Error: (.*)ECONNREFUSED/i, type: 'CONNECTION_REFUSED' },
+    { regex: /Error: Command failed with exit code/i, type: 'COMMAND_FAILED' },
+    { regex: /code=H\d\d/i, type: 'HEROKU_ERROR_CODE' }
 ];
 
-const NOTIFICATION_COOLDOWN_HOURS = 24; // How often to notify for the same error on the same app (24 hours)
+const NOTIFICATION_COOLDOWN_HOURS = 24;
 
 async function checkBotStatusAndNotify() {
     console.log('Checking bot statuses for errors...');
@@ -687,7 +684,6 @@ async function checkBotStatusAndNotify() {
         for (const botEntry of allUserBots.rows) {
             const { user_id, bot_name } = botEntry;
             try {
-                // 1. Check Dyno State First (quick check for obvious issues)
                 const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot_name}/dynos`, {
                     headers: {
                         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -710,7 +706,7 @@ async function checkBotStatusAndNotify() {
                                 reply_markup: {
                                     inline_keyboard: [
                                         [{ text: '🔄 Restart Bot', callback_data: `restart:${bot_name}` }],
-                                        [{ text: '🔑 Set Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }], // New callback for direct session change
+                                        [{ text: '🔑 Set Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }],
                                         [{ text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` }]
                                     ]
                                 }
@@ -718,19 +714,18 @@ async function checkBotStatusAndNotify() {
                         );
                         await recordBotNotification(bot_name, user_id, errorType);
                     }
-                    continue; // Skip log parsing if dyno is clearly crashed
+                    continue;
                 }
 
-                // 2. Fetch Logs for more specific errors (only if not already crashed)
                 const logSessionRes = await axios.post(`https://api.heroku.com/apps/${bot_name}/log-sessions`,
-                    { tail: false, lines: 9000 }, // Fetch more lines for better log analysis
+                    { tail: false, lines: 9000 },
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
                 const logsUrl = logSessionRes.data.logplex_url;
                 const logRes = await axios.get(logsUrl);
                 const logs = logRes.data;
 
-                let notifiedForThisBot = false; // Flag to prevent multiple notifications for one bot in a single check cycle
+                let notifiedForThisBot = false;
 
                 for (const pattern of BOT_ERROR_PATTERNS) {
                     if (logs.match(pattern.regex)) {
@@ -740,15 +735,15 @@ async function checkBotStatusAndNotify() {
 
                         if (!lastNotified || (now.getTime() - lastNotified.getTime() > NOTIFICATION_COOLDOWN_HOURS * 60 * 60 * 1000)) {
                             let message = `🚨 Your bot "${escapeMarkdown(bot_name)}" is experiencing an issue!`;
-                            let actionButtons = [ // Use an array for buttons, then chunk it
+                            let actionButtons = [
                                 { text: '📄 View Logs on Heroku', url: `https://dashboard.heroku.com/apps/${bot_name}/logs` },
-                                { text: '🔄 Restart Bot', callback_data: `restart:${bot_name}` } // Always give restart option
+                                { text: '🔄 Restart Bot', callback_data: `restart:${bot_name}` }
                             ];
 
                             if (errorType === 'INVALID_SESSION' || errorType === 'INVALID_AUTHSTATE') {
                                 message = `⚠️ Your bot "${escapeMarkdown(bot_name)}" has an \\*INVALID SESSION ID\\* or \\*INVALID AUTHSTATE\\*\\.\\n\\n` +
                                           `This means your session has expired or is incorrect\\. Please update your session ID immediately!`;
-                                actionButtons.unshift({ text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` }); // Prepend button for session change
+                                actionButtons.unshift({ text: '🔑 Change Session ID', callback_data: `setvar:SESSION_ID:${bot_name}` });
                             } else if (errorType === 'CONNECTION_REFUSED') {
                                 message = `🔌 Your bot "${escapeMarkdown(bot_name)}" is having trouble connecting to a service \\(Connection Refused\\)\\.\\n\\n` +
                                           `This might be a temporary network issue or a problem with the service your bot connects to\\.`;
@@ -765,19 +760,18 @@ async function checkBotStatusAndNotify() {
                             await bot.sendMessage(user_id, message, {
                                 parse_mode: 'MarkdownV2',
                                 reply_markup: {
-                                    inline_keyboard: chunkArray(actionButtons, 2) // Chunk all action buttons
+                                    inline_keyboard: chunkArray(actionButtons, 2)
                                 }
                             });
                             await recordBotNotification(bot_name, user_id, errorType);
                             notifiedForThisBot = true; 
-                            break; // Stop checking patterns for this bot if one is found and notified
+                            break;
                         }
                     }
                 }
 
             } catch (err) {
                 console.error(`Error checking status for app ${bot_name}:`, err.message);
-                // Log and continue, don't stop the whole check
             }
         }
     } catch (err) {
@@ -785,7 +779,6 @@ async function checkBotStatusAndNotify() {
     }
 }
 
-// Schedule the bot status check to run every 30 minutes
 setInterval(checkBotStatusAndNotify, 30 * 60 * 1000);
 
 
@@ -793,7 +786,7 @@ setInterval(checkBotStatusAndNotify, 30 * 60 * 1000);
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear previous state on /start
+  delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
   await bot.sendMessage(cid,
@@ -806,7 +799,7 @@ bot.onText(/^\/start$/, async msg => {
 bot.onText(/^\/menu$/i, msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear previous state on /menu
+  delete userStates[cid];
   bot.sendMessage(cid, 'Menu:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
@@ -815,7 +808,7 @@ bot.onText(/^\/menu$/i, msg => {
 bot.onText(/^\/apps$/i, msg => {
   const cid = msg.chat.id.toString();
   if (cid === ADMIN_ID) {
-    delete userStates[cid]; // Clear state
+    delete userStates[cid];
     sendAppList(cid);
   }
 });
@@ -831,7 +824,6 @@ bot.on('message', async msg => {
 
   // --- Button Handlers ---
   if (text === 'Deploy') {
-    // Clear existing state before starting a new flow
     delete userStates[cid]; 
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
@@ -843,7 +835,7 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Free Trial') {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
@@ -853,12 +845,12 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Apps' && isAdmin) {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     return sendAppList(cid);
   }
 
   if (text === 'Generate Key' && isAdmin) {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     const buttons = [
       [1, 2, 3, 4, 5].map(n => ({
         text: String(n),
@@ -871,32 +863,32 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     const guideCaption =
         "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link*\n" +
-        "Visit: https://levanter-delta\\.vercel\\.app/\n\n" + // Escaped URL
+        "Visit: https://levanter-delta\\.vercel\\.app/\n\n" +
         "2️⃣ *Important for iPhone Users*\n" +
         "If you are on an iPhone, please open the link using the **Google Chrome** browser for best results\\.\n\n" +
         "3️⃣ *Skip Advertisements*\n" +
         "The website may show ads\\. Please close or skip any popups or advertisements to proceed\\.\n\n" +
         "4️⃣ *Use a CUSTOM ID*\n" +
-        "You \\*\\*must\\*\\* enter your own unique ID in the 'Custom Session' field\\. Do not use the default one\\. A good ID could be your name or username \\(e\\.g\\., `johnsmith`\\)\\.\n\n" + // Escaped example
+        "You \\*\\*must\\*\\* enter your own unique ID in the 'Custom Session' field\\. Do not use the default one\\. A good ID could be your name or username \\(e\\.g\\., `johnsmith`\\)\\.\n\n" +
         "Once you have copied your session ID, tap the 'Deploy' button here to continue\\.";
 
     try {
       await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
         caption: guideCaption,
-        parse_mode: 'MarkdownV2' // Using MarkdownV2
+        parse_mode: 'MarkdownV2'
       });
     } catch {
-      await bot.sendMessage(cid, guideCaption, { parse_mode: 'MarkdownV2' }); // Using MarkdownV2
+      await bot.sendMessage(cid, guideCaption, { parse_mode: 'MarkdownV2' });
     }
     return;
   }
 
   if (text === 'My Bots') {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     const bots = await getUserBots(cid);
     if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
@@ -909,14 +901,16 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    delete userStates[cid]; // Clear existing state
+    delete userStates[cid];
     return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}`);
   }
 
   // --- Stateful flows ---
   const st = userStates[cid];
+  // *** CRITICAL FIX: Ensure 'st' exists before attempting to access its properties ***
   if (!st) {
-      return bot.sendMessage(cid, "Please use the provided buttons or type /start to begin.");
+      console.log(`User ${cid} sent message "${text}" but no active state found.`);
+      return bot.sendMessage(cid, "Hmm, I seem to have lost track of our conversation. Please tap /start or use the menu buttons to begin a new process.");
   }
 
 
@@ -924,10 +918,10 @@ bot.on('message', async msg => {
     const keyAttempt = text.toUpperCase();
     const usesLeft = await useDeployKey(keyAttempt);
     if (usesLeft === null) {
-      return bot.sendMessage(cid, `❌ Invalid or expired key.\\n\\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`, { parse_mode: 'MarkdownV2' }); // Escaped
+      return bot.sendMessage(cid, `❌ Invalid or expired key\\.\\n\\nPlease contact the admin for a valid key: ${SUPPORT_USERNAME}`, { parse_mode: 'MarkdownV2' });
     }
     authorizedUsers.add(cid);
-    st.step = 'SESSION_ID'; // Keep data, just change step
+    st.step = 'SESSION_ID';
 
     const { first_name, last_name, username } = msg.from;
     const userDetails = [
@@ -938,7 +932,7 @@ bot.on('message', async msg => {
 
     await bot.sendMessage(ADMIN_ID,
       `🔑 \\*Key Used By:\\*\n${userDetails}\\n\\n\\*Uses Left:\\* ${usesLeft}`,
-      { parse_mode: 'MarkdownV2' } // Using MarkdownV2
+      { parse_mode: 'MarkdownV2' }
     );
     return bot.sendMessage(cid, 'Verified, please enter your session ID:');
   }
@@ -955,7 +949,8 @@ bot.on('message', async msg => {
   if (st.step === 'APP_NAME') {
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-      return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
+      // *** FIX: Escape nm here as it's user input going into a Markdown message ***
+      return bot.sendMessage(cid, `Invalid name: \`${escapeMarkdown(nm)}\`\\. Use at least 5 lowercase letters, numbers, or hyphens\\.`, { parse_mode: 'MarkdownV2' });
     }
     try {
       await axios.get(`https://api.heroku.com/apps/${nm}`, {
@@ -964,14 +959,16 @@ bot.on('message', async msg => {
           Accept: 'application/vnd.heroku+json; version=3'
         }
       });
-      return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
+      // *** FIX: Escape nm here as it's user input going into a Markdown message ***
+      return bot.sendMessage(cid, `The name "${escapeMarkdown(nm)}" is already taken\\. Please choose another\\.`, { parse_mode: 'MarkdownV2' });
     } catch (e) {
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
         
         st.step = 'AWAITING_WIZARD_CHOICE'; 
         
-        const wizardText = `App name "*${escapeMarkdown(nm)}*" is available.\\n\\n*Next Step:\\*\\nEnable automatic status view? This marks statuses as seen automatically\\.`; // Escaped nm
+        // *** FIX: Escape nm here as it's user input going into a Markdown message ***
+        const wizardText = `App name "\\*${escapeMarkdown(nm)}\\* " is available\\.\\n\\n\\*Next Step:\\*\\nEnable automatic status view? This marks statuses as seen automatically\\.`;
         const wizardKeyboard = {
             reply_markup: {
                 inline_keyboard: [
@@ -982,11 +979,12 @@ bot.on('message', async msg => {
                 ]
             }
         };
-        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'MarkdownV2' }); // Using MarkdownV2
-        st.data.messageId = wizardMsg.message_id; // Store message_id for this specific interaction
+        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'MarkdownV2' });
+        st.data.messageId = wizardMsg.message_id;
       } else {
         console.error(`Error checking app name "${nm}":`, e.message);
-        return bot.sendMessage(cid, `Could not verify app name\\. The Heroku API might be down\\. Please try again later\\.`, { parse_mode: 'MarkdownV2' }); // Escaped
+        // *** FIX: Escape error message here ***
+        return bot.sendMessage(cid, `Could not verify app name\\. Error: ${escapeMarkdown(e.message)}\\n\\nThe Heroku API might be down or there was another issue\\. Please try again later\\.`, { parse_mode: 'MarkdownV2' });
       }
     }
   }
@@ -998,17 +996,17 @@ bot.on('message', async msg => {
     
     const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
     if (!commonVars.includes(varKey) && !/^[A-Z_]+$/.test(varKey)) {
-        return bot.sendMessage(cid, `Invalid variable name\\. Please select from the buttons or type a valid Heroku config var name \\(uppercase letters and underscores only\\)\\.`, { parse_mode: 'MarkdownV2' }); // Escaped
+        return bot.sendMessage(cid, `Invalid variable name\\. Please select from the buttons or type a valid Heroku config var name \\(uppercase letters and underscores only\\)\\.`, { parse_mode: 'MarkdownV2' });
     }
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
         st.step = 'SETVAR_ENTER_VALUE'; 
         st.data.VAR_NAME = varKey; 
 
-        return bot.editMessageText(`Set \\*${escapeMarkdown(varKey)}\\* to:`, { // Escaped varKey
+        return bot.editMessageText(`Set \\*${escapeMarkdown(varKey)}\\* to:`, {
             chat_id: cid,
             message_id: messageIdFromState, 
-            parse_mode: 'MarkdownV2', // Using MarkdownV2
+            parse_mode: 'MarkdownV2',
             reply_markup: {
                 inline_keyboard: [[
                     { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
@@ -1020,7 +1018,7 @@ bot.on('message', async msg => {
     } else {
         st.step = 'SETVAR_ENTER_VALUE';
         st.data.VAR_NAME = varKey;
-        const newMessage = await bot.sendMessage(cid, `Please enter the new value for \\*${escapeMarkdown(varKey)}\\*\\:`, { parse_mode: 'MarkdownV2' }); // Escaped varKey
+        const newMessage = await bot.sendMessage(cid, `Please enter the new value for \\*${escapeMarkdown(varKey)}\\*\\:`, { parse_mode: 'MarkdownV2' });
         st.data.messageId = newMessage.message_id; 
         
         if (messageIdFromState) {
@@ -1038,13 +1036,13 @@ bot.on('message', async msg => {
     const newVal = text.trim();
     if (!APP_NAME || !VAR_NAME || !messageId) {
         delete userStates[cid];
-        return bot.sendMessage(cid, "It looks like the previous operation was interrupted\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' }); // Escaped
+        return bot.sendMessage(cid, "It looks like the previous operation was interrupted\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' });
     }
 
     try {
-      const updateMsg = await bot.editMessageText(`Updating ${escapeMarkdown(VAR_NAME)} for "${escapeMarkdown(APP_NAME)}"...`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }) // Escaped
+      const updateMsg = await bot.editMessageText(`Updating ${escapeMarkdown(VAR_NAME)} for "${escapeMarkdown(APP_NAME)}"...`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' })
           .catch(async () => {
-              return await bot.sendMessage(cid, `Updating ${escapeMarkdown(VAR_NAME)} for "${escapeMarkdown(APP_NAME)}"...`, { parse_mode: 'MarkdownV2' }); // Escaped
+              return await bot.sendMessage(cid, `Updating ${escapeMarkdown(VAR_NAME)} for "${escapeMarkdown(APP_NAME)}"...`, { parse_mode: 'MarkdownV2' });
           });
 
       await axios.patch(
@@ -1065,11 +1063,11 @@ bot.on('message', async msg => {
       await startRestartCountdown(cid, APP_NAME, updateMsg.message_id);
     } catch (e) {
       console.error("Error updating variable:", e.response?.data?.message || e.message);
-      const errorMessage = `Error updating variable: ${escapeMarkdown(e.response?.data?.message || e.message)}\\n\\nPlease try again or contact support\\.`; // Escaped
+      const errorMessage = `Error updating variable: ${escapeMarkdown(e.response?.data?.message || e.message)}\\n\\nPlease try again or contact support\\.`;
       if (messageId) {
-          await bot.editMessageText(errorMessage, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }).catch(() => bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' })); // Escaped
+          await bot.editMessageText(errorMessage, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }).catch(() => bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' }));
       } else {
-          await bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' }); // Escaped
+          await bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' });
       }
       delete userStates[cid]; 
     }
@@ -1086,7 +1084,7 @@ bot.on('callback_query', async q => {
   if (action === 'setup') {
       const st = userStates[cid];
       if (!st || st.data.messageId !== q.message.message_id || st.step !== 'AWAITING_WIZARD_CHOICE') { 
-          await bot.sendMessage(cid, 'This menu has expired or is invalid\\. Please start over by tapping /menu\\.', { parse_mode: 'MarkdownV2' }); // Escaped
+          await bot.sendMessage(cid, 'This menu has expired or is invalid\\. Please start over by tapping /menu\\.', { parse_mode: 'MarkdownV2' });
           delete userStates[cid];
           return;
       }
@@ -1095,10 +1093,10 @@ bot.on('callback_query', async q => {
 
       if (step === 'autostatus') {
           st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
-          const confirmationText = ` \\*Deployment Configuration\\*\\n\\n` + // Escaped
-                                   `\\*App Name:\\* \`${escapeMarkdown(st.data.APP_NAME)}\`\\n` + // Escaped
-                                   `\\*Session ID:\\* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\\n` + // Escaped
-                                   `\\*Auto Status:\\* \`${escapeMarkdown(st.data.AUTO_STATUS_VIEW)}\`\\n\\n` + // Escaped
+          const confirmationText = ` \\*Deployment Configuration\\*\\n\\n` +
+                                   `\\*App Name:\\* \`${escapeMarkdown(st.data.APP_NAME)}\`\\n` +
+                                   `\\*Session ID:\\* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\\n` +
+                                   `\\*Auto Status:\\* \`${escapeMarkdown(st.data.AUTO_STATUS_VIEW)}\`\\n\\n` +
                                    `Ready to proceed?`;
           
           const confirmationKeyboard = {
@@ -1113,13 +1111,13 @@ bot.on('callback_query', async q => {
           await bot.editMessageText(confirmationText, {
               chat_id: cid,
               message_id: st.data.messageId, 
-              parse_mode: 'MarkdownV2', // Using MarkdownV2
+              parse_mode: 'MarkdownV2',
               ...confirmationKeyboard
           });
       }
 
       if (step === 'startbuild') {
-          await bot.editMessageText('Configuration confirmed\\. Initiating deployment\\.\\.\\.', { // Escaped
+          await bot.editMessageText('Configuration confirmed\\. Initiating deployment\\.\\.\\.', {
               chat_id: cid,
               message_id: st.data.messageId,
               parse_mode: 'MarkdownV2'
@@ -1130,13 +1128,8 @@ bot.on('callback_query', async q => {
           if (buildSuccessful) {
               await addUserBot(cid, st.data.APP_NAME, st.data.SESSION_ID); 
 
-              if (st.data.isFreeTrial) {
-                  // This part of free trial logic will be fixed in a separate, more comprehensive review.
-                  // For now, it will use the appName from st.data which is updated in buildWithProgress.
-              }
-
               const { first_name, last_name, username } = q.from;
-              let actualAppUrl = `https://${st.data.APP_NAME}.herokuapp.com`; // Fallback
+              let actualAppUrl = `https://${st.data.APP_NAME}.herokuapp.com`;
               try {
                   const appRes = await axios.get(`https://api.heroku.com/apps/${st.data.APP_NAME}`, {
                       headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -1147,23 +1140,23 @@ bot.on('callback_query', async q => {
               }
 
               const userDetails = [
-                `\\*Name:\\* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, // Escaped
-                `\\*Username:\\* @${escapeMarkdown(username || 'N/A')}`, // Escaped
-                `\\*Chat ID:\\* \`${escapeMarkdown(cid)}\`` // Escaped
+                `\\*Name:\\* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`,
+                `\\*Username:\\* @${escapeMarkdown(username || 'N/A')}`,
+                `\\*Chat ID:\\* \`${escapeMarkdown(cid)}\``
               ].join('\n');
       
-              const appDetails = `\\*App Name:\\* \`${escapeMarkdown(st.data.APP_NAME)}\`\\n\\*URL:\\* ${escapeMarkdown(actualAppUrl)}\\n\\*Session ID:\\* \`${escapeMarkdown(st.data.SESSION_ID)}\`\\n\\*Type:\\* ${escapeMarkdown(st.data.isFreeTrial ? 'Free Trial' : 'Permanent')}`; // Escaped
+              const appDetails = `\\*App Name:\\* \`${escapeMarkdown(st.data.APP_NAME)}\`\\n\\*URL:\\* ${escapeMarkdown(actualAppUrl)}\\n\\*Session ID:\\* \`${escapeMarkdown(st.data.SESSION_ID)}\`\\n\\*Type:\\* ${escapeMarkdown(st.data.isFreeTrial ? 'Free Trial' : 'Permanent')}`;
       
               await bot.sendMessage(ADMIN_ID,
                   `\\*New App Deployed\\*\\n\\n\\*App Details:\\*\\n${appDetails}\\n\\n\\*Deployed By:\\*\\n${userDetails}`,
-                  { parse_mode: 'MarkdownV2', disable_web_page_preview: true } // Using MarkdownV2
+                  { parse_mode: 'MarkdownV2', disable_web_page_preview: true }
               );
           }
           delete userStates[cid];
       }
 
       if (step === 'cancel') {
-          await bot.editMessageText('❌ Deployment cancelled\\.', { // Escaped
+          await bot.editMessageText('❌ Deployment cancelled\\.', {
               chat_id: cid,
               message_id: st.data.messageId,
               parse_mode: 'MarkdownV2'
@@ -1178,10 +1171,10 @@ bot.on('callback_query', async q => {
     const uses = parseInt(payload, 10);
     const key = generateKey();
     await addDeployKey(key, uses, cid);
-    await bot.editMessageText(`Generated key: \`${escapeMarkdown(key)}\`\\nUses: ${uses}`, { // Escaped key
+    await bot.editMessageText(`Generated key: \`${escapeMarkdown(key)}\`\\nUses: ${uses}`, {
         chat_id: cid, 
         message_id: q.message.message_id, 
-        parse_mode: 'MarkdownV2' // Using MarkdownV2
+        parse_mode: 'MarkdownV2' 
     });
     return;
   }
@@ -1199,7 +1192,7 @@ bot.on('callback_query', async q => {
         } 
     };
     
-    return bot.editMessageText(`Manage app "${escapeMarkdown(payload)}":`, { // Escaped payload
+    return bot.editMessageText(`Manage app "${escapeMarkdown(payload)}":`, {
       chat_id: cid,
       message_id: messageId,
       parse_mode: 'MarkdownV2',
@@ -1224,7 +1217,7 @@ bot.on('callback_query', async q => {
   const st = userStates[cid];
   if (!st || st.data.appName !== payload || st.data.messageId !== q.message.message_id) {
       delete userStates[cid]; 
-      await bot.editMessageText("This operation has expired or is invalid\\. Please select an app again from 'My Bots' or 'Apps'\\.", { // Escaped
+      await bot.editMessageText("This operation has expired or is invalid\\. Please select an app again from 'My Bots' or 'Apps'\\.", {
           chat_id: cid,
           message_id: q.message.message_id,
           parse_mode: 'MarkdownV2' 
@@ -1235,7 +1228,7 @@ bot.on('callback_query', async q => {
 
 
   if (action === 'info') {
-    await bot.editMessageText('⚙️ Fetching app info\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+    await bot.editMessageText('⚙️ Fetching app info\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
     try {
       const apiHeaders = {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -1257,7 +1250,7 @@ bot.on('callback_query', async q => {
       const diffTime = Math.abs(now - createdAt);
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-      let dynoStatus = 'No dynos found\\.'; // Escaped
+      let dynoStatus = 'No dynos found\\.';
       let statusEmoji = '❓';
       if (dynoData.length > 0) {
           const webDyno = dynoData.find(d => d.type === 'web');
@@ -1268,34 +1261,34 @@ bot.on('callback_query', async q => {
               else if (state === 'idle') statusEmoji = '🟡';
               else if (state === 'starting' || state === 'restarting') statusEmoji = '⏳';
               else statusEmoji = '❓';
-              dynoStatus = `${statusEmoji} ${escapeMarkdown(state.charAt(0).toUpperCase() + state.slice(1))}`; // Escaped
+              dynoStatus = `${statusEmoji} ${escapeMarkdown(state.charAt(0).toUpperCase() + state.slice(1))}`;
           }
       }
 
-      const info = `\\*App Info: ${escapeMarkdown(appData.name)}\\*\\n\\n` + // Escaped
-                   `\\*Dyno Status:\\* ${dynoStatus}\\n` + // Escaped
-                   `\\*URL:\\* [${escapeMarkdown(appData.web_url)}](${escapeMarkdown(appData.web_url)})\\n` + // Escaped URL and text
-                   `\\*Created:\\* ${escapeMarkdown(createdAt.toLocaleDateString())} \\(${diffDays} days ago\\)\\n` + // Escaped
-                   `\\*Last Release:\\* ${escapeMarkdown(new Date(appData.released_at).toLocaleString())}\\n` + // Escaped
-                   `\\*Stack:\\* ${escapeMarkdown(appData.stack.name)}\\n\\n` + // Escaped
-                   `\\*Key Config Vars:\\*\\n` + // Escaped
+      const info = `\\*App Info: ${escapeMarkdown(appData.name)}\\*\\n\\n` +
+                   `\\*Dyno Status:\\* ${dynoStatus}\\n` +
+                   `\\*URL:\\* [${escapeMarkdown(appData.web_url)}](${escapeMarkdown(appData.web_url)})\\n` +
+                   `\\*Created:\\* ${escapeMarkdown(createdAt.toLocaleDateString())} \\(${diffDays} days ago\\)\\n` +
+                   `\\*Last Release:\\* ${escapeMarkdown(new Date(appData.released_at).toLocaleString())}\\n` +
+                   `\\*Stack:\\* ${escapeMarkdown(appData.stack.name)}\\n\\n` +
+                   `\\*Key Config Vars:\\*\\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\\n` +
-                   `  \`AUTO_STATUS_VIEW\`: \`${escapeMarkdown(configData.AUTO_STATUS_VIEW || 'false')}\`\\n` + // Escaped
-                   `  \`ALWAYS_ONLINE\`: \`${escapeMarkdown(configData.ALWAYS_ONLINE || 'Not Set')}\`\\n` + // Escaped
-                   `  \`PREFIX\`: \`${escapeMarkdown(configData.PREFIX || 'Not Set')}\`\\n` + // Escaped
-                   `  \`ANTI_DELETE\`: \`${escapeMarkdown(configData.ANTI_DELETE || 'Not Set')}\`\\n`; // Escaped
+                   `  \`AUTO_STATUS_VIEW\`: \`${escapeMarkdown(configData.AUTO_STATUS_VIEW || 'false')}\`\\n` +
+                   `  \`ALWAYS_ONLINE\`: \`${escapeMarkdown(configData.ALWAYS_ONLINE || 'Not Set')}\`\\n` +
+                   `  \`PREFIX\`: \`${escapeMarkdown(configData.PREFIX || 'Not Set')}\`\\n` +
+                   `  \`ANTI_DELETE\`: \`${escapeMarkdown(configData.ANTI_DELETE || 'Not Set')}\`\\n`;
 
       return bot.editMessageText(info, {
         chat_id: cid,
         message_id: messageId,
-        parse_mode: 'MarkdownV2', // Using MarkdownV2
+        parse_mode: 'MarkdownV2',
         disable_web_page_preview: true,
         reply_markup: {
             inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     } catch (e) {
-      const errorMsg = escapeMarkdown(e.response?.data?.message || e.message); // Escaped
+      const errorMsg = escapeMarkdown(e.response?.data?.message || e.message);
       return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
@@ -1308,12 +1301,12 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'restart') {
-    await bot.editMessageText('Restarting app\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+    await bot.editMessageText('Restarting app\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
     try {
       await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
-      return bot.editMessageText(`"${escapeMarkdown(payload)}" restarted successfully\\.`, { // Escaped
+      return bot.editMessageText(`"${escapeMarkdown(payload)}" restarted successfully\\.`, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'MarkdownV2',
@@ -1322,7 +1315,7 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
-      return bot.editMessageText(`Error restarting: ${escapeMarkdown(e.message)}`, { // Escaped
+      return bot.editMessageText(`Error restarting: ${escapeMarkdown(e.message)}`, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'MarkdownV2',
@@ -1334,25 +1327,25 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'logs') {
-    await bot.editMessageText('📄 Fetching logs\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+    await bot.editMessageText('📄 Fetching logs\\.\\.\\.', { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail: false, lines: 9000 }, // Increased to 9000 lines
+        { tail: false, lines: 9000 },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
       const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim().slice(-4000); // Telegram message limit is 4096 characters
+      const logs = logRes.data.trim().slice(-4000);
       
-      return bot.editMessageText(`Logs for "${escapeMarkdown(payload)}":\n\`\`\`\n${escapeMarkdown(logs || 'No recent logs.')}\n\`\`\``, { // Escaped
+      return bot.editMessageText(`Logs for "${escapeMarkdown(payload)}":\n\`\`\`\n${escapeMarkdown(logs || 'No recent logs.')}\n\`\`\``, {
         chat_id: cid,
         message_id: messageId,
-        parse_mode: 'MarkdownV2', // Using MarkdownV2
+        parse_mode: 'MarkdownV2',
         reply_markup: {
             inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]]
         }
       });
     } catch (e) {
-      return bot.editMessageText(`Error fetching logs: ${escapeMarkdown(e.message)}`, { // Escaped
+      return bot.editMessageText(`Error fetching logs: ${escapeMarkdown(e.message)}`, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'MarkdownV2',
@@ -1364,7 +1357,7 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'delete' || action === 'userdelete') {
-      return bot.editMessageText(`Are you sure you want to delete the app "${escapeMarkdown(payload)}"? This action cannot be undone\\.`, { // Escaped
+      return bot.editMessageText(`Are you sure you want to delete the app "${escapeMarkdown(payload)}"? This action cannot be undone\\.`, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'MarkdownV2',
@@ -1381,16 +1374,15 @@ bot.on('callback_query', async q => {
       const appToDelete = payload;
       const originalAction = extra;
       
-      await bot.editMessageText(`🗑️ Deleting ${escapeMarkdown(appToDelete)}\\.\\.\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+      await bot.editMessageText(`🗑️ Deleting ${escapeMarkdown(appToDelete)}\\.\\.\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
-          await deleteUserBot(cid, appToDelete); // Delete from user_bots
-          // This line is the one causing 'column app_name does not exist' if schema is not fixed
-          await deleteTrialDeployEntry(appToDelete); // Delete from temp_deploys
+          await deleteUserBot(cid, appToDelete);
+          await deleteTrialDeployEntry(appToDelete);
 
-          await bot.editMessageText(`✅ App "${escapeMarkdown(appToDelete)}" has been permanently deleted\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+          await bot.editMessageText(`✅ App "${escapeMarkdown(appToDelete)}" has been permanently deleted\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
           
           if (originalAction === 'userdelete' && cid !== ADMIN_ID) {
               const bots = await getUserBots(cid);
@@ -1402,7 +1394,7 @@ bot.on('callback_query', async q => {
                       reply_markup: { inline_keyboard: rows }
                   });
               } else {
-                  return bot.editMessageText("You no longer have any deployed bots\\.", { // Escaped
+                  return bot.editMessageText("You no longer have any deployed bots\\.", {
                       chat_id: cid,
                       message_id: messageId,
                       parse_mode: 'MarkdownV2'
@@ -1413,8 +1405,8 @@ bot.on('callback_query', async q => {
           }
 
       } catch (e) {
-          console.error(`Error deleting app ${appToDelete}:`, e.message); // Log the actual error
-          return bot.editMessageText(`Error deleting app: ${escapeMarkdown(e.message)}\\n\\nIf the app no longer exists on Heroku, you might need to manually remove it from your bot's list using the /mybots feature \\(if it appears there\\)\\.`, { // Escaped
+          console.error(`Error deleting app ${appToDelete}:`, e.message);
+          return bot.editMessageText(`Error deleting app: ${escapeMarkdown(e.message)}\\n\\nIf the app no longer exists on Heroku, you might need to manually remove it from your bot's list using the /mybots feature \\(if it appears there\\)\\.`, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'MarkdownV2',
@@ -1442,17 +1434,17 @@ bot.on('callback_query', async q => {
         });
         const configVars = res.data;
 
-        let varList = `\\*Current Config Vars for ${escapeMarkdown(appName)}:\\*\\n\\n`; // Escaped
+        let varList = `\\*Current Config Vars for ${escapeMarkdown(appName)}:\\*\\n\\n`;
         const varButtons = [];
 
         const commonVars = ['SESSION_ID', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'PREFIX', 'ANTI_DELETE'];
 
         for (const key of commonVars) {
             const value = configVars[key] !== undefined ? configVars[key] : 'Not Set';
-            varList += `\`${escapeMarkdown(key)}\`: \`${escapeMarkdown(value)}\`\\n`; // Escaped
+            varList += `\`${escapeMarkdown(key)}\`: \`${escapeMarkdown(value)}\`\\n`;
             varButtons.push({ text: key, callback_data: `varselect:${key}:${appName}` });
         }
-        varList += `\\nSelect a variable to change or type its name:`; // Escaped
+        varList += `\\nSelect a variable to change or type its name:`;
 
         const inlineKeyboardRows = chunkArray(varButtons, 2);
         inlineKeyboardRows.push([{ text: '◀️ Back to App Management', callback_data: `selectapp:${appName}` }]);
@@ -1460,14 +1452,14 @@ bot.on('callback_query', async q => {
         await bot.editMessageText(varList, {
             chat_id: cid,
             message_id: messageId,
-            parse_mode: 'MarkdownV2', // Using MarkdownV2
+            parse_mode: 'MarkdownV2',
             reply_markup: {
                 inline_keyboard: inlineKeyboardRows
             }
         });
 
     } catch (e) {
-        const errorMsg = escapeMarkdown(e.response?.data?.message || e.message); // Escaped
+        const errorMsg = escapeMarkdown(e.response?.data?.message || e.message);
         return bot.editMessageText(`Error fetching config vars: ${errorMsg}`, {
             chat_id: cid,
             message_id: messageId,
@@ -1485,7 +1477,7 @@ bot.on('callback_query', async q => {
     
     if (!st || st.data.appName !== appName || st.step !== 'SETVAR_PROMPT' || st.data.messageId !== q.message.message_id) {
         delete userStates[cid];
-        await bot.sendMessage(cid, "This variable selection has expired\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' }); // Escaped
+        await bot.sendMessage(cid, "This variable selection has expired\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' });
         return;
     }
 
@@ -1493,10 +1485,10 @@ bot.on('callback_query', async q => {
     st.data.VAR_NAME = varKey; 
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      return bot.editMessageText(`Set \\*${escapeMarkdown(varKey)}\\* to:`, { // Escaped
+      return bot.editMessageText(`Set \\*${escapeMarkdown(varKey)}\\* to:`, {
         chat_id: cid,
         message_id: messageId,
-        parse_mode: 'MarkdownV2', // Using MarkdownV2
+        parse_mode: 'MarkdownV2',
         reply_markup: {
           inline_keyboard: [[
             { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
@@ -1506,7 +1498,7 @@ bot.on('callback_query', async q => {
         }
       });
     } else {
-      const newMessage = await bot.sendMessage(cid, `Please enter the new value for \\*${escapeMarkdown(varKey)}\\*\\:`, { parse_mode: 'MarkdownV2' }); // Escaped
+      const newMessage = await bot.sendMessage(cid, `Please enter the new value for \\*${escapeMarkdown(varKey)}\\*\\:`, { parse_mode: 'MarkdownV2' });
       st.data.messageId = newMessage.message_id; 
       
       await bot.editMessageReplyMarkup(undefined, {
@@ -1522,7 +1514,7 @@ bot.on('callback_query', async q => {
     
     if (!st || st.data.appName !== appName || st.data.VAR_NAME !== varKey || st.step !== 'SETVAR_ENTER_VALUE' || st.data.messageId !== q.message.message_id) {
         delete userStates[cid];
-        await bot.sendMessage(cid, "This operation has expired or is invalid\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' }); // Escaped
+        await bot.sendMessage(cid, "This operation has expired or is invalid\\. Please select an app again from 'My Bots' or 'Apps'\\.", { parse_mode: 'MarkdownV2' });
         return;
     }
 
@@ -1533,7 +1525,7 @@ bot.on('callback_query', async q => {
     else newVal = flagVal ? 'true' : 'false';
 
     try {
-      const updateMsg = await bot.editMessageText(`Updating ${escapeMarkdown(varKey)} for "${escapeMarkdown(appName)}" to \`${escapeMarkdown(newVal)}\`\\.\\.\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' }); // Escaped
+      const updateMsg = await bot.editMessageText(`Updating ${escapeMarkdown(varKey)} for "${escapeMarkdown(appName)}" to \`${escapeMarkdown(newVal)}\`\\.\\.\\.`, { chat_id: cid, message_id: messageId, parse_mode: 'MarkdownV2' });
       await axios.patch(
         `https://api.heroku.com/apps/${appName}/config-vars`,
         { [varKey]: newVal },
@@ -1543,7 +1535,7 @@ bot.on('callback_query', async q => {
       delete userStates[cid]; 
     } catch (e) {
       console.error("Error setting boolean variable:", e.response?.data?.message || e.message);
-      const errorMessage = `Error updating variable: ${escapeMarkdown(e.response?.data?.message || e.message)}`; // Escaped
+      const errorMessage = `Error updating variable: ${escapeMarkdown(e.response?.data?.message || e.message)}`;
       await bot.editMessageText(errorMessage, {
           chat_id: cid,
           message_id: messageId,
@@ -1551,7 +1543,7 @@ bot.on('callback_query', async q => {
           reply_markup: {
               inline_keyboard: [[{ text: '◀️ Back', callback_data: `setvar:${appName}` }]]
           }
-      }).catch(() => bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' })); // Escaped
+      }).catch(() => bot.sendMessage(cid, errorMessage, { parse_mode: 'MarkdownV2' }));
       delete userStates[cid]; 
     }
     return;
@@ -1567,7 +1559,7 @@ bot.on('callback_query', async q => {
     } else {
       const bots = await getUserBots(cid);
       if (!bots.length) {
-        return bot.editMessageText("You haven't deployed any bots yet\\.", { chat_id: cid, message_id: currentMessageId, parse_mode: 'MarkdownV2' }); // Escaped
+        return bot.editMessageText("You no longer have any deployed bots\\.", { chat_id: cid, message_id: currentMessageId, parse_mode: 'MarkdownV2' });
       }
       const rows = chunkArray(bots, 3).map(r => r.map(n => ({
         text: n,
