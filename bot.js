@@ -253,6 +253,49 @@ async function recordFreeTrialDeploy(userId) {
     );
 }
 
+// NEW HELPER FUNCTION: Handles 404 Not Found from Heroku API
+async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
+    console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
+    
+    // Find the user_id currently associated with this app in our DB.
+    // This is crucial because an admin might be managing another user's bot.
+    let ownerUserId = await getUserIdByBotName(appName);
+    
+    if (!ownerUserId) {
+        // If owner not found in DB, it might be an admin trying to manage an untracked app, or a very stale entry.
+        ownerUserId = callingChatId; // Fallback to the current chat ID for notification.
+        console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to callingChatId: ${callingChatId} for notification.`);
+    } else {
+        console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
+    }
+
+    // Delete the app from our internal user_bots database
+    await deleteUserBot(ownerUserId, appName); // This deletes the (ownerUserId, appName) pair
+    console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots DB for user "${ownerUserId}".`);
+
+    const message = `🗑️ App "*${appName}*" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
+    
+    // Determine where to send the primary notification
+    if (originalMessageId && q.message.chat.id === callingChatId) { // Only edit if the message belongs to the current interaction
+        await bot.editMessageText(message, {
+            chat_id: callingChatId,
+            message_id: originalMessageId,
+            parse_mode: 'Markdown'
+        }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
+    } else {
+        await bot.sendMessage(callingChatId, message, { parse_mode: 'Markdown' })
+            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
+    }
+
+    // If the original action was user-facing (e.g., a regular user tried to restart THEIR bot)
+    // AND the detected owner is different from the person currently interacting (meaning an admin
+    // managed another user's bot), notify the original owner.
+    if (isUserFacing && ownerUserId !== callingChatId) {
+         await bot.sendMessage(ownerUserId, `ℹ️ Your bot "*${appName}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
+             .catch(err => console.error(`Failed to send notification to original owner in handleAppNotFoundAndCleanDb: ${err.message}`));
+    }
+}
+
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
@@ -1166,7 +1209,7 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
             { text: 'Set Variable', callback_data: `setvar:${payload}` }
           ],
-          [{ text: '◀️ Back', callback_data: 'back_to_app_list' }] // Add back button
+          [{ text: '◀️️ Back', callback_data: 'back_to_app_list' }] // Add back button
         ]
       }
     });
@@ -1213,7 +1256,7 @@ bot.on('callback_query', async q => {
         const existingEntry = await pool.query('SELECT user_id FROM user_bots WHERE bot_name=$1', [appName]);
         if (existingEntry.rows.length > 0) {
             const oldUserId = existingEntry.rows[0].user_id;
-            if (oldUserId !== targetUserId) {
+            if (oldUserId !== targetUserId) { // Only delete if changing ownership
                 console.log(`[Admin] Transferring ownership for bot "${appName}" from ${oldUserId} to ${targetUserId}. Deleting old entry.`);
                 await pool.query('DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2', [oldUserId, appName]);
                 // Optionally notify old user that their bot has been reassigned
@@ -1257,6 +1300,11 @@ bot.on('callback_query', async q => {
         console.log(`[Admin] Sent success notification to target user ${targetUserId}.`);
 
     } catch (e) {
+        // FIX: Handle 404 Not Found explicitly for add_assign_app
+        if (e.response && e.response.status === 404) {
+            await handleAppNotFoundAndCleanDb(cid, appName, q.message.message_id, false); // Admin initiated, not user-facing
+            return; 
+        }
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
         await bot.editMessageText(`❌ Failed to assign app "${appName}" to user \`${targetUserId}\`: ${errorMsg}`, {
@@ -1407,6 +1455,11 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for info
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated info
+          return; 
+      }
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`Error fetching info for ${payload}:`, errorMsg, e.stack);
       return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
@@ -1441,12 +1494,17 @@ bot.on('callback_query', async q => {
           chat_id: cid,
           message_id: messageId,
           reply_markup: {
-            inline_keyboard: [[{ text: '◀️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
+            inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]] // Back to app management
           }
       });
       console.log(`Sent "restarted successfully" notification to user ${cid} for bot ${payload}`);
 
     } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for restart
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated restart
+          return; 
+      }
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`Error restarting ${payload}:`, errorMsg, e.stack);
       return bot.editMessageText(`❌ Error restarting bot: ${errorMsg}`, {
@@ -1487,6 +1545,11 @@ bot.on('callback_query', async q => {
         }
       });
     } catch (e) {
+      // FIX: Handle 404 Not Found explicitly for logs
+      if (e.response && e.response.status === 404) {
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // User initiated logs
+          return; 
+      }
       const errorMsg = e.response?.data?.message || e.message;
       return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
         chat_id: cid,
@@ -1519,7 +1582,7 @@ bot.on('callback_query', async q => {
 
   if (action === 'confirmdelete') {
       const appToDelete = payload;
-      const originalAction = extra;
+      const originalAction = extra; // 'delete' (admin) or 'userdelete' (regular user)
       const st = userStates[cid];
       if (!st || st.data.appName !== appToDelete) {
           return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
@@ -1531,8 +1594,12 @@ bot.on('callback_query', async q => {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
-          if (originalAction === 'userdelete') {
+          // After successful Heroku delete, delete from our DB
+          if (originalAction === 'userdelete') { // If it was a user deleting their own bot
               await deleteUserBot(cid, appToDelete);
+          } else { // If it was an admin deleting
+              const ownerId = await getUserIdByBotName(appToDelete); // Find actual owner
+              if (ownerId) await deleteUserBot(ownerId, appToDelete);
           }
           await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
           // After deletion, take them back to their list of bots or main menu
@@ -1548,6 +1615,13 @@ bot.on('callback_query', async q => {
             return sendAppList(cid); // Admin sees all apps
           }
       } catch (e) {
+          // FIX: Handle 404 Not Found explicitly for delete actions
+          if (e.response && e.response.status === 404) {
+              // If it's a 404 during delete, it means it was already deleted from Heroku.
+              // Just clean up our DB and notify.
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete'); // Pass isUserFacing based on original action
+              return; 
+          }
           const errorMsg = e.response?.data?.message || e.message;
           return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
             chat_id: cid,
@@ -1894,52 +1968,4 @@ async function checkAndRemindLoggedOutBots() {
             if (lastLogoutAlertStr && !isBotRunning) {
                 const lastLogoutAlertTime = new Date(lastLogoutAlertStr);
                 const now = new Date();
-                const timeSinceLogout = now.getTime() - lastLogoutAlertTime.getTime();
-                const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-                // Check if it's been more than 24 hours since the last logout alert AND the bot is NOT running
-                if (timeSinceLogout > twentyFourHours) {
-                    const reminderMessage =
-                        `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
-                        `It appears to still be offline. Please update your session ID to bring it back online.`;
-                    
-                    await bot.sendMessage(user_id, reminderMessage, {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]
-                            ]
-                        }
-                    });
-                    console.log(`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}`);
-                    
-                    // After sending a reminder, you might want to update the LAST_LOGOUT_ALERT
-                    // so it doesn't send repeatedly within the next hour or day.
-                    // This requires setting a config var on Heroku. Example:
-                    // await axios.patch(
-                    //     `https://api.heroku.com/apps/${herokuApp}/config-vars`,
-                    //     { LAST_LOGOUT_ALERT: now.toISOString() },
-                    //     { headers: apiHeaders }
-                    // );
-                }
-            }
-
-        } catch (error) {
-            // Ignore 404 errors (app not found/deleted), log others
-            if (error.response && error.response.status === 404) {
-                console.log(`[Scheduled Task] App ${herokuApp} not found for reminder check, likely deleted.`);
-                // Optionally: Delete this bot from your user_bots table if it's not found on Heroku
-                // await deleteUserBot(user_id, herokuApp);
-            } else {
-                console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
-            }
-        }
-    }
-}
-
-// Schedule the check to run every hour (3600000 milliseconds)
-// For testing, you can make this interval shorter, e.g., 60000 (1 minute)
-setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour
-
-
-console.log('Bot is running...');
+                const timeSinceLogout = now.getTime() - lastLogoutAlert
