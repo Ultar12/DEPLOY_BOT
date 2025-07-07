@@ -365,7 +365,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
 
 
 // 8) Send Heroku apps list
-async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserIdForUpdate = null, isRemoval = false) {
+async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
   try {
     const res = await axios.get('https://api.heroku.com/apps', {
       headers: {
@@ -379,14 +379,14 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
       return bot.sendMessage(chatId, 'No apps found.');
     }
 
-    // Adapt callback data based on whether it's for general selection, /update, or /remove
+    // Adapt callback data based on whether it's for general selection, /add, or /remove
     const rows = chunkArray(apps, 3).map(r =>
       r.map(name => ({ 
         text: name, 
         callback_data: isRemoval
-            ? `${callbackPrefix}:${name}:${targetUserIdForUpdate}` // remove_assign_app:appName:targetUserId
-            : targetUserIdForUpdate 
-                ? `${callbackPrefix}:${name}:${targetUserIdForUpdate}` // update_assign_app:appName:targetUserId
+            ? `${callbackPrefix}:${name}:${targetUserId}` // remove_app_from_user:appName:targetUserId
+            : targetUserId 
+                ? `${callbackPrefix}:${name}:${targetUserId}` // add_assign_app:appName:targetUserId
                 : `${callbackPrefix}:${name}` // selectapp:appName (general info/management)
       }))
     );
@@ -664,15 +664,15 @@ bot.onText(/^\/id$/, async msg => {
     await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
 });
 
-// New /update <user_id> command for admin
-bot.onText(/^\/update (\d+)$/, async (msg, match) => {
+// New /add <user_id> command for admin (formerly /update)
+bot.onText(/^\/add (\d+)$/, async (msg, match) => { // Renamed from /update to /add
     const cid = msg.chat.id.toString();
-    const targetUserId = match[1]; // The user ID provided after /update
+    const targetUserId = match[1]; // The user ID provided after /add
 
-    console.log(`[Admin] /update command received from ${cid}. Target user ID: ${targetUserId}`);
+    console.log(`[Admin] /add command received from ${cid}. Target user ID: ${targetUserId}`);
 
     if (cid !== ADMIN_ID) {
-        console.log(`[Admin] Unauthorized /update attempt by ${cid}.`);
+        console.log(`[Admin] Unauthorized /add attempt by ${cid}.`);
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
     }
 
@@ -681,12 +681,12 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
     console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
 
 
-    console.log(`[Admin] Admin ${cid} initiated /update for user ${targetUserId}. Prompting for app selection.`);
+    console.log(`[Admin] Admin ${cid} initiated /add for user ${targetUserId}. Prompting for app selection.`);
     
     try {
         const sentMsg = await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`, { parse_mode: 'Markdown' }); // Added parse_mode
         userStates[cid] = {
-            step: 'AWAITING_APP_FOR_UPDATE', // New state to signify this specific flow
+            step: 'AWAITING_APP_FOR_ADD', // New state for 'add' flow (formerly AWAITING_APP_FOR_UPDATE)
             data: {
                 targetUserId: targetUserId,
                 messageId: sentMsg.message_id
@@ -694,11 +694,11 @@ bot.onText(/^\/update (\d+)$/, async (msg, match) => {
         };
         console.log(`[Admin] State set for ${cid}:`, userStates[cid]);
         // Now send the app list, editing the message created above
-        // Use the sendAppList which takes chatId, messageId to edit, callbackPrefix, and targetUserIdForUpdate
-        sendAppList(cid, sentMsg.message_id, 'update_assign_app', targetUserId);
+        // Use the sendAppList which takes chatId, messageId to edit, callbackPrefix, and targetUserId
+        sendAppList(cid, sentMsg.message_id, 'add_assign_app', targetUserId); // Renamed callback prefix
     } catch (error) {
-        console.error("Error sending initial /update message or setting state:", error);
-        bot.sendMessage(cid, "An error occurred while starting the update process. Please try again.");
+        console.error("Error sending initial /add message or setting state:", error);
+        bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
     }
 });
 
@@ -757,7 +757,7 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 
 // 12) Message handler for buttons & state machine
 // This handler is for plain text messages, not callback queries (button clicks).
-// The logic for handling the /update command's app selection (button click) is in bot.on('callback_query').
+// The logic for handling the /add command's app selection (button click) is in bot.on('callback_query').
 bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
@@ -952,13 +952,13 @@ bot.on('message', async msg => {
 
   if (st.step === 'SETVAR_ENTER_VALUE') {
     // This part of the message handler is for when a *text* input is expected.
-    // It should NOT interfere with the /update command's flow, which uses button callbacks.
-    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdForUpdate } = st.data; // targetUserIdForUpdate might be undefined here.
+    // It should NOT interfere with the /add command's flow, which uses button callbacks.
+    const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data; // targetUserIdFromState might be undefined here.
     const newVal = text.trim();
     
     // Determine the actual user ID to associate the bot with.
-    // This logic ensures if it's not from an /update context, it uses the current chat ID.
-    const finalUserId = targetUserIdForUpdate || cid;
+    // This logic ensures if it's not from an /add context, it uses the current chat ID.
+    const finalUserId = targetUserIdFromState || cid;
     
     // This check is primarily for the normal deployment flow where SESSION_ID is provided by user.
     if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) { // Keep this validation for *direct user input*
@@ -1165,13 +1165,13 @@ bot.on('callback_query', async q => {
     });
   }
 
-  // Handle app selection from the /update command
-  if (action === 'update_assign_app') {
+  // Handle app selection from the /add command
+  if (action === 'add_assign_app') { // Renamed from update_assign_app
     const appName = payload;
-    const targetUserId = extra; // The user ID passed from the /update command
+    const targetUserId = extra; // The user ID passed from the /add command
 
-    console.log(`[CallbackQuery - update_assign_app] Received selection for app: ${appName} to assign to user: ${targetUserId}`);
-    console.log(`[CallbackQuery - update_assign_app] Current state for ${cid} is:`, userStates[cid]);
+    console.log(`[CallbackQuery - add_assign_app] Received selection for app: ${appName} to assign to user: ${targetUserId}`);
+    console.log(`[CallbackQuery - add_assign_app] Current state for ${cid} is:`, userStates[cid]);
 
     // Ensure it's the admin interacting
     if (cid !== ADMIN_ID) {
@@ -1184,9 +1184,9 @@ bot.on('callback_query', async q => {
 
     // Verify the state is correct for this operation
     const st = userStates[cid];
-    if (!st || st.step !== 'AWAITING_APP_FOR_UPDATE' || st.data.targetUserId !== targetUserId) {
-        console.error(`[CallbackQuery - update_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_UPDATE for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This update session has expired or is invalid. Please start over with `/update <user_id>`.", {
+    if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) { // State check changed
+        console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
+        await bot.editMessageText("This add session has expired or is invalid. Please start over with `/add <user_id>`.", {
             chat_id: cid,
             message_id: q.message.message_id
         });
@@ -1242,7 +1242,7 @@ bot.on('callback_query', async q => {
         });
     } finally {
         delete userStates[cid]; // Clear state regardless of success or failure
-        console.log(`[Admin] State cleared for ${cid} after update_assign_app flow.`);
+        console.log(`[Admin] State cleared for ${cid} after add_assign_app flow.`);
     }
     return;
   }
@@ -1315,7 +1315,7 @@ bot.on('callback_query', async q => {
         // Fallback if state is lost or user clicks old button
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId; // Get the stored message ID
+    const messageId = q.message.message_id; // Get the stored message ID
 
     await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
@@ -1334,7 +1334,7 @@ bot.on('callback_query', async q => {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      let dynoStatus = '⚪️ Scaled to 0'; // Default to scaled to 0 if no active dyno
+      let dynoStatus = '⚪️ Scaled to 0 / Off'; // Default to scaled to 0 or off
       let statusEmoji = '⚪️'; // Grey circle for off/scaled to 0
 
       if (dynoData.length > 0) {
@@ -1357,9 +1357,10 @@ bot.on('callback_query', async q => {
                   statusEmoji = '❓'; // Unknown state
                   dynoStatus = `${statusEmoji} Unknown State: ${state}`;
               }
-          } 
-          // If dynoData has elements but no workerDyno, it remains '⚪️ Scaled to 0'
-          // unless you want to report other dyno types, which is generally not needed for a bot.
+          } else {
+              // Dynos exist, but no 'worker' dyno (e.g., only a 'web' dyno, or worker scaled to 0 after other dynos)
+              dynoStatus = '⚪️ Worker dyno not active/scaled to 0'; // More specific if other dynos exist but not worker
+          }
       }
 
 
@@ -1400,7 +1401,7 @@ bot.on('callback_query', async q => {
     if (!st || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId;
+    const messageId = q.message.message_id; // Use messageId from query
 
     await bot.editMessageText(`🔄 Restarting bot "${payload}"...`, { // Initial message without animation
         chat_id: cid,
@@ -1442,7 +1443,7 @@ bot.on('callback_query', async q => {
     if (!st || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId;
+    const messageId = q.message.message_id; // Use messageId from query
 
     await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
@@ -1479,7 +1480,7 @@ bot.on('callback_query', async q => {
     if (!st || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId;
+    const messageId = q.message.message_id; // Use messageId from query
 
       return bot.editMessageText(`Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
         chat_id: cid,
@@ -1500,7 +1501,7 @@ bot.on('callback_query', async q => {
       if (!st || st.data.appName !== appToDelete) {
           return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
       }
-      const messageId = st.data.messageId;
+      const messageId = q.message.message_id; // Use messageId from query
 
       await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
       try {
@@ -1549,7 +1550,7 @@ bot.on('callback_query', async q => {
     if (!st || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId;
+    const messageId = q.message.message_id; // Use messageId from query
     
     // Edit the current message to show variable selection
     return bot.editMessageText(`Select a variable to set for "${payload}":`, {
@@ -1574,7 +1575,7 @@ bot.on('callback_query', async q => {
     if (!st || st.data.appName !== appName) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
-    const messageId = st.data.messageId;
+    const messageId = q.message.message_id; // Use messageId from query
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
       return bot.editMessageText(`Set ${varKey} to:`, {
@@ -1758,9 +1759,10 @@ bot.on('channel_post', async msg => {
     }
 
     // --- Logout Message Handling ---
-    // Sample: "User [hhhhhhhhh-hr-db] has logged out.\n[Ggggggggggvvvvvvvv] invalid\n🕒 Time: 07/07/2025, 16:44:53"
+    // Sample: "User [hhhhhhhhh-hr-db] has logged out." or "User [botname] has logged out.\n[Some other text] invalid"
     // The regex needs to handle the bot name in brackets, followed by "has logged out."
-    // We will use the 's' (dotall) flag to make '.' match newlines, and 'i' for case-insensitivity
+    // Using 's' (dotall) flag for '.' to match newlines, and 'i' for case-insensitivity
+    // IMPORTANT: Make sure the exact string "has logged out." is present.
     const logoutMatch = text.match(/User \[([^\]]+)\] has logged out\./si); 
     if (logoutMatch) {
         const botName = logoutMatch[1];
@@ -1793,7 +1795,9 @@ bot.on('channel_post', async msg => {
             });
             console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
         } else {
-            console.warn(`[Channel Post] Could not find user for bot "${botName}" during logout alert. (Bot not tracked by this bot's DB?)`);
+            console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
+            // Optionally notify admin if a bot logs out that isn't in your system.
+            bot.sendMessage(ADMIN_ID, `⚠️ Untracked bot "${botName}" logged out. User ID not found in DB.`);
         }
         return;
     }
