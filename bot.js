@@ -1136,7 +1136,7 @@ bot.on('message', async msg => {
     const adminMessage = await bot.sendMessage(ADMIN_ID,
         `📞 *Pairing Request from User:*\n` +
         `${userDetails}\n` +
-        `*WhatsApp Number:* \`\`\`${phoneNumber}\`\`\`\n\n` +
+        `*WhatsApp Number:* \`${phoneNumber}\`\n\n` +
         `_Do you want to accept this pairing request and provide a code?_`,
         {
             parse_mode: 'Markdown',
