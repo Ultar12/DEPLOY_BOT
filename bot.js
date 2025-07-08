@@ -407,6 +407,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
+        // FIX: Corrected typo here, changed '█'.'.repeat(i) to '█'.repeat(i)
         const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
@@ -701,7 +702,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       buildResult = false; // Overall failure
     }
 
-  } catch (error) { // FIX: Moved this catch to correctly handle the whole try block
+  } catch (error) { // FIX: Corrected outer try-catch block
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
@@ -974,6 +975,37 @@ bot.on('message', async msg => {
       return; // Consume it if it's a reply to the bot that we don't handle
   }
 
+  // NEW: Handle user typing their question after clicking "Ask Admin a Question"
+  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
+    const userQuestion = msg.text;
+    const userChatId = cid;
+    const userMessageId = msg.message_id;
+
+    try {
+        const adminMessage = await bot.sendMessage(ADMIN_ID,
+            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*Message:* ${userQuestion}\n\n` +
+            `_Reply to this message to send your response back to the user._`,
+            { parse_mode: 'Markdown' }
+        );
+
+        forwardingContext[adminMessage.message_id] = {
+            original_user_chat_id: userChatId,
+            original_user_message_id: userMessageId,
+            request_type: 'support_question'
+        };
+        console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
+
+        await bot.sendMessage(userChatId, '✅ Your question has been sent to the admin. You will be notified when they reply.');
+    } catch (e) {
+        console.error('Error forwarding message to admin:', e);
+        await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
+    } finally {
+        delete userStates[cid]; // Clear user's state after question is sent
+    }
+    return; // Consume message
+  }
+
 
   // --- Button Handlers (for keyboard buttons, not inline) ---
   if (text === 'Deploy') {
@@ -1075,19 +1107,9 @@ bot.on('message', async msg => {
   }
 
   // --- Stateful flows (for text input) ---
-  const st = userStates[cid];
-  if (!st) {
-    // This block is for admin responding with the pairing code *after* clicking 'Accept'
-    // and the bot is awaiting the code as a text message.
-    // NOTE: This specific state handling for admin input has been moved to the new `/send` command.
-    // It should effectively never be reached if the admin follows instructions.
-    if (isAdmin && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
-      return bot.sendMessage(ADMIN_ID, "Please use the `/send <user_id> <8-character code>` command to send the pairing code.");
-    }
-    return; // No active state, ignore message
-  }
-
-  // Handle user's phone number input
+  // The 'st' variable is defined at the top of the message handler
+  // and checked here.
+  // The AWAITING_PAIRING_CODE_FROM_ADMIN state is now obsolete as /send command is used.
   if (st.step === 'AWAITING_PHONE_NUMBER') {
     const phoneNumber = text;
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
@@ -1380,6 +1402,14 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
+  // NEW: Handle "Ask Admin a Question" button from Support menu
+  if (action === 'ask_admin_question') {
+      delete userStates[cid]; // Clear previous state
+      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
+      await bot.sendMessage(cid, 'Please type your question for the admin:');
+      return;
+  }
+
   // Handle "Can't get code?" button click (USER SIDE)
   if (action === 'cant_get_code') {
       delete userStates[cid]; // Clear any previous state for the user
@@ -1458,7 +1488,6 @@ bot.on('callback_query', async q => {
 
           // Admin's state related to this is implicitly handled by them using the /send command.
           // No need for a specific 'AWAITING_PAIRING_CODE_FROM_ADMIN' state now, as /send is stateless in this context.
-          // Also, remove the context from forwardingContext once buttons are used, as /send is self-contained.
 
           // Edit the original message to admin to show it's handled (remove buttons)
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
@@ -1605,7 +1634,7 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) {
         console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This add session has expired or is invalid. Please start over with `/add <user_id>`.", {
+        await bot.editMessageText("This add session has expired or. is invalid. Please start over with `/add <user_id>`.", {
             chat_id: cid,
             message_id: q.message.message_id
         });
