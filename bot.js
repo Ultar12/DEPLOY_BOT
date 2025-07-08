@@ -2274,10 +2274,17 @@ bot.on('callback_query', async q => {
 bot.on('channel_post', async msg => {
     // Robust check for msg.chat.id before proceeding
     if (!msg || !msg.chat || msg.chat.id === undefined || msg.chat.id === null) {
-        console.error('[Channel Post Error] Invalid message structure: msg, msg.chat, or msg.chat.id is undefined/null. Message:', msg);
+        console.error('[Channel Post Error] Invalid message structure: msg, msg.chat, or msg.chat.id is undefined/null. Message:', JSON.stringify(msg, null, 2));
         return; // Exit if chat ID cannot be determined safely
     }
-    const channelId = msg.chat.id.toString(); // Corrected and now inside a robust check
+    let channelId;
+    try {
+        channelId = msg.chat.id.toString(); // This is the problematic line, now inside try-catch
+    } catch (e) {
+        console.error(`[Channel Post Error] Failed to get channelId from msg.chat.id: ${e.message}. Message:`, JSON.stringify(msg, null, 2));
+        return; // Skip processing this message if channelId cannot be extracted
+    }
+
     const text = msg.text?.trim();
 
     console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
