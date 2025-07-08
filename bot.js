@@ -1231,7 +1231,7 @@ bot.on('message', async msg => {
       return;
     }
 
-    await bot.editMessageText(`✅ Verified!`, {
+    await bot.editMessageText(`✅ Verified! Please Sdnd Your SESSION_ID `, {
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
