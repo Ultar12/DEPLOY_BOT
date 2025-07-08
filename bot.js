@@ -924,7 +924,7 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     // Send the pairing code to the original user
     await bot.sendMessage(targetUserId,
         `Your Pairing-code is:\n` +
-                '`\n' + pairingCode + '\n`\n' + // Corrected line
+        '`\n' + pairingCode + '\n`\n' + // Corrected line
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
