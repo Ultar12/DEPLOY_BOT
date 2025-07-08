@@ -1716,9 +1716,9 @@ bot.on('callback_query', async q => {
           // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 9-character code (e.g., AJWI-2ISN) to the user:*\n` +
+              `*Now, please use the command below to send the Code:*\n` +
               `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
-              `*Or get it from here:* [Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
+              ` [Link](https://levanter-delta.vercel.app/)`, // Added the link here
               { parse_mode: 'Markdown' }
           );
 
