@@ -866,8 +866,11 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
                 await bot.sendMessage(callerId, `❌ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
-            await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`.`);
-        }
+    // Log the entire error object for detailed debugging
+    console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
+    await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
+}
+
     }
 });
 
