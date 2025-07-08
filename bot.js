@@ -82,24 +82,36 @@ const pool = new Pool({
     `);
     console.log("[DB] 'temp_deploys' table checked/created.");
 
+    console.log("[DB] All necessary tables checked/created successfully.");
+
   } catch (dbError) {
+    // This catch block handles errors during the *initial* CREATE TABLE IF NOT EXISTS.
+    // The most common is if a table already exists but the constraint part (like PK) failed to add.
+
+    // Check for specific error code for "duplicate_table" which implies the table itself exists
     if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
         console.warn(`[DB] 'user_bots' table already exists, or there was an issue creating it initially. Attempting to ensure PRIMARY KEY constraint.`);
         try {
+            // Attempt to add the primary key if it's missing.
+            // Using IF NOT EXISTS on the constraint name prevents error if constraint is already there.
             await pool.query(`
                 ALTER TABLE user_bots
                 ADD CONSTRAINT user_bots_pkey PRIMARY KEY (user_id, bot_name);
             `);
             console.log("[DB] PRIMARY KEY constraint successfully added to 'user_bots'.");
         } catch (alterError) {
+            // If ALTER TABLE fails because the constraint already exists, that's fine.
+            // PostgreSQL's error messages for "constraint already exists" can vary.
             if ((alterError.message && alterError.message.includes('already exists in relation "user_bots"')) || (alterError.message && alterError.message.includes('already exists'))) {
                  console.warn("[DB] PRIMARY KEY constraint 'user_bots_pkey' already exists on 'user_bots'. Skipping ALTER TABLE.");
             } else {
+                 // Any other error during ALTER TABLE is critical.
                  console.error("[DB] CRITICAL ERROR adding PRIMARY KEY constraint to 'user_bots':", alterError.message, alterError.stack);
                  process.exit(1);
             }
         }
     } else {
+        // Any other error during initial table creation is considered critical.
         console.error("[DB] CRITICAL ERROR during initial database table creation/check:", dbError.message, dbError.stack);
         process.exit(1);
     }
@@ -107,17 +119,16 @@ const pool = new Pool({
 })();
 
 // 5) DB helper functions
-// NOTE: Replaced `bot.sendMessage(ADMIN_ID, ...)` with console.error and removed for now,
-// as `bot` might not be initialized when these functions are called from web.js.
-// web.js will handle its own error reporting to the user and can send a Telegram
-// message to the admin via the exported botInstance if needed.
 async function addUserBot(u, b, s) {
   try {
+    // Use ON CONFLICT to update if it already exists, or insert if new
+    // With PRIMARY KEY (user_id, bot_name), this will update if the specific user-bot pair exists.
+    // For transferring ownership, we will handle deletion of old entry in the calling function.
     const result = await pool.query(
       `INSERT INTO user_bots(user_id, bot_name, session_id)
        VALUES($1, $2, $3)
        ON CONFLICT (user_id, bot_name) DO UPDATE SET session_id = EXCLUDED.session_id, created_at = CURRENT_TIMESTAMP
-       RETURNING *;`,
+       RETURNING *;`, // Return the row to confirm insertion/update
       [u, b, s]
     );
     if (result.rows.length > 0) {
@@ -127,6 +138,8 @@ async function addUserBot(u, b, s) {
     }
   } catch (error) {
     console.error(`[DB] addUserBot: CRITICAL ERROR Failed to add/update bot "${b}" for user "${u}":`, error.message, error.stack);
+    // You might want to notify admin here if this is a persistent issue
+    bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL DB ERROR: Failed to add/update bot "${b}" for user "${u}". Check logs.`);
   }
 }
 async function getUserBots(u) {
@@ -135,7 +148,7 @@ async function getUserBots(u) {
       'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at',
       [u]
     );
-    console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name));
+    console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name)); // Debugging log
     return r.rows.map(x => x.bot_name);
   }
   catch (error) {
@@ -143,8 +156,12 @@ async function getUserBots(u) {
     return [];
   }
 }
+// Function to get user_id by bot_name
 async function getUserIdByBotName(botName) {
     try {
+        // FIX: Added ORDER BY created_at DESC LIMIT 1 to ensure the LATEST owner is retrieved
+        // if multiple entries for the same bot_name (but different user_ids) exist due to past issues.
+        // Once the /add fix is in place, only one entry per bot_name should exist.
         const r = await pool.query(
             'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1',
             [botName]
@@ -158,6 +175,7 @@ async function getUserIdByBotName(botName) {
         return null;
     }
 }
+// Function to get all bots from the database
 async function getAllUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
@@ -182,6 +200,9 @@ async function deleteUserBot(u, b) {
   }
 }
 async function updateUserSession(u, b, s) {
+  // This function is effectively replaced by the ON CONFLICT in addUserBot,
+  // but keeping it for explicit update calls if desired elsewhere.
+  // For now, it will simply perform an UPDATE.
   try {
     await pool.query(
       'UPDATE user_bots SET session_id=$1 WHERE user_id=$2 AND bot_name=$3',
@@ -235,54 +256,68 @@ async function recordFreeTrialDeploy(userId) {
     );
 }
 
-// NOTE: handleAppNotFoundAndCleanDb now takes 'botInstance' as an argument, as 'bot' is defined later
-async function handleAppNotFoundAndCleanDb(botInstance, callingChatId, appName, originalMessageId = null, isUserFacing = false) {
+// NEW HELPER FUNCTION: Handles 404 Not Found from Heroku API
+async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
 
+    // Find the user_id currently associated with this app in our DB.
+    // This is crucial because an admin might be managing another user's bot.
     let ownerUserId = await getUserIdByBotName(appName);
 
     if (!ownerUserId) {
-        ownerUserId = callingChatId;
+        // If owner not found in DB, it might be an admin trying to manage an untracked app, or a very stale entry.
+        ownerUserId = callingChatId; // Fallback to the current chat ID for notification.
         console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to callingChatId: ${callingChatId} for notification.`);
     } else {
         console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
     }
 
-    await deleteUserBot(ownerUserId, appName);
+    // Delete the app from our internal user_bots database
+    // Note: We are deleting a specific (user_id, bot_name) pair.
+    // If a bot was moved with /add, it should have been deleted from old user's list.
+    // If it's a 404, it's missing on Heroku, so we remove from DB.
+    await deleteUserBot(ownerUserId, appName); // This deletes the (ownerUserId, appName) pair
     console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots DB for user "${ownerUserId}".`);
 
     const message = `🗑️ App "*${appName}*" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
 
-    const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId;
+    // Determine where to send the primary notification
+    // Check if q (callback_query object) exists and if q.message.chat.id is available
+    // FIX: This section assumes `q` is in scope, which it isn't here in a global helper.
+    // We should rely purely on passed arguments.
+    // The previous original `q.message.chat.id` check was incorrect here.
+    const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId; // Send to calling user if message ID provided, else to the owner.
     const messageToEditId = originalMessageId;
 
-    if (messageToEditId && botInstance) {
-        await botInstance.editMessageText(message, {
+    if (messageToEditId) {
+        await bot.editMessageText(message, {
             chat_id: messageTargetChatId,
             message_id: messageToEditId,
             parse_mode: 'Markdown'
         }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
-    } else if (botInstance) {
-        await botInstance.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
-            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb (new msg): ${err.message}`));
     } else {
-        console.error(`[AppNotFoundHandler] Bot not initialized, cannot send message to ${messageTargetChatId}`);
+        // If original message is not editable or not provided, send a new message
+        await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
+            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb (new msg): ${err.message}`));
     }
 
-    if (isUserFacing && ownerUserId !== callingChatId && botInstance) {
-         await botInstance.sendMessage(ownerUserId, `ℹ️ Your bot "*${appName}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
+    // If the original action was user-facing (e.g., a regular user tried to restart THEIR bot)
+    // AND the detected owner is different from the person currently interacting (meaning an admin
+    // managed another user's bot), notify the original owner.
+    if (isUserFacing && ownerUserId !== callingChatId) {
+         await bot.sendMessage(ownerUserId, `ℹ️ Your bot "*${appName}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
              .catch(err => console.error(`Failed to send notification to original owner in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
 }
 
 
 // 6) Initialize bot & in-memory state
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true }); // Keep polling here
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 const userStates = {}; // chatId -> { step, data, message_id }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
 // Map to store Promises for app deployment status based on channel notifications
-const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId, userId, messageId }
+const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
 
 // NEW: Map to store forwarding context for admin replies and pairing requests
 // Key: The message_id of the message sent TO the admin
@@ -440,13 +475,251 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
   }
 }
 
-// 9) buildWithProgress is no longer here. It's moving to web.js, and web.js will use botInstance for Telegram messages.
-// The concept of `buildWithProgress` as a central function for deployment will be handled in web.js
+// 9) Build & deploy helper with animated countdown
+async function buildWithProgress(chatId, vars, isFreeTrial = false) {
+  const name = vars.APP_NAME;
+
+  let buildResult = false; // Flag to track overall success
+  const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
+
+  try {
+    // Stage 1: Create App
+    await axios.post('https://api.heroku.com/apps', { name }, {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+
+    // Stage 2: Add-ons and Buildpacks
+    await bot.editMessageText('⚙️ Configuring resources...', { chat_id: chatId, message_id: createMsg.message_id });
+    await axios.post(
+      `https://api.heroku.com/apps/${name}/addons`,
+      { plan: 'heroku-postgresql' },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    await axios.put(
+      `https://api.heroku.com/apps/${name}/buildpack-installations`,
+      {
+        updates: [
+          { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+          { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+          { buildpack: 'heroku/nodejs' }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    // Stage 3: Config Vars
+    await bot.editMessageText('🔧 Setting environment variables...', { chat_id: chatId, message_id: createMsg.message_id });
+    await axios.patch(
+      `https://api.heroku.com/apps/${name}/config-vars`,
+      {
+        ...defaultEnvVars,
+        ...vars
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    // Stage 4: Build
+    await bot.editMessageText('🛠️ Starting build process...', { chat_id: chatId, message_id: createMsg.message_id });
+    const bres = await axios.post(
+      `https://api.heroku.com/apps/${name}/builds`,
+      { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
+    let buildStatus = 'pending';
+    const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
+
+    for (let i = 1; i <= 20; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const poll = await axios.get(statusUrl, {
+          headers: {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+          }
+        });
+        buildStatus = poll.data.status;
+      } catch {
+        buildStatus = 'error';
+        break;
+      }
+      const pct = Math.min(100, i * 5);
+      await bot.editMessageText(`Building... ${pct}%`, {
+        chat_id: chatId,
+        message_id: progMsg.message_id
+      }).catch(() => {});
+
+      if (buildStatus !== 'pending') break;
+    }
+
+    if (buildStatus === 'succeeded') {
+      // --- CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
+      await addUserBot(chatId, name, vars.SESSION_ID); // Add bot to DB immediately here!
+
+      // ADDED LINE TO FIX FREE TRIAL COOLDOWN
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+        console.log(`[FreeTrial] Recorded free trial deploy for user ${chatId}.`);
+      }
+      // END OF ADDED LINE
+
+      // Admin notification for successful build (even if bot isn't 'connected' yet)
+      const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
+      const userDetails = [
+        `*Name:* ${first_name || ''} ${last_name || ''}`,
+        `*Username:* ${username ? `@${username}` : (first_name || last_name ? `${[first_name, last_name].filter(Boolean).join(' ')} (No @username)` : 'N/A')}`, // FIX: Improved username display
+        `*Chat ID:* \`${chatId}\``
+      ].join('\n');
+      const appDetails = `*App Name:* \`${name}\`\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+
+      await bot.sendMessage(ADMIN_ID,
+          `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+          { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
+      // --- END OF CRITICAL MODIFICATION ---
+
+      const baseWaitingText = `Build complete! Waiting for bot to connect...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
+        chat_id: chatId,
+        message_id: progMsg.message_id
+      });
+
+      // Start animation for waiting state
+      const animateIntervalId = await animateMessage(chatId, progMsg.message_id, baseWaitingText);
+
+      const appStatusPromise = new Promise((resolve, reject) => {
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId }); // Store intervalId
+      });
+
+      const STATUS_CHECK_TIMEOUT = 120 * 1000; // 120 seconds (2 minutes) to wait for connection
+      let timeoutId;
+
+      try {
+          // Set a timeout to reject the promise if no status update is received
+          timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(name);
+              if (appPromise) { // Only reject if still pending
+                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.`));
+                  appDeploymentPromises.delete(name); // Clean up
+              }
+          }, STATUS_CHECK_TIMEOUT);
+
+          await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
+          clearTimeout(timeoutId); // Clear the timeout if resolved/rejected
+          clearInterval(animateIntervalId); // Stop animation on success/failure
+
+          // If resolved, it means "connected" was received
+          await bot.editMessageText(
+            `🎉 Your bot is now live!`, // Removed URL here
+            { chat_id: chatId, message_id: progMsg.message_id }
+          );
+          buildResult = true; // Overall success (including session connection)
+
+          if (isFreeTrial) {
+            // FIX: Schedule 5-minute warning notification for admin
+            setTimeout(async () => {
+                const adminWarningMessage = `🔔 Free Trial App "${name}" has 5 minutes left until deletion!`;
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: `Delete "${name}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
+                    ]
+                };
+                await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
+                console.log(`[FreeTrial] Sent 5-min warning to admin for ${name}.`);
+            }, 55 * 60 * 1000); // 55 minutes
+
+            // FIX: Schedule deletion after 1 hour (formerly 30 minutes)
+            setTimeout(async () => {
+                try {
+                    await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 1-hour runtime has ended.`);
+                    await axios.delete(`https://api.heroku.com/apps/${name}`, {
+                        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                    });
+                    await deleteUserBot(chatId, name);
+                    await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
+                    console.log(`[FreeTrial] Auto-deleted app ${name} after 1 hour.`);
+                } catch (e) {
+                    console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
+                    await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+                    // Also notify admin if auto-delete fails
+                    bot.sendMessage(ADMIN_ID, `⚠️ Failed to auto-delete free trial app "${name}" for user ${chatId}: ${e.message}`);
+                }
+            }, 60 * 60 * 1000); // 1 hour
+          }
+
+      } catch (err) {
+          clearTimeout(timeoutId); // Ensure timeout is cleared on early exit
+          clearInterval(animateIntervalId); // Stop animation
+          console.error(`App status check failed for ${name}:`, err.message);
+          // This catch block handles both direct rejections from channel_post and the timeout
+          await bot.editMessageText(
+            `⚠️ Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
+            `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`, // Updated message for clarity
+            {
+                chat_id: chatId,
+                message_id: progMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
+                    ]
+                }
+            }
+          );
+          buildResult = false; // Overall failure to connect
+      } finally {
+          appDeploymentPromises.delete(name); // Always clean up the promise from the map
+      }
+
+    } else { // Heroku build failed
+      await bot.editMessageText(
+        `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
+        { chat_id: chatId, message_id: progMsg.message_id }
+      );
+      buildResult = false; // Overall failure
+    }
+
+  } catch (error) { // FIX: Corrected outer try-catch block to wrap entire function logic
+    const errorMsg = error.response?.data?.message || error.message;
+    bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
+    buildResult = false; // Overall failure
+  }
+  return buildResult; // Indicate overall deployment success (including app startup)
+}
 
 // 10) Polling error handler
 bot.on('polling_error', console.error);
 
-// 11) Command handlers (These remain Telegram bot's primary command handlers)
+// 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
@@ -656,6 +929,7 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
         { parse_mode: 'Markdown' }
     );
 
+    // ... rest of your code
         await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
         // Clean up user's state
@@ -708,7 +982,7 @@ bot.on('message', async msg => {
           return; // Consume message
       }
       // If it's a reply to bot but not a support question, let it fall through or ignore.
-      console.log(`Received reply to bot message ${repliedToMessageId} from ${cid} but not a support question reply. Ignoring.`); // Typo fixed: repliedToMessageId -> repliedToBotMessageId
+      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply. Ignoring.`);
       return; // Consume it if it's a reply to the bot that we don't handle
   }
 
@@ -759,14 +1033,9 @@ bot.on('message', async msg => {
   if (text === 'Free Trial') {
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
-        // Use luxon for more user-friendly date formatting if desired, otherwise toLocaleString is fine
-        const nextAvailableFormatted = check.cooldown.toLocaleString('en-US', {
-            year: 'numeric', month: 'short', day: 'numeric',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            timeZoneName: 'short'
-        });
-        return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${nextAvailableFormatted}`);
+        return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
+    // FIX: Changed Free Trial text to 1 hour
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
     return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
@@ -788,6 +1057,7 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
+    // Updated guideCaption with exact words provided by user
     const guideCaption =
        "To get your session ID, please follow these steps carefully:\n\n" +
         "1️⃣ *Open the Link:*\n" +
@@ -802,6 +1072,7 @@ bot.on('message', async msg => {
         "5️⃣ *Final Step: Launch Your Bot:*\n" +
         "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin.";
 
+    // Add the new "Can't get code?" button here
     const keyboard = {
         inline_keyboard: [
             [{ text: "Can't get code?", callback_data: "cant_get_code" }]
@@ -835,6 +1106,7 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
+    // FIX: Removed "Contact Support Username" button, kept "Ask Admin a Question"
     const supportKeyboard = {
         inline_keyboard: [
             [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }]
@@ -846,17 +1118,21 @@ bot.on('message', async msg => {
     });
   }
 
-  if (st && st.step === 'AWAITING_PHONE_NUMBER') {
+  // --- Stateful flows (for text input) ---
+  // The 'st' variable is defined at the very beginning of this handler.
+  // This logic runs only if 'st' exists and matches a specific step.
+  if (st && st.step === 'AWAITING_PHONE_NUMBER') { // Check st's existence
     const phoneNumber = text;
-    const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits
+    const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
     if (!phoneRegex.test(phoneNumber)) {
         return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
-    const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`;
+    const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`; // Added TG to clarify
 
+    // Send the user's phone number to the admin with Accept/Decline buttons
     const adminMessage = await bot.sendMessage(ADMIN_ID,
         `📞 *Pairing Request from User:*\n` +
         `${userDetails}\n` +
@@ -866,19 +1142,23 @@ bot.on('message', async msg => {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '✅ Accept Request', callback_data: `pairing_action:accept:${cid}` }],
-                    [{ text: '❌ Decline Request', callback_data: `pairing_action:decline:${cid}` }]
+                    [{ text: '✅ Accept Request', callback_data: `pairing_action:accept:${cid}` }], // Pass original user's CID
+                    [{ text: '❌ Decline Request', callback_data: `pairing_action:decline:${cid}` }] // Pass original user's CID
                 ]
             }
         }
     );
 
+    // Set user's state to acknowledge their request and show loading animation
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
-    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId };
+    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
+    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
 
+    // Store context for the admin's action on this specific message (including for timeout)
+    // Keyed by the message_id sent to the admin
     const timeoutIdForPairing = setTimeout(async () => {
+        // If this timeout fires, it means admin didn't respond in time
         if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
             console.log(`[Pairing Timeout] Request from user ${cid} timed out.`);
             if (userStates[cid].data.animateIntervalId) {
@@ -891,7 +1171,9 @@ bot.on('message', async msg => {
                 }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
             }
             await bot.sendMessage(ADMIN_ID, `🔔 Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`);
-            delete userStates[cid];
+            delete userStates[cid]; // Clear user's state
+            // Remove the context associated with the admin's original message, as it's now stale
+            // We need to iterate forwardingContext to find it if not keyed by adminMessage.message_id directly.
             for (const key in forwardingContext) {
                 if (forwardingContext[key].original_user_chat_id === cid && forwardingContext[key].request_type === 'pairing_request') {
                     delete forwardingContext[key];
@@ -900,23 +1182,24 @@ bot.on('message', async msg => {
                 }
             }
         }
-    }, 60 * 1000);
+    }, 60 * 1000); // 60 seconds timeout
 
     forwardingContext[adminMessage.message_id] = {
         original_user_chat_id: cid,
-        original_user_message_id: msg.message_id,
+        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
         user_phone_number: phoneNumber,
-        request_type: 'pairing_request',
-        user_waiting_message_id: waitingMsg.message_id,
-        user_animate_interval_id: animateIntervalId,
-        timeout_id_for_pairing_request: timeoutIdForPairing
+        request_type: 'pairing_request', // Indicate type of request
+        user_waiting_message_id: waitingMsg.message_id, // Store for later access
+        user_animate_interval_id: animateIntervalId, // Store to clear later
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/declined
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-    return;
+    return; // Exit after handling phone number
   }
 
-  if (st && st.step === 'AWAITING_KEY') {
+
+  if (st && st.step === 'AWAITING_KEY') { // Check st's existence
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
@@ -971,7 +1254,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
-  if (st && st.step === 'SESSION_ID') {
+  if (st && st.step === 'SESSION_ID') { // Check st's existence
     if (text.length < 10) {
       return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
@@ -980,7 +1263,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
   }
 
-  if (st && st.step === 'APP_NAME') {
+  if (st && st.step === 'APP_NAME') { // Check st's existence
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
       return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
@@ -1022,7 +1305,7 @@ bot.on('message', async msg => {
     }
   }
 
-  if (st && st.step === 'SETVAR_ENTER_VALUE') {
+  if (st && st.step === 'SETVAR_ENTER_VALUE') { // Check st's existence
     const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data;
     const newVal = text.trim();
 
@@ -1060,7 +1343,7 @@ bot.on('message', async msg => {
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId, userId: cid, messageId: updateMsg.message_id });
+          appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId });
       });
 
       const STATUS_CHECK_TIMEOUT = 180 * 1000;
@@ -1299,7 +1582,6 @@ bot.on('callback_query', async q => {
               message_id: st.message_id
           });
 
-          // Original buildWithProgress call (needs to be available)
           await buildWithProgress(cid, st.data, st.data.isFreeTrial);
       }
 
@@ -1356,7 +1638,6 @@ bot.on('callback_query', async q => {
     console.log(`[CallbackQuery - add_assign_app] Current state for ${cid} is:`, userStates[cid]);
 
     if (cid !== ADMIN_ID) {
-        console.log(`[Admin] Unauthorized /add attempt by ${cid}.`);
         await bot.editMessageText("❌ You are not authorized to perform this action.", {
             chat_id: cid,
             message_id: q.message.message_id
@@ -1424,7 +1705,7 @@ bot.on('callback_query', async q => {
 
     } catch (e) {
         if (e.response && e.response.status === 404) {
-            await handleAppNotFoundAndCleanDb(bot, cid, appName, q.message.message_id, false);
+            await handleAppNotFoundAndCleanDb(cid, appName, q.message.message_id, false);
             return;
         }
         const errorMsg = e.response?.data?.message || e.message;
@@ -1449,7 +1730,6 @@ bot.on('callback_query', async q => {
     console.log(`[CallbackQuery - remove_app_from_user] Current state for ${cid} is:`, userStates[cid]);
 
     if (cid !== ADMIN_ID) {
-        console.log(`[Admin] Unauthorized /remove attempt by ${cid}.`);
         await bot.editMessageText("❌ You are not authorized to perform this action.", {
             chat_id: cid,
             message_id: q.message.message_id
@@ -1575,8 +1855,7 @@ bot.on('callback_query', async q => {
       });
     } catch (e) {
       if (e.response && e.response.status === 404) {
-          // Pass bot instance to handleAppNotFoundAndCleanDb
-          await handleAppNotFoundAndCleanDb(bot, cid, payload, messageId, true);
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true);
           return;
       }
       const errorMsg = e.response?.data?.message || e.message;
@@ -1619,8 +1898,7 @@ bot.on('callback_query', async q => {
 
     } catch (e) {
       if (e.response && e.response.status === 404) {
-          // Pass bot instance to handleAppNotFoundAndCleanDb
-          await handleAppNotFoundAndCleanDb(bot, cid, payload, messageId, true);
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true);
           return;
       }
       const errorMsg = e.response?.data?.message || e.message;
@@ -1663,8 +1941,7 @@ bot.on('callback_query', async q => {
       });
     } catch (e) {
       if (e.response && e.response.status === 404) {
-          // Pass bot instance to handleAppNotFoundAndCleanDb
-          await handleAppNotFoundAndCleanDb(bot, cid, payload, messageId, true);
+          await handleAppNotFoundAndCleanDb(cid, payload, messageId, true);
           return;
       }
       const errorMsg = e.response?.data?.message || e.message;
@@ -1731,8 +2008,7 @@ bot.on('callback_query', async q => {
           }
       } catch (e) {
           if (e.response && e.response.status === 404) {
-              // Pass bot instance to handleAppNotFoundAndCleanDb
-              await handleAppNotFoundAndCleanDb(bot, cid, appToDelete, messageId, originalAction === 'userdelete');
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete');
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
@@ -1939,8 +2215,7 @@ bot.on('callback_query', async q => {
           }
       } catch (e) {
           if (e.response && e.response.status === 404) {
-              // Pass bot instance to handleAppNotFoundAndCleanDb
-              await handleAppNotFoundAndCleanDb(bot, cid, appToDelete, messageId, false);
+              await handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, false);
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
@@ -2031,8 +2306,7 @@ bot.on('callback_query', async q => {
 
     } catch (e) {
         if (e.response && e.response.status === 404) {
-            // Pass bot instance to handleAppNotFoundAndCleanDb
-            await handleAppNotFoundAndCleanDb(bot, cid, appName, messageId, true);
+            await handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
             return;
         }
         const errorMsg = e.response?.data?.message || e.message;
@@ -2115,15 +2389,7 @@ bot.on('channel_post', async msg => {
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
             clearInterval(pendingPromise.animateIntervalId);
-            // Resolve/Reject the promise for the web request that started this deployment
-            if (pendingPromise.reject) { // Ensure reject function exists
-                // Use the userId and messageId stored in the promise for the original user
-                await bot.editMessageText(
-                    `⚠️ Bot "${botName}" logged out during deployment setup: Invalid session.`,
-                    { chat_id: pendingPromise.userId, message_id: pendingPromise.messageId }
-                ).catch(err => console.error(`Error editing user message on logout during deploy: ${err.message}`));
-                pendingPromise.reject(new Error('Bot session became invalid during deployment setup.'));
-            }
+            pendingPromise.reject(new Error('Bot session became invalid on startup.'));
             appDeploymentPromises.delete(botName);
             console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
         } else {
@@ -2161,14 +2427,7 @@ bot.on('channel_post', async msg => {
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
             clearInterval(pendingPromise.animateIntervalId);
-            if (pendingPromise.resolve) {
-                // Use the userId and messageId stored in the promise for the original user
-                await bot.editMessageText(`🎉 Your bot "${botName}" is now live!`, {
-                    chat_id: pendingPromise.userId,
-                    message_id: pendingPromise.messageId
-                }).catch(err => console.error(`Error editing user message on connect during deploy: ${err.message}`));
-                pendingPromise.resolve('connected');
-            }
+            pendingPromise.resolve('connected');
             appDeploymentPromises.delete(botName);
             console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
         } else {
@@ -2235,7 +2494,6 @@ async function checkAndRemindLoggedOutBots() {
                 const currentOwnerId = await getUserIdByBotName(herokuApp);
                 if (currentOwnerId) {
                     await deleteUserBot(currentOwnerId, herokuApp);
-                    // Pass bot instance to handleAppNotFoundAndCleanDb if called from here
                     await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
                 }
                 return;
@@ -2248,32 +2506,4 @@ async function checkAndRemindLoggedOutBots() {
 setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
 
 
-console.log('Telegram Bot is running...');
-
-// --- EXPORTED FUNCTIONS AND VARIABLES for web.js ---
-// web.js will require bot.js to access these
-module.exports = {
-    botInstance: bot, // The initialized Telegram bot instance
-    pool: pool,       // The PostgreSQL connection pool
-    defaultEnvVars,   // Fallback env vars from app.json
-    HEROKU_API_KEY,
-    GITHUB_REPO_URL,
-    ADMIN_ID,
-    TELEGRAM_LISTEN_CHANNEL_ID,
-    appDeploymentPromises, // Shared map for deployment status
-    // Export all DB helper functions
-    addUserBot,
-    getUserBots,
-    getUserIdByBotName,
-    deleteUserBot,
-    updateUserSession,
-    addDeployKey,
-    useDeployKey,
-    canDeployFreeTrial,
-    recordFreeTrialDeploy,
-    getAllUserBots,
-    handleAppNotFoundAndCleanDb: (callingChatId, appName, originalMessageId = null, isUserFacing = false) =>
-        handleAppNotFoundAndCleanDb(bot, callingChatId, appName, originalMessageId, isUserFacing), // Wrap to pass bot instance
-    animateMessage: (chatId, messageId, baseText) => animateMessage(chatId, messageId, baseText), // Export animatedMessage correctly
-    getAnimatedEmoji // Export emoji function
-};
+console.log('Bot is running...');
