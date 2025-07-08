@@ -321,7 +321,7 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 
 // NEW: Map to store forwarding context for admin replies and pairing requests
 // Key: The message_id of the message sent TO the admin
-// Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id }
+// Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id, timeout_id_for_pairing_request }
 const forwardingContext = {};
 
 
@@ -407,7 +407,6 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        // FIX: Corrected typo here
         const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
@@ -702,7 +701,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       buildResult = false; // Overall failure
     }
 
-  } try {
+  } catch (error) { // FIX: Moved this catch to correctly handle the whole try block
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
@@ -899,14 +898,6 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
     }
 
-    // No need for detailed validation now, regex handles it.
-    // However, if you want a more descriptive error for non-8-char, you could do:
-    /*
-    if (!/^[a-zA-Z0-9]{8}$/.test(pairingCode)) {
-        return bot.sendMessage(cid, '❌ Invalid pairing code format. Please use `/send <user_id> <8-character alphanumeric code>`.');
-    }
-    */
-
     // Attempt to retrieve user's current state to stop animation and clear
     const userState = userStates[targetUserId];
     const userWaitingMessageId = userState?.data?.messageId;
@@ -1070,7 +1061,17 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}\n\nIf you have a question you'd like to send directly to the admin for a reply, use the command: \`/askadmin Your question here...\``, { parse_mode: 'Markdown' });
+    // FIX: Changed support button behavior to offer an inline "Ask Admin" button
+    const supportKeyboard = {
+        inline_keyboard: [
+            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
+            [{ text: 'Contact Support Username', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }] // Link to username
+        ]
+    };
+    return bot.sendMessage(cid, `For help, you can contact the admin or ask a question directly:`, {
+        reply_markup: supportKeyboard,
+        parse_mode: 'Markdown'
+    });
   }
 
   // --- Stateful flows (for text input) ---
@@ -1115,22 +1116,51 @@ bot.on('message', async msg => {
         }
     );
 
-    // Store context for the admin's action on this specific message
-    // Keyed by the message_id sent to the admin
-    forwardingContext[adminMessage.message_id] = {
-        original_user_chat_id: cid,
-        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
-        user_phone_number: phoneNumber,
-        request_type: 'pairing_request' // Indicate type of request
-    };
-    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
-
-
     // Set user's state to acknowledge their request and show loading animation
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
     userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
+
+    // Store context for the admin's action on this specific message (including for timeout)
+    // Keyed by the message_id sent to the admin
+    const timeoutIdForPairing = setTimeout(async () => {
+        // If this timeout fires, it means admin didn't respond in time
+        if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
+            console.log(`[Pairing Timeout] Request from user ${cid} timed out.`);
+            if (userStates[cid].data.animateIntervalId) {
+                clearInterval(userStates[cid].data.animateIntervalId);
+            }
+            if (userStates[cid].data.messageId) {
+                await bot.editMessageText('⌛ Pairing request timed out. The admin did not respond in time. Please try again later.', {
+                    chat_id: cid,
+                    message_id: userStates[cid].data.messageId
+                }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
+            }
+            await bot.sendMessage(ADMIN_ID, `🔔 Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`);
+            delete userStates[cid]; // Clear user's state
+            // Remove the context associated with the admin's original message, as it's now stale
+            // We need to iterate forwardingContext to find it if not keyed by adminMessage.message_id directly.
+            for (const key in forwardingContext) {
+                if (forwardingContext[key].original_user_chat_id === cid && forwardingContext[key].request_type === 'pairing_request') {
+                    delete forwardingContext[key];
+                    console.log(`[Pairing Timeout] Cleaned up stale forwardingContext for admin message ${key}.`);
+                    break;
+                }
+            }
+        }
+    }, 60 * 1000); // 60 seconds timeout
+
+    forwardingContext[adminMessage.message_id] = {
+        original_user_chat_id: cid,
+        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
+        user_phone_number: phoneNumber,
+        request_type: 'pairing_request', // Indicate type of request
+        user_waiting_message_id: waitingMsg.message_id, // Store for later access
+        user_animate_interval_id: animateIntervalId, // Store to clear later
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/declined
+    };
+    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
     return; // Exit after handling phone number
   }
@@ -1272,7 +1302,7 @@ bot.on('message', async msg => {
       console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
       await addUserBot(finalUserId, APP_NAME, newVal);
 
-      const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
+      const baseWaitingText = `Updating ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id
@@ -1303,7 +1333,7 @@ bot.on('message', async msg => {
               chat_id: cid,
               message_id: updateMsg.message_id
           });
-          console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
+          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
       } catch (err) {
           clearTimeout(timeoutId);
@@ -1383,6 +1413,11 @@ bot.on('callback_query', async q => {
           // Context expired or mismatch, reply to admin
           await bot.sendMessage(cid, 'This pairing request has expired or is invalid.');
           return;
+      }
+
+      // Clear the timeout that was set when the request was made by the user
+      if (context.timeout_id_for_pairing_request) {
+          clearTimeout(context.timeout_id_for_pairing_request);
       }
 
       // Clear the forwarding context related to this specific request to prevent re-clicks
