@@ -1717,7 +1717,7 @@ bot.on('callback_query', async q => {
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`\/send ${targetUserChatId} AJWI-2ISN\``, // Example format `AJWI-2ISN`
+              `\`\/send ${targetUserChatId} \``, // Example format `AJWI-2ISN`
               { parse_mode: 'Markdown' }
           );
 
