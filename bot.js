@@ -586,6 +586,13 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
       await addUserBot(chatId, name, vars.SESSION_ID); // Add bot to DB immediately here!
 
+      // ADDED LINE TO FIX FREE TRIAL COOLDOWN
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+        console.log(`[FreeTrial] Recorded free trial deploy for user ${chatId}.`);
+      }
+      // END OF ADDED LINE
+
       // Admin notification for successful build (even if bot isn't 'connected' yet)
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
       const userDetails = [
@@ -1501,7 +1508,7 @@ bot.on('callback_query', async q => {
           }).catch(() => {}); // Ignore if message already modified
           await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
               chat_id: cid,
-              message_id: adminMessage_id, // FIX: typo - changed to adminMessageId
+              message_id: adminMessageId, // FIX: typo - changed to adminMessageId
               parse_mode: 'Markdown'
           }).catch(() => {});
 
@@ -1553,8 +1560,10 @@ bot.on('callback_query', async q => {
           const confirmationKeyboard = {
               reply_markup: {
                   inline_keyboard: [
-                      [{ text: 'Yes, Deploy Now', callback_data: `setup:startbuild` }],
-                      [{ text: 'Cancel', callback_data: `setup:cancel` }]
+                      [
+                          { text: 'Yes, Deploy Now', callback_data: `setup:startbuild` },
+                          { text: 'Cancel', callback_data: `setup:cancel` }
+                      ]
                   ]
               }
           };
