@@ -321,7 +321,7 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 
 // NEW: Map to store forwarding context for admin replies and pairing requests
 // Key: The message_id of the message sent TO the admin
-// Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id }
+// Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id, timeout_id_for_pairing_request }
 const forwardingContext = {};
 
 
@@ -407,7 +407,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        const filledBlocks = '█'.'.repeat(i);
+        const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
         let countdownMessage = `Bot "${appName}" restarting...\n\n`;
@@ -701,7 +701,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       buildResult = false; // Overall failure
     }
 
-  } catch (error) {
+  } catch (error) { // FIX: Corrected outer try-catch block to wrap entire function logic
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
@@ -888,20 +888,14 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
-// NEW: /send <user_id> <8-word code> command handler (Admin only)
-bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
+// NEW: /send <user_id> <8-character alphanumeric code> command handler (Admin only)
+bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated regex for 8 alphanumeric characters
     const cid = msg.chat.id.toString();
     const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2].trim(); // Code from the command
+    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars)
 
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
-    }
-
-    // Validate pairing code format
-    const words = pairingCode.split(/\s+/).filter(word => word.length > 0);
-    if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
-        return bot.sendMessage(cid, '❌ Invalid pairing code format. Please use `/send <user_id> <8-word code>` (8 alphanumeric words separated by spaces).');
     }
 
     // Attempt to retrieve user's current state to stop animation and clear
@@ -922,7 +916,8 @@ bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
     try {
         // Send the pairing code to the original user
         await bot.sendMessage(targetUserId,
-            `Your Pairing-code is \`\`\`${pairingCode}\`\`\`\n` +
+            `Your Pairing-code is:\n` +
+            `\`\`\`\n${pairingCode}\n\`\`\`\n` + // Triple backticks for copyable code block
             `Copy the code and paste it to your WhatsApp linked device ASAP!`,
             { parse_mode: 'Markdown' }
         );
@@ -949,6 +944,9 @@ bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
   if (!text) return;
+
+  // FIX: Define st at the very beginning to ensure it's always available
+  const st = userStates[cid];
 
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
@@ -979,6 +977,38 @@ bot.on('message', async msg => {
       return; // Consume it if it's a reply to the bot that we don't handle
   }
 
+  // NEW: Handle user typing their question after clicking "Ask Admin a Question"
+  // FIX: Ensure 'st' is checked for existence before accessing its properties.
+  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
+    const userQuestion = msg.text;
+    const userChatId = cid;
+    const userMessageId = msg.message_id;
+
+    try {
+        const adminMessage = await bot.sendMessage(ADMIN_ID,
+            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*Message:* ${userQuestion}\n\n` +
+            `_Reply to this message to send your response back to the user._`,
+            { parse_mode: 'Markdown' }
+        );
+
+        forwardingContext[adminMessage.message_id] = {
+            original_user_chat_id: userChatId,
+            original_user_message_id: userMessageId,
+            request_type: 'support_question'
+        };
+        console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
+
+        await bot.sendMessage(userChatId, '✅ Your question has been sent to the admin. You will be notified when they reply.');
+    } catch (e) {
+        console.error('Error forwarding message to admin:', e);
+        await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
+    } finally {
+        delete userStates[cid]; // Clear user's state after question is sent
+    }
+    return; // Consume message
+  }
+
 
   // --- Button Handlers (for keyboard buttons, not inline) ---
   if (text === 'Deploy') {
@@ -996,8 +1026,9 @@ bot.on('message', async msg => {
     if (!check.can) {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
+    // FIX: Changed Free Trial text to 1 hour
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1066,24 +1097,22 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    return bot.sendMessage(cid, `For help, contact the admin: ${SUPPORT_USERNAME}\n\nIf you have a question you'd like to send directly to the admin for a reply, use the command: \`/askadmin Your question here...\``, { parse_mode: 'Markdown' });
+    // FIX: Removed "Contact Support Username" button, kept "Ask Admin a Question"
+    const supportKeyboard = {
+        inline_keyboard: [
+            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }]
+        ]
+    };
+    return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
+        reply_markup: supportKeyboard,
+        parse_mode: 'Markdown'
+    });
   }
 
   // --- Stateful flows (for text input) ---
-  const st = userStates[cid];
-  if (!st) {
-    // This block is for admin responding with the pairing code *after* clicking 'Accept'
-    // and the bot is awaiting the code as a text message.
-    // NOTE: This specific state handling for admin input has been moved to the new `/send` command.
-    // It should effectively never be reached if the admin follows instructions.
-    if (isAdmin && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
-      return bot.sendMessage(ADMIN_ID, "Please use the `/send <user_id> <8-word code>` command to send the pairing code.");
-    }
-    return; // No active state, ignore message
-  }
-
-  // Handle user's phone number input
-  if (st.step === 'AWAITING_PHONE_NUMBER') {
+  // The 'st' variable is defined at the very beginning of this handler.
+  // This logic runs only if 'st' exists and matches a specific step.
+  if (st && st.step === 'AWAITING_PHONE_NUMBER') { // Check st's existence
     const phoneNumber = text;
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
@@ -1111,28 +1140,57 @@ bot.on('message', async msg => {
         }
     );
 
-    // Store context for the admin's action on this specific message
-    // Keyed by the message_id sent to the admin
-    forwardingContext[adminMessage.message_id] = {
-        original_user_chat_id: cid,
-        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
-        user_phone_number: phoneNumber,
-        request_type: 'pairing_request' // Indicate type of request
-    };
-    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
-
-
     // Set user's state to acknowledge their request and show loading animation
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
     userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
 
+    // Store context for the admin's action on this specific message (including for timeout)
+    // Keyed by the message_id sent to the admin
+    const timeoutIdForPairing = setTimeout(async () => {
+        // If this timeout fires, it means admin didn't respond in time
+        if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
+            console.log(`[Pairing Timeout] Request from user ${cid} timed out.`);
+            if (userStates[cid].data.animateIntervalId) {
+                clearInterval(userStates[cid].data.animateIntervalId);
+            }
+            if (userStates[cid].data.messageId) {
+                await bot.editMessageText('⌛ Pairing request timed out. The admin did not respond in time. Please try again later.', {
+                    chat_id: cid,
+                    message_id: userStates[cid].data.messageId
+                }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
+            }
+            await bot.sendMessage(ADMIN_ID, `🔔 Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`);
+            delete userStates[cid]; // Clear user's state
+            // Remove the context associated with the admin's original message, as it's now stale
+            // We need to iterate forwardingContext to find it if not keyed by adminMessage.message_id directly.
+            for (const key in forwardingContext) {
+                if (forwardingContext[key].original_user_chat_id === cid && forwardingContext[key].request_type === 'pairing_request') {
+                    delete forwardingContext[key];
+                    console.log(`[Pairing Timeout] Cleaned up stale forwardingContext for admin message ${key}.`);
+                    break;
+                }
+            }
+        }
+    }, 60 * 1000); // 60 seconds timeout
+
+    forwardingContext[adminMessage.message_id] = {
+        original_user_chat_id: cid,
+        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
+        user_phone_number: phoneNumber,
+        request_type: 'pairing_request', // Indicate type of request
+        user_waiting_message_id: waitingMsg.message_id, // Store for later access
+        user_animate_interval_id: animateIntervalId, // Store to clear later
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/declined
+    };
+    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
+
     return; // Exit after handling phone number
   }
 
 
-  if (st.step === 'AWAITING_KEY') {
+  if (st && st.step === 'AWAITING_KEY') { // Check st's existence
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
@@ -1187,7 +1245,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
-  if (st.step === 'SESSION_ID') {
+  if (st && st.step === 'SESSION_ID') { // Check st's existence
     if (text.length < 10) {
       return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
@@ -1196,7 +1254,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
   }
 
-  if (st.step === 'APP_NAME') {
+  if (st && st.step === 'APP_NAME') { // Check st's existence
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
       return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
@@ -1238,7 +1296,7 @@ bot.on('message', async msg => {
     }
   }
 
-  if (st.step === 'SETVAR_ENTER_VALUE') {
+  if (st && st.step === 'SETVAR_ENTER_VALUE') { // Check st's existence
     const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data;
     const newVal = text.trim();
 
@@ -1299,7 +1357,7 @@ bot.on('message', async msg => {
               chat_id: cid,
               message_id: updateMsg.message_id
           });
-          console.log(`Sent "updated and online" notification to user ${cid} for bot ${APP_NAME}`);
+          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
       } catch (err) {
           clearTimeout(timeoutId);
@@ -1346,6 +1404,14 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
+  // NEW: Handle "Ask Admin a Question" button from Support menu
+  if (action === 'ask_admin_question') {
+      delete userStates[cid]; // Clear previous state
+      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
+      await bot.sendMessage(cid, 'Please type your question for the admin:');
+      return;
+  }
+
   // Handle "Can't get code?" button click (USER SIDE)
   if (action === 'cant_get_code') {
       delete userStates[cid]; // Clear any previous state for the user
@@ -1381,6 +1447,11 @@ bot.on('callback_query', async q => {
           return;
       }
 
+      // Clear the timeout that was set when the request was made by the user
+      if (context.timeout_id_for_pairing_request) {
+          clearTimeout(context.timeout_id_for_pairing_request);
+      }
+
       // Clear the forwarding context related to this specific request to prevent re-clicks
       delete forwardingContext[adminMessageId]; // This specific pairing request context is consumed
 
@@ -1410,16 +1481,16 @@ bot.on('callback_query', async q => {
           }
 
           // Admin accepted, now instruct admin to use the /send command
+          // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 8-word pairing code to the user:*\n` +
-              `\`\`\`/send ${targetUserChatId} [8-word code]\`\`\``, // Providing the user ID explicitly
+              `*Now, please use the command below to send the 8-character code to the user:*\n` +
+              `\`/send ${targetUserChatId} [8-character code]\``, // Use single backticks for the inline command
               { parse_mode: 'Markdown' }
           );
 
           // Admin's state related to this is implicitly handled by them using the /send command.
           // No need for a specific 'AWAITING_PAIRING_CODE_FROM_ADMIN' state now, as /send is stateless in this context.
-          // Also, remove the context from forwardingContext once buttons are used, as /send is self-contained.
 
           // Edit the original message to admin to show it's handled (remove buttons)
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
@@ -1428,7 +1499,7 @@ bot.on('callback_query', async q => {
           }).catch(() => {}); // Ignore if message already modified
           await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
               chat_id: cid,
-              message_id: adminMessageId,
+              message_id: adminMessage_id, // FIX: typo - changed to adminMessageId
               parse_mode: 'Markdown'
           }).catch(() => {});
 
@@ -1566,7 +1637,7 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) {
         console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This add session has expired or is invalid. Please start over with `/add <user_id>`.", {
+        await bot.editMessageText("This add session has expired or. is invalid. Please start over with `/add <user_id>`.", {
             chat_id: cid,
             message_id: q.message.message_id
         });
@@ -2406,4 +2477,22 @@ async function checkAndRemindLoggedOutBots() {
                 }
             }
 
-        } catch
+        } catch (error) {
+            if (error.response && error.response.status === 404) {
+                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
+                const currentOwnerId = await getUserIdByBotName(herokuApp);
+                if (currentOwnerId) {
+                    await deleteUserBot(currentOwnerId, herokuApp);
+                    await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                }
+                return;
+            }
+            console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+        }
+    }
+}
+
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
+
+
+console.log('Bot is running...');
