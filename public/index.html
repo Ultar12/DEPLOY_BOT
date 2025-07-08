@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Deployment Portal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Bot Deployment Portal</h1>
+            <p>Manage your Telegram bots quickly and efficiently.</p>
+            <div id="backend-url-setting">
+                <label for="backendUrl">Backend URL:</label>
+                <input type="url" id="backendUrl" placeholder="e.g., https://your-heroku-app.herokuapp.com" required>
+                <button onclick="saveBackendUrl()">Save URL</button>
+                <p class="small-text">This is the URL where your bot.js backend (running via web.js) is deployed.</p>
+            </div>
+        </header>
+
+        <section id="user-id-section">
+            <h2>Your Telegram User ID:</h2>
+            <input type="text" id="telegramUserId" placeholder="Enter your Telegram User ID" required>
+            <button onclick="saveUserId()">Save ID</button>
+            <p class="small-text">Find your User ID by sending `/id` to your Telegram bot.</p>
+        </section>
+
+        <nav id="main-menu" style="display: none;">
+            <h2>Main Menu</h2>
+            <button onclick="showSection('get-session-section')">Get Session</button>
+            <button onclick="showSection('deploy-section')">Deploy</button>
+            <button onclick="showSection('free-trial-section')">Free Trial</button>
+            <button onclick="showSection('my-bots-section')">My Bots</button>
+            <button onclick="showSection('support-section')">Support</button>
+        </nav>
+
+        <div id="content-sections">
+            <section id="get-session-section" class="content-section" style="display: none;">
+                <h2>Get WhatsApp Session ID</h2>
+                <p>Click the button below to receive instructions on how to get your WhatsApp session ID directly in your Telegram chat with the bot.</p>
+                <button onclick="getWhatsAppSession()">Send Instructions to Telegram</button>
+                <button onclick="backToMenu()">Back to Menu</button>
+            </section>
+
+            <section id="deploy-section" class="content-section" style="display: none;">
+                <h2>Deploy Your Bot</h2>
+                <p>Enter your bot's details to deploy it. This requires a Deploy Key (unless it's a Free Trial).</p>
+                <form id="deploy-form">
+                    <label for="deploySessionId">Session ID:</label>
+                    <input type="text" id="deploySessionId" required minlength="10">
+
+                    <label for="deployAppName">App Name (e.g., my-telegram-bot):</label>
+                    <input type="text" id="deployAppName" required pattern="^[a-z0-9-]+$" title="Lowercase letters, numbers, and hyphens only. Min 5 characters.">
+
+                    <label for="deployKey">Deploy Key (leave blank for Free Trial):</label>
+                    <input type="text" id="deployKey">
+
+                    <label for="autoStatusView">Auto Status View (marks statuses as seen automatically):</label>
+                    <select id="autoStatusView">
+                        <option value="true">Yes (Recommended)</option>
+                        <option value="false">No</option>
+                    </select>
+
+                    <button type="submit">Deploy Bot</button>
+                </form>
+                <button onclick="backToMenu()">Back to Menu</button>
+            </section>
+
+            <section id="free-trial-section" class="content-section" style="display: none;">
+                <h2>Free Trial Deployment</h2>
+                <p id="free-trial-status-text">Checking Free Trial status...</p>
+                <form id="free-trial-form" style="display: none;">
+                    <label for="freeTrialSessionId">Session ID:</label>
+                    <input type="text" id="freeTrialSessionId" required minlength="10">
+
+                    <label for="freeTrialAppName">App Name (e.g., my-trial-bot):</label>
+                    <input type="text" id="freeTrialAppName" required pattern="^[a-z0-9-]+$" title="Lowercase letters, numbers, and hyphens only. Min 5 characters.">
+
+                    <label for="freeTrialAutoStatusView">Auto Status View (marks statuses as seen automatically):</label>
+                    <select id="freeTrialAutoStatusView">
+                        <option value="true">Yes (Recommended)</option>
+                        <option value="false">No</option>
+                    </select>
+
+                    <button type="submit">Start Free Trial (1 Hour)</button>
+                </form>
+                <button onclick="backToMenu()">Back to Menu</button>
+            </section>
+
+            <section id="my-bots-section" class="content-section" style="display: none;">
+                <h2>My Deployed Bots</h2>
+                <ul id="my-bots-list">
+                    <li>Loading your bots...</li>
+                </ul>
+                <button onclick="backToMenu()">Back to Menu</button>
+            </section>
+
+            <section id="support-section" class="content-section" style="display: none;">
+                <h2>Support</h2>
+                <p>For any questions or issues, you can:</p>
+                <ul>
+                    <li><a href="https://wa.me/message/JIIC2JFMHUPEM1" target="_blank">Contact Owner on WhatsApp</a></li>
+                    <li>Ask a question directly via Telegram to the admin using the bot.</li>
+                </ul>
+                <button onclick="backToMenu()">Back to Menu</button>
+            </section>
+
+            <section id="single-bot-management-section" class="content-section" style="display: none;">
+                <h2 id="single-bot-name"></h2>
+                <p id="single-bot-info"></p>
+                <div id="single-bot-actions">
+                    <button onclick="restartBotFromWeb()">Restart</button>
+                    <button onclick="backToMyBots()">Back to My Bots</button>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
