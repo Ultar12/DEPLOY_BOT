@@ -235,6 +235,18 @@ async function useDeployKey(key) {
   return left;
 }
 
+// NEW: Function to get all deploy keys
+async function getAllDeployKeys() {
+    try {
+        const res = await pool.query('SELECT key, uses_left, created_by, created_at FROM deploy_keys ORDER BY created_at DESC');
+        return res.rows;
+    } catch (error) {
+        console.error('[DB] getAllDeployKeys: Failed to get all deploy keys:', error.message);
+        return [];
+    }
+}
+
+
 async function canDeployFreeTrial(userId) {
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
     const res = await pool.query(
@@ -986,11 +998,11 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
-// NEW: /send <user_id> <8-character alphanumeric code> command handler (Admin only)
-bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated regex for 8 alphanumeric characters
+// NEW: /send <user_id> <9-character alphanumeric code with hyphen> command handler (Admin only)
+bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) => { // Updated regex for AJWI-2ISN format
     const cid = msg.chat.id.toString();
     const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars)
+    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars with hyphen)
 
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
@@ -1015,7 +1027,7 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     // Send the pairing code to the original user
     await bot.sendMessage(targetUserId,
         `Your Pairing-code is:\n` +
-        '`\n' + pairingCode + '\n`\n' + // Corrected line
+        `\`${pairingCode}\`\n` + // Use escaped code directly for Markdown
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
@@ -1033,6 +1045,126 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     } catch (e) {
         console.error(`Error sending pairing code to user ${targetUserId}:`, e);
         await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
+    }
+});
+
+// NEW ADMIN COMMAND: /stats
+bot.onText(/^\/stats$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+    }
+
+    try {
+        // Total Users
+        const totalUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_users FROM user_bots');
+        const totalUsers = totalUsersResult.rows[0].total_users;
+
+        // Total Deployed Bots
+        const totalBotsResult = await pool.query('SELECT COUNT(bot_name) AS total_bots FROM user_bots');
+        const totalBots = totalBotsResult.rows[0].total_bots;
+
+        // Active Deploy Keys
+        const activeKeys = await getAllDeployKeys();
+        let keyDetails = '';
+        if (activeKeys.length > 0) {
+            keyDetails = activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n');
+        } else {
+            keyDetails = 'No active deploy keys.';
+        }
+
+        // Free Trial Users
+        const totalFreeTrialUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_trial_users FROM temp_deploys');
+        const totalFreeTrialUsers = totalFreeTrialUsersResult.rows[0].total_trial_users;
+
+        const statsMessage = `
+📊 *Bot Statistics:*
+
+*Total Unique Users:* ${totalUsers}
+*Total Deployed Bots:* ${totalBots}
+*Users Who Used Free Trial:* ${totalFreeTrialUsers}
+
+*Active Deploy Keys:*
+${keyDetails}
+        `;
+
+        await bot.sendMessage(cid, statsMessage, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error fetching stats:`, error.message);
+        await bot.sendMessage(cid, `❌ An error occurred while fetching stats: ${error.message}`);
+    }
+});
+
+// NEW ADMIN COMMAND: /users
+bot.onText(/^\/users$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+    }
+
+    try {
+        const userEntries = await pool.query('SELECT DISTINCT user_id FROM user_bots ORDER BY user_id');
+        const userIds = userEntries.rows.map(row => row.user_id);
+
+        if (userIds.length === 0) {
+            return bot.sendMessage(cid, "No users have deployed bots yet.");
+        }
+
+        let responseMessage = '*Registered Users:*\n\n';
+        let currentUserCount = 0;
+        const maxUsersPerMessage = 10; // To prevent messages from becoming too long
+
+        for (const userId of userIds) {
+            try {
+                // Fetch Telegram chat info for the user
+                const targetChat = await bot.getChat(userId);
+                const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
+                const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
+                const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
+
+                // Fetch bots deployed by this specific user
+                const userBots = await getUserBots(userId);
+                const botsList = userBots.length > 0 ? userBots.map(b => `\`${escapeMarkdown(b)}\``).join(', ') : 'No bots deployed';
+
+                responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n`;
+                responseMessage += `*Name:* ${firstName} ${lastName}\n`;
+                responseMessage += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`;
+                responseMessage += `*Bots:* ${botsList}\n\n`;
+
+                currentUserCount++;
+
+                // Send message in chunks if it gets too long
+                if (currentUserCount % maxUsersPerMessage === 0 && userIds.indexOf(userId) < userIds.length - 1) {
+                    await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+                    responseMessage = '*Registered Users (continued):*\n\n';
+                    // Small delay to prevent hitting Telegram API limits when sending multiple messages
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+
+                // Add a small delay between fetching each user's Telegram info to avoid API limits
+                await new Promise(resolve => setTimeout(resolve, 300)); // Delay between bot.getChat calls
+
+            } catch (error) {
+                console.error(`Error fetching Telegram info or bots for user ${userId}:`, error.message);
+                if (error.response && error.response.body && error.response.body.description && (error.response.body.description.includes("chat not found") || error.response.body.description.includes("user not found"))) {
+                     responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* ❌ User chat not found or bot blocked.\n\n`;
+                } else {
+                     responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* ❌ Error fetching info: ${escapeMarkdown(error.message)}\n\n`;
+                }
+                 // Even on error, add a delay
+                 await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        }
+
+        // Send any remaining message content
+        if (responseMessage.trim() !== '*Registered Users (continued):*' && responseMessage.trim() !== '*Registered Users:*') {
+            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+        }
+
+    } catch (error) {
+        console.error(`Error fetching user list:`, error.message);
+        await bot.sendMessage(cid, `❌ An error occurred while fetching the user list: ${error.message}`);
     }
 });
 
@@ -1282,7 +1414,7 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/declined
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -1585,7 +1717,7 @@ bot.on('callback_query', async q => {
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`/send ${targetUserChatId}\``, // Use single backticks for the inline command
+              `\`\/send ${targetUserChatId} AJWI-2ISN\``, // Example format `AJWI-2ISN`
               { parse_mode: 'Markdown' }
           );
 
@@ -2137,7 +2269,7 @@ bot.on('callback_query', async q => {
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
           [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]
+          [{ text: '◀️️ Back', callback_data: `setvar:${payload}` }]
         ]
       }
     });
@@ -2321,7 +2453,7 @@ bot.on('callback_query', async q => {
   // Redeploy_app callback action
   if (action === 'redeploy_app') {
     const appName = payload;
-    const messageId = q.message.message_id;
+    const messageId = q.message.message.message_id; // FIX: Ensure messageId is correctly retrieved for the original message to edit.
 
     const isOwner = (await getUserIdByBotName(appName)) === cid;
     if (cid !== ADMIN_ID && !isOwner) {
