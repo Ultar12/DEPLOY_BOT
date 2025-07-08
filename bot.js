@@ -329,7 +329,7 @@ const forwardingContext = {};
 
 // Animated emoji for loading states (five square boxes)
 let emojiIndex = 0;
-const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜', '⬜⬜⬜⬜⬜', '⬜⬜⬜⬜⬜', '⬜⬜⬜⬜⬜']; // Cycles through black square moving across white squares
+const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜']; // Cycles through black square moving across white squares
 
 function getAnimatedEmoji() {
     const emoji = animatedEmojis[emojiIndex];
@@ -1457,8 +1457,9 @@ bot.on('callback_query', async q => {
       delete forwardingContext[adminMessageId]; // This specific pairing request context is consumed
 
       // Stop the user's waiting animation (if active) and prepare their message
-      const userMessageId = userStates[targetUserChatId]?.data?.messageId;
-      const userAnimateIntervalId = userStates[targetUserChatId]?.data?.animateIntervalId;
+      const userState = userStates[targetUserChatId]; // Get the current user state
+      const userMessageId = userState?.data?.messageId;
+      const userAnimateIntervalId = userState?.data?.animateIntervalId;
 
       if (userAnimateIntervalId) { // If there's an active animation for the user
           clearInterval(userAnimateIntervalId); // Stop the animation first
@@ -1478,20 +1479,33 @@ bot.on('callback_query', async q => {
               // Start a new animation on the same user message
               const newAnimateIntervalId = await animateMessage(targetUserChatId, userMessageId, 'Wait for your pairing code...');
               // Update user's state with the new animation ID for potential future cleanup
-              userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
+              userStates[targetUserChatId] = {
+                  step: 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN', // Keep the state, but update animation
+                  data: {
+                      messageId: userMessageId,
+                      animateIntervalId: newAnimateIntervalId
+                  }
+              };
+          } else {
+              // If userMessageId was not found (e.g., bot restarted or state cleared),
+              // send a new message to the user informing them to wait.
+              const waitingMsg = await bot.sendMessage(targetUserChatId, `⚙️ Please wait for your pairing code...`);
+              const animateIntervalId = await animateMessage(targetUserChatId, waitingMsg.message_id, 'Waiting for Pairing-code');
+              userStates[targetUserChatId] = {
+                  step: 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN',
+                  data: { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }
+              };
           }
 
+
           // Admin accepted, now instruct admin to use the /send command
-          // FIX: Corrected Markdown for copyable /send command and user ID
+          // Corrected to use triple backticks for copyable command with placeholder
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`\`\`/send ${targetUserChatId} YOUR_8_CHAR_CODE\`\`\``, // Corrected to use triple backticks for copyable command with placeholder
+              `\`\`\`/send ${targetUserChatId} YOUR_8_CHAR_CODE\`\`\``,
               { parse_mode: 'Markdown' }
           );
-
-          // Admin's state related to this is implicitly handled by them using the /send command.
-          // No need for a specific 'AWAITING_PAIRING_CODE_FROM_ADMIN' state now, as /send is stateless in this context.
 
           // Edit the original message to admin to show it's handled (remove buttons)
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
@@ -1500,7 +1514,7 @@ bot.on('callback_query', async q => {
           }).catch(() => {}); // Ignore if message already modified
           await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
               chat_id: cid,
-              message_id: adminMessageId, // Corrected variable name from adminMessage_id to adminMessageId
+              message_id: adminMessageId,
               parse_mode: 'Markdown'
           }).catch(() => {});
 
