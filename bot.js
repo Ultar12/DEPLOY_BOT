@@ -361,20 +361,50 @@ function generateKey() {
     .join('');
 }
 
-// utils.js
+/**
+ * Escapes special MarkdownV2 characters in a given string.
+ * Telegram's MarkdownV2 requires certain characters to be escaped
+ * with a preceding backslash if they are meant to be literal characters
+ * and not Markdown formatting.
+ *
+ * @param {string} text The string to escape.
+ * @returns {string} The escaped string, safe for MarkdownV2 parsing.
+ */
 function escapeMarkdownV2(text) {
     if (typeof text !== 'string') {
+        // Ensure the input is treated as a string, converting numbers, booleans, etc.
         text = String(text);
     }
-    const charsToEscape = [
-        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'
-    ];
-    let escapedText = text;
-    for (const char of charsToEscape) {
-        escapedText = escapedText.split(char).join('\\' + char);
-    }
-    return escapedText;
+
+    // Characters that need escaping in MarkdownV2, as per Telegram Bot API documentation:
+    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
+    // Note: Some characters require their own escape in the regex literal (e.g., \, [, ], (, ), ., +, *)
+    return text
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.') // Specifically for the period/dot character
+        .replace(/!/g, '\\!');
 }
+
+// Example of how to export it if using Node.js modules:
+// module.exports = {
+//     escapeMarkdownV2
+// };
+
 
 module.exports = {
     escapeMarkdownV2
