@@ -11,28 +11,33 @@
         <header>
             <h1>Bot Deployment Portal</h1>
             <p>Manage your Telegram bots quickly and efficiently.</p>
+        </header>
+
+        <div id="initial-setup-fields">
             <div id="backend-url-setting">
                 <label for="backendUrl">Backend URL:</label>
                 <input type="url" id="backendUrl" placeholder="e.g., https://your-heroku-app.herokuapp.com" required>
                 <button onclick="saveBackendUrl()">Save URL</button>
                 <p class="small-text">This is the URL where your bot.js backend (running via web.js) is deployed.</p>
             </div>
-        </header>
 
-        <section id="user-id-section">
-            <h2>Your Telegram User ID:</h2>
-            <input type="text" id="telegramUserId" placeholder="Enter your Telegram User ID" required>
-            <button onclick="saveUserId()">Save ID</button>
-            <p class="small-text">Find your User ID by sending `/id` to your Telegram bot.</p>
-        </section>
+            <section id="user-id-section">
+                <h2>Your Telegram User ID:</h2>
+                <input type="text" id="telegramUserId" placeholder="Enter your Telegram User ID" required>
+                <button onclick="saveUserId()">Save ID</button>
+                <p class="small-text">Find your User ID by sending `/id` to your Telegram bot.</p>
+            </section>
+        </div>
+
 
         <nav id="main-menu" style="display: none;">
             <h2>Main Menu</h2>
-            <button onclick="showSection('get-session-section')">Get Session</button>
-            <button onclick="showSection('deploy-section')">Deploy</button>
-            <button onclick="showSection('free-trial-section')">Free Trial</button>
-            <button onclick="showSection('my-bots-section')">My Bots</button>
-            <button onclick="showSection('support-section')">Support</button>
+            <div class="menu-buttons"> <button onclick="showSection('get-session-section')">Get Session</button>
+                <button onclick="showSection('deploy-section')">Deploy</button>
+                <button onclick="showSection('free-trial-section')">Free Trial</button>
+                <button onclick="showSection('my-bots-section')">My Bots</button>
+                <button onclick="showSection('support-section')">Support</button>
+            </div>
         </nav>
 
         <div id="content-sections">
