@@ -445,12 +445,44 @@ function escapeMarkdown(text) {
 //     escapeMarkdown
 // };
 
+// NEW: Maintenance mode status global variable and file path
+const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
+let isMaintenanceMode = false; // Default to off
+
+// Load maintenance status from file on startup
+async function loadMaintenanceStatus() {
+    try {
+        if (fs.existsSync(MAINTENANCE_FILE)) {
+            const data = await fs.promises.readFile(MAINTENANCE_FILE, 'utf8');
+            isMaintenanceMode = JSON.parse(data).isMaintenanceMode || false;
+            console.log(`[Maintenance] Loaded status: ${isMaintenanceMode ? 'ON' : 'OFF'}`);
+        } else {
+            // If file doesn't exist, create it with default off status
+            await saveMaintenanceStatus(false);
+            console.log('[Maintenance] Status file not found. Created with default OFF.');
+        }
+    } catch (error) {
+        console.error('[Maintenance] Error loading status:', error.message);
+        isMaintenanceMode = false; // Default to off on error
+    }
+}
+
+// Save maintenance status to file
+async function saveMaintenanceStatus(status) {
+    try {
+        await fs.promises.writeFile(MAINTENANCE_FILE, JSON.stringify({ isMaintenanceMode: status }), 'utf8');
+        console.log(`[Maintenance] Saved status: ${status ? 'ON' : 'OFF'}`);
+    } catch (error) {
+        console.error('[Maintenance] Error saving status:', error.message);
+    }
+}
+
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'], // "Free Trial" button
-      ['Support']
+      ['Support', '⭐ Rate Bot'] // Added new button
   ];
   if (isAdmin) {
       return [
@@ -856,6 +888,27 @@ bot.onText(/^\/apps$/i, msg => {
   }
 });
 
+// NEW ADMIN COMMAND: /maintenance
+bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    const status = match[1].toLowerCase();
+
+    if (chatId !== ADMIN_ID) {
+        return bot.sendMessage(chatId, "❌ You are not authorized to use this command.");
+    }
+
+    if (status === 'on') {
+        isMaintenanceMode = true;
+        await saveMaintenanceStatus(true);
+        await bot.sendMessage(chatId, "✅ Maintenance mode is now *ON*.", { parse_mode: 'Markdown' });
+    } else if (status === 'off') {
+        isMaintenanceMode = false;
+        await saveMaintenanceStatus(false);
+        await bot.sendMessage(chatId, "✅ Maintenance mode is now *OFF*.", { parse_mode: 'Markdown' });
+    }
+});
+
+
 // New /id command
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
@@ -1222,6 +1275,12 @@ bot.on('message', async msg => {
 
   // NEW: Notify admin about user online status
   await notifyAdminUserOnline(msg); // Call this at the start of any message processing
+
+  // Check for maintenance mode for non-admin users
+  if (isMaintenanceMode && cid !== ADMIN_ID) {
+      await bot.sendMessage(cid, "Bot On Maintenance, Come Back Later.");
+      return; // Stop processing further commands for non-admin users
+  }
 
   // FIX: Define st at the very beginning to ensure it's always available
   const st = userStates[cid];
@@ -1661,7 +1720,7 @@ bot.on('message', async msg => {
       delete userStates[cid];
 
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.response?.data?.message || e.message;
+      const errorMsg = e.response?.data?.message || e.message;
       console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
@@ -1805,6 +1864,50 @@ bot.on('callback_query', async q => {
       return;
   }
 
+  // NEW: Handle "Rate Bot" button click to show star rating options
+  if (action === 'rate_bot_menu') {
+      const keyboard = {
+          inline_keyboard: [
+              [{ text: '⭐', callback_data: 'rate_bot:1' }, { text: '⭐⭐', callback_data: 'rate_bot:2' }],
+              [{ text: '⭐⭐⭐', callback_data: 'rate_bot:3' }, { text: '⭐⭐⭐⭐', callback_data: 'rate_bot:4' }],
+              [{ text: '⭐⭐⭐⭐⭐', callback_data: 'rate_bot:5' }]
+          ]
+      };
+      await bot.editMessageText('Please rate your experience:', {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          reply_markup: keyboard
+      });
+      return;
+  }
+
+  // NEW: Handle actual star rating submission
+  if (action === 'rate_bot') {
+      const rating = payload;
+      try {
+          const { first_name, last_name, username } = q.from;
+          const userIdEscaped = escapeMarkdown(cid);
+          const ratingMessage = `
+🌟 *New Bot Rating:*
+*User ID:* \`${userIdEscaped}\`
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
+*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
+*Rating:* ${'⭐'.repeat(parseInt(rating, 10))} (${rating} out of 5)
+          `;
+          await bot.sendMessage(ADMIN_ID, ratingMessage, { parse_mode: 'Markdown' });
+          await bot.editMessageText(`✅ Thank you for your ${'⭐'.repeat(parseInt(rating, 10))} rating! Your feedback is valuable.`, {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      } catch (error) {
+          console.error(`Error processing rating from user ${cid}:`, error.message);
+          await bot.editMessageText(`❌ An error occurred while submitting your rating. Please try again later.`, {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      }
+      return;
+  }
 
   // INTERACTIVE WIZARD HANDLER (No changes here)
   if (action === 'setup') {
