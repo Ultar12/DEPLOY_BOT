@@ -362,53 +362,36 @@ function generateKey() {
 }
 
 /**
- * Escapes special MarkdownV2 characters in a given string.
- * Telegram's MarkdownV2 requires certain characters to be escaped
- * with a preceding backslash if they are meant to be literal characters
- * and not Markdown formatting.
+ * Escapes special Markdown (V1) characters in a given string.
+ * This is for `parse_mode: 'Markdown'`.
  *
  * @param {string} text The string to escape.
- * @returns {string} The escaped string, safe for MarkdownV2 parsing.
+ * @returns {string} The escaped string, safe for Markdown (V1) parsing.
  */
-function escapeMarkdownV2(text) {
+function escapeMarkdown(text) {
     if (typeof text !== 'string') {
-        // Ensure the input is treated as a string, converting numbers, booleans, etc.
+        // Ensure the input is treated as a string
         text = String(text);
     }
 
-    // Characters that need escaping in MarkdownV2, as per Telegram Bot API documentation:
-    // _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
-    // Note: Some characters require their own escape in the regex literal (e.g., \, [, ], (, ), ., +, *)
+    // Characters that need escaping in Markdown (V1):
+    // _, *, `, [
+    // Note: The period '.' is NOT a special character in Markdown (V1)
     return text
-        .replace(/_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/~/g, '\\~')
-        .replace(/`/g, '\\`')
-        .replace(/>/g, '\\>')
-        .replace(/#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/-/g, '\\-')
-        .replace(/=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.') // Specifically for the period/dot character
-        .replace(/!/g, '\\!');
+        .replace(/_/g, '\\_')   // Underscore
+        .replace(/\*/g, '\\*')  // Asterisk
+        .replace(/`/g, '\\`')   // Backtick
+        .replace(/\[/g, '\\[')  // Open square bracket (for links, but good practice to escape if literal)
+        .replace(/\]/g, '\\]')  // Close square bracket
+        .replace(/\(/g, '\\(')  // Open parenthesis (for links, good practice to escape if literal)
+        .replace(/\)/g, '\\)'); // Close parenthesis
 }
 
 // Example of how to export it if using Node.js modules:
 // module.exports = {
-//     escapeMarkdownV2
+//     escapeMarkdown
 // };
 
-
-module.exports = {
-    escapeMarkdownV2
-};
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
@@ -863,9 +846,9 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 
 // bot.js (Add this new handler within your existing Command Handlers section)
 
-
-
-// --- Now, update your /info command handler ---
+// --- Make sure to import or define the escapeMarkdown function here ---
+// e.g., const { escapeMarkdown } = require('./utils');
+// OR copy the function code from above directly into this file.
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
@@ -878,26 +861,28 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     try {
         const targetChat = await bot.getChat(targetUserId);
 
-        // Escape all potentially problematic fields
-        const firstName = targetChat.first_name ? escapeMarkdownV2(targetChat.first_name) : 'N/A';
-        const lastName = targetChat.last_name ? escapeMarkdownV2(targetChat.last_name) : 'N/A';
-        const username = targetChat.username ? escapeMarkdownV2(targetChat.username) : 'N/A';
-        const userIdEscaped = escapeMarkdownV2(targetUserId); // Also escape the ID itself for safety
+        // Use the new escapeMarkdown function
+        const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
+        const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
+        const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
+        const userIdEscaped = escapeMarkdown(targetUserId); // Also escape the ID itself for safety
 
 
-        let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`; // Use escaped ID
+        let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`;
         userDetails += `*First Name:* ${firstName}\n`;
         userDetails += `*Last Name:* ${lastName}\n`;
-        userDetails += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`; // Display with @, but use escaped for string
-        userDetails += `*Type:* ${escapeMarkdownV2(targetChat.type)}\n`; // Escape chat type too
+        userDetails += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`;
+        userDetails += `*Type:* ${escapeMarkdown(targetChat.type)}\n`; // Escape chat type too
 
         // Add a link to the user's profile if username is available (Telegram deep link)
         // Note: The URL part of a Markdown link doesn't need escaping.
         if (targetChat.username) {
+            // The displayed text of the link needs to be escaped with escapeMarkdown
             userDetails += `*Profile Link:* [t.me/${username}](https://t.me/${targetChat.username})\n`;
         }
 
-        await bot.sendMessage(callerId, userDetails, { parse_mode: 'MarkdownV2' }); // IMPORTANT: Use MarkdownV2
+        // IMPORTANT: Change parse_mode to 'Markdown'
+        await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
@@ -912,14 +897,11 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
                 await bot.sendMessage(callerId, `❌ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
-    // Log the entire error object for detailed debugging
-    console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
-    await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
-}
-
+            console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
+            await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
+        }
     }
 });
-
 
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
