@@ -345,18 +345,38 @@ async function notifyAdminUserOnline(msg) {
     const userId = msg.chat.id.toString();
     const now = Date.now();
 
-    // Inside your notifyAdminUserOnline function
+    // Don't notify for admin's own activity
+    if (userId === ADMIN_ID) {
+        return;
+    }
 
-  const { first_name, last_name, username } = msg.from; // Correctly destructures 'last_name'
+    const lastNotified = userLastSeenNotification.get(userId) || 0;
 
-   const userDetails = `
+    if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
+        try {
+            // Ensure all properties (first_name, last_name, username) are destructured correctly
+            const { first_name, last_name, username } = msg.from; 
+
+            // Build userDetails, carefully escaping for Markdown
+            // FIXED: Changed `lastName` to `last_name` here.
+            const userDetails = `
 *User Online:*
 *ID:* \`${userId}\`
 *Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
 *Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-            `;
-            // The change is from ${lastName ...} to ${last_name ...}
+            `; 
+            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+            userLastSeenNotification.set(userId, now); // Update last notification time
+            console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
+        } catch (error) {
+            console.error(`Error notifying admin about user ${userId} online:`, error.message);
+            // Optionally send a simpler message to admin if the detailed one fails
+            // bot.sendMessage(ADMIN_ID, `⚠️ Error getting full info for user ${userId} online.`);
+        }
+    }
+}
+
 
 // 7) Utilities
 
@@ -1329,7 +1349,7 @@ bot.on('message', async msg => {
     };
 
     try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/syx8uk.jpeg', {
         caption: guideCaption,
         parse_mode: 'Markdown',
         reply_markup: keyboard
@@ -1440,7 +1460,7 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
+        timeout_id_for_pairing_request: timeoutIdForpairing // Store timeout ID to clear it if accepted/decline
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
