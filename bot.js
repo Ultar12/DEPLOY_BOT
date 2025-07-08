@@ -812,6 +812,59 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     }
 });
 
+// bot.js (Add this new handler within your existing Command Handlers section)
+
+// New /info <user_id> command for admin to get user's Telegram details
+bot.onText(/^\/info (\d+)$/, async (msg, match) => {
+    const callerId = msg.chat.id.toString();
+    const targetUserId = match[1]; // The user ID provided in the command
+
+    // 1. Authorization: Only ADMIN_ID can use this command
+    if (callerId !== ADMIN_ID) {
+        return bot.sendMessage(callerId, "❌ You are not authorized to use this command.");
+    }
+
+    // 2. Fetch User Details from Telegram API
+    try {
+        const targetChat = await bot.getChat(targetUserId); // Get chat object for the target user
+
+        let userDetails = `*Telegram User Info for ID:* \`${targetUserId}\`\n\n`;
+        userDetails += `*First Name:* ${targetChat.first_name || 'N/A'}\n`;
+        userDetails += `*Last Name:* ${targetChat.last_name || 'N/A'}\n`;
+        userDetails += `*Username:* ${targetChat.username ? `@${targetChat.username}` : 'N/A'}\n`;
+        userDetails += `*Type:* ${targetChat.type}\n`; // 'private', 'group', 'supergroup', 'channel'
+
+        // Add a link to the user's profile if username is available (Telegram deep link)
+        if (targetChat.username) {
+            userDetails += `*Profile Link:* [t.me/${targetChat.username}](https://t.me/${targetChat.username})\n`;
+        }
+
+        // Additional fields if applicable (e.g., if it's a private chat, last activity etc. might be inferred)
+        // Note: Full activity info is not directly exposed via getChat for privacy reasons.
+
+        // 3. Send the detailed information back to the admin
+        await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
+
+        // Handle specific Telegram API errors
+        if (error.response && error.response.body && error.response.body.description) {
+            const apiError = error.response.body.description;
+            if (apiError.includes("chat not found") || apiError.includes("user not found")) {
+                await bot.sendMessage(callerId, `❌ User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
+            } else if (apiError.includes("bot was blocked by the user")) {
+                await bot.sendMessage(callerId, `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
+            } else {
+                await bot.sendMessage(callerId, `❌ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
+            }
+        } else {
+            await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`.`);
+        }
+    }
+});
+
+
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
