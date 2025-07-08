@@ -235,6 +235,18 @@ async function useDeployKey(key) {
   return left;
 }
 
+// NEW: Function to get all deploy keys
+async function getAllDeployKeys() {
+    try {
+        const res = await pool.query('SELECT key, uses_left, created_by, created_at FROM deploy_keys ORDER BY created_at DESC');
+        return res.rows;
+    } catch (error) {
+        console.error('[DB] getAllDeployKeys: Failed to get all deploy keys:', error.message);
+        return [];
+    }
+}
+
+
 async function canDeployFreeTrial(userId) {
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
     const res = await pool.query(
@@ -324,6 +336,47 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 // Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id, timeout_id_for_pairing_request }
 const forwardingContext = {};
 
+// NEW: Map to track user online status for admin notification cooldown
+const userLastSeenNotification = new Map(); // chatId -> timestamp of last notification
+const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- Admin Notification for User Online Status ---
+async function notifyAdminUserOnline(msg) {
+    const userId = msg.chat.id.toString();
+    const now = Date.now();
+
+    // Don't notify for admin's own activity
+    if (userId === ADMIN_ID) {
+        return;
+    }
+
+    const lastNotified = userLastSeenNotification.get(userId) || 0;
+
+    if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
+        try {
+            // Ensure all properties (first_name, last_name, username) are destructured correctly
+            const { first_name, last_name, username } = msg.from; 
+
+            // Build userDetails, carefully escaping for Markdown
+            // FIXED: Changed `lastName` to `last_name` here.
+            const userDetails = `
+*User Online:*
+*ID:* \`${userId}\`
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
+*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
+*Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+            `; 
+            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+            userLastSeenNotification.set(userId, now); // Update last notification time
+            console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
+        } catch (error) {
+            console.error(`Error notifying admin about user ${userId} online:`, error.message);
+            // Optionally send a simpler message to admin if the detailed one fails
+            // bot.sendMessage(ADMIN_ID, `⚠️ Error getting full info for user ${userId} online.`);
+        }
+    }
+}
+
 
 // 7) Utilities
 
@@ -392,12 +445,44 @@ function escapeMarkdown(text) {
 //     escapeMarkdown
 // };
 
+// NEW: Maintenance mode status global variable and file path
+const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
+let isMaintenanceMode = false; // Default to off
+
+// Load maintenance status from file on startup
+async function loadMaintenanceStatus() {
+    try {
+        if (fs.existsSync(MAINTENANCE_FILE)) {
+            const data = await fs.promises.readFile(MAINTENANCE_FILE, 'utf8');
+            isMaintenanceMode = JSON.parse(data).isMaintenanceMode || false;
+            console.log(`[Maintenance] Loaded status: ${isMaintenanceMode ? 'ON' : 'OFF'}`);
+        } else {
+            // If file doesn't exist, create it with default off status
+            await saveMaintenanceStatus(false);
+            console.log('[Maintenance] Status file not found. Created with default OFF.');
+        }
+    } catch (error) {
+        console.error('[Maintenance] Error loading status:', error.message);
+        isMaintenanceMode = false; // Default to off on error
+    }
+}
+
+// Save maintenance status to file
+async function saveMaintenanceStatus(status) {
+    try {
+        await fs.promises.writeFile(MAINTENANCE_FILE, JSON.stringify({ isMaintenanceMode: status }), 'utf8');
+        console.log(`[Maintenance] Saved status: ${status ? 'ON' : 'OFF'}`);
+    } catch (error) {
+        console.error('[Maintenance] Error saving status:', error.message);
+    }
+}
+
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'], // "Free Trial" button
-      ['Support']
+      ['Support', '⭐ Rate Bot'] // Added new button
   ];
   if (isAdmin) {
       return [
@@ -803,6 +888,27 @@ bot.onText(/^\/apps$/i, msg => {
   }
 });
 
+// NEW ADMIN COMMAND: /maintenance
+bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    const status = match[1].toLowerCase();
+
+    if (chatId !== ADMIN_ID) {
+        return bot.sendMessage(chatId, "❌ You are not authorized to use this command.");
+    }
+
+    if (status === 'on') {
+        isMaintenanceMode = true;
+        await saveMaintenanceStatus(true);
+        await bot.sendMessage(chatId, "✅ Maintenance mode is now *ON*.", { parse_mode: 'Markdown' });
+    } else if (status === 'off') {
+        isMaintenanceMode = false;
+        await saveMaintenanceStatus(false);
+        await bot.sendMessage(chatId, "✅ Maintenance mode is now *OFF*.", { parse_mode: 'Markdown' });
+    }
+});
+
+
 // New /id command
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
@@ -986,11 +1092,11 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
-// NEW: /send <user_id> <8-character alphanumeric code> command handler (Admin only)
-bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated regex for 8 alphanumeric characters
+// NEW: /send <user_id> <9-character alphanumeric code with hyphen> command handler (Admin only)
+bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) => { // Updated regex for AJWI-2ISN format
     const cid = msg.chat.id.toString();
     const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars)
+    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars with hyphen)
 
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
@@ -1014,8 +1120,8 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     try {
     // Send the pairing code to the original user
     await bot.sendMessage(targetUserId,
-        `Your Pairing-code is:\n` +
-        '`\n' + pairingCode + '\n`\n' + // Corrected line
+        `Your Pairing-code is:\n\n` +
+        `\`${pairingCode}\`\n\n` + // Use escaped code directly for Markdown
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
@@ -1036,6 +1142,128 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     }
 });
 
+// NEW ADMIN COMMAND: /stats
+bot.onText(/^\/stats$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+    }
+
+    try {
+        // Total Users
+        const totalUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_users FROM user_bots');
+        const totalUsers = totalUsersResult.rows[0].total_users;
+
+        // Total Deployed Bots
+        const totalBotsResult = await pool.query('SELECT COUNT(bot_name) AS total_bots FROM user_bots');
+        const totalBots = totalBotsResult.rows[0].total_bots;
+
+        // Active Deploy Keys
+        const activeKeys = await getAllDeployKeys();
+        let keyDetails = '';
+        if (activeKeys.length > 0) {
+            keyDetails = activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n');
+        } else {
+            keyDetails = 'No active deploy keys.';
+        }
+
+        // Free Trial Users
+        const totalFreeTrialUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_trial_users FROM temp_deploys');
+        const totalFreeTrialUsers = totalFreeTrialUsersResult.rows[0].total_trial_users;
+
+        const statsMessage = `
+📊 *Bot Statistics:*
+
+*Total Unique Users:* ${totalUsers}
+*Total Deployed Bots:* ${totalBots}
+*Users Who Used Free Trial:* ${totalFreeTrialUsers}
+
+*Active Deploy Keys:*
+${keyDetails}
+        `;
+
+        await bot.sendMessage(cid, statsMessage, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error fetching stats:`, error.message);
+        await bot.sendMessage(cid, `❌ An error occurred while fetching stats: ${error.message}`);
+    }
+});
+
+// NEW ADMIN COMMAND: /users
+bot.onText(/^\/users$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+    }
+
+    try {
+        const userEntries = await pool.query('SELECT DISTINCT user_id FROM user_bots ORDER BY user_id');
+        const userIds = userEntries.rows.map(row => row.user_id);
+
+        if (userIds.length === 0) {
+            return bot.sendMessage(cid, "No users have deployed bots yet.");
+        }
+
+        let responseMessage = '*Registered Users:*\n\n';
+        let currentUserCount = 0;
+        const maxUsersPerMessage = 10; // To prevent messages from becoming too long
+
+        for (const userId of userIds) {
+            try {
+                // Fetch Telegram chat info for the user
+                const targetChat = await bot.getChat(userId);
+                const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
+                const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
+                const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A'; // Escape username for Markdown
+                const userIdEscaped = escapeMarkdown(userId); // Also escape the ID itself for safety
+
+
+                // Fetch bots deployed by this specific user
+                const userBots = await getUserBots(userId);
+                const botsList = userBots.length > 0 ? userBots.map(b => `\`${escapeMarkdown(b)}\``).join(', ') : 'No bots deployed';
+
+                responseMessage += `*ID:* \`${userIdEscaped}\`\n`;
+                responseMessage += `*Name:* ${firstName} ${lastName}\n`;
+                responseMessage += `*Username:* ${username}\n`;
+                responseMessage += `*Bots:* ${botsList}\n\n`;
+
+                currentUserCount++;
+
+                // Send message in chunks if it gets too long
+                if (currentUserCount % maxUsersPerMessage === 0 && userIds.indexOf(userId) < userIds.length - 1) {
+                    await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+                    responseMessage = '*Registered Users (continued):*\n\n';
+                    // Small delay to prevent hitting Telegram API limits when sending multiple messages
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+
+                // Add a small delay between fetching each user's Telegram info to avoid API limits
+                await new Promise(resolve => setTimeout(resolve, 300)); // Delay between bot.getChat calls
+
+            } catch (error) {
+                console.error(`Error fetching Telegram info or bots for user ${userId}:`, error.message);
+                if (error.response && error.response.body && error.response.body.description && (error.response.body.description.includes("chat not found") || error.response.body.description.includes("user not found"))) {
+                     responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* ❌ User chat not found or bot blocked.\n\n`;
+                } else {
+                     responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* ❌ Error fetching info: ${escapeMarkdown(error.message)}\n\n`;
+                }
+                 // Even on error, add a delay
+                 await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        }
+
+        // Send any remaining message content
+        if (responseMessage.trim() !== '*Registered Users (continued):*' && responseMessage.trim() !== '*Registered Users:*') {
+            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+        }
+
+    } catch (error) {
+        console.error(`Error fetching user list:`, error.message);
+        await bot.sendMessage(cid, `❌ An error occurred while fetching the user list: ${error.message}`);
+    }
+});
+
 
 // 12) Message handler for buttons & state machine
 // This handler is for plain text messages, not callback queries (button clicks).
@@ -1044,6 +1272,15 @@ bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
   if (!text) return;
+
+  // NEW: Notify admin about user online status
+  await notifyAdminUserOnline(msg); // Call this at the start of any message processing
+
+  // Check for maintenance mode for non-admin users
+  if (isMaintenanceMode && cid !== ADMIN_ID) {
+      await bot.sendMessage(cid, "Bot On Maintenance, Come Back Later.");
+      return; // Stop processing further commands for non-admin users
+  }
 
   // FIX: Define st at the very beginning to ensure it's always available
   const st = userStates[cid];
@@ -1171,7 +1408,7 @@ bot.on('message', async msg => {
     };
 
     try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/an2cc1.jpeg', {
+      await bot.sendPhoto(cid, 'https://files.catbox.moe/syx8uk.jpeg', {
         caption: guideCaption,
         parse_mode: 'Markdown',
         reply_markup: keyboard
@@ -1282,7 +1519,7 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/declined
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -1483,7 +1720,7 @@ bot.on('message', async msg => {
       delete userStates[cid];
 
     } catch (e) {
-      const errorMsg = e.response?.data?.message || e.response?.data?.message || e.message;
+      const errorMsg = e.response?.data?.message || e.message;
       console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
@@ -1584,8 +1821,9 @@ bot.on('callback_query', async q => {
           // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`/send ${targetUserChatId}\``, // Use single backticks for the inline command
+              `*Now, please use the command below to send the Code:*\n` +
+              `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
+              `[Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
               { parse_mode: 'Markdown' }
           );
 
@@ -1626,6 +1864,50 @@ bot.on('callback_query', async q => {
       return;
   }
 
+  // NEW: Handle "Rate Bot" button click to show star rating options
+  if (action === 'rate_bot_menu') {
+      const keyboard = {
+          inline_keyboard: [
+              [{ text: '⭐', callback_data: 'rate_bot:1' }, { text: '⭐⭐', callback_data: 'rate_bot:2' }],
+              [{ text: '⭐⭐⭐', callback_data: 'rate_bot:3' }, { text: '⭐⭐⭐⭐', callback_data: 'rate_bot:4' }],
+              [{ text: '⭐⭐⭐⭐⭐', callback_data: 'rate_bot:5' }]
+          ]
+      };
+      await bot.editMessageText('Please rate your experience:', {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          reply_markup: keyboard
+      });
+      return;
+  }
+
+  // NEW: Handle actual star rating submission
+  if (action === 'rate_bot') {
+      const rating = payload;
+      try {
+          const { first_name, last_name, username } = q.from;
+          const userIdEscaped = escapeMarkdown(cid);
+          const ratingMessage = `
+🌟 *New Bot Rating:*
+*User ID:* \`${userIdEscaped}\`
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
+*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
+*Rating:* ${'⭐'.repeat(parseInt(rating, 10))} (${rating} out of 5)
+          `;
+          await bot.sendMessage(ADMIN_ID, ratingMessage, { parse_mode: 'Markdown' });
+          await bot.editMessageText(`✅ Thank you for your ${'⭐'.repeat(parseInt(rating, 10))} rating! Your feedback is valuable.`, {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      } catch (error) {
+          console.error(`Error processing rating from user ${cid}:`, error.message);
+          await bot.editMessageText(`❌ An error occurred while submitting your rating. Please try again later.`, {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+      }
+      return;
+  }
 
   // INTERACTIVE WIZARD HANDLER (No changes here)
   if (action === 'setup') {
@@ -2137,7 +2419,7 @@ bot.on('callback_query', async q => {
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
           [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]
+          [{ text: '◀️️ Back', callback_data: `setvar:${payload}` }]
         ]
       }
     });
@@ -2321,7 +2603,8 @@ bot.on('callback_query', async q => {
   // Redeploy_app callback action
   if (action === 'redeploy_app') {
     const appName = payload;
-    const messageId = q.message.message_id;
+    // FIX: Corrected how messageId is accessed from q.message
+    const messageId = q.message.message_id; 
 
     const isOwner = (await getUserIdByBotName(appName)) === cid;
     if (cid !== ADMIN_ID && !isOwner) {
@@ -2490,7 +2773,7 @@ bot.on('channel_post', async msg => {
         const userId = await getUserIdByBotName(botName);
         if (userId) {
             const warningMessage =
-                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
+                `⚠️ Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
                 `Please update your session ID to get it back online.`;
 
             await bot.sendMessage(userId, warningMessage, {
