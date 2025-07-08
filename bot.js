@@ -336,6 +336,41 @@ const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animat
 // Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any, user_waiting_message_id, user_animate_interval_id, timeout_id_for_pairing_request }
 const forwardingContext = {};
 
+// NEW: Map to track user online status for admin notification cooldown
+const userLastSeenNotification = new Map(); // chatId -> timestamp of last notification
+const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- Admin Notification for User Online Status ---
+async function notifyAdminUserOnline(msg) {
+    const userId = msg.chat.id.toString();
+    const now = Date.now();
+
+    // Don't notify for admin's own activity
+    if (userId === ADMIN_ID) {
+        return;
+    }
+
+    const lastNotified = userLastSeenNotification.get(userId) || 0;
+
+    if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
+        try {
+            const { first_name, last_name, username } = msg.from;
+            const userDetails = `
+*User Online:*
+*ID:* \`${userId}\`
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${lastName ? escapeMarkdown(lastName) : ''}
+*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
+*Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+            `;
+            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+            userLastSeenNotification.set(userId, now); // Update last notification time
+            console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
+        } catch (error) {
+            console.error(`Error notifying admin about user ${userId} online:`, error.message);
+        }
+    }
+}
+
 
 // 7) Utilities
 
@@ -1121,15 +1156,17 @@ bot.onText(/^\/users$/, async (msg) => {
                 const targetChat = await bot.getChat(userId);
                 const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
                 const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
-                const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
+                const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A'; // Escape username for Markdown
+                const userIdEscaped = escapeMarkdown(userId); // Also escape the ID itself for safety
+
 
                 // Fetch bots deployed by this specific user
                 const userBots = await getUserBots(userId);
                 const botsList = userBots.length > 0 ? userBots.map(b => `\`${escapeMarkdown(b)}\``).join(', ') : 'No bots deployed';
 
-                responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n`;
+                responseMessage += `*ID:* \`${userIdEscaped}\`\n`;
                 responseMessage += `*Name:* ${firstName} ${lastName}\n`;
-                responseMessage += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`;
+                responseMessage += `*Username:* ${username}\n`;
                 responseMessage += `*Bots:* ${botsList}\n\n`;
 
                 currentUserCount++;
@@ -1176,6 +1213,9 @@ bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
   if (!text) return;
+
+  // NEW: Notify admin about user online status
+  await notifyAdminUserOnline(msg); // Call this at the start of any message processing
 
   // FIX: Define st at the very beginning to ensure it's always available
   const st = userStates[cid];
@@ -1718,7 +1758,7 @@ bot.on('callback_query', async q => {
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the Code:*\n` +
               `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
-              ` [Link](https://levanter-delta.vercel.app/)`, // Added the link here
+              `[Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
               { parse_mode: 'Markdown' }
           );
 
