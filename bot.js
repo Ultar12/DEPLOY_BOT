@@ -1419,7 +1419,7 @@ bot.on('callback_query', async q => {
 
       // Send a NEW message to ask for the WhatsApp number
       await bot.sendMessage(cid,
-          'Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.',
+          'Please send your WhatsApp number in the full international format including the `+` e.g., `+2349163000000`.',
           {
               parse_mode: 'Markdown'
           }
@@ -1485,7 +1485,7 @@ bot.on('callback_query', async q => {
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`/send ${targetUserChatId} [8-character code]\``, // Use single backticks for the inline command
+              `\`/send ${targetUserChatId}\``, // Use single backticks for the inline command
               { parse_mode: 'Markdown' }
           );
 
