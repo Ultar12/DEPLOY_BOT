@@ -926,21 +926,24 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
-} 
-        await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
-        // Clean up user's state
-        delete userStates[targetUserId];
-        console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state cleared.`);
+    // If the above messages are sent successfully, inform the admin
+    await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
-        // Clean up admin's state if any related to this specific request (though /send makes it less necessary)
-        delete userStates[cid]; // Clears admin's state after successful sending
+    // Clean up user's state
+    delete userStates[targetUserId];
+    console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state cleared.`);
 
-    } catch (e) {
-        console.error(`Error sending pairing code to user ${targetUserId}:`, e);
-        await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
-    }
-});
+    // Clean up admin's state if any related to this specific request
+    delete userStates[cid]; // Clears admin's state after successful sending
+
+} catch (e) {
+    console.error(`Error sending pairing code to user ${targetUserId}:`, e);
+    await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
+}
+// The closing `});` suggests this is part of an event listener or a function call.
+// Ensure it properly closes the preceding scope.
+
 
 
 // 12) Message handler for buttons & state machine
