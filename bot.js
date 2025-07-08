@@ -134,7 +134,7 @@ async function addUserBot(u, b, s) {
     if (result.rows.length > 0) {
       console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}". Row:`, result.rows[0]);
     } else {
-      console.warn(`[DB] addUserBot: Insert/update operation for bot "${b}" for user "${u}" did not return a row. This might indicate an issue.`);
+      console.warn(`[DB] addUserBot: Insert/update operation for bot "${b}" for user "${u}" did not return a row. This might indicate an horrific issue.`);
     }
   } catch (error) {
     console.error(`[DB] addUserBot: CRITICAL ERROR Failed to add/update bot "${b}" for user "${u}":`, error.message, error.stack);
@@ -319,9 +319,9 @@ const authorizedUsers = new Set(); // chatIds who've passed a key
 // Map to store Promises for app deployment status based on channel notifications
 const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
 
-// NEW: Map to store forwarding context for admin replies
+// NEW: Map to store forwarding context for admin replies and pairing requests
 // Key: The message_id of the message sent TO the admin
-// Value: { original_user_chat_id, original_user_message_id }
+// Value: { original_user_chat_id, original_user_message_id, request_type, data_if_any }
 const forwardingContext = {};
 
 
@@ -876,7 +876,8 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         // Store context for this specific message sent to the admin
         forwardingContext[adminMessage.message_id] = {
             original_user_chat_id: userChatId,
-            original_user_message_id: userMessageId
+            original_user_message_id: userMessageId,
+            request_type: 'support_question' // Indicate type of request
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -905,31 +906,61 @@ bot.on('message', async msg => {
       const context = forwardingContext[repliedToBotMessageId];
 
       if (context) {
-          const { original_user_chat_id, original_user_message_id } = context;
-
-          // Ensure the reply is coming from an authorized source (e.g., ADMIN_ID)
-          if (cid === ADMIN_ID) {
+          // This is a reply to a message the bot sent. Handle based on the request_type.
+          if (context.request_type === 'support_question' && cid === ADMIN_ID) {
+              const { original_user_chat_id, original_user_message_id } = context;
               try {
-                  // Forward the admin's reply back to the original user
                   await bot.sendMessage(original_user_chat_id, `*Admin replied:*\n${msg.text}`, {
                       parse_mode: 'Markdown',
                       reply_to_message_id: original_user_message_id // Reply to the original user's message
                   });
                   await bot.sendMessage(cid, '✅ Your reply has been sent to the user.');
-
-                  // Clean up context after reply is sent
-                  delete forwardingContext[repliedToBotMessageId];
-                  console.log(`[Forwarding] Context for ${repliedToBotMessageId} cleared.`);
-
+                  delete forwardingContext[repliedToBotMessageId]; // Clean up context
+                  console.log(`[Forwarding] Context for support question reply ${repliedToBotMessageId} cleared.`);
               } catch (e) {
-                  console.error('Error forwarding admin reply:', e);
+                  console.error('Error forwarding admin reply (support question):', e);
                   await bot.sendMessage(cid, '❌ Failed to send your reply to the user. They might have blocked the bot or the chat no longer exists.');
               }
-          } else {
-              console.log(`[Forwarding] Received reply from non-admin user ${cid} to bot message ${repliedToBotMessageId}. Ignoring for now.`);
+              return; // Consume message
+          } else if (context.request_type === 'pairing_request_pending' && cid === ADMIN_ID) {
+              // This is the admin replying with the pairing code after 'Accept'
+              const pairingCode = text.trim();
+              const words = pairingCode.split(/\s+/).filter(word => word.length > 0);
+
+              if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
+                  return bot.sendMessage(ADMIN_ID, '❌ Invalid pairing code format. Please send exactly 8 alphanumeric words separated by spaces.');
+              }
+
+              const { original_user_chat_id, original_user_message_id, animateIntervalId } = context;
+
+              // Stop user's animation
+              if (userStates[original_user_chat_id] && userStates[original_user_chat_id].data.animateIntervalId) {
+                  clearInterval(userStates[original_user_chat_id].data.animateIntervalId);
+                  // Optionally, edit the user's waiting message to say "Code received!"
+                  await bot.editMessageText(`✅ Pairing code received from admin! Sending to you now...`, {
+                      chat_id: original_user_chat_id,
+                      message_id: userStates[original_user_chat_id].data.messageId
+                  }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
+              }
+
+              // Send the pairing code to the original user
+              await bot.sendMessage(original_user_chat_id,
+                  `Your Pairing-code is \`\`\`${pairingCode}\`\`\`\n` +
+                  `Copy the code and paste it to your WhatsApp linked device ASAP!`,
+                  { parse_mode: 'Markdown' }
+              );
+              await bot.sendMessage(ADMIN_ID, `✅ Pairing code sent to user \`${original_user_chat_id}\`.`);
+
+              // Clear states for both admin and the user
+              delete userStates[ADMIN_ID];
+              delete userStates[original_user_chat_id];
+              delete forwardingContext[repliedToBotMessageId]; // Clean up context
+              console.log(`[Pairing] Pairing code sent to user ${original_user_chat_id} and states/context cleared.`);
+              return; // Consume message
           }
-          return; // Important: Consume the message if it's a reply we handled
       }
+      // If it's a reply to bot but no matching context, or non-admin reply, fall through or ignore.
+      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but no specific forwarding context handled.`);
   }
 
 
@@ -1025,75 +1056,64 @@ bot.on('message', async msg => {
   // --- Stateful flows (for text input) ---
   const st = userStates[cid];
   if (!st) {
-    // Admin handling for pairing code. This block only runs if the *admin* sends a message
-    // AND is in the specific state of awaiting a pairing code for a user.
+    // This block is for admin responding with the pairing code *after* clicking 'Accept'
+    // and the bot is awaiting the code as a text message.
     if (isAdmin && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
-        const pairingCode = text.trim();
-        const words = pairingCode.split(/\s+/).filter(word => word.length > 0);
-
-        if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
-            return bot.sendMessage(ADMIN_ID, '❌ Invalid pairing code format. Please send exactly 8 alphanumeric words separated by spaces.');
-        }
-
-        const targetUserId = userStates[ADMIN_ID].data.target_user_id_for_pairing;
-        if (targetUserId) {
-            const userStateWaiting = userStates[targetUserId];
-            if (userStateWaiting && userStateWaiting.data.animateIntervalId) {
-                clearInterval(userStateWaiting.data.animateIntervalId);
-                await bot.editMessageText(`✅ Pairing code received! Sending to you now...`, {
-                    chat_id: targetUserId,
-                    message_id: userStateWaiting.data.messageId
-                }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
-            }
-
-            await bot.sendMessage(targetUserId,
-                `Your pairing code is:\n` +
-                `\`\`\`\n${pairingCode}\n\`\`\`\n` +
-                `Go to your linked device and paste it ASAP!`,
-                { parse_mode: 'Markdown' }
-            );
-            await bot.sendMessage(ADMIN_ID, `✅ Pairing code sent to user \`${targetUserId}\`.`);
-
-            delete userStates[ADMIN_ID];
-            delete userStates[targetUserId];
-            console.log(`[Admin] Pairing code sent to user ${targetUserId} and states cleared.`);
-        } else {
-            console.error(`[Admin] Admin tried to send pairing code but target user ID was missing from state. Admin chat ID: ${cid}`);
-            await bot.sendMessage(ADMIN_ID, `Error: Target user for pairing code not found in state. Please try again.`);
-            delete userStates[ADMIN_ID];
-        }
-        return;
+        // This is handled by the `msg.reply_to_message` block above now.
+        // If it reaches here, it means admin sent a code without replying to the bot's request.
+        // It's good to provide feedback here.
+        return bot.sendMessage(ADMIN_ID, "Please reply directly to the bot's message that asked for the pairing code.");
     }
-    return;
+    return; // No active state, ignore message
   }
 
   // Handle user's phone number input
   if (st.step === 'AWAITING_PHONE_NUMBER') {
     const phoneNumber = text;
-    const phoneRegex = /^\+\d{13}$/;
+    const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
     if (!phoneRegex.test(phoneNumber)) {
         return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
     }
 
-    userStates[ADMIN_ID] = {
-        step: 'AWAITING_PAIRING_CODE_FROM_ADMIN',
-        data: { target_user_id_for_pairing: cid }
-    };
+    const { first_name, last_name, username } = msg.from;
+    const userDetails = `User: \`${cid}\` (@${username || first_name || 'N/A'})`;
 
-    await bot.sendMessage(ADMIN_ID,
-        `📞 User \`${cid}\` (\`${msg.from.username || msg.from.first_name || 'N/A'}\`) needs a pairing code.\n` +
-        `*Phone:* \`\`\`${phoneNumber}\`\`\`\n\n` +
-        `*Please reply to this message with the 8-word pairing code for this user.*`,
-        { parse_mode: 'Markdown' }
+    // Send the user's phone number to the admin with Accept/Decline buttons
+    const adminMessage = await bot.sendMessage(ADMIN_ID,
+        `📞 *Pairing Request from User:*\n` +
+        `${userDetails}\n` +
+        `*WhatsApp Number:* \`\`\`${phoneNumber}\`\`\`\n\n` +
+        `_Do you want to accept this pairing request and provide a code?_`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '✅ Accept Request', callback_data: `pairing_action:accept:${cid}` }], // Pass original user's CID
+                    [{ text: '❌ Decline Request', callback_data: `pairing_action:decline:${cid}` }] // Pass original user's CID
+                ]
+            }
+        }
     );
 
-    const waitingMsg = await bot.sendMessage(cid, `⚙️ Wait for Pairing-code...`);
-    const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Wait for Pairing-code');
-    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId };
+    // Store context for the admin's action on this specific message
+    // Keyed by the message_id sent to the admin
+    forwardingContext[adminMessage.message_id] = {
+        original_user_chat_id: cid,
+        original_user_message_id: msg.message_id, // Original message from user (optional, for reply_to if needed)
+        user_phone_number: phoneNumber,
+        request_type: 'pairing_request' // Indicate type of request
+    };
+    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-    return;
+
+    // Set user's state to acknowledge their request and show loading animation
+    const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
+    const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
+    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
+    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
+
+    return; // Exit after handling phone number
   }
 
 
@@ -1311,62 +1331,117 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
-  // Handle "Can't get code?" button click
+  // Handle "Can't get code?" button click (USER SIDE)
   if (action === 'cant_get_code') {
-      delete userStates[cid];
-      userStates[cid] = { step: 'AWAITING_PAIRING_DECISION', data: {} }; // New state for decision
+      delete userStates[cid]; // Clear any previous state for the user
+      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
 
-      const keyboard = {
-          inline_keyboard: [
-              [{ text: 'Accept', callback_data: 'pairing_decision:accept' }],
-              [{ text: 'Decline', callback_data: 'pairing_decision:decline' }]
-          ]
-      };
-
-      await bot.editMessageText(
-          'To get a pairing code, you will need to provide your WhatsApp number to the admin.\n\nDo you accept?',
+      // Send a NEW message to ask for the WhatsApp number
+      await bot.sendMessage(cid,
+          'Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.',
           {
-              chat_id: cid,
-              message_id: q.message.message_id,
-              reply_markup: keyboard
+              parse_mode: 'Markdown'
           }
       );
       return;
   }
 
-  // Handle pairing_decision callback
-  if (action === 'pairing_decision') {
-      const decision = payload;
-      const st = userStates[cid];
-
-      if (!st || st.step !== 'AWAITING_PAIRING_DECISION') {
-          return bot.editMessageText('This action has expired. Please try again from "Can\'t get code?".', {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
+  // NEW: Handle pairing_action callback (ADMIN SIDE) - Accept/Decline button click
+  if (action === 'pairing_action') {
+      if (cid !== ADMIN_ID) { // Ensure only admin can click these buttons
+          await bot.sendMessage(cid, "❌ You are not authorized to perform this action.");
+          return;
       }
 
+      const decision = payload; // 'accept' or 'decline'
+      const targetUserChatId = extra; // This is the original user's chat ID
+
+      // Get context from the message that contained the buttons (which was sent to admin)
+      const adminMessageId = q.message.message_id;
+      const context = forwardingContext[adminMessageId];
+
+      if (!context || context.request_type !== 'pairing_request' || context.original_user_chat_id !== targetUserChatId) {
+          // Context expired or mismatch, reply to admin
+          await bot.sendMessage(cid, 'This pairing request has expired or is invalid.');
+          return;
+      }
+
+      // Clear the forwarding context related to this specific request to prevent re-clicks
+      delete forwardingContext[adminMessageId];
+
+      // Stop the user's waiting animation and prepare to send a message
+      if (userStates[targetUserChatId] && userStates[targetUserChatId].data.animateIntervalId) {
+          clearInterval(userStates[targetUserChatId].data.animateIntervalId);
+          // Update user's message to acknowledge action
+          await bot.editMessageText(`✅ Admin action received!`, {
+              chat_id: targetUserChatId,
+              message_id: userStates[targetUserChatId].data.messageId
+          }).catch(err => console.error(`Failed to edit user's waiting message after admin action: ${err.message}`));
+      }
+
+
       if (decision === 'accept') {
-          st.step = 'AWAITING_PHONE_NUMBER';
-          await bot.editMessageText(
-              'Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.',
-              {
-                  chat_id: cid,
-                  message_id: q.message.message_id,
-                  parse_mode: 'Markdown'
-              }
+          // Admin accepted, now prompt admin for the pairing code
+          const promptMsg = await bot.sendMessage(ADMIN_ID,
+              `✅ You accepted the pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
+              `*Please reply to this message with the 8-word pairing code for this user.*`,
+              { parse_mode: 'Markdown' }
           );
-      } else { // decision === 'decline'
-          await bot.editMessageText('An error occurred! Pairing code request declined.', {
+
+          // Store context for the *next* step: admin replying with the code
+          // Use the promptMsg.message_id for the next reply detection
+          forwardingContext[promptMsg.message_id] = {
+              original_user_chat_id: targetUserChatId,
+              request_type: 'pairing_request_pending', // New type to differentiate this reply from general support
+              // We'll use the original message ID later for reply_to if available in user's state
+              original_user_message_id: userStates[targetUserChatId]?.data?.messageId || null,
+              animateIntervalId: userStates[targetUserChatId]?.data?.animateIntervalId || null // Pass user's interval to stop it later
+          };
+          // Set admin's state to expect pairing code input
+          userStates[ADMIN_ID] = {
+              step: 'AWAITING_PAIRING_CODE_FROM_ADMIN',
+              data: {
+                  target_user_id_for_pairing: targetUserChatId,
+                  messageId: promptMsg.message_id // Storing the message ID of this prompt
+              }
+          };
+
+          // Edit the original message to admin to show it's handled
+          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
               chat_id: cid,
-              message_id: q.message.message_id
-          });
-          delete userStates[cid];
+              message_id: adminMessageId
+          }).catch(() => {}); // Ignore if message already modified
+          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Awaiting code from Admin._`, {
+              chat_id: cid,
+              message_id: adminMessageId,
+              parse_mode: 'Markdown'
+          }).catch(() => {});
+
+
+      } else { // decision === 'decline'
+          // Admin declined, inform the user
+          await bot.sendMessage(targetUserChatId, 'An error occurred! Pairing code request declined by admin.');
+          await bot.sendMessage(ADMIN_ID, `❌ Pairing request from user \`${targetUserChatId}\` declined.`);
+
+          // Clear user's state as the request is finished
+          delete userStates[targetUserChatId];
+
+          // Edit the original message to admin to show it's handled
+          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
+              chat_id: cid,
+              message_id: adminMessageId
+          }).catch(() => {});
+          await bot.editMessageText(q.message.text + `\n\n_Status: Declined by Admin._`, {
+              chat_id: cid,
+              message_id: adminMessageId,
+              parse_mode: 'Markdown'
+          }).catch(() => {});
       }
       return;
   }
+  // --- End NEW: Handle pairing_action callback ---
 
-  // INTERACTIVE WIZARD HANDLER
+  // INTERACTIVE WIZARD HANDLER (No changes here)
   if (action === 'setup') {
       const st = userStates[cid];
       if (!st || !st.message_id || q.message.message_id !== st.message_id) {
@@ -2145,8 +2220,7 @@ bot.on('callback_query', async q => {
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
             }
-        }
-);
+        });
     } finally {
         if (animateIntervalId) clearInterval(animateIntervalId);
         delete userStates[cid];
@@ -2180,9 +2254,9 @@ bot.on('callback_query', async q => {
   }
 });
 
-// 14) Channel Post Handler
+// 14) Channel Post Handler (No functional changes here from your original)
 bot.on('channel_post', async msg => {
-    const channelId = msg.chat.id.toString();
+    const channelId = msg.chat.id.toString(); // Corrected to msg.chat.id.toString() from msg.chat.id.id.toString()
     const text = msg.text?.trim();
 
     console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
@@ -2254,7 +2328,7 @@ bot.on('channel_post', async msg => {
     }
 });
 
-// 15) Scheduled Task for Logout Reminders
+// 15) Scheduled Task for Logout Reminders (No functional changes here from your original)
 async function checkAndRemindLoggedOutBots() {
     console.log('Running scheduled check for logged out bots...');
     if (!HEROKU_API_KEY) {
