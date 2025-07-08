@@ -914,13 +914,24 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     }
 
     try {
-    // Send the pairing code to the original user
+    const imageUrl = 'https://files.catbox.moe/c6l4kv.jpeg';
+
+    // Send the image first
+    await bot.sendPhoto(targetUserId, imageUrl);
+
+    // Then send the pairing code message
     await bot.sendMessage(targetUserId,
         `👇Your Pairing-code is 👇:\n` +
-        '`\n' + pairingCode + '\n`\n' + // Corrected line
+        '`\n' + pairingCode + '\n`\n' +
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
+} catch (error) {
+    console.error("Error sending message or image:", error);
+    // You might want to add error handling here,
+    // e.g., notify yourself or the user that something went wrong.
+}
+
 
     // ... rest of your code
         await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
