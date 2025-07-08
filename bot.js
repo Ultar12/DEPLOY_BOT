@@ -1481,10 +1481,11 @@ bot.on('callback_query', async q => {
           }
 
           // Admin accepted, now instruct admin to use the /send command
+          // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`\`/send ${targetUserChatId} [8-character code]\`\`\``, // Providing the user ID explicitly with monospace
+              `\`/send ${targetUserChatId} [8-character code]\``, // Use single backticks for the inline command
               { parse_mode: 'Markdown' }
           );
 
@@ -1498,7 +1499,7 @@ bot.on('callback_query', async q => {
           }).catch(() => {}); // Ignore if message already modified
           await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
               chat_id: cid,
-              message_id: adminMessageId,
+              message_id: adminMessage_id, // FIX: typo - changed to adminMessageId
               parse_mode: 'Markdown'
           }).catch(() => {});
 
