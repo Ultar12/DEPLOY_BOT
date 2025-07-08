@@ -922,10 +922,6 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
         { parse_mode: 'Markdown' }
     );
     // ... rest of your code
-} catch (e) {
-    // ... error handling
-}
-
         await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
         // Clean up user's state
