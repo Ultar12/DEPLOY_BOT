@@ -1460,7 +1460,7 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForpairing // Store timeout ID to clear it if accepted/decline
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -2500,7 +2500,8 @@ bot.on('callback_query', async q => {
   // Redeploy_app callback action
   if (action === 'redeploy_app') {
     const appName = payload;
-    const messageId = q.message.message.message_id; // FIX: Ensure messageId is correctly retrieved for the original message to edit.
+    // FIX: Corrected how messageId is accessed from q.message
+    const messageId = q.message.message_id; 
 
     const isOwner = (await getUserIdByBotName(appName)) === cid;
     if (cid !== ADMIN_ID && !isOwner) {
