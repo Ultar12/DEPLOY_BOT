@@ -407,7 +407,8 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        const filledBlocks = '█'.'.repeat(i);
+        // FIX: Corrected typo here
+        const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
         let countdownMessage = `Bot "${appName}" restarting...\n\n`;
@@ -701,7 +702,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       buildResult = false; // Overall failure
     }
 
-  } catch (error) {
+  } try {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
@@ -888,21 +889,23 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
-// NEW: /send <user_id> <8-word code> command handler (Admin only)
-bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
+// NEW: /send <user_id> <8-character alphanumeric code> command handler (Admin only)
+bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated regex for 8 alphanumeric characters
     const cid = msg.chat.id.toString();
     const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2].trim(); // Code from the command
+    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars)
 
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
     }
 
-    // Validate pairing code format
-    const words = pairingCode.split(/\s+/).filter(word => word.length > 0);
-    if (words.length !== 8 || !words.every(word => /^[a-zA-Z0-9]+$/.test(word))) {
-        return bot.sendMessage(cid, '❌ Invalid pairing code format. Please use `/send <user_id> <8-word code>` (8 alphanumeric words separated by spaces).');
+    // No need for detailed validation now, regex handles it.
+    // However, if you want a more descriptive error for non-8-char, you could do:
+    /*
+    if (!/^[a-zA-Z0-9]{8}$/.test(pairingCode)) {
+        return bot.sendMessage(cid, '❌ Invalid pairing code format. Please use `/send <user_id> <8-character alphanumeric code>`.');
     }
+    */
 
     // Attempt to retrieve user's current state to stop animation and clear
     const userState = userStates[targetUserId];
@@ -922,7 +925,8 @@ bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
     try {
         // Send the pairing code to the original user
         await bot.sendMessage(targetUserId,
-            `Your Pairing-code is \`\`\`${pairingCode}\`\`\`\n` +
+            `Your Pairing-code is:\n` +
+            `\`\`\`\n${pairingCode}\n\`\`\`\n` + // Triple backticks for copyable code block
             `Copy the code and paste it to your WhatsApp linked device ASAP!`,
             { parse_mode: 'Markdown' }
         );
@@ -1077,7 +1081,7 @@ bot.on('message', async msg => {
     // NOTE: This specific state handling for admin input has been moved to the new `/send` command.
     // It should effectively never be reached if the admin follows instructions.
     if (isAdmin && userStates[ADMIN_ID]?.step === 'AWAITING_PAIRING_CODE_FROM_ADMIN') {
-      return bot.sendMessage(ADMIN_ID, "Please use the `/send <user_id> <8-word code>` command to send the pairing code.");
+      return bot.sendMessage(ADMIN_ID, "Please use the `/send <user_id> <8-character code>` command to send the pairing code.");
     }
     return; // No active state, ignore message
   }
@@ -1412,8 +1416,8 @@ bot.on('callback_query', async q => {
           // Admin accepted, now instruct admin to use the /send command
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 8-word pairing code to the user:*\n` +
-              `\`\`\`/send ${targetUserChatId} [8-word code]\`\`\``, // Providing the user ID explicitly
+              `*Now, please use the command below to send the 8-character code to the user:*\n` +
+              `\`\`/send ${targetUserChatId} [8-character code]\`\`\``, // Providing the user ID explicitly with monospace
               { parse_mode: 'Markdown' }
           );
 
@@ -2406,4 +2410,22 @@ async function checkAndRemindLoggedOutBots() {
                 }
             }
 
-        } catch
+        } catch (error) {
+            if (error.response && error.response.status === 404) {
+                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
+                const currentOwnerId = await getUserIdByBotName(herokuApp);
+                if (currentOwnerId) {
+                    await deleteUserBot(currentOwnerId, herokuApp);
+                    await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                }
+                return;
+            }
+            console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+        }
+    }
+}
+
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
+
+
+console.log('Bot is running...');
