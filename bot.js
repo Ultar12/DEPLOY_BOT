@@ -362,10 +362,7 @@ function generateKey() {
 }
 
 function escapeMarkdownVz (text) {
-
-// Telegram Bot API documentation states these characters must be escaped in MarkdownVz:
-
-// _, *, [, ], (, ), ~, ', >, #, +, -, =, 1, {, },,, ! // And to escape them, prepend with a backslash (\) return text.replace(/[_*[\]()~'>#+\-=|{}.!]/g, '\\ $&');
+}
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
