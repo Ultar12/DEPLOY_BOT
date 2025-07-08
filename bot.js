@@ -407,7 +407,6 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        // FIX: Corrected typo here, changed '█'.'.repeat(i) to '█'.repeat(i)
         const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
@@ -702,7 +701,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       buildResult = false; // Overall failure
     }
 
-  } catch (error) { // FIX: Corrected outer try-catch block
+  } catch (error) { // FIX: Corrected outer try-catch block to wrap entire function logic
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
     buildResult = false; // Overall failure
@@ -946,6 +945,9 @@ bot.on('message', async msg => {
   const text = msg.text?.trim();
   if (!text) return;
 
+  // FIX: Define st at the very beginning to ensure it's always available
+  const st = userStates[cid];
+
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
 
@@ -976,6 +978,7 @@ bot.on('message', async msg => {
   }
 
   // NEW: Handle user typing their question after clicking "Ask Admin a Question"
+  // FIX: Ensure 'st' is checked for existence before accessing its properties.
   if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
     const userQuestion = msg.text;
     const userChatId = cid;
@@ -1023,8 +1026,9 @@ bot.on('message', async msg => {
     if (!check.can) {
         return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
     }
+    // FIX: Changed Free Trial text to 1 hour
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (30 mins runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1093,24 +1097,22 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    // FIX: Changed support button behavior to offer an inline "Ask Admin" button
+    // FIX: Removed "Contact Support Username" button, kept "Ask Admin a Question"
     const supportKeyboard = {
         inline_keyboard: [
-            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
-            [{ text: 'Contact Support Username', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }] // Link to username
+            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }]
         ]
     };
-    return bot.sendMessage(cid, `For help, you can contact the admin or ask a question directly:`, {
+    return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
         reply_markup: supportKeyboard,
         parse_mode: 'Markdown'
     });
   }
 
   // --- Stateful flows (for text input) ---
-  // The 'st' variable is defined at the top of the message handler
-  // and checked here.
-  // The AWAITING_PAIRING_CODE_FROM_ADMIN state is now obsolete as /send command is used.
-  if (st.step === 'AWAITING_PHONE_NUMBER') {
+  // The 'st' variable is defined at the very beginning of this handler.
+  // This logic runs only if 'st' exists and matches a specific step.
+  if (st && st.step === 'AWAITING_PHONE_NUMBER') { // Check st's existence
     const phoneNumber = text;
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
@@ -1188,7 +1190,7 @@ bot.on('message', async msg => {
   }
 
 
-  if (st.step === 'AWAITING_KEY') {
+  if (st && st.step === 'AWAITING_KEY') { // Check st's existence
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
@@ -1243,7 +1245,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
-  if (st.step === 'SESSION_ID') {
+  if (st && st.step === 'SESSION_ID') { // Check st's existence
     if (text.length < 10) {
       return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
@@ -1252,7 +1254,7 @@ bot.on('message', async msg => {
     return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
   }
 
-  if (st.step === 'APP_NAME') {
+  if (st && st.step === 'APP_NAME') { // Check st's existence
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
       return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
@@ -1294,7 +1296,7 @@ bot.on('message', async msg => {
     }
   }
 
-  if (st.step === 'SETVAR_ENTER_VALUE') {
+  if (st && st.step === 'SETVAR_ENTER_VALUE') { // Check st's existence
     const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data;
     const newVal = text.trim();
 
@@ -1324,7 +1326,7 @@ bot.on('message', async msg => {
       console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
       await addUserBot(finalUserId, APP_NAME, newVal);
 
-      const baseWaitingText = `Updating ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
+      const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id
