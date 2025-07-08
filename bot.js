@@ -1716,8 +1716,9 @@ bot.on('callback_query', async q => {
           // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 8-character code to the user:*\n` +
-              `\`\/send ${targetUserChatId} \``, // Example format `AJWI-2ISN`
+              `*Now, please use the command below to send the 9-character code (e.g., AJWI-2ISN) to the user:*\n` +
+              `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
+              `*Or get it from here:* [Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
               { parse_mode: 'Markdown' }
           );
 
@@ -2622,7 +2623,7 @@ bot.on('channel_post', async msg => {
         const userId = await getUserIdByBotName(botName);
         if (userId) {
             const warningMessage =
-                `⚠️ Your bot "*${botName}*" has logged out due to an invalid session.\n` +
+                `⚠️ Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
                 `Please update your session ID to get it back online.`;
 
             await bot.sendMessage(userId, warningMessage, {
