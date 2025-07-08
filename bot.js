@@ -361,8 +361,24 @@ function generateKey() {
     .join('');
 }
 
-function escapeMarkdownVz (text) {
+// utils.js
+function escapeMarkdownV2(text) {
+    if (typeof text !== 'string') {
+        text = String(text);
+    }
+    const charsToEscape = [
+        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'
+    ];
+    let escapedText = text;
+    for (const char of charsToEscape) {
+        escapedText = escapedText.split(char).join('\\' + char);
+    }
+    return escapedText;
 }
+
+module.exports = {
+    escapeMarkdownV2
+};
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
