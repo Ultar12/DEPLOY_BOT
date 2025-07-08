@@ -914,9 +914,6 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
     }
 
     try {
-        // Send the pairing code to the original user
-        await bot.sendMessage(targetUserId,
-    try {
     // Send the pairing code to the original user
     await bot.sendMessage(targetUserId,
         `Your Pairing-code is:\n` +
