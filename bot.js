@@ -483,7 +483,8 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'], // "Free Trial" button
-      ['Support', '⭐ Rate Bot'] // Added new button
+      // FIXED: Corrected callback_data for Rate Bot
+      ['Support', { text: '⭐ Rate Bot', callback_data: 'rate_bot_menu' }]
   ];
   if (isAdmin) {
       return [
@@ -850,18 +851,26 @@ bot.onText(/^\/start$/, async msg => {
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     });
   } else {
+    // UPDATED: Dynamic greeting
+    const { first_name: userFirstName } = msg.from; // Renamed to avoid conflict
+    let personalizedGreeting = `👋 Welcome`;
+    if (userFirstName) {
+        personalizedGreeting += ` back, ${escapeMarkdown(userFirstName)}`; // Escape name for Markdown
+    }
+    personalizedGreeting += ` to our Bot Deployment Service!`;
+
     // Send image with professional caption and keyboard for regular users
     const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg';
     // Updated welcomeCaption with exact words provided by user
     const welcomeCaption = `
-👋 Welcome to our Bot Deployment Service!
+${personalizedGreeting}
 
 To get started, please follow these simple steps:
 
-1️⃣  Connect Your WhatsApp:
+1️⃣  *Connect Your WhatsApp:*
     Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
 
-2️⃣  Deploy Your Bot:
+2️⃣  *Deploy Your Bot:*
     Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
 
 We're here to assist you every step of the way!
@@ -1424,7 +1433,14 @@ bot.on('message', async msg => {
   if (text === 'My Bots') {
     console.log(`[Flow] My Bots button clicked by user: ${cid}`);
     const bots = await getUserBots(cid);
-    if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
+    if (!bots.length) {
+        // ADDED: Inline button for deploying first bot
+        return bot.sendMessage(cid, "You haven't deployed any bots yet. Would you like to deploy your first bot?", {
+            reply_markup: {
+                inline_keyboard: [[{ text: '🚀 Deploy Now!', callback_data: 'deploy_first_bot' }]]
+            }
+        });
+    }
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
       text: n,
       callback_data: `selectbot:${n}`
@@ -1532,6 +1548,7 @@ bot.on('message', async msg => {
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
     const startTime = Date.now();
@@ -1597,6 +1614,7 @@ bot.on('message', async msg => {
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
       return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
     }
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     try {
       await axios.get(`https://api.heroku.com/apps/${nm}`, {
         headers: {
@@ -1645,6 +1663,7 @@ bot.on('message', async msg => {
     }
 
     try {
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`);
 
       console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
@@ -1741,6 +1760,18 @@ bot.on('callback_query', async q => {
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
+
+  // ADDED: Handle deploy_first_bot callback
+  if (action === 'deploy_first_bot') {
+    // Simulate the 'Deploy' button press from the main keyboard
+    if (cid === ADMIN_ID) { // Admin flow for deploy
+        userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
+        return bot.sendMessage(cid, 'Please enter your session ID');
+    } else { // Regular user flow for deploy
+        userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
+        return bot.sendMessage(cid, 'Enter your Deploy key');
+    }
+  }
 
   // NEW: Handle "Ask Admin a Question" button from Support menu
   if (action === 'ask_admin_question') {
@@ -1891,7 +1922,7 @@ bot.on('callback_query', async q => {
           const ratingMessage = `
 🌟 *New Bot Rating:*
 *User ID:* \`${userIdEscaped}\`
-*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${lastName ? escapeMarkdown(lastName) : ''}
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
 *Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
 *Rating:* ${'⭐'.repeat(parseInt(rating, 10))} (${rating} out of 5)
           `;
@@ -1984,26 +2015,28 @@ bot.on('callback_query', async q => {
 
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName, messageId: messageId, isUserBot: isUserBot } };
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText(`⚙️ Fetching app status for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
 
-    let dynoOn = false;
-    try {
-        const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        const workerDyno = dynoRes.data.find(d => d.type === 'worker');
-        if (workerDyno && workerDyno.state === 'up') {
-            dynoOn = true;
-        }
-    } catch (e) {
-        console.error(`Error fetching dyno status for ${appName}: ${e.message}`);
-        // If there's an error, assume it's off or unreachable for now.
-        dynoOn = false;
-    }
+    // Dyno On/Off removed from here
+    // let dynoOn = false;
+    // try {
+    //     const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
+    //         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+    //     });
+    //     const workerDyno = dynoRes.data.find(d => d.type === 'worker');
+    //     if (workerDyno && workerDyno.state === 'up') {
+    //         dynoOn = true;
+    //     }
+    // } catch (e) {
+    //     console.error(`Error fetching dyno status for ${appName}: ${e.message}`);
+    //     // If there's an error, assume it's off or unreachable for now.
+    //     dynoOn = false;
+    // }
 
-    const dynoToggleButton = dynoOn
-        ? { text: '🔴 Turn Off', callback_data: `dyno_off:${appName}` }
-        : { text: '🟢 Turn On', callback_data: `dyno_on:${appName}` };
+    // const dynoToggleButton = dynoOn
+    //     ? { text: '🔴 Turn Off', callback_data: `dyno_off:${appName}` }
+    //     : { text: '🟢 Turn On', callback_data: `dyno_on:${appName}` };
 
     return bot.editMessageText(`Manage app "*${appName}*":`, {
       chat_id: cid,
@@ -2021,8 +2054,8 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
             { text: 'Set Variable', callback_data: `setvar:${appName}` }
           ],
-          // Dynamically added dyno control button
-          [dynoToggleButton],
+          // Dynamically added dyno control button - REMOVED
+          // [dynoToggleButton],
           [{ text: '◀️️ Back', callback_data: 'back_to_app_list' }]
         ]
       }
@@ -2192,6 +2225,7 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
       const apiHeaders = {
@@ -2280,6 +2314,7 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText(`🔄 Restarting bot "*${payload}*"...`, {
         chat_id: cid,
         message_id: messageId,
@@ -2327,6 +2362,7 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
@@ -2389,6 +2425,7 @@ bot.on('callback_query', async q => {
       }
       const messageId = q.message.message_id;
 
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
       await bot.editMessageText(`🗑️ Deleting "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
@@ -2497,6 +2534,7 @@ bot.on('callback_query', async q => {
     else newVal = flagVal ? 'true' : 'false';
 
     try {
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
       const updateMsg = await bot.sendMessage(cid, `Updating *${varKey}* for "*${appName}*"...`, { parse_mode: 'Markdown' });
       console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`);
       const patchResponse = await axios.patch(
@@ -2555,7 +2593,7 @@ bot.on('callback_query', async q => {
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
-              `⚠️ Bot "*${appName}*" failed to come online after variable "*${varKey}*" update: ${err.message}\n\n` +
+              `⚠️ Bot "*${appName}*" failed to come online after variable "*${VAR_NAME}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
@@ -2612,6 +2650,7 @@ bot.on('callback_query', async q => {
           return;
       }
 
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
       await bot.editMessageText(`🗑️ Admin deleting Free Trial app "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
@@ -2651,6 +2690,7 @@ bot.on('callback_query', async q => {
         return;
     }
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText(`🔄 Redeploying "*${appName}*" from GitHub...`, {
         chat_id: cid,
         message_id: messageId,
@@ -2742,243 +2782,11 @@ bot.on('callback_query', async q => {
     return;
   }
 
-// Dyno Off Handler
-if (action === 'dyno_off') {
-    const appName = payload;
-    const messageId = q.message.message_id;
+// REMOVED: Dyno Off Handler
+// if (action === 'dyno_off') { ... }
 
-    const isOwner = (await getUserIdByBotName(appName)) === cid;
-    if (cid !== ADMIN_ID && !isOwner) {
-        await bot.editMessageText("❌ You are not authorized to turn off this app.", { chat_id: cid, message_id: messageId });
-        return;
-    }
-
-    await bot.editMessageText(`Turning off dyno for "*${appName}*"...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    });
-
-    try {
-        await axios.patch(
-            `https://api.heroku.com/apps/${appName}/formation`,
-            {
-                updates: [
-                    { process: 'worker', quantity: 0 } // Scale worker dyno to 0
-                ]
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        await bot.editMessageText(`✅ Dyno for "*${appName}*" turned *off* successfully!`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown'
-        });
-        console.log(`Dyno for "${appName}" turned off by user ${cid}.`);
-
-        // Re-display the app management menu to update the button state
-        await new Promise(r => setTimeout(r, 1000)); // Small delay for effect
-        // Simulate re-selecting the app to get the updated button
-        const reRenderQuery = {
-            ...q, // Copy original query object
-            data: `selectapp:${appName}` // Change data to simulate re-selection
-        };
-        await bot.answerCallbackQuery(reRenderQuery.id).catch(() => {}); // Answer the new query ID
-        await bot.emit('callback_query', reRenderQuery); // Trigger the selectapp handler
-
-    } catch (e) {
-        if (e.response && e.response.status === 404) {
-            await handleAppNotFoundAndCleanDb(cid, appName, messageId, isOwner);
-            return;
-        }
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error(`Error turning off dyno for ${appName}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to turn off dyno for "*${appName}*": ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-    }
-    return;
-}
-
-// Dyno On Handler (Revised to use channel check for 'connected' status)
-if (action === 'dyno_on') {
-    const appName = payload;
-    const messageId = q.message.message_id;
-
-    const isOwner = (await getUserIdByBotName(appName)) === cid;
-    if (cid !== ADMIN_ID && !isOwner) {
-        await bot.editMessageText("❌ You are not authorized to turn on this app.", { chat_id: cid, message_id: messageId });
-        return;
-    }
-
-    // Initial message to user
-    await bot.editMessageText(`Turning on dyno for "*${appName}*"...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    });
-
-    let animateIntervalId = null; // Declare here so it's accessible in finally block
-
-    try {
-        // Step 1: Scale worker dyno to 1
-        const scaleResponse = await axios.patch(
-            `https://api.heroku.com/apps/${appName}/formation`,
-            {
-                updates: [
-                    { process: 'worker', quantity: 1 }
-                ]
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-
-        if (scaleResponse.status < 200 || scaleResponse.status >= 300) {
-            throw new Error(`Heroku API responded with status ${scaleResponse.status}`);
-        }
-
-        // Step 2: Start animation and wait for bot to connect via channel message
-        const baseWaitingText = `Dyno for "*${appName}*" is starting. Waiting for bot to connect...`;
-        await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown'
-        });
-        animateIntervalId = await animateMessage(cid, messageId, baseWaitingText);
-
-        const appStatusPromise = new Promise((resolve, reject) => {
-            // Store the resolve/reject functions and interval ID for this app
-            appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId });
-            console.log(`[dyno_on] Stored promise for ${appName}. Waiting for channel message.`);
-        });
-
-        const STATUS_CHECK_TIMEOUT = 180 * 1000; // 3 minutes timeout for bot to come online
-        let timeoutId;
-
-        try {
-            // Set a timeout to reject the promise if no status update is received
-            timeoutId = setTimeout(() => {
-                const appPromise = appDeploymentPromises.get(appName);
-                if (appPromise) {
-                    appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after turning on.`));
-                    appDeploymentPromises.delete(appName); // Clean up
-                    console.log(`[dyno_on] Promise for ${appName} timed out.`);
-                }
-            }, STATUS_CHECK_TIMEOUT);
-
-            await appStatusPromise; // Wait for the channel_post handler to resolve/reject this
-
-            // If we reach here, it means the promise was resolved by the channel_post handler (bot connected)
-            clearTimeout(timeoutId);
-            clearInterval(animateIntervalId); // Stop animation
-
-            await bot.editMessageText(`✅ Dyno for "*${appName}*" turned *on* successfully and bot is online!`, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Check Status (Info)', callback_data: `info:${appName}` }], // Still good to have
-                        [{ text: 'View Logs', callback_data: `logs:${appName}` }],
-                        [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
-                    ]
-                }
-            });
-            console.log(`Dyno for "${appName}" turned on and confirmed online for user ${cid}.`);
-
-            if (cid !== ADMIN_ID) {
-                await bot.sendMessage(ADMIN_ID, `🟢 User \`${cid}\` (Bot: *${appName}*) successfully turned on their bot dyno and it reported online.`, { parse_mode: 'Markdown' });
-            }
-
-        } catch (err) {
-            // This catches rejections from appStatusPromise (either 'logged out' or timeout)
-            clearTimeout(timeoutId);
-            clearInterval(animateIntervalId);
-            console.error(`App status check failed for ${appName} after turning on dyno:`, err.message);
-
-            let errorMessageToUser = `⚠️ Dyno for "*${appName}*" turned on, but bot failed to come online or session is invalid: ${err.message}\n\n`;
-
-            if (err.message.includes("logged out")) {
-                errorMessageToUser += `It appears the session ID is invalid. Please update it.`;
-            } else {
-                errorMessageToUser += `Please check the bot's logs via the "View Logs" button for more details, or try restarting it.`;
-            }
-
-            await bot.editMessageText(errorMessageToUser, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
-                        [{ text: 'View Logs', callback_data: `logs:${appName}` }],
-                        [{ text: 'Restart Bot', callback_data: `restart:${appName}` }],
-                        [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
-                    ]
-                }
-            }
-            );
-        } finally {
-            // Always clean up the promise from the map regardless of outcome
-            appDeploymentPromises.delete(appName);
-        }
-
-    } catch (e) {
-        // This outer catch handles initial Heroku API scaling errors
-        if (animateIntervalId) clearInterval(animateIntervalId); // Ensure animation stops on outer error
-        if (e.response && e.response.status === 404) {
-            await handleAppNotFoundAndCleanDb(cid, appName, messageId, isOwner);
-            return;
-        }
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error(`Error turning on dyno for ${appName} (initial scaling):`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to turn on dyno for "*${appName}*": ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-    }
-    // After handling the dyno_on action, re-render the app management menu
-    // to show the updated dyno status (the button should now be "Turn Off").
-    await new Promise(r => setTimeout(r, 1000)); // Small delay for effect
-    // We'll simulate a 'selectapp' click to re-render the menu with the updated state.
-    // First, edit the message to show a loading state briefly
-    await bot.editMessageText(`Manage app "*${appName}*":\n\n_Updating status..._`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: 'Loading menu...', callback_data: 'dummy' }]] }
-    }).catch(err => console.warn(`Failed to edit message to loading state for ${appName}: ${err.message}`));
-
-    // Then, re-emit the original query data, but changed to 'selectapp' to refresh the menu
-    const reRenderQuery = {
-        ...q, // Copy original query object
-        data: `selectapp:${appName}` // Change data to simulate re-selection
-    };
-    await bot.answerCallbackQuery(reRenderQuery.id).catch(() => {}); // Answer the new query ID
-    await bot.emit('callback_query', reRenderQuery); // Trigger the selectapp handler
-    return;
-}
-
+// REMOVED: Dyno On Handler
+// if (action === 'dyno_on') { ... }
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
