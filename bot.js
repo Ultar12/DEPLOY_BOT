@@ -926,14 +926,7 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{8})$/, async (msg, match) => { // Updated
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
-} catch (error) {
-    console.error("Error sending message or image:", error);
-    // You might want to add error handling here,
-    // e.g., notify yourself or the user that something went wrong.
-}
-
-
-    // ... rest of your code
+} 
         await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
         // Clean up user's state
