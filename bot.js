@@ -407,7 +407,8 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        const filledBlocks = '█'.'.repeat(i);
+        // FIX: Removed extra single quote here
+        const filledBlocks = '█'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
         let countdownMessage = `Bot "${appName}" restarting...\n\n`;
@@ -1930,7 +1931,7 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          return bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
+          return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
