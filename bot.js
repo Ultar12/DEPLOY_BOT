@@ -1349,7 +1349,7 @@ bot.on('message', async msg => {
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format, e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
@@ -1716,9 +1716,9 @@ bot.on('callback_query', async q => {
           // FIX: Corrected Markdown for copyable /send command and user ID
           await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the 9-character code (e.g., AJWI-2ISN) to the user:*\n` +
+              `*Now, please use the command below to send the CODE:*\n` +
+             `*Get it from here:* [LINK](https://levanter-delta.vercel.app/)`, // Added the link here
               `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
-              `*Or get it from here:* [Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
               { parse_mode: 'Markdown' }
           );
 
