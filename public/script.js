@@ -1,24 +1,33 @@
 // public/script.js
 
 // --- Configuration ---
-// IMPORTANT: This will now point to your main Heroku/Render app URL
-// (e.g., https://your-heroku-app.herokuapp.com or https://your-render-app.onrender.com)
 let BACKEND_BASE_URL = localStorage.getItem('backendUrl') || '';
 // --- End Configuration ---
 
 let currentUserId = localStorage.getItem('telegramUserId');
-let currentManagedBotName = ''; // To store the bot name when managing a single bot
+let currentManagedBotName = '';
 
 document.addEventListener('DOMContentLoaded', () => {
     const backendUrlInput = document.getElementById('backendUrl');
     backendUrlInput.value = BACKEND_BASE_URL;
 
     const userIdInput = document.getElementById('telegramUserId');
-    if (currentUserId) {
-        userIdInput.value = currentUserId;
+    userIdInput.value = currentUserId; // Set input value if already saved
+
+    // Check if both are present to decide initial view
+    if (BACKEND_BASE_URL && currentUserId) {
         showMainMenu();
     } else {
-        userIdInput.focus();
+        // Ensure initial setup fields are visible if data is missing
+        document.getElementById('initial-setup-fields').style.display = 'block';
+        document.getElementById('main-menu').style.display = 'none';
+        document.getElementById('content-sections').style.display = 'none'; // Hide content sections initially
+
+        if (!BACKEND_BASE_URL) {
+            backendUrlInput.focus();
+        } else {
+            userIdInput.focus();
+        }
     }
 
     // Add event listeners for forms
@@ -33,10 +42,7 @@ function saveBackendUrl() {
         BACKEND_BASE_URL = newUrl;
         localStorage.setItem('backendUrl', newUrl);
         showAlert('Backend URL saved!', 'success');
-        // If URL saved, and user ID exists, show main menu
-        if (currentUserId) {
-            showMainMenu();
-        }
+        checkAndShowMainMenu(); // Check if user ID is also present
     } else {
         showAlert('Please enter a valid backend URL starting with http:// or https://', 'error');
     }
@@ -49,12 +55,16 @@ function saveUserId() {
         currentUserId = newUserId;
         localStorage.setItem('telegramUserId', newUserId);
         showAlert('Telegram User ID saved!', 'success');
-        // If user ID saved, and backend URL exists, show main menu
-        if (BACKEND_BASE_URL) {
-            showMainMenu();
-        }
+        checkAndShowMainMenu(); // Check if backend URL is also present
     } else {
         showAlert('Please enter your Telegram User ID.', 'error');
+    }
+}
+
+// New function to check both fields and show main menu
+function checkAndShowMainMenu() {
+    if (BACKEND_BASE_URL && currentUserId) {
+        showMainMenu();
     }
 }
 
@@ -76,11 +86,10 @@ function showSection(sectionId) {
 }
 
 function showMainMenu() {
-    // Hide ID input and backend URL setting
-    document.getElementById('user-id-section').style.display = 'none';
-    document.getElementById('backend-url-setting').style.display = 'none';
+    document.getElementById('initial-setup-fields').style.display = 'none'; // Hide setup fields
     document.getElementById('main-menu').style.display = 'block'; // Show main menu
-    showSection('deploy-section'); // Default to deploy section or welcome
+    document.getElementById('content-sections').style.display = 'block'; // Show content container
+    showSection('deploy-section'); // Default to deploy section when main menu appears
 }
 
 function backToMenu() {
@@ -159,7 +168,7 @@ async function handleDeployFormSubmit(event) {
         showAlert('App Name must be at least 5 lowercase letters, numbers, and hyphens only.', 'error');
         return;
     }
-    if (!deployKey && !document.getElementById('deployKey').disabled) { // Ensure deployKey is required unless disabled (e.g. for free trial)
+    if (!deployKey && !document.getElementById('deployKey').disabled) {
         showAlert('Deploy Key is required for this deployment type.', 'error');
         return;
     }
@@ -172,9 +181,9 @@ async function handleDeployFormSubmit(event) {
             userId: currentUserId, sessionId, appName, deployKey, isFreeTrial: false, autoStatusView
         });
         showAlert(data.message || 'Bot deployment initiated! Check your Telegram for updates.', 'success');
-        document.getElementById('deploy-form').reset(); // Clear form
-        fetchMyBots(); // Refresh bot list
-        showSection('my-bots-section'); // Show my bots list
+        document.getElementById('deploy-form').reset();
+        fetchMyBots();
+        showSection('my-bots-section');
     } catch (error) {
         console.error('Error deploying bot:', error);
         showAlert(`Error: ${error.message}`, 'error');
