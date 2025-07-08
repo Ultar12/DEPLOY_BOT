@@ -407,8 +407,7 @@ async function startRestartCountdown(chatId, appName, messageId) {
         const minutesLeft = Math.floor(secondsLeft / 60);
         const remainingSeconds = secondsLeft % 60;
 
-        // FIX: Removed extra single quote here
-        const filledBlocks = '█'.repeat(i);
+        const filledBlocks = '█'.'.repeat(i);
         const emptyBlocks = '░'.repeat(totalSteps - i);
 
         let countdownMessage = `Bot "${appName}" restarting...\n\n`;
@@ -1931,7 +1930,7 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          return bot.editMessageText(`Error deleting app: ${errorMsg}`, {
+          return bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
             chat_id: cid,
             message_id: messageId,
             reply_markup: {
@@ -2407,22 +2406,4 @@ async function checkAndRemindLoggedOutBots() {
                 }
             }
 
-        } catch (error) {
-            if (error.response && error.response.status === 404) {
-                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
-                const currentOwnerId = await getUserIdByBotName(herokuApp);
-                if (currentOwnerId) {
-                    await deleteUserBot(currentOwnerId, herokuApp);
-                    await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
-                }
-                return;
-            }
-            console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
-        }
-    }
-}
-
-setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
-
-
-console.log('Bot is running...');
+        } catch
