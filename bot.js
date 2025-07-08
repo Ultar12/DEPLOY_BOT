@@ -1026,8 +1026,8 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) 
     try {
     // Send the pairing code to the original user
     await bot.sendMessage(targetUserId,
-        `Your Pairing-code is:\n` +
-        `\`${pairingCode}\`\n` + // Use escaped code directly for Markdown
+        `Your Pairing-code is:\n\n` +
+        `\`${pairingCode}\`\n\n` + // Use escaped code directly for Markdown
         `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
         { parse_mode: 'Markdown' }
     );
