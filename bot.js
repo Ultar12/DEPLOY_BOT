@@ -361,6 +361,12 @@ function generateKey() {
     .join('');
 }
 
+function escapeMarkdownVz (text) {
+
+// Telegram Bot API documentation states these characters must be escaped in MarkdownVz:
+
+// _, *, [, ], (, ), ~, ', >, #, +, -, =, 1, {, },,, ! // And to escape them, prepend with a backslash (\) return text.replace(/[_*[\]()~'>#+\-=|{}.!]/g, '\\ $&');
+
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
@@ -814,41 +820,45 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 
 // bot.js (Add this new handler within your existing Command Handlers section)
 
-// New /info <user_id> command for admin to get user's Telegram details
+
+
+// --- Now, update your /info command handler ---
+
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
-    const targetUserId = match[1]; // The user ID provided in the command
+    const targetUserId = match[1];
 
-    // 1. Authorization: Only ADMIN_ID can use this command
     if (callerId !== ADMIN_ID) {
         return bot.sendMessage(callerId, "❌ You are not authorized to use this command.");
     }
 
-    // 2. Fetch User Details from Telegram API
     try {
-        const targetChat = await bot.getChat(targetUserId); // Get chat object for the target user
+        const targetChat = await bot.getChat(targetUserId);
 
-        let userDetails = `*Telegram User Info for ID:* \`${targetUserId}\`\n\n`;
-        userDetails += `*First Name:* ${targetChat.first_name || 'N/A'}\n`;
-        userDetails += `*Last Name:* ${targetChat.last_name || 'N/A'}\n`;
-        userDetails += `*Username:* ${targetChat.username ? `@${targetChat.username}` : 'N/A'}\n`;
-        userDetails += `*Type:* ${targetChat.type}\n`; // 'private', 'group', 'supergroup', 'channel'
+        // Escape all potentially problematic fields
+        const firstName = targetChat.first_name ? escapeMarkdownV2(targetChat.first_name) : 'N/A';
+        const lastName = targetChat.last_name ? escapeMarkdownV2(targetChat.last_name) : 'N/A';
+        const username = targetChat.username ? escapeMarkdownV2(targetChat.username) : 'N/A';
+        const userIdEscaped = escapeMarkdownV2(targetUserId); // Also escape the ID itself for safety
+
+
+        let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`; // Use escaped ID
+        userDetails += `*First Name:* ${firstName}\n`;
+        userDetails += `*Last Name:* ${lastName}\n`;
+        userDetails += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`; // Display with @, but use escaped for string
+        userDetails += `*Type:* ${escapeMarkdownV2(targetChat.type)}\n`; // Escape chat type too
 
         // Add a link to the user's profile if username is available (Telegram deep link)
+        // Note: The URL part of a Markdown link doesn't need escaping.
         if (targetChat.username) {
-            userDetails += `*Profile Link:* [t.me/${targetChat.username}](https://t.me/${targetChat.username})\n`;
+            userDetails += `*Profile Link:* [t.me/${username}](https://t.me/${targetChat.username})\n`;
         }
 
-        // Additional fields if applicable (e.g., if it's a private chat, last activity etc. might be inferred)
-        // Note: Full activity info is not directly exposed via getChat for privacy reasons.
-
-        // 3. Send the detailed information back to the admin
-        await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
+        await bot.sendMessage(callerId, userDetails, { parse_mode: 'MarkdownV2' }); // IMPORTANT: Use MarkdownV2
 
     } catch (error) {
         console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
 
-        // Handle specific Telegram API errors
         if (error.response && error.response.body && error.response.body.description) {
             const apiError = error.response.body.description;
             if (apiError.includes("chat not found") || apiError.includes("user not found")) {
