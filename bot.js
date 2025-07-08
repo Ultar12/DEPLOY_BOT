@@ -345,32 +345,18 @@ async function notifyAdminUserOnline(msg) {
     const userId = msg.chat.id.toString();
     const now = Date.now();
 
-    // Don't notify for admin's own activity
-    if (userId === ADMIN_ID) {
-        return;
-    }
+    // Inside your notifyAdminUserOnline function
 
-    const lastNotified = userLastSeenNotification.get(userId) || 0;
+  const { first_name, last_name, username } = msg.from; // Correctly destructures 'last_name'
 
-    if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
-        try {
-            const { first_name, last_name, username } = msg.from;
-            const userDetails = `
+   const userDetails = `
 *User Online:*
 *ID:* \`${userId}\`
-*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${lastName ? escapeMarkdown(lastName) : ''}
+*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
 *Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
             `;
-            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
-            userLastSeenNotification.set(userId, now); // Update last notification time
-            console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
-        } catch (error) {
-            console.error(`Error notifying admin about user ${userId} online:`, error.message);
-        }
-    }
-}
-
+            // The change is from ${lastName ...} to ${last_name ...}
 
 // 7) Utilities
 
