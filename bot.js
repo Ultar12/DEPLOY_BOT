@@ -45,7 +45,7 @@ const pool = new Pool({
   try {
     // --- IMPORTANT FOR DEVELOPMENT/DEBUGGING ---
     // Uncomment the line below ONCE if you need to completely reset your user_bots table
-    // (e.g., if you suspect corrupt data or a malformed schema).
+    // (e.e.g., if you suspect corrupt data or a malformed schema).
     // After running once, comment it out again to prevent data loss on future deploys.
     // await pool.query('DROP TABLE IF EXISTS user_bots;');
     // console.warn("[DB] DEVELOPMENT: user_bots table dropped (if existed).");
@@ -483,8 +483,7 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'], // "Free Trial" button
-      // FIXED: Corrected callback_data for Rate Bot
-      ['Support', { text: '⭐ Rate Bot', callback_data: 'rate_bot_menu' }]
+      ['Support'] // Kept Support, removed Rate Bot
   ];
   if (isAdmin) {
       return [
@@ -861,17 +860,17 @@ bot.onText(/^\/start$/, async msg => {
 
     // Send image with professional caption and keyboard for regular users
     const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg';
-    // Updated welcomeCaption with exact words provided by user
+    // Updated welcomeCaption with new guidance
     const welcomeCaption = `
 ${personalizedGreeting}
 
 To get started, please follow these simple steps:
 
-1️⃣  *Connect Your WhatsApp:*
-    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+1️⃣  *Get Your Session:*
+    Tap the 'Get Session' button and provide your WhatsApp number in full international format. The admin will then generate a pairing code for you.
 
 2️⃣  *Deploy Your Bot:*
-    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+    Once you have your session code, use the 'Deploy' button to effortlessly launch your personalized bot.
 
 We're here to assist you every step of the way!
 `;
@@ -1010,7 +1009,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
             } else if (apiError.includes("bot was blocked by the user")) {
                 await bot.sendMessage(callerId, `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
             } else {
-                await bot.sendMessage(callerId, `❌ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
+                await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
             console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
@@ -1140,8 +1139,12 @@ bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) 
         await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
 
         // Clean up user's state
-        delete userStates[targetUserId];
-        console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state cleared.`);
+        // After sending the pairing code, transition user to AWAITING_SESSION_ID
+        // Preserve isFreeTrial flag if it was part of the original request
+        userStates[targetUserId] = { step: 'SESSION_ID', data: { isFreeTrial: userState?.data?.isFreeTrial || false } };
+        await bot.sendMessage(targetUserId, 'Now, please enter your session ID (the pairing code you just received):');
+
+        console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state transitioned to SESSION_ID.`);
 
         // Clean up admin's state if any related to this specific request (though /send makes it less necessary)
         delete userStates[cid]; // Clears admin's state after successful sending
@@ -1395,39 +1398,17 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    // Updated guideCaption with exact words provided by user
-    const guideCaption =
-       "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link:*\n" +
-        "Visit: <https://levanter-delta.vercel.app/>\n" +
-        "Use the 'Custom Session ID' button if you prefer.\n\n" +
-        "2️⃣ *Important for iPhone Users:*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" +
-        "3️⃣ *Skip Advertisements:*\n" +
-        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Copy Your Session ID:*\n" +
-        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" +
-        "5️⃣ *Final Step: Launch Your Bot:*\n" +
-        "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin.";
+      delete userStates[cid]; // Clear any previous state for the user
+      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
 
-    // Add the new "Can't get code?" button here
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: "Can't get code?", callback_data: "cant_get_code" }]
-        ]
-    };
-
-    try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/syx8uk.jpeg', {
-        caption: guideCaption,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
-    } catch (e) {
-        console.error(`Error sending photo in Get Session: ${e.message}`);
-        await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown', reply_markup: keyboard });
-    }
-    return;
+      // Send a NEW message to ask for the WhatsApp number
+      await bot.sendMessage(cid,
+          'Please send your WhatsApp number in the full international format including the `+` e.g., `+23491630000000`.',
+          {
+              parse_mode: 'Markdown'
+          }
+      );
+      return;
   }
 
   if (text === 'My Bots') {
@@ -1498,7 +1479,7 @@ bot.on('message', async msg => {
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
+    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId, isFreeTrial: st.data.isFreeTrial, isAdminDeploy: st.data.isAdminDeploy }; // Store messageId and intervalId, preserve flags
 
     // Store context for the admin's action on this specific message (including for timeout)
     // Keyed by the message_id sent to the admin
@@ -1536,7 +1517,9 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
+        timeout_id_for_pairing_request: timeoutIdForPairing, // Store timeout ID to clear it if accepted/decline
+        isFreeTrial: st.data.isFreeTrial, // Pass this on for the /send command to use
+        isAdminDeploy: st.data.isAdminDeploy
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -1781,21 +1764,6 @@ bot.on('callback_query', async q => {
       return;
   }
 
-  // Handle "Can't get code?" button click (USER SIDE)
-  if (action === 'cant_get_code') {
-      delete userStates[cid]; // Clear any previous state for the user
-      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
-
-      // Send a NEW message to ask for the WhatsApp number
-      await bot.sendMessage(cid,
-          'Please send your WhatsApp number in the full international format including the `+` e.g., `+23491630000000`.',
-          {
-              parse_mode: 'Markdown'
-          }
-      );
-      return;
-  }
-
   // NEW: Handle pairing_action callback (ADMIN SIDE) - Accept/Decline button click
   if (action === 'pairing_action') {
       if (cid !== ADMIN_ID) { // Ensure only admin can click these buttons
@@ -1825,8 +1793,12 @@ bot.on('callback_query', async q => {
       delete forwardingContext[adminMessageId]; // This specific pairing request context is consumed
 
       // Stop the user's waiting animation (if active) and prepare their message
-      const userMessageId = userStates[targetUserChatId]?.data?.messageId;
-      const userAnimateIntervalId = userStates[targetUserChatId]?.data?.animateIntervalId;
+      const userStateForTargetUser = userStates[targetUserChatId];
+      const userMessageId = userStateForTargetUser?.data?.messageId;
+      const userAnimateIntervalId = userStateForTargetUser?.data?.animateIntervalId;
+      const isFreeTrialFromContext = context.isFreeTrial;
+      const isAdminDeployFromContext = context.isAdminDeploy;
+
 
       if (userAnimateIntervalId) { // If there's an active animation for the user
           clearInterval(userAnimateIntervalId); // Stop the animation first
@@ -1896,51 +1868,6 @@ bot.on('callback_query', async q => {
       return;
   }
 
-  // NEW: Handle "Rate Bot" button click to show star rating options
-  if (action === 'rate_bot_menu') {
-      const keyboard = {
-          inline_keyboard: [
-              [{ text: '⭐', callback_data: 'rate_bot:1' }, { text: '⭐⭐', callback_data: 'rate_bot:2' }],
-              [{ text: '⭐⭐⭐', callback_data: 'rate_bot:3' }, { text: '⭐⭐⭐⭐', callback_data: 'rate_bot:4' }],
-              [{ text: '⭐⭐⭐⭐⭐', callback_data: 'rate_bot:5' }]
-          ]
-      };
-      await bot.editMessageText('Please rate your experience:', {
-          chat_id: cid,
-          message_id: q.message.message_id,
-          reply_markup: keyboard
-      });
-      return;
-  }
-
-  // NEW: Handle actual star rating submission
-  if (action === 'rate_bot') {
-      const rating = payload;
-      try {
-          const { first_name, last_name, username } = q.from;
-          const userIdEscaped = escapeMarkdown(cid);
-          const ratingMessage = `
-🌟 *New Bot Rating:*
-*User ID:* \`${userIdEscaped}\`
-*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
-*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
-*Rating:* ${'⭐'.repeat(parseInt(rating, 10))} (${rating} out of 5)
-          `;
-          await bot.sendMessage(ADMIN_ID, ratingMessage, { parse_mode: 'Markdown' });
-          await bot.editMessageText(`✅ Thank you for your ${'⭐'.repeat(parseInt(rating, 10))} rating! Your feedback is valuable.`, {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
-      } catch (error) {
-          console.error(`Error processing rating from user ${cid}:`, error.message);
-          await bot.editMessageText(`❌ An error occurred while submitting your rating. Please try again later.`, {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
-      }
-      return;
-  }
-
   // INTERACTIVE WIZARD HANDLER (No changes here)
   if (action === 'setup') {
       const st = userStates[cid];
@@ -1993,7 +1920,7 @@ bot.on('callback_query', async q => {
       if (step === 'cancel') {
           await bot.editMessageText('❌ Deployment cancelled.', {
               chat_id: cid,
-              message_id: st.message_id
+              message_id: st.message.message_id
           });
           delete userStates[cid];
       }
@@ -2593,7 +2520,7 @@ bot.on('callback_query', async q => {
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
-              `⚠️ Bot "*${appName}*" failed to come online after variable "*${VAR_NAME}" update: ${err.message}\n\n` +
+              `⚠️ Bot "*${appName}*" failed to come online after variable "*${varKey}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
@@ -2830,7 +2757,7 @@ bot.on('channel_post', async msg => {
 
     const text = msg.text?.trim();
 
-    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
+    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE--n${text}\n---END MESSAGE---`);
 
     if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
         console.log(`[Channel Post] Ignoring message from non-listening channel: ${channelId}`);
