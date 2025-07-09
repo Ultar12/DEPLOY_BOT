@@ -1298,7 +1298,7 @@ bot.on('message', async msg => {
                   return; // Stay in this state, await correct code
               }
 
-              const { original_user_chat_id: targetUserId, isFreeTrial, isAdminDeploy, user_waiting_message_id, user_animate_interval_id } = context;
+              const { original_user_chat_id: targetUserId, user_waiting_message_id, user_animate_interval_id } = context;
 
               // Stop the user's waiting animation (if active)
               if (userAnimateIntervalId) {
@@ -1323,8 +1323,8 @@ bot.on('message', async msg => {
 
                   // Clear user's state as this part of the process is complete
                   delete userStates[targetUserId];
-                  // If it was a free trial request, the next step (deploy) will pick up the isFreeTrial flag.
                   // For the admin, clear their state related to this request.
+                  delete userStates[cid];
                   delete forwardingContext[repliedToBotMessageId];
                   console.log(`[Pairing] Pairing code sent by admin to user ${targetUserId}. Admin and user states cleared/updated.`);
 
@@ -1836,12 +1836,22 @@ bot.on('callback_query', async q => {
               }
           };
 
-          await bot.sendMessage(ADMIN_ID,
+          // Admin is now asked to send the code in a direct reply to this specific message
+          const adminReplyPromptMsg = await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `Please send the pairing code for this user now (e.g., \`ABCD-1234\`).\n` +
-              `[Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
+              `*Please reply to _this_ message with the pairing code* (e.g., \`ABCD-1234\`).\n` +
+              `[Session ID Generator](https://levanter-delta.vercel.app/)`,
               { parse_mode: 'Markdown' }
           );
+
+          // Store context for the admin's *next reply* specifically for sending the code
+          forwardingContext[adminReplyPromptMsg.message_id] = {
+              original_user_chat_id: targetUserChatId,
+              request_type: 'pairing_request_awaiting_code',
+              user_waiting_message_id: userMessageId,
+              user_animate_interval_id: userAnimateIntervalId
+          };
+
 
           // Update the user's waiting message to reflect that admin accepted and is getting the code
           if (userMessageId) {
