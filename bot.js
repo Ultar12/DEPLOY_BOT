@@ -45,7 +45,7 @@ const pool = new Pool({
   try {
     // --- IMPORTANT FOR DEVELOPMENT/DEBUGGING ---
     // Uncomment the line below ONCE if you need to completely reset your user_bots table
-    // (e.e.g., if you suspect corrupt data or a malformed schema).
+    // (e.g., if you suspect corrupt data or a malformed schema).
     // After running once, comment it out again to prevent data loss on future deploys.
     // await pool.query('DROP TABLE IF EXISTS user_bots;');
     // console.warn("[DB] DEVELOPMENT: user_bots table dropped (if existed).");
@@ -602,15 +602,21 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
   try {
     // Stage 1: Create App
+    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application...');
+
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
       }
     });
+    clearInterval(createMsgAnimate); // Stop animation
 
     // Stage 2: Add-ons and Buildpacks
-    await bot.editMessageText('⚙️ Configuring resources...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources...');
+
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
@@ -640,9 +646,12 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(configMsgAnimate); // Stop animation
 
     // Stage 3: Config Vars
-    await bot.editMessageText('🔧 Setting environment variables...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables...');
+
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
@@ -657,9 +666,12 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(varsMsgAnimate); // Stop animation
 
     // Stage 4: Build
-    await bot.editMessageText('🛠️ Starting build process...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process...');
+
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -671,10 +683,13 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(buildStartMsgAnimate); // Stop animation
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let buildStatus = 'pending';
-    const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
+    const progMsg = await bot.editMessageText(`${getAnimatedEmoji()} Building... 0%`, { chat_id: chatId, message_id: createMsg.message_id });
+    const buildProgressAnimate = await animateMessage(chatId, progMsg.message_id, 'Building...');
+
 
     for (let i = 1; i <= 20; i++) {
       await new Promise(r => setTimeout(r, 5000));
@@ -691,13 +706,15 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         break;
       }
       const pct = Math.min(100, i * 5);
-      await bot.editMessageText(`Building... ${pct}%`, {
+      // Update the animation and percentage in the same message
+      await bot.editMessageText(`${getAnimatedEmoji()} Building... ${pct}%`, {
         chat_id: chatId,
         message_id: progMsg.message_id
       }).catch(() => {});
 
       if (buildStatus !== 'pending') break;
     }
+    clearInterval(buildProgressAnimate); // Stop animation after build polling loop
 
     if (buildStatus === 'succeeded') {
       // --- CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
@@ -1101,60 +1118,6 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
-// NEW: /send <user_id> <9-character alphanumeric code with hyphen> command handler (Admin only)
-bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) => { // Updated regex for AJWI-2ISN format
-    const cid = msg.chat.id.toString();
-    const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars with hyphen)
-
-    if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
-    }
-
-    // Attempt to retrieve user's current state to stop animation and clear
-    const userState = userStates[targetUserId];
-    const userWaitingMessageId = userState?.data?.messageId;
-    const userAnimateIntervalId = userState?.data?.animateIntervalId;
-
-    if (userAnimateIntervalId) {
-        clearInterval(userAnimateIntervalId); // Stop the animation
-        if (userWaitingMessageId) {
-            await bot.editMessageText(`✅ Pairing code received! Sending to you now...`, {
-                chat_id: targetUserId,
-                message_id: userWaitingMessageId
-            }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
-        }
-    }
-
-    try {
-    // Send the pairing code to the original user
-    await bot.sendMessage(targetUserId,
-        `Your Pairing-code is:\n\n` +
-        `\`${pairingCode}\`\n\n` + // Use escaped code directly for Markdown
-        `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
-        { parse_mode: 'Markdown' }
-    );
-
-    // ... rest of your code
-        await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
-
-        // Clean up user's state
-        // After sending the pairing code, transition user to AWAITING_SESSION_ID
-        // Preserve isFreeTrial flag if it was part of the original request
-        userStates[targetUserId] = { step: 'SESSION_ID', data: { isFreeTrial: userState?.data?.isFreeTrial || false } };
-        await bot.sendMessage(targetUserId, 'Now, please enter your session ID (the pairing code you just received):');
-
-        console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state transitioned to SESSION_ID.`);
-
-        // Clean up admin's state if any related to this specific request (though /send makes it less necessary)
-        delete userStates[cid]; // Clears admin's state after successful sending
-
-    } catch (e) {
-        console.error(`Error sending pairing code to user ${targetUserId}:`, e);
-        await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
-    }
-});
-
 // NEW ADMIN COMMAND: /stats
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
@@ -1300,6 +1263,52 @@ bot.on('message', async msg => {
 
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
+
+  // --- ADMIN DIRECT PAIRING CODE INPUT ---
+  // This block must come BEFORE general reply_to_message handling if it needs to consume the message.
+  if (isAdmin && st && st.step === 'AWAITING_ADMIN_PAIRING_CODE_INPUT') {
+      const pairingCode = text.trim();
+      const pairingCodeRegex = /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/;
+
+      if (!pairingCodeRegex.test(pairingCode)) {
+          return bot.sendMessage(cid, '❌ Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).');
+      }
+
+      const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
+
+      // Stop the user's waiting animation (if active)
+      if (userAnimateIntervalId) {
+          clearInterval(userAnimateIntervalId);
+          if (userWaitingMessageId) {
+              await bot.editMessageText(`✅ Pairing code received from admin! Sending to you now...`, {
+                  chat_id: targetUserId,
+                  message_id: userWaitingMessageId
+              }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
+          }
+      }
+
+      try {
+          await bot.sendMessage(targetUserId,
+              `Your Pairing-code is:\n\n` +
+              `\`${pairingCode}\`\n\n` +
+              `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!\n\n` +
+              `When you're ready, tap the 'Deploy' button to continue.`, // Instruct user to use Deploy button
+              { parse_mode: 'Markdown' }
+          );
+          await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
+
+          // Clear user's state as this part of the process is complete
+          delete userStates[targetUserId];
+          // Clear admin's state for this flow
+          delete userStates[cid];
+          console.log(`[Pairing] Pairing code sent by admin to user ${targetUserId}. Admin and user states cleared/updated.`);
+
+      } catch (e) {
+          console.error(`Error sending pairing code to user ${targetUserId}:`, e);
+          await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
+      }
+      return; // Consume message
+  }
 
   // NEW: Check if this is a reply TO the bot (potentially from an admin) for support questions
   if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
@@ -1479,7 +1488,13 @@ bot.on('message', async msg => {
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId, isFreeTrial: st.data.isFreeTrial, isAdminDeploy: st.data.isAdminDeploy }; // Store messageId and intervalId, preserve flags
+    // Preserve any flags from the previous state (e.g., if this was a Free Trial request)
+    userStates[cid].data = {
+        messageId: waitingMsg.message_id,
+        animateIntervalId: animateIntervalId,
+        isFreeTrial: st?.data?.isFreeTrial || false, // Pass on if it was a Free Trial request
+        isAdminDeploy: st?.data?.isAdminDeploy || false // Pass on if it was an admin initiated deploy
+    };
 
     // Store context for the admin's action on this specific message (including for timeout)
     // Keyed by the message_id sent to the admin
@@ -1517,9 +1532,7 @@ bot.on('message', async msg => {
         request_type: 'pairing_request', // Indicate type of request
         user_waiting_message_id: waitingMsg.message_id, // Store for later access
         user_animate_interval_id: animateIntervalId, // Store to clear later
-        timeout_id_for_pairing_request: timeoutIdForPairing, // Store timeout ID to clear it if accepted/decline
-        isFreeTrial: st.data.isFreeTrial, // Pass this on for the /send command to use
-        isAdminDeploy: st.data.isAdminDeploy
+        timeout_id_for_pairing_request: timeoutIdForPairing // Store timeout ID to clear it if accepted/decline
     };
     console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
@@ -1796,9 +1809,8 @@ bot.on('callback_query', async q => {
       const userStateForTargetUser = userStates[targetUserChatId];
       const userMessageId = userStateForTargetUser?.data?.messageId;
       const userAnimateIntervalId = userStateForTargetUser?.data?.animateIntervalId;
-      const isFreeTrialFromContext = context.isFreeTrial;
-      const isAdminDeployFromContext = context.isAdminDeploy;
-
+      // Preserve original context flags for later use if needed (e.g., free trial status)
+      const { isFreeTrial, isAdminDeploy } = userStateForTargetUser?.data || {};
 
       if (userAnimateIntervalId) { // If there's an active animation for the user
           clearInterval(userAnimateIntervalId); // Stop the animation first
@@ -1812,43 +1824,56 @@ bot.on('callback_query', async q => {
       }
 
       if (decision === 'accept') {
-          // Add 3-second delay and then transition to loading for the user
-          if (userMessageId) { // Ensure there's a message to edit
-              await new Promise(r => setTimeout(r, 3000)); // Wait 3 seconds
-              // Start a new animation on the same user message
-              const newAnimateIntervalId = await animateMessage(targetUserChatId, userMessageId, 'Wait for your pairing code...');
-              // Update user's state with the new animation ID for potential future cleanup
-              userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
-          }
+          // Admin accepted, now transition admin state to awaiting pairing code directly
+          userStates[cid] = {
+              step: 'AWAITING_ADMIN_PAIRING_CODE_INPUT',
+              data: {
+                  targetUserId: targetUserChatId,
+                  userWaitingMessageId: userMessageId, // Pass this to admin's state for potential final animation stop
+                  userAnimateIntervalId: userAnimateIntervalId, // Pass this for potential final animation clear
+                  isFreeTrial: isFreeTrial,
+                  isAdminDeploy: isAdminDeploy
+              }
+          };
 
-          // Admin accepted, now instruct admin to use the /send command
-          // FIX: Corrected Markdown for copyable /send command and user ID
-          await bot.sendMessage(ADMIN_ID,
+          // Admin is now asked to send the code in a direct reply to this specific message
+          const adminReplyPromptMsg = await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the Code:*\n` +
-              `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
-              `[Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
+              `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).\n` + // Modified prompt
+              `[Session ID Generator](https://levanter-delta.vercel.app/)`,
               { parse_mode: 'Markdown' }
           );
 
-          // Admin's state related to this is implicitly handled by them using the /send command.
-          // No need for a specific 'AWAITING_PAIRING_CODE_FROM_ADMIN' state now, as /send is stateless in this context.
+          // IMPORTANT: We don't need to add to forwardingContext if we use userStates[cid] for the admin's current flow.
+          // The admin's next message is handled by the 'AWAITING_ADMIN_PAIRING_CODE_INPUT' check at the top of bot.on('message').
+
+          // Update the user's waiting message to reflect that admin accepted and is getting the code
+          if (userMessageId) {
+            const waitingForCodeMsg = await bot.editMessageText(`${getAnimatedEmoji()} Admin accepted! Please wait while the admin gets your pairing code...`, {
+                chat_id: targetUserChatId,
+                message_id: userMessageId
+            });
+            const newAnimateIntervalId = await animateMessage(targetUserChatId, waitingForCodeMsg.message_id, 'Admin getting your pairing code...');
+            // Update user's state with the new animation ID for potential future cleanup
+            userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
+          }
+
 
           // Edit the original message to admin to show it's handled (remove buttons)
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
               chat_id: cid,
               message_id: adminMessageId
           }).catch(() => {}); // Ignore if message already modified
-          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
+          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to send code directly._`, {
               chat_id: cid,
-              message_id: adminMessageId, // FIX: typo - changed to adminMessageId
+              message_id: adminMessageId,
               parse_mode: 'Markdown'
           }).catch(() => {});
 
 
       } else { // decision === 'decline'
           // Admin declined, inform the user
-          await bot.sendMessage(targetUserChatId, 'An error occurred! Pairing code request declined by admin.');
+          await bot.sendMessage(targetUserChatId, '❌ Your pairing code request was declined by the admin. Please contact support if you have questions.');
           await bot.sendMessage(ADMIN_ID, `❌ Pairing request from user \`${targetUserChatId}\` declined.`);
 
           // Clear user's state as the request is finished
@@ -2757,7 +2782,7 @@ bot.on('channel_post', async msg => {
 
     const text = msg.text?.trim();
 
-    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE--n${text}\n---END MESSAGE---`);
+    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
 
     if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
         console.log(`[Channel Post] Ignoring message from non-listening channel: ${channelId}`);
