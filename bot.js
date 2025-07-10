@@ -464,7 +464,7 @@ async function animateMessage(chatId, messageId, baseText) {
 
 
 function generateKey() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456389';
   return Array.from({ length: 8 })
     .map(() => chars[Math.floor(Math.random() * chars.length)])
     .join('');
@@ -1089,7 +1089,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
+    const cid = msg.chat.id.id.toString();
     const targetUserId = match[1];
 
     console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
