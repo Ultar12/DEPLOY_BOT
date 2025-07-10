@@ -385,7 +385,8 @@ async function processTelegramQueue() {
         } catch (error) {
             console.error(`[Telegram API Error] Failed to execute ${method}: ${error.message}`);
             if (error.response && error.response.statusCode === 429) {
-                retryAfterSeconds = error.response.parameters.retry_after || 5; // Default to 5 seconds if not specified
+                // FIX: Add null check for error.response.parameters
+                retryAfterSeconds = error.response.parameters?.retry_after || 5; // Default to 5 seconds if not specified
                 console.warn(`[Telegram Rate Limit] Hit 429. Retrying after ${retryAfterSeconds} seconds.`);
                 telegramQueue.unshift({ chatId, text, options, method, resolve, reject }); // Add back to front of queue
             } else {
@@ -1089,7 +1090,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
-    const cid = msg.chat.id.id.toString();
+    const cid = msg.chat.id.toString();
     const targetUserId = match[1];
 
     console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
