@@ -303,23 +303,30 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     const messageToEditId = originalMessageId;
 
     if (messageToEditId) {
-        await bot.editMessageText(message, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: messageTargetChatId,
             message_id: messageToEditId,
+            text: message,
             parse_mode: 'Markdown'
-        }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
+        });
     } else {
         // If original message is not editable or not provided, send a new message
-        await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
-            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb (new msg): ${err.message}`));
+        await sendTelegramMessageSafely('sendMessage', {
+            chat_id: messageTargetChatId,
+            text: message,
+            parse_mode: 'Markdown'
+        });
     }
 
     // If the original action was user-facing (e.g., a regular user tried to restart THEIR bot)
     // AND the detected owner is different from the person currently interacting (meaning an admin
     // managed another user's bot), notify the original owner.
     if (isUserFacing && ownerUserId !== callingChatId) {
-         await bot.sendMessage(ownerUserId, `ℹ️ Your bot "*${appName}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
-             .catch(err => console.error(`Failed to send notification to original owner in handleAppNotFoundAndCleanDb: ${err.message}`));
+         await sendTelegramMessageSafely('sendMessage', {
+             chat_id: ownerUserId,
+             text: `ℹ️ Your bot "*${appName}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`,
+             parse_mode: 'Markdown'
+         });
     }
 }
 
@@ -340,6 +347,48 @@ const forwardingContext = {};
 // NEW: Map to track user online status for admin notification cooldown
 const userLastSeenNotification = new Map(); // chatId -> timestamp of last notification
 const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- Telegram API Rate Limiting Variables ---
+let telegramRetryAfter = 0; // In seconds
+let lastTelegramRequestTime = 0; // Unix timestamp in ms
+
+/**
+ * Safely sends a Telegram message, respecting rate limits.
+ * @param {string} methodName - The TelegramBot method name (e.g., 'sendMessage', 'editMessageText').
+ * @param {object} params - The parameters for the Telegram method.
+ * @returns {Promise<any>} The result of the Telegram API call.
+ */
+async function sendTelegramMessageSafely(methodName, params) {
+    const now = Date.now();
+    const elapsedTimeSinceLastRequest = now - lastTelegramRequestTime;
+    const requiredDelay = (telegramRetryAfter * 1000); // Convert seconds to milliseconds
+
+    if (elapsedTimeSinceLastRequest < requiredDelay) {
+        const remainingDelay = requiredDelay - elapsedTimeSinceLastRequest;
+        console.warn(`[Telegram Rate Limit] Waiting for ${remainingDelay / 1000}s due to previous 429 error.`);
+        await new Promise(resolve => setTimeout(resolve, remainingDelay));
+    }
+
+    try {
+        const result = await bot[methodName](...Object.values(params)); // Dynamically call the method
+        lastTelegramRequestTime = Date.now(); // Update last request time on success
+        telegramRetryAfter = 0; // Reset retry_after on success
+        return result;
+    } catch (error) {
+        if (error.response && error.response.statusCode === 429 && error.response.parameters && error.response.parameters.retry_after) {
+            telegramRetryAfter = error.response.parameters.retry_after;
+            lastTelegramRequestTime = Date.now(); // Mark current time as when 429 was received
+            console.error(`[Telegram Rate Limit] Received 429 Too Many Requests. Retrying after ${telegramRetryAfter}s.`);
+            // Re-throw the error or handle it as appropriate for the calling function
+            // For now, re-throwing so the calling function can decide how to handle it.
+            throw error;
+        } else {
+            // Not a 429 error, just re-throw
+            throw error;
+        }
+    }
+}
+
 
 // --- Admin Notification for User Online Status ---
 async function notifyAdminUserOnline(msg) {
@@ -367,7 +416,11 @@ async function notifyAdminUserOnline(msg) {
 *Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
             `;
-            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+            await sendTelegramMessageSafely('sendMessage', {
+                chat_id: ADMIN_ID,
+                text: userDetails,
+                parse_mode: 'Markdown'
+            });
             userLastSeenNotification.set(userId, now); // Update last notification time
             console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
         } catch (error) {
@@ -395,11 +448,13 @@ function getAnimatedEmoji() {
 async function animateMessage(chatId, messageId, baseText) {
     const intervalId = setInterval(async () => {
         try {
-            await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
+            await sendTelegramMessageSafely('editMessageText', {
                 chat_id: chatId,
-                message_id: messageId
-            }).catch(() => {}); // Catch potential errors if message is deleted
+                message_id: messageId,
+                text: `${getAnimatedEmoji()} ${baseText}`
+            });
         } catch (e) {
+            // Log and stop animation if message is gone or edit fails for other reasons
             console.error(`Error animating message ${messageId}:`, e.message);
             clearInterval(intervalId); // Stop animation on error
         }
@@ -504,7 +559,10 @@ function chunkArray(arr, size) {
 }
 
 async function sendAnimatedMessage(chatId, baseText) {
-    const msg = await bot.sendMessage(chatId, `⚙️ ${baseText}...`);
+    const msg = await sendTelegramMessageSafely('sendMessage', {
+        chat_id: chatId,
+        text: `⚙️ ${baseText}...`
+    });
     await new Promise(r => setTimeout(r, 1200)); // Wait for animation
     return msg;
 }
@@ -515,10 +573,11 @@ async function startRestartCountdown(chatId, appName, messageId) {
     const totalSteps = totalSeconds / intervalTime;
 
     // Initial message
-    await bot.editMessageText(`Bot "${appName}" restarting...`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: chatId,
-        message_id: messageId
-    }).catch(() => {});
+        message_id: messageId,
+        text: `Bot "${appName}" restarting...`
+    });
 
     for (let i = 0; i <= totalSteps; i++) {
         const secondsLeft = totalSeconds - (i * intervalTime);
@@ -535,17 +594,19 @@ async function startRestartCountdown(chatId, appName, messageId) {
             countdownMessage += `[${filledBlocks}] Restart complete!`;
         }
 
-        await bot.editMessageText(countdownMessage, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: chatId,
-            message_id: messageId
-        }).catch(() => {}); // Ignore errors if message is deleted
+            message_id: messageId,
+            text: countdownMessage
+        });
 
         if (secondsLeft <= 0) break; // Exit loop when countdown is done
         await new Promise(r => setTimeout(r, intervalTime * 1000));
     }
-    await bot.editMessageText(`Bot "${appName}" has restarted successfully and is back online!`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        text: `Bot "${appName}" has restarted successfully and is back online!`
     });
 }
 
@@ -561,8 +622,12 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     });
     const apps = res.data.map(a => a.name);
     if (!apps.length) {
-      if (messageId) return bot.editMessageText(chatId, 'No apps found.', { chat_id: chatId, message_id: messageId });
-      return bot.sendMessage(chatId, 'No apps found.');
+      if (messageId) {
+          await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: messageId, text: 'No apps found.' });
+      } else {
+          await sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: 'No apps found.' });
+      }
+      return;
     }
 
     // Adapt callback data based on whether it's for general selection, /add, or /remove
@@ -579,16 +644,25 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
     const message = `Total apps: ${apps.length}\nSelect an app:`;
     if (messageId) {
-        await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: rows } });
+        await sendTelegramMessageSafely('editMessageText', {
+            chat_id: chatId,
+            message_id: messageId,
+            text: message,
+            reply_markup: { inline_keyboard: rows }
+        });
     } else {
-        await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
+        await sendTelegramMessageSafely('sendMessage', {
+            chat_id: chatId,
+            text: message,
+            reply_markup: { inline_keyboard: rows }
+        });
     }
   } catch (e) {
     const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
     if (messageId) {
-        bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+        await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: messageId, text: errorMsg });
     } else {
-        bot.sendMessage(chatId, errorMsg);
+        await sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: errorMsg });
     }
   }
 }
@@ -598,11 +672,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
 
   let buildResult = false; // Flag to track overall success
-  const createMsg = await bot.sendMessage(chatId, '🚀 Creating application...');
+  const createMsg = await sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: '🚀 Creating application...' });
 
   try {
     // Stage 1: Create App
-    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: createMsg.message_id, text: `${getAnimatedEmoji()} Creating application...` });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application...');
 
     await axios.post('https://api.heroku.com/apps', { name }, {
@@ -614,7 +688,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     clearInterval(createMsgAnimate); // Stop animation
 
     // Stage 2: Add-ons and Buildpacks
-    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: createMsg.message_id, text: `${getAnimatedEmoji()} Configuring resources...` });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources...');
 
     await axios.post(
@@ -649,7 +723,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     clearInterval(configMsgAnimate); // Stop animation
 
     // Stage 3: Config Vars
-    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: createMsg.message_id, text: `${getAnimatedEmoji()} Setting environment variables...` });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables...');
 
     await axios.patch(
@@ -669,7 +743,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     clearInterval(varsMsgAnimate); // Stop animation
 
     // Stage 4: Build
-    await bot.editMessageText(`${getAnimatedEmoji()} Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: createMsg.message_id, text: `${getAnimatedEmoji()} Starting build process...` });
     const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process...');
 
     const bres = await axios.post(
@@ -687,7 +761,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let buildStatus = 'pending';
-    const progMsg = await bot.editMessageText(`${getAnimatedEmoji()} Building... 0%`, { chat_id: chatId, message_id: createMsg.message_id });
+    const progMsg = await sendTelegramMessageSafely('editMessageText', { chat_id: chatId, message_id: createMsg.message_id, text: `${getAnimatedEmoji()} Building... 0%` });
     const buildProgressAnimate = await animateMessage(chatId, progMsg.message_id, 'Building...');
 
 
@@ -707,10 +781,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       }
       const pct = Math.min(100, i * 5);
       // Update the animation and percentage in the same message
-      await bot.editMessageText(`${getAnimatedEmoji()} Building... ${pct}%`, {
+      await sendTelegramMessageSafely('editMessageText', {
         chat_id: chatId,
-        message_id: progMsg.message_id
-      }).catch(() => {});
+        message_id: progMsg.message_id,
+        text: `${getAnimatedEmoji()} Building... ${pct}%`
+      });
 
       if (buildStatus !== 'pending') break;
     }
@@ -737,16 +812,19 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       ].join('\n');
       const appDetails = `*App Name:* \`${name}\`\n*Session ID:* \`${vars.SESSION_ID}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
 
-      await bot.sendMessage(ADMIN_ID,
-          `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-          { parse_mode: 'Markdown', disable_web_page_preview: true }
-      );
+      await sendTelegramMessageSafely('sendMessage', {
+          chat_id: ADMIN_ID,
+          text: `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true
+      });
       // --- END OF CRITICAL MODIFICATION ---
 
       const baseWaitingText = `Build complete! Waiting for bot to connect...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Initial message with emoji
+      await sendTelegramMessageSafely('editMessageText', { // Initial message with emoji
         chat_id: chatId,
-        message_id: progMsg.message_id
+        message_id: progMsg.message_id,
+        text: `${getAnimatedEmoji()} ${baseWaitingText}`
       });
 
       // Start animation for waiting state
@@ -774,10 +852,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           clearInterval(animateIntervalId); // Stop animation on success/failure
 
           // If resolved, it means "connected" was received
-          await bot.editMessageText(
-            `🎉 Your bot is now live!`, // Removed URL here
-            { chat_id: chatId, message_id: progMsg.message_id }
-          );
+          await sendTelegramMessageSafely('editMessageText', {
+            chat_id: chatId,
+            message_id: progMsg.message_id,
+            text: `🎉 Your bot is now live!` // Removed URL here
+          });
           buildResult = true; // Overall success (including session connection)
 
           if (isFreeTrial) {
@@ -789,25 +868,42 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
                         [{ text: `Delete "${name}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
                     ]
                 };
-                await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
+                await sendTelegramMessageSafely('sendMessage', {
+                    chat_id: ADMIN_ID,
+                    text: adminWarningMessage,
+                    reply_markup: keyboard,
+                    parse_mode: 'Markdown'
+                });
                 console.log(`[FreeTrial] Sent 5-min warning to admin for ${name}.`);
             }, 55 * 60 * 1000); // 55 minutes
 
             // FIX: Schedule deletion after 1 hour (formerly 30 minutes)
             setTimeout(async () => {
                 try {
-                    await bot.sendMessage(chatId, `⏳ Your Free Trial app "${name}" is being deleted now as its 1-hour runtime has ended.`);
+                    await sendTelegramMessageSafely('sendMessage', {
+                        chat_id: chatId,
+                        text: `⏳ Your Free Trial app "${name}" is being deleted now as its 1-hour runtime has ended.`
+                    });
                     await axios.delete(`https://api.heroku.com/apps/${name}`, {
                         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                     });
                     await deleteUserBot(chatId, name);
-                    await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`);
+                    await sendTelegramMessageSafely('sendMessage', {
+                        chat_id: chatId,
+                        text: `Free Trial app "${name}" successfully deleted.`
+                    });
                     console.log(`[FreeTrial] Auto-deleted app ${name} after 1 hour.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                    await bot.sendMessage(chatId, `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`);
+                    await sendTelegramMessageSafely('sendMessage', {
+                        chat_id: chatId,
+                        text: `⚠️ Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`
+                    });
                     // Also notify admin if auto-delete fails
-                    bot.sendMessage(ADMIN_ID, `⚠️ Failed to auto-delete free trial app "${name}" for user ${chatId}: ${e.message}`);
+                    await sendTelegramMessageSafely('sendMessage', {
+                        chat_id: ADMIN_ID,
+                        text: `⚠️ Failed to auto-delete free trial app "${name}" for user ${chatId}: ${e.message}`
+                    });
                 }
             }, 60 * 60 * 1000); // 1 hour
           }
@@ -817,35 +913,37 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           clearInterval(animateIntervalId); // Stop animation
           console.error(`App status check failed for ${name}:`, err.message);
           // This catch block handles both direct rejections from channel_post and the timeout
-          await bot.editMessageText(
-            `⚠️ Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
+          await sendTelegramMessageSafely('editMessageText', {
+            chat_id: chatId,
+            message_id: progMsg.message_id,
+            text: `⚠️ Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
             `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`, // Updated message for clarity
-            {
-                chat_id: chatId,
-                message_id: progMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
-                    ]
-                }
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
+                ]
             }
-          );
+          });
           buildResult = false; // Overall failure to connect
       } finally {
           appDeploymentPromises.delete(name); // Always clean up the promise from the map
       }
 
     } else { // Heroku build failed
-      await bot.editMessageText(
-        `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
-        { chat_id: chatId, message_id: progMsg.message_id }
-      );
+      await sendTelegramMessageSafely('editMessageText', {
+        chat_id: chatId,
+        message_id: progMsg.message_id,
+        text: `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`
+      });
       buildResult = false; // Overall failure
     }
 
   } catch (error) { // FIX: Corrected outer try-catch block to wrap entire function logic
     const errorMsg = error.response?.data?.message || error.message;
-    bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`);
+    await sendTelegramMessageSafely('sendMessage', {
+        chat_id: chatId,
+        text: `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`
+    });
     buildResult = false; // Overall failure
   }
   return buildResult; // Indicate overall deployment success (including app startup)
@@ -863,8 +961,10 @@ bot.onText(/^\/start$/, async msg => {
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
 
   if (isAdmin) {
-    await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
-      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    await sendTelegramMessageSafely('sendMessage', {
+        chat_id: cid,
+        text: 'Welcome, Admin! Here is your menu:',
+        reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     });
   } else {
     // UPDATED: Dynamic greeting
@@ -891,26 +991,30 @@ To get started, please follow these simple steps:
 
 We're here to assist you every step of the way!
 `;
-    await bot.sendPhoto(cid, welcomeImageUrl, {
-      caption: welcomeCaption,
-      parse_mode: 'Markdown',
-      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+    await sendTelegramMessageSafely('sendPhoto', {
+        chat_id: cid,
+        photo: welcomeImageUrl,
+        caption: welcomeCaption,
+        parse_mode: 'Markdown',
+        reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     });
   }
 });
 
-bot.onText(/^\/menu$/i, msg => {
+bot.onText(/^\/menu$/i, async msg => {
   const cid = msg.chat.id.toString();
   const isAdmin = cid === ADMIN_ID;
-  bot.sendMessage(cid, 'Menu:', {
-    reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+  await sendTelegramMessageSafely('sendMessage', {
+      chat_id: cid,
+      text: 'Menu:',
+      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
 });
 
-bot.onText(/^\/apps$/i, msg => {
+bot.onText(/^\/apps$/i, async msg => {
   const cid = msg.chat.id.toString();
   if (cid === ADMIN_ID) {
-    sendAppList(cid);
+    await sendAppList(cid);
   }
 });
 
@@ -920,17 +1024,17 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     const status = match[1].toLowerCase();
 
     if (chatId !== ADMIN_ID) {
-        return bot.sendMessage(chatId, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: "❌ You are not authorized to use this command." });
     }
 
     if (status === 'on') {
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
-        await bot.sendMessage(chatId, "✅ Maintenance mode is now *ON*.", { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: "✅ Maintenance mode is now *ON*.", parse_mode: 'Markdown' });
     } else if (status === 'off') {
         isMaintenanceMode = false;
         await saveMaintenanceStatus(false);
-        await bot.sendMessage(chatId, "✅ Maintenance mode is now *OFF*.", { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', { chat_id: chatId, text: "✅ Maintenance mode is now *OFF*.", parse_mode: 'Markdown' });
     }
 });
 
@@ -938,7 +1042,7 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 // New /id command
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
-    await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
+    await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Your Telegram Chat ID is: \`${cid}\``, parse_mode: 'Markdown' });
 });
 
 // New /add <user_id> command for admin
@@ -950,7 +1054,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 
     if (cid !== ADMIN_ID) {
         console.log(`[Admin] Unauthorized /add attempt by ${cid}.`);
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "❌ You are not authorized to use this command." });
     }
 
     delete userStates[cid];
@@ -960,7 +1064,11 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     console.log(`[Admin] Admin ${cid} initiated /add for user ${targetUserId}. Prompting for app selection.`);
 
     try {
-        const sentMsg = await bot.sendMessage(cid, `Please select the app to assign to user \`${targetUserId}\`:`, { parse_mode: 'Markdown' });
+        const sentMsg = await sendTelegramMessageSafely('sendMessage', {
+            chat_id: cid,
+            text: `Please select the app to assign to user \`${targetUserId}\`:`,
+            parse_mode: 'Markdown'
+        });
         userStates[cid] = {
             step: 'AWAITING_APP_FOR_ADD',
             data: {
@@ -969,10 +1077,10 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
             }
         };
         console.log(`[Admin] State set for ${cid}:`, userStates[cid]);
-        sendAppList(cid, sentMsg.message_id, 'add_assign_app', targetUserId);
+        await sendAppList(cid, sentMsg.message_id, 'add_assign_app', targetUserId);
     } catch (error) {
         console.error("Error sending initial /add message or setting state:", error);
-        bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
+        await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "An error occurred while starting the add process. Please try again." });
     }
 });
 
@@ -987,7 +1095,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const targetUserId = match[1];
 
     if (callerId !== ADMIN_ID) {
-        return bot.sendMessage(callerId, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: callerId, text: "❌ You are not authorized to use this command." });
     }
 
     try {
@@ -1014,7 +1122,11 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         }
 
         // IMPORTANT: Change parse_mode to 'Markdown'
-        await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', {
+            chat_id: callerId,
+            text: userDetails,
+            parse_mode: 'Markdown'
+        });
 
     } catch (error) {
         console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
@@ -1022,15 +1134,15 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         if (error.response && error.response.body && error.response.body.description) {
             const apiError = error.response.body.description;
             if (apiError.includes("chat not found") || apiError.includes("user not found")) {
-                await bot.sendMessage(callerId, `❌ User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
+                await sendTelegramMessageSafely('sendMessage', { chat_id: callerId, text: `❌ User with ID \`${targetUserId}\` not found or has not interacted with the bot.` });
             } else if (apiError.includes("bot was blocked by the user")) {
-                await bot.sendMessage(callerId, `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
+                await sendTelegramMessageSafely('sendMessage', { chat_id: callerId, text: `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.` });
             } else {
-                await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
+                await sendTelegramMessageSafely('sendMessage', { chat_id: callerId, text: `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}` });
             }
         } else {
             console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
-            await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
+            await sendTelegramMessageSafely('sendMessage', { chat_id: callerId, text: `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.` });
         }
     }
 });
@@ -1044,7 +1156,7 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 
     if (cid !== ADMIN_ID) {
         console.log(`[Admin] Unauthorized /remove attempt by ${cid}.`);
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "❌ You are not authorized to use this command." });
     }
 
     delete userStates[cid];
@@ -1052,13 +1164,17 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 
     const userBots = await getUserBots(targetUserId);
     if (!userBots.length) {
-        return bot.sendMessage(cid, `User \`${targetUserId}\` has no bots deployed via this system.`, { parse_mode: 'Markdown' });
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `User \`${targetUserId}\` has no bots deployed via this system.`, parse_mode: 'Markdown' });
     }
 
     console.log(`[Admin] Admin ${cid} initiated /remove for user ${targetUserId}. Prompting for app removal selection.`);
 
     try {
-        const sentMsg = await bot.sendMessage(cid, `Select app to remove from user \`${targetUserId}\`'s dashboard:`, { parse_mode: 'Markdown' });
+        const sentMsg = await sendTelegramMessageSafely('sendMessage', {
+            chat_id: cid,
+            text: `Select app to remove from user \`${targetUserId}\`'s dashboard:`,
+            parse_mode: 'Markdown'
+        });
 
         userStates[cid] = {
             step: 'AWAITING_APP_FOR_REMOVAL',
@@ -1074,14 +1190,15 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
             callback_data: `remove_app_from_user:${name}:${targetUserId}`
         })));
 
-        await bot.editMessageReplyMarkup({ inline_keyboard: rows }, {
+        await sendTelegramMessageSafely('editMessageReplyMarkup', {
             chat_id: cid,
-            message_id: sentMsg.message_id
+            message_id: sentMsg.message_id,
+            reply_markup: { inline_keyboard: rows }
         });
 
     } catch (error) {
         console.error("Error sending initial /remove message or setting state:", error);
-        bot.sendMessage(cid, "An error occurred while starting the removal process. Please try again.");
+        await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "An error occurred while starting the removal process. Please try again." });
     }
 });
 
@@ -1092,16 +1209,17 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userMessageId = msg.message_id; // The ID of the user's question
 
     if (userChatId === ADMIN_ID) {
-        return bot.sendMessage(userChatId, "You are the admin, you can't ask yourself questions!");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: userChatId, text: "You are the admin, you can't ask yourself questions!" });
     }
 
     try {
-        const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
-            `*Message:* ${userQuestion}\n\n` +
-            `_Reply to this message to send your response back to the user._`,
-            { parse_mode: 'Markdown' }
-        );
+        const adminMessage = await sendTelegramMessageSafely('sendMessage', {
+            chat_id: ADMIN_ID,
+            text: `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+                  `*Message:* ${userQuestion}\n\n` +
+                  `_Reply to this message to send your response back to the user._`,
+            parse_mode: 'Markdown'
+        });
 
         // Store context for this specific message sent to the admin
         forwardingContext[adminMessage.message_id] = {
@@ -1111,10 +1229,10 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, '✅ Your question has been sent to the admin. You will be notified when they reply.');
+        await sendTelegramMessageSafely('sendMessage', { chat_id: userChatId, text: '✅ Your question has been sent to the admin. You will be notified when they reply.' });
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
+        await sendTelegramMessageSafely('sendMessage', { chat_id: userChatId, text: '❌ Failed to send your question to the admin. Please try again later.' });
     }
 });
 
@@ -1122,7 +1240,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "❌ You are not authorized to use this command." });
     }
 
     try {
@@ -1158,11 +1276,11 @@ bot.onText(/^\/stats$/, async (msg) => {
 ${keyDetails}
         `;
 
-        await bot.sendMessage(cid, statsMessage, { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: statsMessage, parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error(`Error fetching stats:`, error.message);
-        await bot.sendMessage(cid, `❌ An error occurred while fetching stats: ${error.message}`);
+        await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `❌ An error occurred while fetching stats: ${error.message}` });
     }
 });
 
@@ -1170,7 +1288,7 @@ ${keyDetails}
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "❌ You are not authorized to use this command." });
     }
 
     try {
@@ -1178,7 +1296,7 @@ bot.onText(/^\/users$/, async (msg) => {
         const userIds = userEntries.rows.map(row => row.user_id);
 
         if (userIds.length === 0) {
-            return bot.sendMessage(cid, "No users have deployed bots yet.");
+            return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "No users have deployed bots yet." });
         }
 
         let responseMessage = '*Registered Users:*\n\n';
@@ -1188,7 +1306,7 @@ bot.onText(/^\/users$/, async (msg) => {
         for (const userId of userIds) {
             try {
                 // Fetch Telegram chat info for the user
-                const targetChat = await bot.getChat(userId);
+                const targetChat = await bot.getChat(userId); // This specific API call is fine as is
                 const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
                 const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
                 const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A'; // Escape username for Markdown
@@ -1208,7 +1326,7 @@ bot.onText(/^\/users$/, async (msg) => {
 
                 // Send message in chunks if it gets too long
                 if (currentUserCount % maxUsersPerMessage === 0 && userIds.indexOf(userId) < userIds.length - 1) {
-                    await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+                    await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: responseMessage, parse_mode: 'Markdown' });
                     responseMessage = '*Registered Users (continued):*\n\n';
                     // Small delay to prevent hitting Telegram API limits when sending multiple messages
                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -1231,12 +1349,12 @@ bot.onText(/^\/users$/, async (msg) => {
 
         // Send any remaining message content
         if (responseMessage.trim() !== '*Registered Users (continued):*' && responseMessage.trim() !== '*Registered Users:*') {
-            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+            await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: responseMessage, parse_mode: 'Markdown' });
         }
 
     } catch (error) {
         console.error(`Error fetching user list:`, error.message);
-        await bot.sendMessage(cid, `❌ An error occurred while fetching the user list: ${error.message}`);
+        await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `❌ An error occurred while fetching the user list: ${error.message}` });
     }
 });
 
@@ -1254,7 +1372,7 @@ bot.on('message', async msg => {
 
   // Check for maintenance mode for non-admin users
   if (isMaintenanceMode && cid !== ADMIN_ID) {
-      await bot.sendMessage(cid, "Bot On Maintenance, Come Back Later.");
+      await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Bot On Maintenance, Come Back Later." });
       return; // Stop processing further commands for non-admin users
   }
 
@@ -1271,7 +1389,7 @@ bot.on('message', async msg => {
       const pairingCodeRegex = /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/;
 
       if (!pairingCodeRegex.test(pairingCode)) {
-          return bot.sendMessage(cid, '❌ Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).');
+          return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: '❌ Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).' });
       }
 
       const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
@@ -1281,22 +1399,24 @@ bot.on('message', async msg => {
           clearInterval(userAnimateIntervalId);
           // Update the user's message to "Your pairing-code is now ready!"
           if (userWaitingMessageId) {
-              await bot.editMessageText(`✅ Your pairing-code is now ready!`, {
+              await sendTelegramMessageSafely('editMessageText', {
                   chat_id: targetUserId,
-                  message_id: userWaitingMessageId
-              }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
+                  message_id: userWaitingMessageId,
+                  text: `✅ Your pairing-code is now ready!`
+              });
           }
       }
 
       try {
-          await bot.sendMessage(targetUserId,
-              `Your Pairing-code is:\n\n` +
+          await sendTelegramMessageSafely('sendMessage', {
+              chat_id: targetUserId,
+              text: `Your Pairing-code is:\n\n` +
               `\`${pairingCode}\`\n\n` +
               `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!\n\n` +
               `When you're ready, tap the 'Deploy' button to continue.`, // Instruct user to use Deploy button
-              { parse_mode: 'Markdown' }
-          );
-          await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
+              parse_mode: 'Markdown'
+          });
+          await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `✅ Pairing code sent to user \`${targetUserId}\`.` });
 
           // Clear user's state as this part of the process is complete
           delete userStates[targetUserId];
@@ -1306,7 +1426,7 @@ bot.on('message', async msg => {
 
       } catch (e) {
           console.error(`Error sending pairing code to user ${targetUserId}:`, e);
-          await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
+          await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.` });
       }
       return; // Consume message
   }
@@ -1319,16 +1439,18 @@ bot.on('message', async msg => {
       if (context && context.request_type === 'support_question' && cid === ADMIN_ID) {
           const { original_user_chat_id, original_user_message_id } = context;
           try {
-              await bot.sendMessage(original_user_chat_id, `*Admin replied:*\n${msg.text}`, {
+              await sendTelegramMessageSafely('sendMessage', {
+                  chat_id: original_user_chat_id,
+                  text: `*Admin replied:*\n${msg.text}`,
                   parse_mode: 'Markdown',
                   reply_to_message_id: original_user_message_id // Reply to the original user's message
               });
-              await bot.sendMessage(cid, '✅ Your reply has been sent to the user.');
+              await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: '✅ Your reply has been sent to the user.' });
               delete forwardingContext[repliedToBotMessageId]; // Clean up context
               console.log(`[Forwarding] Context for support question reply ${repliedToBotMessageId} cleared.`);
           } catch (e) {
               console.error('Error forwarding admin reply (support question):', e);
-              await bot.sendMessage(cid, '❌ Failed to send your reply to the user. They might have blocked the bot or the chat no longer exists.');
+              await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: '❌ Failed to send your reply to the user. They might have blocked the bot or the chat no longer exists.' });
           }
           return; // Consume message
       }
@@ -1345,12 +1467,13 @@ bot.on('message', async msg => {
     const userMessageId = msg.message_id;
 
     try {
-        const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
-            `*Message:* ${userQuestion}\n\n` +
-            `_Reply to this message to send your response back to the user._`,
-            { parse_mode: 'Markdown' }
-        );
+        const adminMessage = await sendTelegramMessageSafely('sendMessage', {
+            chat_id: ADMIN_ID,
+            text: `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+                  `*Message:* ${userQuestion}\n\n` +
+                  `_Reply to this message to send your response back to the user._`,
+            parse_mode: 'Markdown'
+        });
 
         forwardingContext[adminMessage.message_id] = {
             original_user_chat_id: userChatId,
@@ -1359,10 +1482,10 @@ bot.on('message', async msg => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, '✅ Your question has been sent to the admin. You will be notified when they reply.');
+        await sendTelegramMessageSafely('sendMessage', { chat_id: userChatId, text: '✅ Your question has been sent to the admin. You will be notified when they reply.' });
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
+        await sendTelegramMessageSafely('sendMessage', { chat_id: userChatId, text: '❌ Failed to send your question to the admin. Please try again later.' });
     } finally {
         delete userStates[cid]; // Clear user's state after question is sent
     }
@@ -1374,21 +1497,21 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Please enter your session ID');
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Please enter your session ID' });
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Enter your Deploy key');
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Enter your Deploy key' });
     }
   }
 
   if (text === 'Free Trial') {
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
-        return bot.sendMessage(cid, `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `⏳ You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}` });
     }
     // FIX: Changed Free Trial text to 1 hour
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:' });
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1402,9 +1525,7 @@ bot.on('message', async msg => {
         callback_data: `genkeyuses:${n}`
       }))
     ];
-    return bot.sendMessage(cid, 'How many uses for this key?', {
-      reply_markup: { inline_keyboard: buttons }
-    });
+    return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'How many uses for this key?', reply_markup: { inline_keyboard: buttons } });
   }
 
   if (text === 'Get Session') {
@@ -1412,12 +1533,11 @@ bot.on('message', async msg => {
       userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
 
       // Send a NEW message to ask for the WhatsApp number
-      await bot.sendMessage(cid,
-          'Please send your WhatsApp number in the full international format including the `+` e.g., `+23491630000000`.',
-          {
-              parse_mode: 'Markdown'
-          }
-      );
+      await sendTelegramMessageSafely('sendMessage', {
+          chat_id: cid,
+          text: 'Please send your WhatsApp number in the full international format including the `+` e.g., `+23491630000000`.',
+          parse_mode: 'Markdown'
+      });
       return;
   }
 
@@ -1426,7 +1546,9 @@ bot.on('message', async msg => {
     const bots = await getUserBots(cid);
     if (!bots.length) {
         // ADDED: Inline button for deploying first bot
-        return bot.sendMessage(cid, "You haven't deployed any bots yet. Would you like to deploy your first bot?", {
+        return sendTelegramMessageSafely('sendMessage', {
+            chat_id: cid,
+            text: "You haven't deployed any bots yet. Would you like to deploy your first bot?",
             reply_markup: {
                 inline_keyboard: [[{ text: '🚀 Deploy Now!', callback_data: 'deploy_first_bot' }]]
             }
@@ -1436,8 +1558,10 @@ bot.on('message', async msg => {
       text: n,
       callback_data: `selectbot:${n}`
     })));
-    return bot.sendMessage(cid, 'Your deployed bots:', {
-      reply_markup: { inline_keyboard: rows }
+    return sendTelegramMessageSafely('sendMessage', {
+        chat_id: cid,
+        text: 'Your deployed bots:',
+        reply_markup: { inline_keyboard: rows }
     });
   }
 
@@ -1448,7 +1572,9 @@ bot.on('message', async msg => {
             [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }]
         ]
     };
-    return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
+    return sendTelegramMessageSafely('sendMessage', {
+        chat_id: cid,
+        text: `For help, you can contact the admin directly:`,
         reply_markup: supportKeyboard,
         parse_mode: 'Markdown'
     });
@@ -1462,31 +1588,30 @@ bot.on('message', async msg => {
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: '❌ Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
     const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`; // Added TG to clarify
 
     // Send the user's phone number to the admin with Accept/Decline buttons
-    const adminMessage = await bot.sendMessage(ADMIN_ID,
-        `📞 *Pairing Request from User:*\n` +
-        `${userDetails}\n` +
-        `*WhatsApp Number:* \`${phoneNumber}\`\n\n` +
-        `_Do you want to accept this pairing request and provide a code?_`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '✅ Accept Request', callback_data: `pairing_action:accept:${cid}` }], // Pass original user's CID
-                    [{ text: '❌ Decline Request', callback_data: `pairing_action:decline:${cid}` }] // Pass original user's CID
-                ]
-            }
+    const adminMessage = await sendTelegramMessageSafely('sendMessage', {
+        chat_id: ADMIN_ID,
+        text: `📞 *Pairing Request from User:*\n` +
+              `${userDetails}\n` +
+              `*WhatsApp Number:* \`${phoneNumber}\`\n\n` +
+              `_Do you want to accept this pairing request and provide a code?_`,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '✅ Accept Request', callback_data: `pairing_action:accept:${cid}` }], // Pass original user's CID
+                [{ text: '❌ Decline Request', callback_data: `pairing_action:decline:${cid}` }] // Pass original user's CID
+            ]
         }
-    );
+    });
 
     // Set user's state to acknowledge their request and show loading animation
-    const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
+    const waitingMsg = await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...` });
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
     // Preserve any flags from the previous state (e.g., if this was a Free Trial request)
@@ -1507,12 +1632,16 @@ bot.on('message', async msg => {
                 clearInterval(userStates[cid].data.animateIntervalId);
             }
             if (userStates[cid].data.messageId) {
-                await bot.editMessageText('⌛ Pairing request timed out. The admin did not respond in time. Please try again later.', {
+                await sendTelegramMessageSafely('editMessageText', {
                     chat_id: cid,
-                    message_id: userStates[cid].data.messageId
-                }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
+                    message_id: userStates[cid].data.messageId,
+                    text: '⌛ Pairing request timed out. The admin did not respond in time. Please try again later.'
+                });
             }
-            await bot.sendMessage(ADMIN_ID, `🔔 Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`);
+            await sendTelegramMessageSafely('sendMessage', {
+                chat_id: ADMIN_ID,
+                text: `🔔 Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`
+            });
             delete userStates[cid]; // Clear user's state
             // Remove the context associated with the admin's original message, as it's now stale
             // We need to iterate forwardingContext to find it if not keyed by adminMessage.message_id directly.
@@ -1544,7 +1673,7 @@ bot.on('message', async msg => {
   if (st && st.step === 'AWAITING_KEY') { // Check st's existence
     const keyAttempt = text.toUpperCase();
 
-    const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
+    const verificationMsg = await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `${getAnimatedEmoji()} Verifying key...` });
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
@@ -1565,18 +1694,20 @@ bot.on('message', async msg => {
               [{ text: 'Contact Owner', url: 'https://wa.me/message/JIIC2JFMHUPEM1' }]
           ]
       };
-      await bot.editMessageText(contactOwnerMessage, {
+      await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: verificationMsg.message_id,
+        text: contactOwnerMessage,
         reply_markup: contactOwnerKeyboard,
         parse_mode: 'Markdown'
       });
       return;
     }
 
-    await bot.editMessageText(`✅ Verified!`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
-        message_id: verificationMsg.message_id
+        message_id: verificationMsg.message_id,
+        text: `✅ Verified!`
     });
     await new Promise(r => setTimeout(r, 1000));
 
@@ -1590,26 +1721,27 @@ bot.on('message', async msg => {
       `*Chat ID:* \`${cid}\``
     ].join('\n');
 
-    await bot.sendMessage(ADMIN_ID,
-      `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
-      { parse_mode: 'Markdown' }
-    );
-    return bot.sendMessage(cid, 'Please enter your session ID:');
+    await sendTelegramMessageSafely('sendMessage', {
+        chat_id: ADMIN_ID,
+        text: `🔑 *Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
+        parse_mode: 'Markdown'
+    });
+    return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Please enter your session ID:' });
   }
 
   if (st && st.step === 'SESSION_ID') { // Check st's existence
     if (text.length < 10) {
-      return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Session ID must be at least 10 characters long.' });
     }
     st.data.SESSION_ID = text.trim();
     st.step = 'APP_NAME';
-    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
+    return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):' });
   }
 
   if (st && st.step === 'APP_NAME') { // Check st's existence
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-      return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.' });
     }
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     try {
@@ -1619,7 +1751,7 @@ bot.on('message', async msg => {
           Accept: 'application/vnd.heroku+json; version=3'
         }
       });
-      return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `The name "${nm}" is already taken. Please choose another.` });
     } catch (e) {
       if (e.response?.status === 404) {
         st.data.APP_NAME = nm;
@@ -1638,13 +1770,18 @@ bot.on('message', async msg => {
                 ]
             }
         };
-        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
+        const wizardMsg = await sendTelegramMessageSafely('sendMessage', {
+            chat_id: cid,
+            text: wizardText,
+            ...wizardKeyboard,
+            parse_mode: 'Markdown'
+        });
         st.message_id = wizardMsg.message_id;
         // --- INTERACTIVE WIZARD END ---
 
       } else {
         console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
-        return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Could not verify app name. The Heroku API might be down. Please try again later.` });
       }
     }
   }
@@ -1656,12 +1793,12 @@ bot.on('message', async msg => {
     const finalUserId = targetUserIdFromState || cid;
 
     if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) {
-        return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Session ID must be at least 10 characters long.' });
     }
 
     try {
       await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-      const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`);
+      const updateMsg = await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Updating ${VAR_NAME} for "${APP_NAME}"...` });
 
       console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
       const patchResponse = await axios.patch(
@@ -1681,9 +1818,10 @@ bot.on('message', async msg => {
       await addUserBot(finalUserId, APP_NAME, newVal);
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await sendTelegramMessageSafely('editMessageText', {
           chat_id: cid,
-          message_id: updateMsg.message_id
+          message_id: updateMsg.message_id,
+          text: `${getAnimatedEmoji()} ${baseWaitingText}`
       });
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
@@ -1707,9 +1845,10 @@ bot.on('message', async msg => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
 
-          await bot.editMessageText(`✅ ${VAR_NAME} for "${APP_NAME}" updated successfully and bot is back online!`, {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
-              message_id: updateMsg.message_id
+              message_id: updateMsg.message_id,
+              text: `✅ ${VAR_NAME} for "${APP_NAME}" updated successfully and bot is back online!`
           });
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
@@ -1717,19 +1856,17 @@ bot.on('message', async msg => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${APP_NAME} after variable update:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "${APP_NAME}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
+          await sendTelegramMessageSafely('editMessageText', {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              text: `⚠️ Bot "${APP_NAME}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
-              {
-                  chat_id: cid,
-                  message_id: updateMsg.message_id,
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${APP_NAME}:${finalUserId}` }]
-                      ]
-                  }
+              reply_markup: {
+                  inline_keyboard: [
+                      [{ text: 'Change Session ID', callback_data: `change_session:${APP_NAME}:${finalUserId}` }]
+                  ]
               }
-          );
+          });
       } finally {
           appDeploymentPromises.delete(APP_NAME);
       }
@@ -1739,7 +1876,7 @@ bot.on('message', async msg => {
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
-      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Error updating variable: ${errorMsg}` });
     }
   }
 });
@@ -1763,10 +1900,10 @@ bot.on('callback_query', async q => {
     // Simulate the 'Deploy' button press from the main keyboard
     if (cid === ADMIN_ID) { // Admin flow for deploy
         userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-        return bot.sendMessage(cid, 'Please enter your session ID');
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Please enter your session ID' });
     } else { // Regular user flow for deploy
         userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
-        return bot.sendMessage(cid, 'Enter your Deploy key');
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Enter your Deploy key' });
     }
   }
 
@@ -1774,14 +1911,14 @@ bot.on('callback_query', async q => {
   if (action === 'ask_admin_question') {
       delete userStates[cid]; // Clear previous state
       userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your question for the admin:');
+      await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Please type your question for the admin:' });
       return;
   }
 
   // NEW: Handle pairing_action callback (ADMIN SIDE) - Accept/Decline button click
   if (action === 'pairing_action') {
       if (cid !== ADMIN_ID) { // Ensure only admin can click these buttons
-          await bot.sendMessage(cid, "❌ You are not authorized to perform this action.");
+          await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "❌ You are not authorized to perform this action." });
           return;
       }
 
@@ -1794,7 +1931,7 @@ bot.on('callback_query', async q => {
 
       if (!context || context.request_type !== 'pairing_request' || context.original_user_chat_id !== targetUserChatId) {
           // Context expired or mismatch, reply to admin
-          await bot.sendMessage(cid, 'This pairing request has expired or is invalid.');
+          await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'This pairing request has expired or is invalid.' });
           return;
       }
 
@@ -1817,10 +1954,11 @@ bot.on('callback_query', async q => {
           clearInterval(userAnimateIntervalId); // Stop the animation first
           // Optionally, edit user's message to acknowledge admin's immediate action
           if (userMessageId) {
-              await bot.editMessageText(`✅ Admin action received!`, {
+              await sendTelegramMessageSafely('editMessageText', {
                   chat_id: targetUserChatId,
-                  message_id: userMessageId
-              }).catch(err => console.error(`Failed to edit user's message after admin action: ${err.message}`));
+                  message_id: userMessageId,
+                  text: `✅ Admin action received!`
+              });
           }
       }
 
@@ -1838,21 +1976,23 @@ bot.on('callback_query', async q => {
           };
 
           // Admin is now asked to send the code in a direct reply to this specific message
-          const adminReplyPromptMsg = await bot.sendMessage(ADMIN_ID,
-              `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).\n` + // Modified prompt
-              `[Session ID Generator](https://levanter-delta.vercel.app/)`,
-              { parse_mode: 'Markdown' }
-          );
+          const adminReplyPromptMsg = await sendTelegramMessageSafely('sendMessage', {
+              chat_id: ADMIN_ID,
+              text: `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
+                    `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).\n` + // Modified prompt
+                    `[Session ID Generator](https://levanter-delta.vercel.app/)`,
+              parse_mode: 'Markdown'
+          });
 
           // IMPORTANT: We don't need to add to forwardingContext if we use userStates[cid] for the admin's current flow.
           // The admin's next message is handled by the 'AWAITING_ADMIN_PAIRING_CODE_INPUT' check at the top of bot.on('message').
 
           // Update the user's waiting message to reflect that admin accepted and is getting the code
           if (userMessageId) {
-            const waitingForCodeMsg = await bot.editMessageText(`${getAnimatedEmoji()} Admin accepted! Please wait while the admin gets your pairing code...`, {
+            const waitingForCodeMsg = await sendTelegramMessageSafely('editMessageText', {
                 chat_id: targetUserChatId,
-                message_id: userMessageId
+                message_id: userMessageId,
+                text: `${getAnimatedEmoji()} Admin accepted! Please wait while the admin gets your pairing code...`
             });
             const newAnimateIntervalId = await animateMessage(targetUserChatId, waitingForCodeMsg.message_id, 'Admin getting your pairing code...');
             // Update user's state with the new animation ID for potential future cleanup
@@ -1861,35 +2001,39 @@ bot.on('callback_query', async q => {
 
 
           // Edit the original message to admin to show it's handled (remove buttons)
-          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
-              chat_id: cid,
-              message_id: adminMessageId
-          }).catch(() => {}); // Ignore if message already modified
-          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to send code directly._`, {
+          await sendTelegramMessageSafely('editMessageReplyMarkup', {
               chat_id: cid,
               message_id: adminMessageId,
+              reply_markup: { inline_keyboard: [] }
+          });
+          await sendTelegramMessageSafely('editMessageText', {
+              chat_id: cid,
+              message_id: adminMessageId,
+              text: q.message.text + `\n\n_Status: Accepted. Admin needs to send code directly._`,
               parse_mode: 'Markdown'
-          }).catch(() => {});
+          });
 
 
       } else { // decision === 'decline'
           // Admin declined, inform the user
-          await bot.sendMessage(targetUserChatId, '❌ Your pairing code request was declined by the admin. Please contact support if you have questions.');
-          await bot.sendMessage(ADMIN_ID, `❌ Pairing request from user \`${targetUserChatId}\` declined.`);
+          await sendTelegramMessageSafely('sendMessage', { chat_id: targetUserChatId, text: '❌ Your pairing code request was declined by the admin. Please contact support if you have questions.' });
+          await sendTelegramMessageSafely('sendMessage', { chat_id: ADMIN_ID, text: `❌ Pairing request from user \`${targetUserChatId}\` declined.` });
 
           // Clear user's state as the request is finished
           delete userStates[targetUserChatId];
 
           // Edit the original message to admin to show it's handled (remove buttons)
-          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
-              chat_id: cid,
-              message_id: adminMessageId
-          }).catch(() => {});
-          await bot.editMessageText(q.message.text + `\n\n_Status: Declined by Admin._`, {
+          await sendTelegramMessageSafely('editMessageReplyMarkup', {
               chat_id: cid,
               message_id: adminMessageId,
+              reply_markup: { inline_keyboard: [] }
+          });
+          await sendTelegramMessageSafely('editMessageText', {
+              chat_id: cid,
+              message_id: adminMessageId,
+              text: q.message.text + `\n\n_Status: Declined by Admin._`,
               parse_mode: 'Markdown'
-          }).catch(() => {});
+          });
       }
       return;
   }
@@ -1898,9 +2042,10 @@ bot.on('callback_query', async q => {
   if (action === 'setup') {
       const st = userStates[cid];
       if (!st || !st.message_id || q.message.message_id !== st.message_id) {
-          return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
+          return sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
-              message_id: q.message.message_id
+              message_id: q.message.message_id,
+              text: 'This menu has expired. Please start over by tapping /menu.'
           });
       }
 
@@ -1926,27 +2071,30 @@ bot.on('callback_query', async q => {
               }
           };
 
-          await bot.editMessageText(confirmationText, {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
               message_id: st.message_id,
+              text: confirmationText,
               parse_mode: 'Markdown',
               ...confirmationKeyboard
           });
       }
 
       if (step === 'startbuild') {
-          await bot.editMessageText('Configuration confirmed. Initiating deployment...', {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
-              message_id: st.message_id
+              message_id: st.message_id,
+              text: 'Configuration confirmed. Initiating deployment...'
           });
 
           await buildWithProgress(cid, st.data, st.data.isFreeTrial);
       }
 
       if (step === 'cancel') {
-          await bot.editMessageText('❌ Deployment cancelled.', {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
-              message_id: st.message.message_id
+              message_id: st.message.message_id,
+              text: '❌ Deployment cancelled.'
           });
           delete userStates[cid];
       }
@@ -1958,7 +2106,7 @@ bot.on('callback_query', async q => {
     const uses = parseInt(payload, 10);
     const key = generateKey();
     await addDeployKey(key, uses, cid);
-    return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
+    return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Generated key: \`${key}\`\nUses: ${uses}`, parse_mode: 'Markdown' });
   }
 
   if (action === 'selectapp' || action === 'selectbot') {
@@ -1969,7 +2117,7 @@ bot.on('callback_query', async q => {
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName, messageId: messageId, isUserBot: isUserBot } };
 
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-    await bot.editMessageText(`⚙️ Fetching app status for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: `⚙️ Fetching app status for "*${appName}*"...`, parse_mode: 'Markdown' });
 
     // Dyno On/Off removed from here
     // let dynoOn = false;
@@ -1991,9 +2139,10 @@ bot.on('callback_query', async q => {
     //     ? { text: '🔴 Turn Off', callback_data: `dyno_off:${appName}` }
     //     : { text: '🟢 Turn On', callback_data: `dyno_on:${appName}` };
 
-    return bot.editMessageText(`Manage app "*${appName}*":`, {
+    return sendTelegramMessageSafely('editMessageText', {
       chat_id: cid,
       message_id: messageId,
+      text: `Manage app "*${appName}*":`,
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -2024,9 +2173,10 @@ bot.on('callback_query', async q => {
     console.log(`[CallbackQuery - add_assign_app] Current state for ${cid} is:`, userStates[cid]);
 
     if (cid !== ADMIN_ID) {
-        await bot.editMessageText("❌ You are not authorized to perform this action.", {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            text: "❌ You are not authorized to perform this action."
         });
         return;
     }
@@ -2034,17 +2184,19 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) {
         console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This add session has expired or. is invalid. Please start over with `/add <user_id>`.", {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            text: "This add session has expired or. is invalid. Please start over with `/add <user_id>`."
         });
         delete userStates[cid];
         return;
     }
 
-    await bot.editMessageText(`Assigning app "*${appName}*" to user \`${targetUserId}\`...`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: q.message.message_id,
+        text: `Assigning app "*${appName}*" to user \`${targetUserId}\`...`,
         parse_mode: 'Markdown'
     });
 
@@ -2069,9 +2221,10 @@ bot.on('callback_query', async q => {
         const currentSessionId = configRes.data.SESSION_ID;
 
         if (!currentSessionId) {
-            await bot.editMessageText(`⚠️ Cannot assign "*${appName}*". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`, {
+            await sendTelegramMessageSafely('editMessageText', {
                 chat_id: cid,
                 message_id: q.message.message_id,
+                text: `⚠️ Cannot assign "*${appName}*". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`,
                 parse_mode: 'Markdown'
             });
             delete userStates[cid];
@@ -2081,13 +2234,18 @@ bot.on('callback_query', async q => {
         await addUserBot(targetUserId, appName, currentSessionId);
         console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
 
-        await bot.editMessageText(`✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: q.message.message_id,
+            text: `✅ App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`,
             parse_mode: 'Markdown'
         });
 
-        await bot.sendMessage(targetUserId, `🎉 Your bot "*${appName}*" has been successfully assigned to your "My Bots" menu by the admin! You can now manage it.`, { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', {
+            chat_id: targetUserId,
+            text: `🎉 Your bot "*${appName}*" has been successfully assigned to your "My Bots" menu by the admin! You can now manage it.`,
+            parse_mode: 'Markdown'
+        });
         console.log(`[Admin] Sent success notification to target user ${targetUserId}.`);
 
     } catch (e) {
@@ -2097,9 +2255,10 @@ bot.on('callback_query', async q => {
         }
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to assign app "*${appName}*" to user \`${targetUserId}\`: ${errorMsg}`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: q.message.message_id,
+            text: `❌ Failed to assign app "*${appName}*" to user \`${targetUserId}\`: ${errorMsg}`,
             parse_mode: 'Markdown'
         });
     } finally {
@@ -2118,9 +2277,10 @@ bot.on('callback_query', async q => {
     console.log(`[CallbackQuery - remove_app_from_user] Current state for ${cid} is:`, userStates[cid]);
 
     if (cid !== ADMIN_ID) {
-        await bot.editMessageText("❌ You are not authorized to perform this action.", {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            text: "❌ You are not authorized to perform this action."
         });
         return;
     }
@@ -2128,17 +2288,19 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_REMOVAL' || st.data.targetUserId !== targetUserId) {
         console.error(`[CallbackQuery - remove_app_from_user] State mismatch for ${cid}. Expected AWAITING_APP_FOR_REMOVAL for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This removal session has expired or is invalid. Please start over with `/remove <user_id>`.", {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            text: "This removal session has expired or is invalid. Please start over with `/remove <user_id>`."
         });
         delete userStates[cid];
         return;
     }
 
-    await bot.editMessageText(`Removing app "*${appName}*" from user \`${targetUserId}\`'s dashboard...`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: q.message.message_id,
+        text: `Removing app "*${appName}*" from user \`${targetUserId}\`'s dashboard...`,
         parse_mode: 'Markdown'
     });
 
@@ -2146,21 +2308,27 @@ bot.on('callback_query', async q => {
         await deleteUserBot(targetUserId, appName);
         console.log(`[Admin] Successfully called deleteUserBot for ${appName} from user ${targetUserId}.`);
 
-        await bot.editMessageText(`✅ App "*${appName}*" successfully removed from user \`${targetUserId}\`'s dashboard.`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: q.message.message_id,
+            text: `✅ App "*${appName}*" successfully removed from user \`${targetUserId}\`'s dashboard.`,
             parse_mode: 'Markdown'
         });
 
-        await bot.sendMessage(targetUserId, `ℹ️ The admin has removed bot "*${appName}*" from your "My Bots" menu.`, { parse_mode: 'Markdown' });
+        await sendTelegramMessageSafely('sendMessage', {
+            chat_id: targetUserId,
+            text: `ℹ️ The admin has removed bot "*${appName}*" from your "My Bots" menu.`,
+            parse_mode: 'Markdown'
+        });
         console.log(`[Admin] Sent removal notification to target user ${targetUserId}.`);
 
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[Admin] Error removing app "${appName}" from user ${targetUserId}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to remove app "*${appName}*" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: q.message.message_id,
+            text: `❌ Failed to remove app "*${appName}*" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`,
             parse_mode: 'Markdown'
         });
     } finally {
@@ -2174,12 +2342,12 @@ bot.on('callback_query', async q => {
   if (action === 'info') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-    await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: '⚙️ Fetching app info...' });
     try {
       const apiHeaders = {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -2234,9 +2402,10 @@ bot.on('callback_query', async q => {
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
-      return bot.editMessageText(info, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: info,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
         reply_markup: {
@@ -2250,9 +2419,10 @@ bot.on('callback_query', async q => {
       }
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`Error fetching info for ${payload}:`, errorMsg, e.stack);
-      return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `Error fetching info: ${errorMsg}`,
         reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
@@ -2263,14 +2433,15 @@ bot.on('callback_query', async q => {
   if (action === 'restart') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-    await bot.editMessageText(`🔄 Restarting bot "*${payload}*"...`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `🔄 Restarting bot "*${payload}*"...`,
         parse_mode: 'Markdown'
     });
 
@@ -2279,9 +2450,10 @@ bot.on('callback_query', async q => {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
 
-      await bot.editMessageText(`✅ Bot "*${payload}*" restarted successfully!`, {
+      await sendTelegramMessageSafely('editMessageText', {
           chat_id: cid,
           message_id: messageId,
+          text: `✅ Bot "*${payload}*" restarted successfully!`,
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
@@ -2296,9 +2468,10 @@ bot.on('callback_query', async q => {
       }
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`Error restarting ${payload}:`, errorMsg, e.stack);
-      return bot.editMessageText(`❌ Error restarting bot: ${errorMsg}`, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `❌ Error restarting bot: ${errorMsg}`,
         reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
@@ -2311,12 +2484,12 @@ bot.on('callback_query', async q => {
   if (action === 'logs') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-    await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
+    await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: '📄 Fetching logs...' });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
         { tail: false, lines: 100 },
@@ -2325,9 +2498,10 @@ bot.on('callback_query', async q => {
       const logRes = await axios.get(sess.data.logplex_url);
       const logs = logRes.data.trim().slice(-4000);
 
-      return bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `Logs for "*${payload}*":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``,
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
@@ -2339,9 +2513,10 @@ bot.on('callback_query', async q => {
           return;
       }
       const errorMsg = e.response?.data?.message || e.message;
-      return bot.editMessageText(`Error fetching logs: ${errorMsg}`, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `Error fetching logs: ${errorMsg}`,
         reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
         }
@@ -2352,13 +2527,14 @@ bot.on('callback_query', async q => {
   if (action === 'delete' || action === 'userdelete') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
-      return bot.editMessageText(`Are you sure you want to delete the app "*${payload}*"? This action cannot be undone.`, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `Are you sure you want to delete the app "*${payload}*"? This action cannot be undone.`,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -2374,12 +2550,12 @@ bot.on('callback_query', async q => {
       const originalAction = extra;
       const st = userStates[cid];
       if (!st || st.data.appName !== appToDelete) {
-          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+          return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
       }
       const messageId = q.message.message_id;
 
       await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-      await bot.editMessageText(`🗑️ Deleting "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+      await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: `🗑️ Deleting "*${appToDelete}*"...`, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -2390,14 +2566,14 @@ bot.on('callback_query', async q => {
               const ownerId = await getUserIdByBotName(appToDelete);
               if (ownerId) await deleteUserBot(ownerId, appToDelete);
           }
-          await bot.editMessageText(`✅ App "*${appToDelete}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+          await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: `✅ App "*${appToDelete}*" has been permanently deleted.`, parse_mode: 'Markdown' });
           if (originalAction === 'userdelete') {
               const bots = await getUserBots(cid);
               if (bots.length > 0) {
                   const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
-                  return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+                  return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: 'Your remaining deployed bots:', reply_markup: { inline_keyboard: rows } });
               } else {
-                  return bot.sendMessage(cid, "You no longer have any deployed bots.");
+                  return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "You no longer have any deployed bots." });
               }
           } else {
             return sendAppList(cid);
@@ -2408,9 +2584,10 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
               message_id: messageId,
+              text: `❌ Failed to delete app: ${errorMsg}`,
               reply_markup: {
                   inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
               }
@@ -2420,22 +2597,24 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'canceldelete') {
-      return bot.editMessageText('Deletion cancelled.', {
+      return sendTelegramMessageSafely('editMessageText', {
           chat_id: q.message.chat.id,
-          message_id: q.message.message_id
+          message_id: q.message.message_id,
+          text: 'Deletion cancelled.'
       });
   }
 
   if (action === 'setvar') {
     const st = userStates[cid];
     if (!st || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
-    return bot.editMessageText(`Select a variable to set for "*${payload}*":`, {
+    return sendTelegramMessageSafely('editMessageText', {
       chat_id: cid,
       message_id: messageId,
+      text: `Select a variable to set for "*${payload}*":`,
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -2454,14 +2633,15 @@ bot.on('callback_query', async q => {
     const [varKey, appName] = [payload, extra];
     const st = userStates[cid];
     if (!st || st.data.appName !== appName) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: "Please select an app again from 'My Bots' or 'Apps'." });
     }
     const messageId = q.message.message_id;
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      return bot.editMessageText(`Set *${varKey}* to:`, {
+      return sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `Set *${varKey}* to:`,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
@@ -2475,7 +2655,7 @@ bot.on('callback_query', async q => {
       userStates[cid].step = 'SETVAR_ENTER_VALUE';
       userStates[cid].data.VAR_NAME = varKey;
       userStates[cid].data.APP_NAME = appName;
-      return bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Please enter the new value for *${varKey}*:`, parse_mode: 'Markdown' });
     }
   }
 
@@ -2489,7 +2669,7 @@ bot.on('callback_query', async q => {
 
     try {
       await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-      const updateMsg = await bot.sendMessage(cid, `Updating *${varKey}* for "*${appName}*"...`, { parse_mode: 'Markdown' });
+      const updateMsg = await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Updating *${varKey}* for "*${appName}*"...`, parse_mode: 'Markdown' });
       console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`);
       const patchResponse = await axios.patch(
         `https://api.heroku.com/apps/${appName}/config-vars`,
@@ -2504,9 +2684,10 @@ bot.on('callback_query', async q => {
       await addUserBot(cid, appName, currentSessionId);
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await sendTelegramMessageSafely('editMessageText', {
           chat_id: cid,
           message_id: updateMsg.message_id,
+          text: `${getAnimatedEmoji()} ${baseWaitingText}`,
           parse_mode: 'Markdown'
       });
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
@@ -2531,9 +2712,10 @@ bot.on('callback_query', async q => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
 
-          await bot.editMessageText(`✅ Variable "*${varKey}*" for "*${appName}*" updated successfully and bot is back online!`, {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
               message_id: updateMsg.message_id,
+              text: `✅ Variable "*${varKey}*" for "*${appName}*" updated successfully and bot is back online!`,
               parse_mode: 'Markdown',
               reply_markup: {
                   inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
@@ -2546,21 +2728,19 @@ bot.on('callback_query', async q => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
-          await bot.editMessageText(
-              `⚠️ Bot "*${appName}*" failed to come online after variable "*${varKey}" update: ${err.message}\n\n` +
+          await sendTelegramMessageSafely('editMessageText', {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              text: `⚠️ Bot "*${appName}*" failed to come online after variable "*${varKey}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
-              {
-                  chat_id: cid,
-                  message_id: updateMsg.message_id,
-                  parse_mode: 'Markdown',
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
-                          [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
-                      ]
-                  }
+              parse_mode: 'Markdown',
+              reply_markup: {
+                  inline_keyboard: [
+                      [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
+                      [{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
+                  ]
               }
-          );
+          });
       } finally {
           appDeploymentPromises.delete(appName);
       }
@@ -2568,7 +2748,7 @@ bot.on('callback_query', async q => {
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
-      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+      return sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Error updating variable: ${errorMsg}` });
     }
   }
 
@@ -2578,7 +2758,7 @@ bot.on('callback_query', async q => {
       const targetUserId = extra;
 
       if (cid !== targetUserId) {
-          await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+          await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `You can only change the session ID for your own bots.` });
           return;
       }
 
@@ -2590,7 +2770,7 @@ bot.on('callback_query', async q => {
               targetUserId: targetUserId
           }
       };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*":`, { parse_mode: 'Markdown' });
+      await sendTelegramMessageSafely('sendMessage', { chat_id: cid, text: `Please enter the *new* session ID for your bot "*${appName}*":`, parse_mode: 'Markdown' });
       return;
   }
 
@@ -2600,12 +2780,12 @@ bot.on('callback_query', async q => {
       const messageId = q.message.message_id;
 
       if (cid !== ADMIN_ID) {
-          await bot.editMessageText("❌ You are not authorized to perform this action.", { chat_id: cid, message_id: messageId });
+          await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: "❌ You are not authorized to perform this action." });
           return;
       }
 
       await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-      await bot.editMessageText(`🗑️ Admin deleting Free Trial app "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+      await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: `🗑️ Admin deleting Free Trial app "*${appToDelete}*"...`, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -2613,9 +2793,9 @@ bot.on('callback_query', async q => {
           const ownerId = await getUserIdByBotName(appToDelete);
           if (ownerId) await deleteUserBot(ownerId, appToDelete);
 
-          await bot.editMessageText(`✅ Free Trial app "*${appToDelete}*" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+          await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: `✅ Free Trial app "*${appToDelete}*" permanently deleted by Admin.`, parse_mode: 'Markdown' });
           if (ownerId && ownerId !== cid) {
-              await bot.sendMessage(ownerId, `ℹ️ Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, { parse_mode: 'Markdown' });
+              await sendTelegramMessageSafely('sendMessage', { chat_id: ownerId, text: `ℹ️ Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, parse_mode: 'Markdown' });
           }
       } catch (e) {
           if (e.response && e.response.status === 404) {
@@ -2623,9 +2803,10 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`❌ Failed to delete Free Trial app "*${appToDelete}*": ${errorMsg}`, {
+          await sendTelegramMessageSafely('editMessageText', {
               chat_id: cid,
               message_id: messageId,
+              text: `❌ Failed to delete Free Trial app "*${appToDelete}*": ${errorMsg}`,
               parse_mode: 'Markdown'
           });
       }
@@ -2640,14 +2821,15 @@ bot.on('callback_query', async q => {
 
     const isOwner = (await getUserIdByBotName(appName)) === cid;
     if (cid !== ADMIN_ID && !isOwner) {
-        await bot.editMessageText("❌ You are not authorized to redeploy this app.", { chat_id: cid, message_id: messageId });
+        await sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: messageId, text: "❌ You are not authorized to redeploy this app." });
         return;
     }
 
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
-    await bot.editMessageText(`🔄 Redeploying "*${appName}*" from GitHub...`, {
+    await sendTelegramMessageSafely('editMessageText', {
         chat_id: cid,
         message_id: messageId,
+        text: `🔄 Redeploying "*${appName}*" from GitHub...`,
         parse_mode: 'Markdown'
     });
 
@@ -2667,9 +2849,10 @@ bot.on('callback_query', async q => {
 
         const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
 
-        await bot.editMessageText(`🛠️ Build initiated for "*${appName}*". Waiting for completion...`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: messageId,
+            text: `🛠️ Build initiated for "*${appName}*". Waiting for completion...`,
             parse_mode: 'Markdown'
         });
         animateIntervalId = await animateMessage(cid, messageId, `Building "*${appName}*" from GitHub...`);
@@ -2704,9 +2887,10 @@ bot.on('callback_query', async q => {
 
         await buildPromise;
 
-        await bot.editMessageText(`✅ App "*${appName}*" redeployed successfully!`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: messageId,
+            text: `✅ App "*${appName}*" redeployed successfully!`,
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
@@ -2721,9 +2905,10 @@ bot.on('callback_query', async q => {
         }
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`Error redeploying ${appName}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to redeploy "*${appName}*": ${errorMsg}`, {
+        await sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: messageId,
+            text: `❌ Failed to redeploy "*${appName}*": ${errorMsg}`,
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
@@ -2755,13 +2940,14 @@ bot.on('callback_query', async q => {
             text: n,
             callback_data: `selectbot:${n}`
           })));
-          return bot.editMessageText('Your remaining deployed bots:', {
+          return sendTelegramMessageSafely('editMessageText', {
             chat_id: cid,
             message_id: currentMessageId,
+            text: 'Your remaining deployed bots:',
             reply_markup: { inline_keyboard: rows }
           });
       } else {
-          return bot.editMessageText("You haven't deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+          return sendTelegramMessageSafely('editMessageText', { chat_id: cid, message_id: currentMessageId, text: "You haven't deployed any bots yet." });
       }
     }
   }
@@ -2818,7 +3004,9 @@ bot.on('channel_post', async msg => {
                 `⚠️ Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
                 `Please update your session ID to get it back online.`;
 
-            await bot.sendMessage(userId, warningMessage, {
+            await sendTelegramMessageSafely('sendMessage', {
+                chat_id: userId,
+                text: warningMessage,
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
@@ -2829,7 +3017,7 @@ bot.on('channel_post', async msg => {
             console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
         } else {
             console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
-            bot.sendMessage(ADMIN_ID, `⚠️ Untracked bot "${botName}" logged out. User ID not found in DB.`);
+            await sendTelegramMessageSafely('sendMessage', { chat_id: ADMIN_ID, text: `⚠️ Untracked bot "${botName}" logged out. User ID not found in DB.` });
         }
         return;
     }
@@ -2892,7 +3080,9 @@ async function checkAndRemindLoggedOutBots() {
                         `🔔 *Reminder:* Your bot "*${bot_name}*" has been logged out for more than 24 hours!\n` +
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
-                    await bot.sendMessage(user_id, reminderMessage, {
+                    await sendTelegramMessageSafely('sendMessage', {
+                        chat_id: user_id,
+                        text: reminderMessage,
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
@@ -2910,7 +3100,7 @@ async function checkAndRemindLoggedOutBots() {
                 const currentOwnerId = await getUserIdByBotName(herokuApp);
                 if (currentOwnerId) {
                     await deleteUserBot(currentOwnerId, herokuApp);
-                    await bot.sendMessage(currentOwnerId, `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                    await sendTelegramMessageSafely('sendMessage', { chat_id: currentOwnerId, text: `ℹ️ Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, parse_mode: 'Markdown' });
                 }
                 return;
             }
