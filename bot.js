@@ -9,7 +9,7 @@ const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
-const path = require('path'); // ADDED: Import the 'path.js' module
+const path = require('path'); // ADDED: Import the 'path' module
 
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
@@ -1021,7 +1021,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
         if (error.response && error.response.body && error.response.body.description) {
             const apiError = error.response.body.description;
-            if (apiError.includes("chat not found") || apiApiError.includes("user not found")) {
+            if (apiError.includes("chat not found") || apiError.includes("user not found")) {
                 await bot.sendMessage(callerId, `❌ User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
             } else if (apiError.includes("bot was blocked by the user")) {
                 await bot.sendMessage(callerId, `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
