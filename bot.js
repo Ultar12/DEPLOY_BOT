@@ -9,6 +9,7 @@ const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
+const path = require('path'); // ADDED: Import the 'path' module
 
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
@@ -355,7 +356,7 @@ async function notifyAdminUserOnline(msg) {
     if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
         try {
             // Ensure all properties (first_name, last_name, username) are destructured correctly
-            const { first_name, last_name, username } = msg.from; 
+            const { first_name, last_name, username } = msg.from;
 
             // Build userDetails, carefully escaping for Markdown
             // FIXED: Changed `lastName` to `last_name` here.
@@ -365,7 +366,7 @@ async function notifyAdminUserOnline(msg) {
 *Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
 *Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-            `; 
+            `;
             await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
             userLastSeenNotification.set(userId, now); // Update last notification time
             console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
@@ -482,7 +483,7 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'], // "Free Trial" button
-      ['Support', '⭐ Rate Bot'] // Added new button
+      ['Support'] // Kept Support, removed Rate Bot
   ];
   if (isAdmin) {
       return [
@@ -601,15 +602,21 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
   try {
     // Stage 1: Create App
+    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application...');
+
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
       }
     });
+    clearInterval(createMsgAnimate); // Stop animation
 
     // Stage 2: Add-ons and Buildpacks
-    await bot.editMessageText('⚙️ Configuring resources...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources...');
+
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
@@ -639,9 +646,12 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(configMsgAnimate); // Stop animation
 
     // Stage 3: Config Vars
-    await bot.editMessageText('🔧 Setting environment variables...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables...');
+
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
@@ -656,9 +666,12 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(varsMsgAnimate); // Stop animation
 
     // Stage 4: Build
-    await bot.editMessageText('🛠️ Starting build process...', { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`${getAnimatedEmoji()} Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process...');
+
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -670,10 +683,13 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
+    clearInterval(buildStartMsgAnimate); // Stop animation
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let buildStatus = 'pending';
-    const progMsg = await bot.editMessageText('Building... 0%', { chat_id: chatId, message_id: createMsg.message_id });
+    const progMsg = await bot.editMessageText(`${getAnimatedEmoji()} Building... 0%`, { chat_id: chatId, message_id: createMsg.message_id });
+    const buildProgressAnimate = await animateMessage(chatId, progMsg.message_id, 'Building...');
+
 
     for (let i = 1; i <= 20; i++) {
       await new Promise(r => setTimeout(r, 5000));
@@ -690,13 +706,15 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         break;
       }
       const pct = Math.min(100, i * 5);
-      await bot.editMessageText(`Building... ${pct}%`, {
+      // Update the animation and percentage in the same message
+      await bot.editMessageText(`${getAnimatedEmoji()} Building... ${pct}%`, {
         chat_id: chatId,
         message_id: progMsg.message_id
       }).catch(() => {});
 
       if (buildStatus !== 'pending') break;
     }
+    clearInterval(buildProgressAnimate); // Stop animation after build polling loop
 
     if (buildStatus === 'succeeded') {
       // --- CRITICAL MODIFICATION: Add bot to DB immediately after successful build ---
@@ -849,19 +867,27 @@ bot.onText(/^\/start$/, async msg => {
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     });
   } else {
+    // UPDATED: Dynamic greeting
+    const { first_name: userFirstName } = msg.from; // Renamed to avoid conflict
+    let personalizedGreeting = `👋 Welcome`;
+    if (userFirstName) {
+        personalizedGreeting += ` back, ${escapeMarkdown(userFirstName)}`; // Escape name for Markdown
+    }
+    personalizedGreeting += ` to our Bot Deployment Service!`;
+
     // Send image with professional caption and keyboard for regular users
     const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg';
-    // Updated welcomeCaption with exact words provided by user
+    // Updated welcomeCaption with new guidance
     const welcomeCaption = `
-👋 Welcome to our Bot Deployment Service!
+${personalizedGreeting}
 
 To get started, please follow these simple steps:
 
-1️⃣  Connect Your WhatsApp:
-    Tap the 'Get Session' button to retrieve the necessary session details to link your WhatsApp account.
+1️⃣  *Get Your Session:*
+    Tap the 'Get Session' button and provide your WhatsApp number in full international format. The admin will then generate a pairing code for you.
 
-2️⃣  Deploy Your Bot:
-    Once you have your session, use the 'Deploy' button to effortlessly launch your personalized bot.
+2️⃣  *Deploy Your Bot:*
+    Once you have your session code, use the 'Deploy' button to effortlessly launch your personalized bot.
 
 We're here to assist you every step of the way!
 `;
@@ -1000,7 +1026,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
             } else if (apiError.includes("bot was blocked by the user")) {
                 await bot.sendMessage(callerId, `❌ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
             } else {
-                await bot.sendMessage(callerId, `❌ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
+                await bot.sendMessage(callerId, `❌ An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
             console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
@@ -1089,56 +1115,6 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
         await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
-    }
-});
-
-// NEW: /send <user_id> <9-character alphanumeric code with hyphen> command handler (Admin only)
-bot.onText(/^\/send (\d+) ([a-zA-Z0-9]{4}-[a-zA-Z0-9]{4})$/, async (msg, match) => { // Updated regex for AJWI-2ISN format
-    const cid = msg.chat.id.toString();
-    const targetUserId = match[1]; // User ID from the command
-    const pairingCode = match[2]; // Code from the command (now guaranteed to be 8 alphanumeric chars with hyphen)
-
-    if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "❌ You are not authorized to use this command.");
-    }
-
-    // Attempt to retrieve user's current state to stop animation and clear
-    const userState = userStates[targetUserId];
-    const userWaitingMessageId = userState?.data?.messageId;
-    const userAnimateIntervalId = userState?.data?.animateIntervalId;
-
-    if (userAnimateIntervalId) {
-        clearInterval(userAnimateIntervalId); // Stop the animation
-        if (userWaitingMessageId) {
-            await bot.editMessageText(`✅ Pairing code received! Sending to you now...`, {
-                chat_id: targetUserId,
-                message_id: userWaitingMessageId
-            }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
-        }
-    }
-
-    try {
-    // Send the pairing code to the original user
-    await bot.sendMessage(targetUserId,
-        `Your Pairing-code is:\n\n` +
-        `\`${pairingCode}\`\n\n` + // Use escaped code directly for Markdown
-        `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!`,
-        { parse_mode: 'Markdown' }
-    );
-
-    // ... rest of your code
-        await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
-
-        // Clean up user's state
-        delete userStates[targetUserId];
-        console.log(`[Pairing] Pairing code sent to user ${targetUserId} and user state cleared.`);
-
-        // Clean up admin's state if any related to this specific request (though /send makes it less necessary)
-        delete userStates[cid]; // Clears admin's state after successful sending
-
-    } catch (e) {
-        console.error(`Error sending pairing code to user ${targetUserId}:`, e);
-        await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
     }
 });
 
@@ -1288,6 +1264,53 @@ bot.on('message', async msg => {
   const lc = text.toLowerCase();
   const isAdmin = cid === ADMIN_ID;
 
+  // --- ADMIN DIRECT PAIRING CODE INPUT ---
+  // This block must come BEFORE general reply_to_message handling if it needs to consume the message.
+  if (isAdmin && st && st.step === 'AWAITING_ADMIN_PAIRING_CODE_INPUT') {
+      const pairingCode = text.trim();
+      const pairingCodeRegex = /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/;
+
+      if (!pairingCodeRegex.test(pairingCode)) {
+          return bot.sendMessage(cid, '❌ Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).');
+      }
+
+      const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
+
+      // Stop the user's waiting animation (if active)
+      if (userAnimateIntervalId) {
+          clearInterval(userAnimateIntervalId);
+          // Update the user's message to "Your pairing-code is now ready!"
+          if (userWaitingMessageId) {
+              await bot.editMessageText(`✅ Your pairing-code is now ready!`, {
+                  chat_id: targetUserId,
+                  message_id: userWaitingMessageId
+              }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
+          }
+      }
+
+      try {
+          await bot.sendMessage(targetUserId,
+              `Your Pairing-code is:\n\n` +
+              `\`${pairingCode}\`\n\n` +
+              `Tap to Copy the CODE and paste it to your WhatsApp linked device ASAP!\n\n` +
+              `When you're ready, tap the 'Deploy' button to continue.`, // Instruct user to use Deploy button
+              { parse_mode: 'Markdown' }
+          );
+          await bot.sendMessage(cid, `✅ Pairing code sent to user \`${targetUserId}\`.`);
+
+          // Clear user's state as this part of the process is complete
+          delete userStates[targetUserId];
+          // Clear admin's state for this flow
+          delete userStates[cid];
+          console.log(`[Pairing] Pairing code sent by admin to user ${targetUserId}. Admin and user states cleared/updated.`);
+
+      } catch (e) {
+          console.error(`Error sending pairing code to user ${targetUserId}:`, e);
+          await bot.sendMessage(cid, `❌ Failed to send pairing code to user \`${targetUserId}\`. They might have blocked the bot or the chat no longer exists.`);
+      }
+      return; // Consume message
+  }
+
   // NEW: Check if this is a reply TO the bot (potentially from an admin) for support questions
   if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
       const repliedToBotMessageId = msg.reply_to_message.message_id;
@@ -1385,45 +1408,30 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Get Session') {
-    // Updated guideCaption with exact words provided by user
-    const guideCaption =
-       "To get your session ID, please follow these steps carefully:\n\n" +
-        "1️⃣ *Open the Link:*\n" +
-        "Visit: <https://levanter-delta.vercel.app/>\n" +
-        "Use the 'Custom Session ID' button if you prefer.\n\n" +
-        "2️⃣ *Important for iPhone Users:*\n" +
-        "If you are on an iPhone, please open the link using the **Google Chrome** browser.\n\n" +
-        "3️⃣ *Skip Advertisements:*\n" +
-        "The website may show ads. Please close or skip any popups or advertisements to proceed.\n\n" +
-        "4️⃣ *Copy Your Session ID:*\n" +
-        "Once you are done logging in, check your personal chat and copy the first message starting with `levanter_`.\n\n" +
-        "5️⃣ *Final Step: Launch Your Bot:*\n" +
-        "When you're done, come back here and tap the 'Deploy' button to launch your bot. Remember to get your Deploy key from the Admin.";
+      delete userStates[cid]; // Clear any previous state for the user
+      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
 
-    // Add the new "Can't get code?" button here
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: "Can't get code?", callback_data: "cant_get_code" }]
-        ]
-    };
-
-    try {
-      await bot.sendPhoto(cid, 'https://files.catbox.moe/syx8uk.jpeg', {
-        caption: guideCaption,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      });
-    } catch (e) {
-        console.error(`Error sending photo in Get Session: ${e.message}`);
-        await bot.sendMessage(cid, guideCaption, { parse_mode: 'Markdown', reply_markup: keyboard });
-    }
-    return;
+      // Send a NEW message to ask for the WhatsApp number
+      await bot.sendMessage(cid,
+          'Please send your WhatsApp number in the full international format including the `+` e.g., `+23491630000000`.',
+          {
+              parse_mode: 'Markdown'
+          }
+      );
+      return;
   }
 
   if (text === 'My Bots') {
     console.log(`[Flow] My Bots button clicked by user: ${cid}`);
     const bots = await getUserBots(cid);
-    if (!bots.length) return bot.sendMessage(cid, "You haven't deployed any bots yet.");
+    if (!bots.length) {
+        // ADDED: Inline button for deploying first bot
+        return bot.sendMessage(cid, "You haven't deployed any bots yet. Would you like to deploy your first bot?", {
+            reply_markup: {
+                inline_keyboard: [[{ text: '🚀 Deploy Now!', callback_data: 'deploy_first_bot' }]]
+            }
+        });
+    }
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
       text: n,
       callback_data: `selectbot:${n}`
@@ -1481,7 +1489,13 @@ bot.on('message', async msg => {
     const waitingMsg = await bot.sendMessage(cid, `⚙️ Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN'; // Update user's state
-    userStates[cid].data = { messageId: waitingMsg.message_id, animateIntervalId: animateIntervalId }; // Store messageId and intervalId
+    // Preserve any flags from the previous state (e.g., if this was a Free Trial request)
+    userStates[cid].data = {
+        messageId: waitingMsg.message_id,
+        animateIntervalId: animateIntervalId,
+        isFreeTrial: st?.data?.isFreeTrial || false, // Pass on if it was a Free Trial request
+        isAdminDeploy: st?.data?.isAdminDeploy || false // Pass on if it was an admin initiated deploy
+    };
 
     // Store context for the admin's action on this specific message (including for timeout)
     // Keyed by the message_id sent to the admin
@@ -1531,6 +1545,7 @@ bot.on('message', async msg => {
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
     const startTime = Date.now();
@@ -1596,6 +1611,7 @@ bot.on('message', async msg => {
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
       return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
     }
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     try {
       await axios.get(`https://api.heroku.com/apps/${nm}`, {
         headers: {
@@ -1644,6 +1660,7 @@ bot.on('message', async msg => {
     }
 
     try {
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
       const updateMsg = await bot.sendMessage(cid, `Updating ${VAR_NAME} for "${APP_NAME}"...`);
 
       console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
@@ -1741,26 +1758,23 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
+  // ADDED: Handle deploy_first_bot callback
+  if (action === 'deploy_first_bot') {
+    // Simulate the 'Deploy' button press from the main keyboard
+    if (cid === ADMIN_ID) { // Admin flow for deploy
+        userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
+        return bot.sendMessage(cid, 'Please enter your session ID');
+    } else { // Regular user flow for deploy
+        userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
+        return bot.sendMessage(cid, 'Enter your Deploy key');
+    }
+  }
+
   // NEW: Handle "Ask Admin a Question" button from Support menu
   if (action === 'ask_admin_question') {
       delete userStates[cid]; // Clear previous state
       userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
       await bot.sendMessage(cid, 'Please type your question for the admin:');
-      return;
-  }
-
-  // Handle "Can't get code?" button click (USER SIDE)
-  if (action === 'cant_get_code') {
-      delete userStates[cid]; // Clear any previous state for the user
-      userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: {} }; // Direct to awaiting phone number
-
-      // Send a NEW message to ask for the WhatsApp number
-      await bot.sendMessage(cid,
-          'Please send your WhatsApp number in the full international format including the `+` e.g., `+2349163000000`.',
-          {
-              parse_mode: 'Markdown'
-          }
-      );
       return;
   }
 
@@ -1793,8 +1807,11 @@ bot.on('callback_query', async q => {
       delete forwardingContext[adminMessageId]; // This specific pairing request context is consumed
 
       // Stop the user's waiting animation (if active) and prepare their message
-      const userMessageId = userStates[targetUserChatId]?.data?.messageId;
-      const userAnimateIntervalId = userStates[targetUserChatId]?.data?.animateIntervalId;
+      const userStateForTargetUser = userStates[targetUserChatId];
+      const userMessageId = userStateForTargetUser?.data?.messageId;
+      const userAnimateIntervalId = userStateForTargetUser?.data?.animateIntervalId;
+      // Preserve original context flags for later use if needed (e.g., free trial status)
+      const { isFreeTrial, isAdminDeploy } = userStateForTargetUser?.data || {};
 
       if (userAnimateIntervalId) { // If there's an active animation for the user
           clearInterval(userAnimateIntervalId); // Stop the animation first
@@ -1808,43 +1825,56 @@ bot.on('callback_query', async q => {
       }
 
       if (decision === 'accept') {
-          // Add 3-second delay and then transition to loading for the user
-          if (userMessageId) { // Ensure there's a message to edit
-              await new Promise(r => setTimeout(r, 3000)); // Wait 3 seconds
-              // Start a new animation on the same user message
-              const newAnimateIntervalId = await animateMessage(targetUserChatId, userMessageId, 'Wait for your pairing code...');
-              // Update user's state with the new animation ID for potential future cleanup
-              userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
-          }
+          // Admin accepted, now transition admin state to awaiting pairing code directly
+          userStates[cid] = {
+              step: 'AWAITING_ADMIN_PAIRING_CODE_INPUT',
+              data: {
+                  targetUserId: targetUserChatId,
+                  userWaitingMessageId: userMessageId, // Pass this to admin's state for potential final animation stop
+                  userAnimateIntervalId: userAnimateIntervalId, // Pass this for potential final animation clear
+                  isFreeTrial: isFreeTrial,
+                  isAdminDeploy: isAdminDeploy
+              }
+          };
 
-          // Admin accepted, now instruct admin to use the /send command
-          // FIX: Corrected Markdown for copyable /send command and user ID
-          await bot.sendMessage(ADMIN_ID,
+          // Admin is now asked to send the code in a direct reply to this specific message
+          const adminReplyPromptMsg = await bot.sendMessage(ADMIN_ID,
               `✅ Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
-              `*Now, please use the command below to send the Code:*\n` +
-              `\`/send ${targetUserChatId} \`\n\n` + // Example format `AJWI-2ISN`
-              `[Session ID Generator](https://levanter-delta.vercel.app/)`, // Added the link here
+              `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).\n` + // Modified prompt
+              `[Session ID Generator](https://levanter-delta.vercel.app/)`,
               { parse_mode: 'Markdown' }
           );
 
-          // Admin's state related to this is implicitly handled by them using the /send command.
-          // No need for a specific 'AWAITING_PAIRING_CODE_FROM_ADMIN' state now, as /send is stateless in this context.
+          // IMPORTANT: We don't need to add to forwardingContext if we use userStates[cid] for the admin's current flow.
+          // The admin's next message is handled by the 'AWAITING_ADMIN_PAIRING_CODE_INPUT' check at the top of bot.on('message').
+
+          // Update the user's waiting message to reflect that admin accepted and is getting the code
+          if (userMessageId) {
+            const waitingForCodeMsg = await bot.editMessageText(`${getAnimatedEmoji()} Admin accepted! Please wait while the admin gets your pairing code...`, {
+                chat_id: targetUserChatId,
+                message_id: userMessageId
+            });
+            const newAnimateIntervalId = await animateMessage(targetUserChatId, waitingForCodeMsg.message_id, 'Admin getting your pairing code...');
+            // Update user's state with the new animation ID for potential future cleanup
+            userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
+          }
+
 
           // Edit the original message to admin to show it's handled (remove buttons)
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { // Remove buttons
               chat_id: cid,
               message_id: adminMessageId
           }).catch(() => {}); // Ignore if message already modified
-          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to use /send command._`, {
+          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to send code directly._`, {
               chat_id: cid,
-              message_id: adminMessageId, // FIX: typo - changed to adminMessageId
+              message_id: adminMessageId,
               parse_mode: 'Markdown'
           }).catch(() => {});
 
 
       } else { // decision === 'decline'
           // Admin declined, inform the user
-          await bot.sendMessage(targetUserChatId, 'An error occurred! Pairing code request declined by admin.');
+          await bot.sendMessage(targetUserChatId, '❌ Your pairing code request was declined by the admin. Please contact support if you have questions.');
           await bot.sendMessage(ADMIN_ID, `❌ Pairing request from user \`${targetUserChatId}\` declined.`);
 
           // Clear user's state as the request is finished
@@ -1860,51 +1890,6 @@ bot.on('callback_query', async q => {
               message_id: adminMessageId,
               parse_mode: 'Markdown'
           }).catch(() => {});
-      }
-      return;
-  }
-
-  // NEW: Handle "Rate Bot" button click to show star rating options
-  if (action === 'rate_bot_menu') {
-      const keyboard = {
-          inline_keyboard: [
-              [{ text: '⭐', callback_data: 'rate_bot:1' }, { text: '⭐⭐', callback_data: 'rate_bot:2' }],
-              [{ text: '⭐⭐⭐', callback_data: 'rate_bot:3' }, { text: '⭐⭐⭐⭐', callback_data: 'rate_bot:4' }],
-              [{ text: '⭐⭐⭐⭐⭐', callback_data: 'rate_bot:5' }]
-          ]
-      };
-      await bot.editMessageText('Please rate your experience:', {
-          chat_id: cid,
-          message_id: q.message.message_id,
-          reply_markup: keyboard
-      });
-      return;
-  }
-
-  // NEW: Handle actual star rating submission
-  if (action === 'rate_bot') {
-      const rating = payload;
-      try {
-          const { first_name, last_name, username } = q.from;
-          const userIdEscaped = escapeMarkdown(cid);
-          const ratingMessage = `
-🌟 *New Bot Rating:*
-*User ID:* \`${userIdEscaped}\`
-*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
-*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
-*Rating:* ${'⭐'.repeat(parseInt(rating, 10))} (${rating} out of 5)
-          `;
-          await bot.sendMessage(ADMIN_ID, ratingMessage, { parse_mode: 'Markdown' });
-          await bot.editMessageText(`✅ Thank you for your ${'⭐'.repeat(parseInt(rating, 10))} rating! Your feedback is valuable.`, {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
-      } catch (error) {
-          console.error(`Error processing rating from user ${cid}:`, error.message);
-          await bot.editMessageText(`❌ An error occurred while submitting your rating. Please try again later.`, {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
       }
       return;
   }
@@ -1961,7 +1946,7 @@ bot.on('callback_query', async q => {
       if (step === 'cancel') {
           await bot.editMessageText('❌ Deployment cancelled.', {
               chat_id: cid,
-              message_id: st.message_id
+              message_id: st.message.message_id
           });
           delete userStates[cid];
       }
@@ -1979,23 +1964,51 @@ bot.on('callback_query', async q => {
   if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id;
-    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: payload, messageId: messageId, isUserBot: isUserBot } };
+    const appName = payload; // The app name
 
-    return bot.editMessageText(`Manage app "${payload}":`, {
+    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName, messageId: messageId, isUserBot: isUserBot } };
+
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+    await bot.editMessageText(`⚙️ Fetching app status for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+
+    // Dyno On/Off removed from here
+    // let dynoOn = false;
+    // try {
+    //     const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
+    //         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+    //     });
+    //     const workerDyno = dynoRes.data.find(d => d.type === 'worker');
+    //     if (workerDyno && workerDyno.state === 'up') {
+    //         dynoOn = true;
+    //     }
+    // } catch (e) {
+    //     console.error(`Error fetching dyno status for ${appName}: ${e.message}`);
+    //     // If there's an error, assume it's off or unreachable for now.
+    //     dynoOn = false;
+    // }
+
+    // const dynoToggleButton = dynoOn
+    //     ? { text: '🔴 Turn Off', callback_data: `dyno_off:${appName}` }
+    //     : { text: '🟢 Turn On', callback_data: `dyno_on:${appName}` };
+
+    return bot.editMessageText(`Manage app "*${appName}*":`, {
       chat_id: cid,
       message_id: messageId,
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [
-            { text: 'Info', callback_data: `info:${payload}` },
-            { text: 'Restart', callback_data: `restart:${payload}` },
-            { text: 'Logs', callback_data: `logs:${payload}` }
+            { text: 'Info', callback_data: `info:${appName}` },
+            { text: 'Restart', callback_data: `restart:${appName}` },
+            { text: 'Logs', callback_data: `logs:${appName}` }
           ],
           [
-            { text: 'Redeploy', callback_data: `redeploy_app:${payload}` },
-            { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${payload}` },
-            { text: 'Set Variable', callback_data: `setvar:${payload}` }
+            { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
+            { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
+            { text: 'Set Variable', callback_data: `setvar:${appName}` }
           ],
+          // Dynamically added dyno control button - REMOVED
+          // [dynoToggleButton],
           [{ text: '◀️️ Back', callback_data: 'back_to_app_list' }]
         ]
       }
@@ -2029,7 +2042,7 @@ bot.on('callback_query', async q => {
         return;
     }
 
-    await bot.editMessageText(`Assigning app "${appName}" to user \`${targetUserId}\`...`, {
+    await bot.editMessageText(`Assigning app "*${appName}*" to user \`${targetUserId}\`...`, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown'
@@ -2056,9 +2069,10 @@ bot.on('callback_query', async q => {
         const currentSessionId = configRes.data.SESSION_ID;
 
         if (!currentSessionId) {
-            await bot.editMessageText(`⚠️ Cannot assign "${appName}". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`, {
+            await bot.editMessageText(`⚠️ Cannot assign "*${appName}*". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`, {
                 chat_id: cid,
-                message_id: q.message.message_id
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown'
             });
             delete userStates[cid];
             return;
@@ -2083,9 +2097,10 @@ bot.on('callback_query', async q => {
         }
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to assign app "${appName}" to user \`${targetUserId}\`: ${errorMsg}`, {
+        await bot.editMessageText(`❌ Failed to assign app "*${appName}*" to user \`${targetUserId}\`: ${errorMsg}`, {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
         });
     } finally {
         delete userStates[cid];
@@ -2121,7 +2136,7 @@ bot.on('callback_query', async q => {
         return;
     }
 
-    await bot.editMessageText(`Removing app "${appName}" from user \`${targetUserId}\`'s dashboard...`, {
+    await bot.editMessageText(`Removing app "*${appName}*" from user \`${targetUserId}\`'s dashboard...`, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown'
@@ -2143,9 +2158,10 @@ bot.on('callback_query', async q => {
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[Admin] Error removing app "${appName}" from user ${targetUserId}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to remove app "${appName}" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`, {
+        await bot.editMessageText(`❌ Failed to remove app "*${appName}*" from user \`${targetUserId}\`'s dashboard: ${errorMsg}`, {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
         });
     } finally {
         delete userStates[cid];
@@ -2162,6 +2178,7 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText('⚙️ Fetching app info...', { chat_id: cid, message_id: messageId });
     try {
       const apiHeaders = {
@@ -2250,9 +2267,11 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
-    await bot.editMessageText(`🔄 Restarting bot "${payload}"...`, {
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+    await bot.editMessageText(`🔄 Restarting bot "*${payload}*"...`, {
         chat_id: cid,
-        message_id: messageId
+        message_id: messageId,
+        parse_mode: 'Markdown'
     });
 
     try {
@@ -2260,9 +2279,10 @@ bot.on('callback_query', async q => {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
 
-      await bot.editMessageText(`✅ Bot "${payload}" restarted successfully!`, {
+      await bot.editMessageText(`✅ Bot "*${payload}*" restarted successfully!`, {
           chat_id: cid,
           message_id: messageId,
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]]
           }
@@ -2295,6 +2315,7 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     await bot.editMessageText('📄 Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
@@ -2304,7 +2325,7 @@ bot.on('callback_query', async q => {
       const logRes = await axios.get(sess.data.logplex_url);
       const logs = logRes.data.trim().slice(-4000);
 
-      return bot.editMessageText(`Logs for "${payload}":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
+      return bot.editMessageText(`Logs for "*${payload}*":\n\`\`\`\n${logs || 'No recent logs.'}\n\`\`\``, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'Markdown',
@@ -2335,9 +2356,10 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
-      return bot.editMessageText(`Are you sure you want to delete the app "${payload}"? This action cannot be undone.`, {
+      return bot.editMessageText(`Are you sure you want to delete the app "*${payload}*"? This action cannot be undone.`, {
         chat_id: cid,
         message_id: messageId,
+        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
             { text: "Yes, I'm sure", callback_data: `confirmdelete:${payload}:${action}` },
@@ -2356,7 +2378,8 @@ bot.on('callback_query', async q => {
       }
       const messageId = q.message.message_id;
 
-      await bot.editMessageText(`🗑️ Deleting ${appToDelete}...`, { chat_id: cid, message_id: messageId });
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+      await bot.editMessageText(`🗑️ Deleting "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -2367,7 +2390,7 @@ bot.on('callback_query', async q => {
               const ownerId = await getUserIdByBotName(appToDelete);
               if (ownerId) await deleteUserBot(ownerId, appToDelete);
           }
-          await bot.editMessageText(`✅ App "${appToDelete}" has been permanently deleted.`, { chat_id: cid, message_id: messageId });
+          await bot.editMessageText(`✅ App "*${appToDelete}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
           if (originalAction === 'userdelete') {
               const bots = await getUserBots(cid);
               if (bots.length > 0) {
@@ -2385,14 +2408,15 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          return bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            reply_markup: {
-                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
-            }
+          await bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
+              chat_id: cid,
+              message_id: messageId,
+              reply_markup: {
+                  inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
+              }
           });
       }
+      return;
   }
 
   if (action === 'canceldelete') {
@@ -2409,9 +2433,10 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
-    return bot.editMessageText(`Select a variable to set for "${payload}":`, {
+    return bot.editMessageText(`Select a variable to set for "*${payload}*":`, {
       chat_id: cid,
       message_id: messageId,
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
@@ -2419,7 +2444,7 @@ bot.on('callback_query', async q => {
           [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
           [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: '◀️️ Back', callback_data: `setvar:${payload}` }]
+          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }] // Changed back to selectapp to refresh menu properly
         ]
       }
     });
@@ -2434,9 +2459,10 @@ bot.on('callback_query', async q => {
     const messageId = q.message.message_id;
 
     if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      return bot.editMessageText(`Set ${varKey} to:`, {
+      return bot.editMessageText(`Set *${varKey}* to:`, {
         chat_id: cid,
         message_id: messageId,
+        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
             { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
@@ -2449,7 +2475,7 @@ bot.on('callback_query', async q => {
       userStates[cid].step = 'SETVAR_ENTER_VALUE';
       userStates[cid].data.VAR_NAME = varKey;
       userStates[cid].data.APP_NAME = appName;
-      return bot.sendMessage(cid, `Please enter the new value for ${varKey}:`);
+      return bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
     }
   }
 
@@ -2462,7 +2488,8 @@ bot.on('callback_query', async q => {
     else newVal = flagVal ? 'true' : 'false';
 
     try {
-      const updateMsg = await bot.sendMessage(cid, `Updating ${varKey} for "${appName}"...`);
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+      const updateMsg = await bot.sendMessage(cid, `Updating *${varKey}* for "*${appName}*"...`, { parse_mode: 'Markdown' });
       console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`);
       const patchResponse = await axios.patch(
         `https://api.heroku.com/apps/${appName}/config-vars`,
@@ -2476,10 +2503,11 @@ bot.on('callback_query', async q => {
       const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
       await addUserBot(cid, appName, currentSessionId);
 
-      const baseWaitingText = `Updating ${varKey} for "${appName}". Waiting for bot status confirmation...`;
+      const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
-          message_id: updateMsg.message_id
+          message_id: updateMsg.message_id,
+          parse_mode: 'Markdown'
       });
       const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
 
@@ -2503,9 +2531,10 @@ bot.on('callback_query', async q => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
 
-          await bot.editMessageText(`✅ Variable "${varKey}" for "${appName}" updated successfully and bot is back online!`, {
+          await bot.editMessageText(`✅ Variable "*${varKey}*" for "*${appName}*" updated successfully and bot is back online!`, {
               chat_id: cid,
               message_id: updateMsg.message_id,
+              parse_mode: 'Markdown',
               reply_markup: {
                   inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]
                   ]
@@ -2518,11 +2547,12 @@ bot.on('callback_query', async q => {
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
-              `⚠️ Bot "${appName}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
+              `⚠️ Bot "*${appName}*" failed to come online after variable "*${varKey}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
                   message_id: updateMsg.message_id,
+                  parse_mode: 'Markdown',
                   reply_markup: {
                       inline_keyboard: [
                           [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
@@ -2560,7 +2590,7 @@ bot.on('callback_query', async q => {
               targetUserId: targetUserId
           }
       };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "${appName}":`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*":`, { parse_mode: 'Markdown' });
       return;
   }
 
@@ -2574,7 +2604,8 @@ bot.on('callback_query', async q => {
           return;
       }
 
-      await bot.editMessageText(`🗑️ Admin deleting Free Trial app "${appToDelete}"...`, { chat_id: cid, message_id: messageId });
+      await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+      await bot.editMessageText(`🗑️ Admin deleting Free Trial app "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -2582,7 +2613,7 @@ bot.on('callback_query', async q => {
           const ownerId = await getUserIdByBotName(appToDelete);
           if (ownerId) await deleteUserBot(ownerId, appToDelete);
 
-          await bot.editMessageText(`✅ Free Trial app "${appToDelete}" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId });
+          await bot.editMessageText(`✅ Free Trial app "*${appToDelete}*" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
           if (ownerId && ownerId !== cid) {
               await bot.sendMessage(ownerId, `ℹ️ Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, { parse_mode: 'Markdown' });
           }
@@ -2592,9 +2623,10 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`❌ Failed to delete Free Trial app "${appToDelete}": ${errorMsg}`, {
+          await bot.editMessageText(`❌ Failed to delete Free Trial app "*${appToDelete}*": ${errorMsg}`, {
               chat_id: cid,
-              message_id: messageId
+              message_id: messageId,
+              parse_mode: 'Markdown'
           });
       }
       return;
@@ -2604,7 +2636,7 @@ bot.on('callback_query', async q => {
   if (action === 'redeploy_app') {
     const appName = payload;
     // FIX: Corrected how messageId is accessed from q.message
-    const messageId = q.message.message_id; 
+    const messageId = q.message.message_id;
 
     const isOwner = (await getUserIdByBotName(appName)) === cid;
     if (cid !== ADMIN_ID && !isOwner) {
@@ -2612,9 +2644,11 @@ bot.on('callback_query', async q => {
         return;
     }
 
-    await bot.editMessageText(`🔄 Redeploying "${appName}" from GitHub...`, {
+    await bot.sendChatAction(cid, 'typing'); // Added typing indicator
+    await bot.editMessageText(`🔄 Redeploying "*${appName}*" from GitHub...`, {
         chat_id: cid,
-        message_id: messageId
+        message_id: messageId,
+        parse_mode: 'Markdown'
     });
 
     let animateIntervalId = null;
@@ -2633,11 +2667,12 @@ bot.on('callback_query', async q => {
 
         const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
 
-        await bot.editMessageText(`🛠️ Build initiated for "${appName}". Waiting for completion...`, {
+        await bot.editMessageText(`🛠️ Build initiated for "*${appName}*". Waiting for completion...`, {
             chat_id: cid,
-            message_id: messageId
+            message_id: messageId,
+            parse_mode: 'Markdown'
         });
-        animateIntervalId = await animateMessage(cid, messageId, `Building "${appName}" from GitHub...`);
+        animateIntervalId = await animateMessage(cid, messageId, `Building "*${appName}*" from GitHub...`);
 
         const BUILD_POLL_TIMEOUT = 300 * 1000;
 
@@ -2669,9 +2704,10 @@ bot.on('callback_query', async q => {
 
         await buildPromise;
 
-        await bot.editMessageText(`✅ App "${appName}" redeployed successfully!`, {
+        await bot.editMessageText(`✅ App "*${appName}*" redeployed successfully!`, {
             chat_id: cid,
             message_id: messageId,
+            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
             }
@@ -2685,9 +2721,10 @@ bot.on('callback_query', async q => {
         }
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`Error redeploying ${appName}:`, errorMsg, e.stack);
-        await bot.editMessageText(`❌ Failed to redeploy "${appName}": ${errorMsg}`, {
+        await bot.editMessageText(`❌ Failed to redeploy "*${appName}*": ${errorMsg}`, {
             chat_id: cid,
             message_id: messageId,
+            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
             }
@@ -2699,6 +2736,11 @@ bot.on('callback_query', async q => {
     return;
   }
 
+// REMOVED: Dyno Off Handler
+// if (action === 'dyno_off') { ... }
+
+// REMOVED: Dyno On Handler
+// if (action === 'dyno_on') { ... }
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
@@ -2763,7 +2805,7 @@ bot.on('channel_post', async msg => {
         const pendingPromise = appDeploymentPromises.get(botName);
         if (pendingPromise) {
             clearInterval(pendingPromise.animateIntervalId);
-            pendingPromise.reject(new Error('Bot session became invalid on startup.'));
+            pendingPromise.reject(new Error('Bot session became invalid.')); // Changed message for clarity
             appDeploymentPromises.delete(botName);
             console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
         } else {
