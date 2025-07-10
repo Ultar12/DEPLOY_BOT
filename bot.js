@@ -2880,4 +2880,4 @@ async function checkAndRemindLoggedOutBots() {
 setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
 
 
-console.log('Bot is running Ultar...');
+console.log('Bot is running...');
