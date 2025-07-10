@@ -869,7 +869,7 @@ bot.onText(/^\/start$/, async msg => {
   } else {
     // UPDATED: Dynamic greeting
     const { first_name: userFirstName } = msg.from; // Renamed to avoid conflict
-    let personalizedGreeting = `👋 Welcome`;
+    let personalizedGreeting = `Welcome`;
     if (userFirstName) {
         personalizedGreeting += ` back, ${escapeMarkdown(userFirstName)}`; // Escape name for Markdown
     }
@@ -1111,7 +1111,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, '✅ Your question has been sent to the admin. You will be notified when they reply.');
+        await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
         await bot.sendMessage(userChatId, '❌ Failed to send your question to the admin. Please try again later.');
@@ -1271,7 +1271,7 @@ bot.on('message', async msg => {
       const pairingCodeRegex = /^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/;
 
       if (!pairingCodeRegex.test(pairingCode)) {
-          return bot.sendMessage(cid, '❌ Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).');
+          return bot.sendMessage(cid, 'Invalid pairing code format. Please send a 9-character alphanumeric code with a hyphen (e.g., `ABCD-1234`).');
       }
 
       const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
@@ -1574,7 +1574,7 @@ bot.on('message', async msg => {
       return;
     }
 
-    await bot.editMessageText(`✅ Verified!`, {
+    await bot.editMessageText(`Verified!!!`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
@@ -1874,8 +1874,8 @@ bot.on('callback_query', async q => {
 
       } else { // decision === 'decline'
           // Admin declined, inform the user
-          await bot.sendMessage(targetUserChatId, '❌ Your pairing code request was declined by the admin. Please contact support if you have questions.');
-          await bot.sendMessage(ADMIN_ID, `❌ Pairing request from user \`${targetUserChatId}\` declined.`);
+          await bot.sendMessage(targetUserChatId, 'Your pairing code request was declined by the admin. Please contact support if you have questions.');
+          await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${targetUserChatId}\` declined.`);
 
           // Clear user's state as the request is finished
           delete userStates[targetUserChatId];
@@ -1944,7 +1944,7 @@ bot.on('callback_query', async q => {
       }
 
       if (step === 'cancel') {
-          await bot.editMessageText('❌ Deployment cancelled.', {
+          await bot.editMessageText('Deployment cancelled.', {
               chat_id: cid,
               message_id: st.message.message_id
           });
