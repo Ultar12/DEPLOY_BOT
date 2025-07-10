@@ -361,6 +361,38 @@ function generateKey() {
     .join('');
 }
 
+/**
+ * Escapes special Markdown (V1) characters in a given string.
+ * This is for `parse_mode: 'Markdown'`.
+ *
+ * @param {string} text The string to escape.
+ * @returns {string} The escaped string, safe for Markdown (V1) parsing.
+ */
+function escapeMarkdown(text) {
+    if (typeof text !== 'string') {
+        // Ensure the input is treated as a string
+        text = String(text);
+    }
+
+    // Characters that need escaping in Markdown (V1):
+    // _, *, `, [
+    // Note: The period '.' is NOT a special character in Markdown (V1)
+    return text
+        .replace(/_/g, '\\_')   // Underscore
+        .replace(/\*/g, '\\*')  // Asterisk
+        .replace(/`/g, '\\`')   // Backtick
+        .replace(/\[/g, '\\[')  // Open square bracket (for links, but good practice to escape if literal)
+        .replace(/\]/g, '\\]')  // Close square bracket
+        .replace(/\(/g, '\\(')  // Open parenthesis (for links, good practice to escape if literal)
+        .replace(/\)/g, '\\)'); // Close parenthesis
+}
+
+// Example of how to export it if using Node.js modules:
+// module.exports = {
+//     escapeMarkdown
+// };
+
+
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
@@ -809,6 +841,65 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     } catch (error) {
         console.error("Error sending initial /add message or setting state:", error);
         bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
+    }
+});
+
+// bot.js (Add this new handler within your existing Command Handlers section)
+
+// --- Make sure to import or define the escapeMarkdown function here ---
+// e.g., const { escapeMarkdown } = require('./utils');
+// OR copy the function code from above directly into this file.
+
+bot.onText(/^\/info (\d+)$/, async (msg, match) => {
+    const callerId = msg.chat.id.toString();
+    const targetUserId = match[1];
+
+    if (callerId !== ADMIN_ID) {
+        return bot.sendMessage(callerId, "âŒ You are not authorized to use this command.");
+    }
+
+    try {
+        const targetChat = await bot.getChat(targetUserId);
+
+        // Use the new escapeMarkdown function
+        const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
+        const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
+        const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
+        const userIdEscaped = escapeMarkdown(targetUserId); // Also escape the ID itself for safety
+
+
+        let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`;
+        userDetails += `*First Name:* ${firstName}\n`;
+        userDetails += `*Last Name:* ${lastName}\n`;
+        userDetails += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`;
+        userDetails += `*Type:* ${escapeMarkdown(targetChat.type)}\n`; // Escape chat type too
+
+        // Add a link to the user's profile if username is available (Telegram deep link)
+        // Note: The URL part of a Markdown link doesn't need escaping.
+        if (targetChat.username) {
+            // The displayed text of the link needs to be escaped with escapeMarkdown
+            userDetails += `*Profile Link:* [t.me/${username}](https://t.me/${targetChat.username})\n`;
+        }
+
+        // IMPORTANT: Change parse_mode to 'Markdown'
+        await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
+
+        if (error.response && error.response.body && error.response.body.description) {
+            const apiError = error.response.body.description;
+            if (apiError.includes("chat not found") || apiError.includes("user not found")) {
+                await bot.sendMessage(callerId, `âŒ User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
+            } else if (apiError.includes("bot was blocked by the user")) {
+                await bot.sendMessage(callerId, `âŒ The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
+            } else {
+                await bot.sendMessage(callerId, `âŒ Failed to get info for user \`${targetUserId}\`: ${apiError}`);
+            }
+        } else {
+            console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
+            await bot.sendMessage(callerId, `âŒ An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
+        }
     }
 });
 
