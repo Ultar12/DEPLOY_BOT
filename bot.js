@@ -1279,12 +1279,11 @@ bot.on('message', async msg => {
       // Stop the user's waiting animation (if active)
       if (userAnimateIntervalId) {
           clearInterval(userAnimateIntervalId);
-          // Update the user's message to "Your pairing-code is now ready!"
           if (userWaitingMessageId) {
-              await bot.editMessageText(`✅ Your pairing-code is now ready!`, {
+              await bot.editMessageText(`✅ Pairing code received from admin! Sending to you now...`, {
                   chat_id: targetUserId,
                   message_id: userWaitingMessageId
-              }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
+              }).catch(err => console.error(`Failed to edit user's waiting message to "received": ${err.message}`));
           }
       }
 
@@ -2408,15 +2407,14 @@ bot.on('callback_query', async q => {
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
-              chat_id: cid,
-              message_id: messageId,
-              reply_markup: {
-                  inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
-              }
+          return bot.editMessageText(`❌ Failed to delete app: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appToDelete}` }]]
+            }
           });
       }
-      return;
   }
 
   if (action === 'canceldelete') {
