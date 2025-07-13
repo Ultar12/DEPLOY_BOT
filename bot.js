@@ -32,6 +32,9 @@ const {
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
+// Admin SUDO numbers that cannot be removed
+const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
+
 // Add the channel ID the bot will listen to for specific messages
 const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here
 
@@ -1368,8 +1371,8 @@ bot.on('message', async msg => {
       return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
   }
 
-  // NEW: Handle input for "SUDO" number
-  if (st && st.step === 'AWAITING_SUDO_VAR_NUMBER') {
+  // NEW: Handle input for "SUDO" number (Add)
+  if (st && st.step === 'AWAITING_SUDO_ADD_NUMBER') {
       const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
       const phoneNumber = text.trim();
 
@@ -1381,7 +1384,7 @@ bot.on('message', async msg => {
 
       try {
           await bot.sendChatAction(cid, 'typing');
-          const updateMsg = await bot.sendMessage(cid, `Updating SUDO variable for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+          const updateMsg = await bot.sendMessage(cid, `Adding number to SUDO variable for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
 
           // Get current SUDO var value
           const configRes = await axios.get(
@@ -1411,7 +1414,7 @@ bot.on('message', async msg => {
           );
           console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
 
-          await bot.editMessageText(`✅ SUDO variable for "*${APP_NAME}*" updated successfully! New value: \`${newSudoValue}\``, {
+          await bot.editMessageText(`✅ Number added to SUDO variable for "*${APP_NAME}*" successfully! New value: \`${newSudoValue}\``, {
               chat_id: cid,
               message_id: updateMsg.message_id,
               parse_mode: 'Markdown'
@@ -1425,6 +1428,70 @@ bot.on('message', async msg => {
       }
       return;
   }
+
+  // NEW: Handle input for "SUDO" number (Remove)
+  if (st && st.step === 'AWAITING_SUDO_REMOVE_NUMBER') {
+    const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
+    const numberToRemove = text.trim();
+
+    if (!/^\d+$/.test(numberToRemove)) {
+        return bot.sendMessage(cid, '❌ Invalid input. Please enter numbers only, without plus signs or spaces. Example: `2349163916314`');
+    }
+
+    // Check if it's an admin number
+    if (ADMIN_SUDO_NUMBERS.includes(numberToRemove)) {
+        return bot.sendMessage(cid, "⛔ You can't remove the admin number.");
+    }
+
+    try {
+        await bot.sendChatAction(cid, 'typing');
+        const updateMsg = await bot.sendMessage(cid, `Attempting to remove number from SUDO for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+
+        const configRes = await axios.get(
+            `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const currentSudo = configRes.data.SUDO || '';
+        let sudoNumbers = currentSudo.split(',').map(s => s.trim()).filter(Boolean); // Split, trim, remove empty strings
+
+        const initialLength = sudoNumbers.length;
+        sudoNumbers = sudoNumbers.filter(num => num !== numberToRemove); // Filter out the number
+
+        if (sudoNumbers.length === initialLength) {
+            await bot.editMessageText(`⚠️ Number \`${numberToRemove}\` not found in SUDO variable for "*${APP_NAME}*". No changes made.`, {
+                chat_id: cid,
+                message_id: updateMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+        } else {
+            const newSudoValue = sudoNumbers.join(',');
+            await axios.patch(
+                `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+                { SUDO: newSudoValue },
+                {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3',
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            await bot.editMessageText(`✅ Number \`${numberToRemove}\` removed from SUDO variable for "*${APP_NAME}*" successfully! New value: \`${newSudoValue}\``, {
+                chat_id: cid,
+                message_id: updateMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+        }
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[API_CALL_ERROR] Error removing SUDO number for ${APP_NAME}:`, errorMsg, e.response?.data);
+        await bot.sendMessage(cid, `❌ Error removing number from SUDO variable: ${errorMsg}`);
+    } finally {
+        delete userStates[cid];
+    }
+    return;
+}
+
 
   // NEW: Check if this is a reply TO the bot (potentially from an admin) for support questions
   if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
@@ -1771,8 +1838,14 @@ bot.on('message', async msg => {
     const finalUserId = targetUserIdFromState || cid;
 
     if (VAR_NAME === 'SESSION_ID' && newVal.length < 10) {
-        return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
+      // Allow empty string for SESSION_ID if it's meant to clear it
+      if (newVal === '') {
+          // If clearing, no length check needed
+      } else {
+          return bot.sendMessage(cid, 'Session ID must be at least 10 characters long, or empty to clear.');
+      }
     }
+
 
     try {
       await bot.sendChatAction(cid, 'typing'); // Added typing indicator
@@ -1792,8 +1865,11 @@ bot.on('message', async msg => {
       );
       console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
 
-      console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
-      await addUserBot(finalUserId, APP_NAME, newVal);
+      // Only update session_id in DB if VAR_NAME is SESSION_ID
+      if (VAR_NAME === 'SESSION_ID') {
+          console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${finalUserId}".`);
+          await addUserBot(finalUserId, APP_NAME, newVal);
+      }
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
@@ -2581,11 +2657,18 @@ bot.on('callback_query', async q => {
         if (value === null || value === undefined || value === '') {
             return '`Not Set`';
         }
-        return `\`${escapeMarkdown(String(value).substring(0, 20))}${value.length > 20 ? '...' : ''}\``;
+        // For SESSION_ID, only show "Set" or "Not Set"
+        // For others, show a truncated value
+        if (value.length > 20) {
+            return `\`${escapeMarkdown(String(value).substring(0, 20))}...\``;
+        }
+        return `\`${escapeMarkdown(String(value))}\``;
     };
 
+    const sessionIDValue = configVars.SESSION_ID ? `\`${escapeMarkdown(String(configVars.SESSION_ID))}\`` : '`Not Set`';
+
     const varInfo = `*Current Config Variables for ${appName}:*\n` +
-                     `\`SESSION_ID\`: ${configVars.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` + // Indicate if set, don't show full value
+                     `\`SESSION_ID\`: ${sessionIDValue}\n` + // Display full SESSION_ID if available
                      `\`AUTO_STATUS_VIEW\`: ${formatVarValue(configVars.AUTO_STATUS_VIEW)}\n` +
                      `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
                      `\`PREFIX\`: ${formatVarValue(configVars.PREFIX)}\n` +
@@ -2606,8 +2689,9 @@ bot.on('callback_query', async q => {
            { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` },
            { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: 'OTHER VARIABLE?', callback_data: `varselect:OTHER_VAR:${payload}` },
-           { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }],
+          // SUDO then OTHER VARIABLE?
+          [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }], // Changed text to SUDO
+          [{ text: 'OTHER VARIABLE?', callback_data: `varselect:OTHER_VAR:${payload}` }], // Changed text to OTHER VARIABLE?
           [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]
         ]
       }
@@ -2622,36 +2706,74 @@ bot.on('callback_query', async q => {
     }
     const messageId = q.message.message_id;
 
-    if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-      return bot.editMessageText(`Set *${varKey}* to:`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
-            { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
-          ],
-          [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]]
+    if (varKey === 'SESSION_ID') {
+        userStates[cid].step = 'SETVAR_ENTER_VALUE';
+        userStates[cid].data.VAR_NAME = varKey;
+        userStates[cid].data.APP_NAME = appName;
+        // The bot previously displays the current SESSION_ID. Now ask for new one.
+        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*":`, { parse_mode: 'Markdown' });
+    }
+    else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
+        // PREFIX also needs direct input, not boolean
+        userStates[cid].step = 'SETVAR_ENTER_VALUE';
+        userStates[cid].data.VAR_NAME = varKey;
+        userStates[cid].data.APP_NAME = appName;
+
+        let promptMessage = `Please enter the new value for *${varKey}*:`
+        if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
+          // Provide boolean options for specific vars
+          return bot.editMessageText(`Set *${varKey}* to:`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
+                { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
+              ],
+              [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]]
+            }
+          });
         }
-      });
+        return bot.sendMessage(cid, promptMessage, { parse_mode: 'Markdown' });
+
     } else if (varKey === 'OTHER_VAR') {
         userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid; // Store for potential admin use case
         return bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
-    } else if (varKey === 'SUDO_VAR') { // Changed from SUDO_VAR to SUDO
-        userStates[cid].step = 'AWAITING_SUDO_VAR_NUMBER';
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.targetUserId = cid; // Store for potential admin use case
-        return bot.sendMessage(cid, 'Please enter the number to add to SUDO variable (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
+    } else if (varKey === 'SUDO_VAR') { // This is the 'SUDO' button
+        // Offer Add or Remove for SUDO
+        return bot.editMessageText(`How do you want to manage the *SUDO* variable for "*${appName}*"?`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
+                    [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
+                    [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]
+                ]
+            }
+        });
     }
-    else {
-      userStates[cid].step = 'SETVAR_ENTER_VALUE';
-      userStates[cid].data.VAR_NAME = varKey;
+  }
+
+  // New handler for SUDO add/remove actions
+  if (action === 'sudo_action') {
+      const sudoAction = payload; // 'add' or 'remove'
+      const appName = extra; // appName
+
       userStates[cid].data.APP_NAME = appName;
-      return bot.sendMessage(cid, `Please enter the new value for *${varKey}*:`, { parse_mode: 'Markdown' });
-    }
+      userStates[cid].data.targetUserId = cid; // Keep context for admin
+
+      if (sudoAction === 'add') {
+          userStates[cid].step = 'AWAITING_SUDO_ADD_NUMBER';
+          return bot.sendMessage(cid, 'Please enter the number to *add* to SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
+      } else if (sudoAction === 'remove') {
+          userStates[cid].step = 'AWAITING_SUDO_REMOVE_NUMBER';
+          return bot.sendMessage(cid, 'Please enter the number to *remove* from SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
+      }
   }
 
   if (action === 'setvarbool') {
@@ -2676,7 +2798,8 @@ bot.on('callback_query', async q => {
 
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
       const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
-      await addUserBot(cid, appName, currentSessionId);
+      // Only update session_id in DB if VAR_NAME is SESSION_ID, which is not the case for setvarbool
+      // await addUserBot(cid, appName, currentSessionId); 
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
