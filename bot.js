@@ -1311,6 +1311,121 @@ bot.on('message', async msg => {
       return; // Consume message
   }
 
+  // NEW: Handle input for "Other Var" value
+  if (st && st.step === 'AWAITING_OTHER_VAR_VALUE') {
+      const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data;
+      const varValue = text.trim();
+
+      const finalUserId = targetUserIdFromState || cid;
+
+      try {
+          await bot.sendChatAction(cid, 'typing');
+          const updateMsg = await bot.sendMessage(cid, `Updating *${VAR_NAME}* for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+
+          console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
+          const patchResponse = await axios.patch(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              { [VAR_NAME]: varValue },
+              {
+                  headers: {
+                      Authorization: `Bearer ${HEROKU_API_KEY}`,
+                      Accept: 'application/vnd.heroku+json; version=3',
+                      'Content-Type': 'application/json'
+                  }
+              }
+          );
+          console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
+
+          await bot.editMessageText(`✅ Variable *${VAR_NAME}* for "*${APP_NAME}*" updated successfully!`, {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              parse_mode: 'Markdown'
+          });
+      } catch (e) {
+          const errorMsg = e.response?.data?.message || e.message;
+          console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
+          await bot.sendMessage(cid, `❌ Error updating variable: ${errorMsg}`);
+      } finally {
+          delete userStates[cid];
+      }
+      return;
+  }
+
+  // NEW: Handle input for "Other Var" name
+  if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
+      const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
+      const varName = text.trim().toUpperCase(); // Capitalize the variable name
+
+      if (!/^[A-Z0-9_]+$/.test(varName)) {
+          return bot.sendMessage(cid, '❌ Invalid variable name. Please use only uppercase letters, numbers, and underscores.');
+      }
+
+      userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
+      userStates[cid].data.VAR_NAME = varName;
+      userStates[cid].data.APP_NAME = APP_NAME;
+      userStates[cid].data.targetUserId = targetUserIdFromState; // Preserve targetUserId for admin context
+
+      return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
+  }
+
+  // NEW: Handle input for "SUDO Var" number
+  if (st && st.step === 'AWAITING_SUDO_VAR_NUMBER') {
+      const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
+      const phoneNumber = text.trim();
+
+      if (!/^\d+$/.test(phoneNumber)) { // Check if it contains only digits
+          return bot.sendMessage(cid, '❌ Invalid input. Please enter numbers only, without plus signs or spaces. Example: `2349163916314`');
+      }
+
+      const finalUserId = targetUserIdFromState || cid;
+
+      try {
+          await bot.sendChatAction(cid, 'typing');
+          const updateMsg = await bot.sendMessage(cid, `Updating SUDO variable for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+
+          // Get current SUDO var value
+          const configRes = await axios.get(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              {
+                  headers: {
+                      Authorization: `Bearer ${HEROKU_API_KEY}`,
+                      Accept: 'application/vnd.heroku+json; version=3'
+                  }
+              }
+          );
+          const currentSudo = configRes.data.SUDO || ''; // Get current SUDO, default to empty string if not set
+
+          const newSudoValue = currentSudo ? `${currentSudo},${phoneNumber}` : phoneNumber;
+
+          console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { SUDO: '***' }`);
+          const patchResponse = await axios.patch(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              { SUDO: newSudoValue },
+              {
+                  headers: {
+                      Authorization: `Bearer ${HEROKU_API_KEY}`,
+                      Accept: 'application/vnd.heroku+json; version=3',
+                      'Content-Type': 'application/json'
+                  }
+              }
+          );
+          console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
+
+          await bot.editMessageText(`✅ SUDO variable for "*${APP_NAME}*" updated successfully! New value: \`${newSudoValue}\``, {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              parse_mode: 'Markdown'
+          });
+      } catch (e) {
+          const errorMsg = e.response?.data?.message || e.message;
+          console.error(`[API_CALL_ERROR] Error updating SUDO variable for ${APP_NAME}:`, errorMsg, e.response?.data);
+          await bot.sendMessage(cid, `❌ Error updating SUDO variable: ${errorMsg}`);
+      } finally {
+          delete userStates[cid];
+      }
+      return;
+  }
+
   // NEW: Check if this is a reply TO the bot (potentially from an admin) for support questions
   if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
       const repliedToBotMessageId = msg.reply_to_message.message_id;
@@ -2439,11 +2554,15 @@ bot.on('callback_query', async q => {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
+          // Session ID on its own row
           [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}` }],
-          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` }],
-          [{ text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
-          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` }],
-          [{ text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
+          // Other variables, two per row
+          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` },
+           { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
+          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` },
+           { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
+          [{ text: 'Other Var', callback_data: `varselect:OTHER_VAR:${payload}` },
+           { text: 'SUDO Var', callback_data: `varselect:SUDO_VAR:${payload}` }],
           [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }] // Changed back to selectapp to refresh menu properly
         ]
       }
@@ -2471,7 +2590,18 @@ bot.on('callback_query', async q => {
           [{ text: '◀️️ Back', callback_data: `setvar:${appName}` }]]
         }
       });
-    } else {
+    } else if (varKey === 'OTHER_VAR') {
+        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
+        userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.targetUserId = cid; // Store for potential admin use case
+        return bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
+    } else if (varKey === 'SUDO_VAR') {
+        userStates[cid].step = 'AWAITING_SUDO_VAR_NUMBER';
+        userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.targetUserId = cid; // Store for potential admin use case
+        return bot.sendMessage(cid, 'Please enter the number to add to SUDO variable (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
+    }
+    else {
       userStates[cid].step = 'SETVAR_ENTER_VALUE';
       userStates[cid].data.VAR_NAME = varKey;
       userStates[cid].data.APP_NAME = appName;
