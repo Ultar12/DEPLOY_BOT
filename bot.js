@@ -1000,7 +1000,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
         const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
         const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
-        const userIdEscaped = escapeMarkdown(targetUserId); // Also escape the ID itself for safety
+        const userIdEscaped = escapeMarkdown(userId); // Also escape the ID itself for safety
 
 
         let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`;
@@ -1434,12 +1434,23 @@ bot.on('message', async msg => {
     const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
     const numberToRemove = text.trim();
 
+    // Initialize attempt counter if it doesn't exist
+    st.data.attempts = (st.data.attempts || 0) + 1;
+
     if (!/^\d+$/.test(numberToRemove)) {
+        if (st.data.attempts >= 3) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, '❌ Too many invalid attempts. Please try again later.');
+        }
         return bot.sendMessage(cid, '❌ Invalid input. Please enter numbers only, without plus signs or spaces. Example: `2349163916314`');
     }
 
     // Check if it's an admin number
     if (ADMIN_SUDO_NUMBERS.includes(numberToRemove)) {
+        if (st.data.attempts >= 3) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, "⛔ Too many attempts to remove an admin number. Please try again later.");
+        }
         return bot.sendMessage(cid, "⛔ You can't remove the admin number.");
     }
 
@@ -1458,7 +1469,15 @@ bot.on('message', async msg => {
         sudoNumbers = sudoNumbers.filter(num => num !== numberToRemove); // Filter out the number
 
         if (sudoNumbers.length === initialLength) {
-            await bot.editMessageText(`⚠️ Number \`${numberToRemove}\` not found in SUDO variable for "*${APP_NAME}*". No changes made.`, {
+            if (st.data.attempts >= 3) {
+                delete userStates[cid];
+                return bot.editMessageText(`⚠️ Number \`${numberToRemove}\` not found in SUDO variable. Too many attempts. Please try again later.`, {
+                    chat_id: cid,
+                    message_id: updateMsg.message_id,
+                    parse_mode: 'Markdown'
+                });
+            }
+            await bot.editMessageText(`⚠️ Number \`${numberToRemove}\` not found in SUDO variable for "*${APP_NAME}*". No changes made. You have ${3 - st.data.attempts} attempts left.`, {
                 chat_id: cid,
                 message_id: updateMsg.message_id,
                 parse_mode: 'Markdown'
@@ -1481,13 +1500,13 @@ bot.on('message', async msg => {
                 message_id: updateMsg.message_id,
                 parse_mode: 'Markdown'
             });
+            delete userStates[cid]; // Clear state on success
         }
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[API_CALL_ERROR] Error removing SUDO number for ${APP_NAME}:`, errorMsg, e.response?.data);
         await bot.sendMessage(cid, `❌ Error removing number from SUDO variable: ${errorMsg}`);
-    } finally {
-        delete userStates[cid];
+        delete userStates[cid]; // Clear state on error
     }
     return;
 }
@@ -2111,7 +2130,7 @@ bot.on('callback_query', async q => {
                   inline_keyboard: [
                       [
                           { text: 'Yes, Deploy Now', callback_data: `setup:startbuild` },
-                          { text: 'Cancel', callback_data: `setup:cancel` }
+                          { text: 'No', callback_data: `setup:cancel` }
                       ]
                   ]
               }
@@ -2657,15 +2676,18 @@ bot.on('callback_query', async q => {
         if (value === null || value === undefined || value === '') {
             return '`Not Set`';
         }
-        // For SESSION_ID, only show "Set" or "Not Set"
-        // For others, show a truncated value
-        if (value.length > 20) {
-            return `\`${escapeMarkdown(String(value).substring(0, 20))}...\``;
+        // Properly escape all Markdown V1 characters
+        let escapedValue = escapeMarkdown(String(value));
+        // Truncate if too long AFTER escaping
+        if (escapedValue.length > 20) {
+            escapedValue = escapedValue.substring(0, 20) + '...';
         }
-        return `\`${escapeMarkdown(String(value))}\``;
+        return `\`${escapedValue}\``;
     };
 
+    // For SESSION_ID, always show the full value or 'Not Set' for clarity
     const sessionIDValue = configVars.SESSION_ID ? `\`${escapeMarkdown(String(configVars.SESSION_ID))}\`` : '`Not Set`';
+
 
     const varInfo = `*Current Config Variables for ${appName}:*\n` +
                      `\`SESSION_ID\`: ${sessionIDValue}\n` + // Display full SESSION_ID if available
@@ -2689,7 +2711,7 @@ bot.on('callback_query', async q => {
            { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` },
            { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          // SUDO then OTHER VARIABLE?
+          // SUDO then OTHER VARIABLE? (Order changed)
           [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }], // Changed text to SUDO
           [{ text: 'OTHER VARIABLE?', callback_data: `varselect:OTHER_VAR:${payload}` }], // Changed text to OTHER VARIABLE?
           [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]
@@ -2766,6 +2788,7 @@ bot.on('callback_query', async q => {
 
       userStates[cid].data.APP_NAME = appName;
       userStates[cid].data.targetUserId = cid; // Keep context for admin
+      userStates[cid].data.attempts = 0; // Initialize attempts for this flow
 
       if (sudoAction === 'add') {
           userStates[cid].step = 'AWAITING_SUDO_ADD_NUMBER';
