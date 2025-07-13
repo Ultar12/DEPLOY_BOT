@@ -1311,7 +1311,7 @@ bot.on('message', async msg => {
       return; // Consume message
   }
 
-  // NEW: Handle input for "Other Var" value
+  // NEW: Handle input for "OTHER VARIABLE?" value
   if (st && st.step === 'AWAITING_OTHER_VAR_VALUE') {
       const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState } = st.data;
       const varValue = text.trim();
@@ -1351,7 +1351,7 @@ bot.on('message', async msg => {
       return;
   }
 
-  // NEW: Handle input for "Other Var" name
+  // NEW: Handle input for "OTHER VARIABLE?" name
   if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
       const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
       const varName = text.trim().toUpperCase(); // Capitalize the variable name
@@ -1368,7 +1368,7 @@ bot.on('message', async msg => {
       return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
   }
 
-  // NEW: Handle input for "SUDO Var" number
+  // NEW: Handle input for "SUDO" number
   if (st && st.step === 'AWAITING_SUDO_VAR_NUMBER') {
       const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
       const phoneNumber = text.trim();
@@ -2547,8 +2547,53 @@ bot.on('callback_query', async q => {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
+    const appName = payload;
 
-    return bot.editMessageText(`Select a variable to set for "*${payload}*":`, {
+    await bot.sendChatAction(cid, 'typing');
+    await bot.editMessageText(`⚙️ Fetching current variables for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+
+    let configVars = {};
+    try {
+        const configRes = await axios.get(
+            `https://api.heroku.com/apps/${appName}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        configVars = configRes.data;
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            await handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
+            return;
+        }
+        const errorMsg = e.response?.data?.message || e.message;
+        return bot.editMessageText(`Error fetching config vars: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: '◀️️ Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    }
+
+    const formatVarValue = (value) => {
+        if (typeof value === 'boolean') {
+            return value ? '`true`' : '`false`';
+        }
+        if (value === null || value === undefined || value === '') {
+            return '`Not Set`';
+        }
+        return `\`${escapeMarkdown(String(value).substring(0, 20))}${value.length > 20 ? '...' : ''}\``;
+    };
+
+    const varInfo = `*Current Config Variables for ${appName}:*\n` +
+                     `\`SESSION_ID\`: ${configVars.SESSION_ID ? '✅ Set' : '❌ Not Set'}\n` + // Indicate if set, don't show full value
+                     `\`AUTO_STATUS_VIEW\`: ${formatVarValue(configVars.AUTO_STATUS_VIEW)}\n` +
+                     `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
+                     `\`PREFIX\`: ${formatVarValue(configVars.PREFIX)}\n` +
+                     `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
+                     `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n\n` +
+                     `Select a variable to set:`;
+
+    return bot.editMessageText(varInfo, {
       chat_id: cid,
       message_id: messageId,
       parse_mode: 'Markdown',
@@ -2561,9 +2606,9 @@ bot.on('callback_query', async q => {
            { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
           [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` },
            { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: 'Other Var', callback_data: `varselect:OTHER_VAR:${payload}` },
-           { text: 'SUDO Var', callback_data: `varselect:SUDO_VAR:${payload}` }],
-          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }] // Changed back to selectapp to refresh menu properly
+          [{ text: 'OTHER VARIABLE?', callback_data: `varselect:OTHER_VAR:${payload}` },
+           { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }],
+          [{ text: '◀️️ Back', callback_data: `selectapp:${payload}` }]
         ]
       }
     });
@@ -2595,7 +2640,7 @@ bot.on('callback_query', async q => {
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid; // Store for potential admin use case
         return bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
-    } else if (varKey === 'SUDO_VAR') {
+    } else if (varKey === 'SUDO_VAR') { // Changed from SUDO_VAR to SUDO
         userStates[cid].step = 'AWAITING_SUDO_VAR_NUMBER';
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid; // Store for potential admin use case
