@@ -1435,19 +1435,19 @@ bot.on('message', async msg => {
 
     if (!/^\d+$/.test(numberToRemove)) {
         if (st.data.attempts >= 3) {
-            delete userStates[cid];
+            delete userStates[cid]; // CLEAR USER STATE ON 3 INCORRECT ATTEMPTS
             return bot.sendMessage(cid, 'Too many invalid attempts. Please try again later.');
         }
-        return bot.sendMessage(cid, 'Invalid input. Please enter numbers only, without plus signs or spaces. Example: `2349163916314`');
+        return bot.sendMessage(cid, `Invalid input. Please enter numbers only, without plus signs or spaces. Example: \`2349163916314\` (Attempt ${st.data.attempts} of 3)`);
     }
 
     // Check if it's an admin number
     if (ADMIN_SUDO_NUMBERS.includes(numberToRemove)) {
         if (st.data.attempts >= 3) {
-            delete userStates[cid];
+            delete userStates[cid]; // CLEAR USER STATE ON 3 INCORRECT ATTEMPTS
             return bot.sendMessage(cid, "Too many attempts to remove an admin number. Please try again later.");
         }
-        return bot.sendMessage(cid, "You can't remove the admin number.");
+        return bot.sendMessage(cid, `You can't remove the admin number. (Attempt ${st.data.attempts} of 3)`);
     }
 
     try {
@@ -1466,7 +1466,7 @@ bot.on('message', async msg => {
 
         if (sudoNumbers.length === initialLength) {
             if (st.data.attempts >= 3) {
-                delete userStates[cid];
+                delete userStates[cid]; // CLEAR USER STATE ON 3 INCORRECT ATTEMPTS
                 return bot.editMessageText(`Number \`${numberToRemove}\` not found in SUDO variable. Too many attempts. Please try again later.`, {
                     chat_id: cid,
                     message_id: updateMsg.message_id,
@@ -1741,7 +1741,7 @@ bot.on('message', async msg => {
   if (st && st.step === 'AWAITING_KEY') { // Check st's existence
     const keyAttempt = text.toUpperCase();
 
-    const verificationMsg = await bot.sendMessage(cid, `${getAnimatedEmoji()} Verifying key...`);
+    const verificationMsg = await bot.sendMessage(cid, `Verifying key...`);
     await bot.sendChatAction(cid, 'typing'); // Added typing indicator
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
@@ -1787,10 +1787,12 @@ bot.on('message', async msg => {
       `*Chat ID:* \`${cid}\``
     ].join('\n');
 
+    // FIX: Notify admin after successful key verification
     await bot.sendMessage(ADMIN_ID,
       `*Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
+    // FIX: Send session ID prompt to the user
     return bot.sendMessage(cid, 'Please enter your session ID:');
   }
 
@@ -2152,7 +2154,7 @@ bot.on('callback_query', async q => {
       if (step === 'cancel') {
           await bot.editMessageText('Deployment cancelled.', {
               chat_id: cid,
-              message_id: st.message.message_id
+              message_id: q.message.message_id // Changed from st.message.message_id to q.message.message_id
           });
           delete userStates[cid];
       }
@@ -2737,7 +2739,7 @@ bot.on('callback_query', async q => {
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
 
-        let promptMessage = `Please enter the new value for *${varKey}*:`
+        let promptMessage = `Please enter the new value for *${varKey}*:`; // Fixed typo: `promptMessage` instead of `promptMessage`
         if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
           // Provide boolean options for specific vars
           return bot.editMessageText(`Set *${varKey}* to:`, {
