@@ -11,12 +11,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path'); // ADDED: Import the 'path' module
 
-// NEW IMPORTS FOR TIKTOK FUNCTIONALITY
-const youtubedl = require('youtube-dl-exec'); // For executing yt-dlp
-const { v4: uuidv4 } = require('uuid'); // For unique filenames/folders
-const fsPromises = require('fs').promises; // For async file operations
-const rimraf = require('rimraf'); // For cross-platform directory deletion
-
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
 try {
@@ -43,22 +37,6 @@ const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 
 // Add the channel ID the bot will listen to for specific messages
 const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here
-
-// NEW CONSTANTS FOR TIKTOK DOWNLOAD
-const DOWNLOAD_DIR = 'downloads_tiktok'; // A dedicated temporary directory
-const TELEGRAM_VIDEO_LIMIT_BYTES = 50 * 1024 * 1024; // 50 MB in bytes (Telegram's direct video upload limit)
-
-// Ensure the download directory exists on startup
-(async () => {
-  try {
-    await fsPromises.mkdir(DOWNLOAD_DIR, { recursive: true });
-    console.log(`[TikTok] Download directory created/ensured: ${DOWNLOAD_DIR}`);
-  } catch (error) {
-    console.error(`[TikTok] Error creating download directory: ${error.message}`);
-    process.exit(1); // Critical error if we can't create the download directory
-  }
-})();
-
 
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
@@ -575,173 +553,6 @@ async function startRestartCountdown(chatId, appName, messageId) {
 }
 
 
-// --- TikTok Download Function ---
-async function tiktok_download(msg) {
-  const chatId = msg.chat.id.toString();
-  const args = msg.text.split(' ').slice(1); // Get arguments after the command
-  const tiktokUrl = args[0];
-
-  if (!tiktokUrl) {
-    return bot.sendMessage(chatId, `Please provide a TikTok video URL after the \`/tiktok\` command.\nExample: \`/tiktok https://www.tiktok.com/@username/video/1234567890\``, { parse_mode: 'Markdown' });
-  }
-
-  // Basic URL validation
-  if (!tiktokUrl.startsWith('http') || !tiktokUrl.includes('tiktok.com')) {
-    return bot.sendMessage(chatId, `That doesn't look like a valid TikTok URL. Please provide a full URL.`, { parse_mode: 'Markdown' });
-  }
-
-  // Create a unique temporary directory for this download
-  const tempDirId = uuidv4();
-  const tempDirPath = path.join(DOWNLOAD_DIR, tempDirId);
-  let downloadedFilePath = null;
-  let processingMessageId = null;
-
-  try {
-    await fsPromises.mkdir(tempDirPath, { recursive: true });
-    console.log(`[TikTok] Created temp directory: ${tempDirPath}`);
-
-    const processingMessage = await bot.sendMessage(chatId, `⏳Getting your TikTok video, please wait... This might take a moment. ⏳`, { parse_mode: 'Markdown' });
-    processingMessageId = processingMessage.message_id;
-
-    // First, get info about the video without downloading
-    const info = await youtubedl(tiktokUrl, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      noCallHome: true,
-      noCheckCertificate: true,
-      youtubeSkipDashManifest: true,
-      format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', // Prioritize MP4
-    });
-
-    if (info.is_live) {
-      await bot.editMessageText(`🚫Sorry, I cannot download live streams. Please provide a link to a completed video.`, {
-        chat_id: chatId,
-        message_id: processingMessageId,
-        parse_mode: 'Markdown'
-      });
-      return;
-    }
-
-    // Determine the expected filename for the download based on yt-dlp's output template.
-    // yt-dlp uses a template, so constructing the exact filename can be tricky.
-    // The safest is to let it download and then search the directory.
-    const fileExtension = info.actual_ext || info.ext || 'mp4';
-    // Use a simpler template for the direct download filename for predictability
-    const downloadTemplate = path.join(tempDirPath, `${info.id}.%(ext)s`);
-
-    console.log(`[TikTok] Attempting download for ${tiktokUrl} to template: ${downloadTemplate}`);
-
-    // Now, download the video using the determined template
-    await youtubedl(tiktokUrl, {
-      output: downloadTemplate, // Save to the temp directory with the template
-      format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      // Include any other options you need from your Python bot's ydl_opts
-      noWarnings: true,
-      noCallHome: true,
-      noCheckCertificate: true,
-      youtubeSkipDashManifest: true,
-      // You might also want to set a user-agent to avoid throttling from TikTok if issues arise:
-      // userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    });
-
-    // Find the actual downloaded file. It might not be exactly `info.id.ext` due to `yt-dlp`'s internal logic.
-    const downloadedFiles = await fsPromises.readdir(tempDirPath);
-    if (downloadedFiles.length === 0) {
-      throw new Error("yt-dlp did not download any file to the temporary directory.");
-    }
-    // Take the first file found in the directory. In most cases for single video, it's the only one.
-    downloadedFilePath = path.join(tempDirPath, downloadedFiles[0]);
-
-    const fileStats = await fsPromises.stat(downloadedFilePath);
-    const fileSize = fileStats.size; // in bytes
-    console.log(`[TikTok] Downloaded file size: ${fileSize / (1024 * 1024)} MB`);
-
-    const videoTitle = escapeMarkdown(info.title || 'TikTok Video'); // Assuming escapeMarkdown is available
-
-    if (fileSize > TELEGRAM_VIDEO_LIMIT_BYTES) {
-      // Send as document if larger than 50MB
-      await bot.editMessageText(`✅Video downloaded! Sending as document due to size (${(fileSize / (1024 * 1024)).toFixed(2)} MB). Please wait, this might take a while. 📤`, {
-        chat_id: chatId,
-        message_id: processingMessageId,
-        parse_mode: 'Markdown'
-      });
-      await bot.sendDocument(chatId, downloadedFilePath, {
-        caption: `🎥Here's your TikTok video: ${videoTitle}`,
-        parse_mode: 'Markdown',
-        filename: downloadedFiles[0], // Use the actual filename found
-      }, {
-        // Options for Telegram API request (e.g., timeouts)
-        read_timeout: 300,
-        write_timeout: 300,
-        connect_timeout: 300
-      });
-    } else {
-      // Send as video if smaller than 50MB
-      await bot.editMessageText(`✅Video downloaded! Sending in high quality (${(fileSize / (1024 * 1024)).toFixed(2)} MB). Please wait. 📤`, {
-        chat_id: chatId,
-        message_id: processingMessageId,
-        parse_mode: 'Markdown'
-      });
-      await bot.sendVideo(chatId, downloadedFilePath, {
-        caption: `🎥Here's your TikTok video: ${videoTitle}`,
-        parse_mode: 'Markdown',
-        supports_streaming: true,
-        filename: downloadedFiles[0], // Use the actual filename found
-      }, {
-        // Options for Telegram API request (e.g., timeouts)
-        read_timeout: 300,
-        write_timeout: 300,
-        connect_timeout: 300
-      });
-    }
-
-    await bot.deleteMessage(chatId, processingMessageId); // Remove the "processing" message
-    await bot.sendMessage(chatId, `🎉Your TikTok video has been sent successfully! Enjoy!`, { parse_mode: 'Markdown' });
-
-  } catch (error) {
-    console.error(`[TikTok] Error during download or sending for ${tiktokUrl}:`, error);
-
-    let userFacingError = 'An unexpected error occurred.';
-    // Check for specific yt-dlp related errors from the wrapper's output
-    if (error.stderr) {
-      if (error.stderr.includes("This video is unavailable") || error.stderr.includes("TikTok said: Video unavailable")) {
-        userFacingError = "The video might be private, removed, or region-restricted.";
-      } else if (error.stderr.includes("Unsupported URL")) {
-        userFacingError = "This URL is not supported by the downloader.";
-      } else if (error.stderr.includes("HTTP Error 404")) {
-        userFacingError = "The video link leads to a 404 error (not found).";
-      } else if (error.stderr.includes("network error")) {
-        userFacingError = "A network error occurred during download. Please try again later.";
-      }
-    } else if (error.message.includes("yt-dlp did not download any file")) {
-        userFacingError = "Failed to download the video. It might be unavailable or a network issue occurred.";
-    }
-
-    if (processingMessageId) {
-      await bot.editMessageText(`❌Failed to download the TikTok video: \`${escapeMarkdown(userFacingError)}\`\n\n💡Please ensure the link is public and valid. Try again later. ✨`, {
-        chat_id: chatId,
-        message_id: processingMessageId,
-        parse_mode: 'Markdown'
-      }).catch(editErr => console.error(`Failed to edit error message: ${editErr.message}`));
-    } else {
-      await bot.sendMessage(chatId, `❌Failed to download the TikTok video: \`${escapeMarkdown(userFacingError)}\`\n\n💡Please ensure the link is public and valid. Try again later. ✨`, {
-        parse_mode: 'Markdown'
-      });
-    }
-  } finally {
-    // Clean up the temporary directory
-    if (tempDirPath && fs.existsSync(tempDirPath)) {
-      try {
-        await rimraf.sync(tempDirPath); // rimraf for cross-platform deletion
-        console.log(`[TikTok] Cleaned up temporary directory: ${tempDirPath}`);
-      } catch (err) {
-        console.error(`[TikTok] Error removing temporary directory ${tempDirPath}: ${err.message}`);
-      }
-    }
-  }
-}
-
-
 // 8) Send Heroku apps list
 async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
   try {
@@ -1167,10 +978,6 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
         bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
     }
 });
-
-// ADDED: TikTok command handler
-bot.onText(/^\/tiktok (.+)$/, tiktok_download); // For /tiktok <URL>
-bot.onText(/^\/tiktok$/, tiktok_download); // For /tiktok (without URL, to prompt)
 
 // bot.js (Add this new handler within your existing Command Handlers section)
 
