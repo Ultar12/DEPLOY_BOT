@@ -507,7 +507,7 @@ function chunkArray(arr, size) {
 }
 
 async function sendAnimatedMessage(chatId, baseText) {
-    const msg = await bot.sendMessage(chatId, `⚙️ ${baseText}...`);
+    const msg = await bot.sendMessage(chatId, '⚙️ ${baseText}...');
     await new Promise(r => setTimeout(r, 1200)); // Wait for animation
     return msg;
 }
@@ -821,7 +821,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           console.error(`App status check failed for ${name}:`, err.message);
           // This catch block handles both direct rejections from channel_post and the timeout
           await bot.editMessageText(
-            `Bot "${name}" failed to start or session is invalid after deployment: ${err.message}\n\n` +
+            `Bot "${name}" failed to start or session is invalid: ${err.message}\n\n` +
             `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`, // Updated message for clarity
             {
                 chat_id: chatId,
@@ -987,7 +987,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
-    const targetUserId = match[1];
+    const targetUserId = match[1]; // Correct variable name from match
 
     if (callerId !== ADMIN_ID) {
         return bot.sendMessage(callerId, "You are not authorized to use this command.");
@@ -1000,7 +1000,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
         const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
         const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
-        const userIdEscaped = escapeMarkdown(userId); // Also escape the ID itself for safety
+        const userIdEscaped = escapeMarkdown(targetUserId); // CORRECTED: Use targetUserId here
 
 
         let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`;
