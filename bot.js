@@ -3418,4 +3418,20 @@ async function checkAndRemindLoggedOutBots() {
 
         } catch (error) {
             if (error.response && error.response.status === 404) {
-                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check.
+                console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
+                const currentOwnerId = await getUserIdByBotName(herokuApp);
+                if (currentOwnerId) {
+                    await deleteUserBot(currentOwnerId, herokuApp);
+                    await bot.sendMessage(currentOwnerId, `Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                }
+                return;
+            }
+            console.error(`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}):`, error.response?.data?.message || error.message);
+        }
+    }
+}
+
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
+
+
+console.log('Bot is running...');
