@@ -14,7 +14,11 @@
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "node-telegram-bot-api": "^0.61.0",
-    "pg": "^8.11.1"
-    "yt-dlp": "^2024.07.13"
+    "pg": "^8.11.1",
+    "youtube-dl-exec": "^3.0.22",  <-- 🚀 Added this line
+    "uuid": "^10.0.0",              <-- 🚀 Added this line
+    "rimraf": "^6.0.0"              <-- 🚀 Added this line
+    // "yt-dlp": "^2024.07.13" <-- You can remove this line as it's the Python tool directly
+                                  // and the Node.js wrapper handles it.
   }
 }
