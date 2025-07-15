@@ -2318,6 +2318,7 @@ bot.on('callback_query', async q => {
   }
 
   // Handle app selection from the /remove command
+
   if (action === 'remove_app_from_user') {
     const appName = payload;
     const targetUserId = extra;
@@ -2334,7 +2335,9 @@ bot.on('callback_query', async q => {
     }
 
     const st = userStates[cid];
-    if (!st || st.data.appName !== targetUserId) {
+    // FIX START: Corrected the condition here
+    if (!st || st.step !== 'AWAITING_APP_FOR_REMOVAL' || st.data.targetUserId !== targetUserId) {
+    // FIX END:
         console.error(`[CallbackQuery - remove_app_from_user] State mismatch for ${cid}. Expected AWAITING_APP_FOR_REMOVAL for ${targetUserId}, got:`, st);
         await bot.editMessageText("This removal session has expired or is invalid. Please start over with `/remove <user_id>`.", {
             chat_id: cid,
@@ -2377,7 +2380,6 @@ bot.on('callback_query', async q => {
     }
     return;
   }
-
 
   if (action === 'info') {
     const st = userStates[cid];
