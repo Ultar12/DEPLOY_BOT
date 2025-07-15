@@ -1351,6 +1351,7 @@ bot.on('message', async msg => {
   }
 
   // NEW: Handle input for "OTHER VARIABLE?" name
+  // MODIFIED: Added check for existing variable before asking for value
   if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
       const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
       const varName = text.trim().toUpperCase(); // Capitalize the variable name
@@ -1359,12 +1360,51 @@ bot.on('message', async msg => {
           return bot.sendMessage(cid, 'Invalid variable name. Please use only uppercase letters, numbers, and underscores.');
       }
 
-      userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
-      userStates[cid].data.VAR_NAME = varName;
-      userStates[cid].data.APP_NAME = APP_NAME;
-      userStates[cid].data.targetUserId = targetUserIdFromState; // Preserve targetUserId for admin context
+      try {
+          const configRes = await axios.get(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+          );
+          const existingConfigVars = configRes.data;
 
-      return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
+          if (existingConfigVars.hasOwnProperty(varName)) {
+              // Variable exists, inform user and ask if they want to overwrite
+              userStates[cid].step = 'AWAITING_OVERWRITE_CONFIRMATION';
+              userStates[cid].data.VAR_NAME = varName;
+              userStates[cid].data.APP_NAME = APP_NAME;
+              userStates[cid].data.targetUserId = targetUserIdFromState; // Preserve context
+              const message = `Variable *${varName}* already exists for "*${APP_NAME}*" with value: \`${escapeMarkdown(String(existingConfigVars[varName]))}\`\n\nDo you want to overwrite it?`;
+              await bot.sendMessage(cid, message, {
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                      inline_keyboard: [
+                          [{ text: 'Yes, Overwrite', callback_data: `overwrite_var:yes:${varName}:${APP_NAME}` }],
+                          [{ text: 'No, Cancel', callback_data: `overwrite_var:no:${varName}:${APP_NAME}` }]
+                      ]
+                  }
+              });
+          } else {
+              // Variable does not exist, proceed to ask for value
+              userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
+              userStates[cid].data.VAR_NAME = varName;
+              userStates[cid].data.APP_NAME = APP_NAME;
+              userStates[cid].data.targetUserId = targetUserIdFromState; // Preserve targetUserId for admin context
+              return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
+          }
+      } catch (e) {
+          const errorMsg = e.response?.data?.message || e.message;
+          console.error(`[API_CALL_ERROR] Error checking existence of variable ${varName} for ${APP_NAME}:`, errorMsg, e.response?.data);
+          await bot.sendMessage(cid, `Error checking variable existence: ${errorMsg}`);
+          delete userStates[cid]; // Clear state on error
+      }
+      return;
+  }
+
+  // NEW: Handler for overwrite confirmation
+  if (st && st.step === 'AWAITING_OVERWRITE_CONFIRMATION') {
+      // This step should be handled by `callback_query` for `overwrite_var`
+      // So, if we reach here, it means a text message was sent unexpectedly.
+      return bot.sendMessage(cid, 'Please use the "Yes" or "No" buttons to confirm.');
   }
 
   // NEW: Handle input for "SUDO" number (Add)
@@ -1959,7 +1999,7 @@ bot.on('callback_query', async q => {
   const action = dataParts[0];
   const payload = dataParts[1];
   const extra = dataParts[2];
-  const flag = dataParts[3];
+  const flag = dataParts[3]; // Used for boolean values and overwrite action
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
 
@@ -2713,7 +2753,7 @@ bot.on('callback_query', async q => {
            { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
           // SUDO then OTHER VARIABLE? (Order changed)
           [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }], // Changed text to SUDO
-          [{ text: 'OTHER VARIABLE?', callback_data: `varselect:OTHER_VAR:${payload}` }], // Changed text to OTHER VARIABLE?
+          [{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${payload}` }], // Changed text here
           [{ text: 'Back', callback_data: `selectapp:${payload}` }]
         ]
       }
@@ -2796,6 +2836,44 @@ bot.on('callback_query', async q => {
       } else if (sudoAction === 'remove') {
           userStates[cid].step = 'AWAITING_SUDO_REMOVE_NUMBER';
           return bot.sendMessage(cid, 'Please enter the number to *remove* from SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
+      }
+  }
+
+  // NEW: Handler for overwrite confirmation buttons
+  if (action === 'overwrite_var') {
+      const confirmation = payload; // 'yes' or 'no'
+      const varName = extra;
+      const appName = flag; // appName is in flag
+
+      const st = userStates[cid];
+      if (!st || st.step !== 'AWAITING_OVERWRITE_CONFIRMATION' || st.data.VAR_NAME !== varName || st.data.APP_NAME !== appName) {
+          await bot.editMessageText('This overwrite session has expired or is invalid. Please try setting the variable again.', {
+              chat_id: cid,
+              message_id: q.message.message_id
+          });
+          delete userStates[cid];
+          return;
+      }
+
+      if (confirmation === 'yes') {
+          // Proceed to ask for the new value
+          await bot.editMessageText(`You chose to overwrite *${varName}*.`, {
+              chat_id: cid,
+              message_id: q.message.message_id,
+              parse_mode: 'Markdown'
+          });
+          userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
+          // Data is already set from AWAITING_OTHER_VAR_NAME
+          return bot.sendMessage(cid, `Please enter the *new* value for *${varName}*:`, { parse_mode: 'Markdown' });
+      } else {
+          // User chose not to overwrite
+          await bot.editMessageText(`Variable *${varName}* was not overwritten.`, {
+              chat_id: cid,
+              message_id: q.message.message_id,
+              parse_mode: 'Markdown'
+          });
+          delete userStates[cid]; // Clear state
+          return;
       }
   }
 
