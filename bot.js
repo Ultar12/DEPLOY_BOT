@@ -1367,7 +1367,7 @@ bot.on('message', async msg => {
           // We need to fetch the messageId from the current state if available to edit it.
           // If this is a direct text input after 'Add/Set Other Variable', q.message.message_id won't be available.
           // In that case, send a new message.
-          const currentMessageId = st.message_id || q.message?.message_id; // Try to use messageId from state or query
+          const currentMessageId = st.message_id || msg.message_id; // Try to use messageId from state or current message
 
           if (currentMessageId) {
             await bot.editMessageText(`The *SUDO* variable must be managed using "Add Number" or "Remove Number" options.\n\nHow do you want to manage it for "*${APP_NAME}*"?`, {
@@ -2126,7 +2126,8 @@ bot.on('callback_query', async q => {
 
           // Admin is now asked to send the code in a direct reply to this specific message
           const adminReplyPromptMsg = await bot.sendMessage(ADMIN_ID,
-              `Accepted pairing request from user \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
+              `*Pairing Request from User:*\n` +
+              `User ID: \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n\n` +
               `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).\n` + // Modified prompt
               `[Session ID Generator](https://levanter-delta.vercel.app/)`,
               { parse_mode: 'Markdown' }
@@ -2839,12 +2840,18 @@ bot.on('callback_query', async q => {
         return bot.sendMessage(cid, promptMessage, { parse_mode: 'Markdown' });
 
     } else if (varKey === 'OTHER_VAR') {
-        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
+        // FIX: Set the state directly here
+        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME'; // Correctly set the next step for text input
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid; // Store for potential admin use case
-        // MODIFIED: Send a new message instead of editing the existing one, so the message can persist with the current variable list.
+        userStates[cid].message_id = q.message.message_id; // Store the message ID for potential editing
+
+        // Send a new message to ask for the variable name.
+        // It's generally better to send a new message here rather than editing the existing one
+        // that contains the variable list, as that list might be useful for the user to refer back to.
         await bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
-        // No return here, allow flow to continue to avoid editing the message that displayed the variable list.
+        // Do NOT return here immediately, let the current callback_query process finish normally.
+        // The `bot.on('message')` handler will pick up the user's next text input due to the state change.
     } else if (varKey === 'SUDO_VAR') { // This is the 'SUDO' button
         // Offer Add or Remove for SUDO
         return bot.editMessageText(`How do you want to manage the *SUDO* variable for "*${appName}*"?`, {
@@ -2944,7 +2951,7 @@ bot.on('callback_query', async q => {
       // await addUserBot(cid, appName, currentSessionId); 
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId}`, { // Corrected variable name to match `updateMsg.message_id`
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
