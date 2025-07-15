@@ -1352,6 +1352,7 @@ bot.on('message', async msg => {
 
   // NEW: Handle input for "OTHER VARIABLE?" name
   // MODIFIED: Added check for existing variable before asking for value
+  // MODIFIED: Added specific handling for SUDO variable
   if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
       const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
       const varName = text.trim().toUpperCase(); // Capitalize the variable name
@@ -1359,6 +1360,44 @@ bot.on('message', async msg => {
       if (!/^[A-Z0-9_]+$/.test(varName)) {
           return bot.sendMessage(cid, 'Invalid variable name. Please use only uppercase letters, numbers, and underscores.');
       }
+
+      // --- START MODIFICATION FOR SUDO ---
+      if (varName === 'SUDO') {
+          delete userStates[cid]; // Clear the current state to prevent further text input for SUDO directly
+          // We need to fetch the messageId from the current state if available to edit it.
+          // If this is a direct text input after 'Add/Set Other Variable', q.message.message_id won't be available.
+          // In that case, send a new message.
+          const currentMessageId = st.message_id || q.message?.message_id; // Try to use messageId from state or query
+
+          if (currentMessageId) {
+            await bot.editMessageText(`The *SUDO* variable must be managed using "Add Number" or "Remove Number" options.\n\nHow do you want to manage it for "*${APP_NAME}*"?`, {
+                chat_id: cid,
+                message_id: currentMessageId,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Add Number', callback_data: `sudo_action:add:${APP_NAME}` }],
+                        [{ text: 'Remove Number', callback_data: `sudo_action:remove:${APP_NAME}` }],
+                        [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${APP_NAME}` }] // Added back button
+                    ]
+                }
+            }).catch(err => console.error(`Failed to edit message in AWAITING_OTHER_VAR_NAME for SUDO: ${err.message}`));
+          } else {
+             // Fallback if no messageId to edit
+             await bot.sendMessage(cid, `The *SUDO* variable must be managed using "Add Number" or "Remove Number" options.\n\nHow do you want to manage it for "*${APP_NAME}*"?`, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Add Number', callback_data: `sudo_action:add:${APP_NAME}` }],
+                        [{ text: 'Remove Number', callback_data: `sudo_action:remove:${APP_NAME}` }],
+                        [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${APP_NAME}` }]
+                    ]
+                }
+            });
+          }
+          return; // Consume the message and exit
+      }
+      // --- END MODIFICATION FOR SUDO ---
 
       try {
           const configRes = await axios.get(
@@ -2803,7 +2842,9 @@ bot.on('callback_query', async q => {
         userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid; // Store for potential admin use case
-        return bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
+        // MODIFIED: Send a new message instead of editing the existing one, so the message can persist with the current variable list.
+        await bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
+        // No return here, allow flow to continue to avoid editing the message that displayed the variable list.
     } else if (varKey === 'SUDO_VAR') { // This is the 'SUDO' button
         // Offer Add or Remove for SUDO
         return bot.editMessageText(`How do you want to manage the *SUDO* variable for "*${appName}*"?`, {
