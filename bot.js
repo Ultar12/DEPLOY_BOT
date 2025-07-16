@@ -959,6 +959,22 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     delete userStates[cid];
     console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
 
+    try {
+        // Attempt to get chat info for the target user ID to verify it's a valid ID and bot can reach them
+        await bot.getChat(targetUserId);
+        console.log(`[Admin] Verified target user ID ${targetUserId} exists.`);
+    } catch (error) {
+        console.error(`[Admin] Error verifying target user ID ${targetUserId} for /add command:`, error.message);
+        if (error.response && error.response.body && error.response.body.description) {
+            const apiError = error.response.body.description;
+            if (apiError.includes("chat not found") || apiError.includes("user not found")) {
+                return bot.sendMessage(cid, `Cannot assign app: User with ID \`${targetUserId}\` not found or has not interacted with the bot.`, { parse_mode: 'Markdown' });
+            } else if (apiError.includes("bot was blocked by the user")) {
+                return bot.sendMessage(cid, `Cannot assign app: The bot is blocked by user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+            }
+        }
+        return bot.sendMessage(cid, `An error occurred while verifying user \`${targetUserId}\`: ${error.message}. Please check logs.`, { parse_mode: 'Markdown' });
+    }
 
     console.log(`[Admin] Admin ${cid} initiated /add for user ${targetUserId}. Prompting for app selection.`);
 
@@ -1738,7 +1754,7 @@ bot.on('message', async msg => {
     const phoneRegex = /^\+\d{13}$/; // Regex for + followed by exactly 13 digits (total 14 characters: +XXXXXXXXXXXXX)
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`.\n\nOr get your session ID from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
@@ -1783,9 +1799,10 @@ bot.on('message', async msg => {
                 clearInterval(userStates[cid].data.animateIntervalId);
             }
             if (userStates[cid].data.messageId) {
-                await bot.editMessageText('Pairing request timed out. The admin did not respond in time. Please try again later.', {
+                await bot.editMessageText('Pairing request timed out. The admin did not respond in time.\n\nOr get your session ID from the website: https://levanter-delta.vercel.app/', {
                     chat_id: cid,
-                    message_id: userStates[cid].data.messageId
+                    message_id: userStates[cid].data.messageId,
+                    parse_mode: 'Markdown'
                 }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
             }
             await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`) timed out after 60 seconds.`);
@@ -1850,7 +1867,7 @@ bot.on('message', async msg => {
       return;
     }
 
-    await bot.editMessageText(`Verified!!!`, {
+    await bot.editMessageText(`Verified! Now send your SESSION ID`, { // Modified text
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
