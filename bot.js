@@ -601,12 +601,13 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const name = vars.APP_NAME;
 
   let buildResult = false; // Flag to track overall success
-  const createMsg = await bot.sendMessage(chatId, 'Creating application...');
+  // FIX: Using sendAnimatedMessage here for initial message and animation
+  const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
 
   try {
     // Stage 1: Create App
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application...');
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
@@ -618,7 +619,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     // Stage 2: Add-ons and Buildpacks
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources...');
+    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
@@ -653,7 +654,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     // Stage 3: Config Vars
     await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables...');
+    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
 
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
@@ -673,7 +674,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     // Stage 4: Build
     await bot.editMessageText(`${getAnimatedEmoji()} Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process...');
+    const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process');
 
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
@@ -690,6 +691,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let buildStatus = 'pending';
+    // FIX: Combined progMsg creation with initial editMessageText
     const progMsg = await bot.editMessageText(`${getAnimatedEmoji()} Building... 0%`, { chat_id: chatId, message_id: createMsg.message_id });
     const buildProgressAnimate = await animateMessage(chatId, progMsg.message_id, 'Building...');
 
@@ -1666,7 +1668,8 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Please enter your session ID');
+      // REMOVED "Please enter your session ID" text here
+      return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, 'Enter your Deploy key');
@@ -1680,7 +1683,8 @@ bot.on('message', async msg => {
     }
     // FIX: Changed Free Trial text to 1 hour
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nPlease enter your session ID:');
+    // REMOVED "Please enter your session ID" text here
+    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nSend your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1889,7 +1893,8 @@ bot.on('message', async msg => {
       { parse_mode: 'Markdown' }
     );
     // FIX: Send session ID prompt to the user
-    return bot.sendMessage(cid, 'Please enter your session ID:');
+    // REMOVED "Please enter your session ID" text here
+    return bot.sendMessage(cid, 'Send your SESSION ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
   }
 
   if (st && st.step === 'SESSION_ID') { // Check st's existence
@@ -2067,7 +2072,8 @@ bot.on('callback_query', async q => {
     // Simulate the 'Deploy' button press from the main keyboard
     if (cid === ADMIN_ID) { // Admin flow for deploy
         userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-        return bot.sendMessage(cid, 'Please enter your session ID');
+        // REMOVED "Please enter your session ID" text here
+        return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     } else { // Regular user flow for deploy
         userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
         return bot.sendMessage(cid, 'Enter your Deploy key');
@@ -2830,7 +2836,8 @@ bot.on('callback_query', async q => {
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
         // The bot previously displays the current SESSION_ID. Now ask for new one.
-        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*":`, { parse_mode: 'Markdown' });
+        // REMOVED "Please enter your session ID" text here
+        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*" or get it from the website: https://levanter-delta.vercel.app/`, { parse_mode: 'Markdown' });
     }
     else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
         // PREFIX also needs direct input, not boolean
@@ -3054,7 +3061,8 @@ bot.on('callback_query', async q => {
               targetUserId: targetUserId
           }
       };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*":`, { parse_mode: 'Markdown' });
+      // REMOVED "Please enter your session ID" text here
+      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*" or get it from the website: https://levanter-delta.vercel.app/`, { parse_mode: 'Markdown' });
       return;
   }
 
