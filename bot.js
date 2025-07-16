@@ -663,7 +663,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             }
 
             // Always update the message text with the current percentage
-            await bot.editMessageText(`🏗️ Building... ${currentPct}%`, {
+            await bot.editMessageText(`Building... ${currentPct}%`, {
                 chat_id: chatId,
                 message_id: createMsg.message_id // Use createMsg.message_id to edit the initial message
             }).catch(() => {}); // Catch if message is already gone/edited
