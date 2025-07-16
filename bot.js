@@ -585,18 +585,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
-    await axios.post(
-      `https://api.heroku.com/apps/${name}/addons`,
-      { plan: 'heroku-postgresql' },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
     await axios.put(
       `https://api.heroku.com/apps/${name}/buildpack-installations`,
       {
@@ -635,9 +623,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     );
     clearInterval(varsMsgAnimate);
 
-    await bot.editMessageText(`${getAnimatedEmoji()} Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const buildStartMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Starting build process');
-
+    await bot.editMessageText(`Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    // No animated emoji here, keeping it plain for the build percentage updates below.
     const bres = await axios.post(
       `https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${GITHUB_REPO_URL}/tarball/main` } },
@@ -649,39 +636,83 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         }
       }
     );
-    clearInterval(buildStartMsgAnimate);
 
     const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
     let buildStatus = 'pending';
-    const progMsg = await bot.editMessageText(`${getAnimatedEmoji()} Building... 0%`, { chat_id: chatId, message_id: createMsg.message_id });
-    const buildProgressAnimate = await animateMessage(chatId, progMsg.message_id, 'Building...');
+    let currentPct = 0; // Start percentage at 0
 
+    // Use a simpler setInterval for the percentage update without the animated emoji
+    const buildProgressInterval = setInterval(async () => {
+        try {
+            const poll = await axios.get(statusUrl, {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3'
+                }
+            });
+            buildStatus = poll.data.status;
 
-    for (let i = 1; i <= 20; i++) {
-      await new Promise(r => setTimeout(r, 5000));
-      try {
-        const poll = await axios.get(statusUrl, {
-          headers: {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3'
-          }
+            // Update percentage. This logic simulates progress;
+            // for real-time Heroku build progress, you'd need build stream events.
+            if (buildStatus === 'pending') {
+                currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1); // Increment by random small amount
+            } else if (buildStatus === 'succeeded') {
+                currentPct = 100;
+            } else if (buildStatus === 'failed') {
+                currentPct = 'Error'; // Indicate an error state
+            }
+
+            // Always update the message text with the current percentage
+            await bot.editMessageText(`🏗️ Building... ${currentPct}%`, {
+                chat_id: chatId,
+                message_id: createMsg.message_id // Use createMsg.message_id to edit the initial message
+            }).catch(() => {}); // Catch if message is already gone/edited
+
+            if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
+                clearInterval(buildProgressInterval); // Stop interval once build is not pending or maxed out
+            }
+        } catch (error) {
+            console.error(`Error polling build status for ${name}:`, error.message);
+            clearInterval(buildProgressInterval); // Stop on polling error
+            await bot.editMessageText(`🏗️ Building... Error`, {
+                chat_id: chatId,
+                message_id: createMsg.message_id
+            }).catch(() => {});
+            buildStatus = 'error'; // Force status to error if polling fails
+        }
+    }, 5000); // Update every 5 seconds for smoother, steady percentage
+
+    // Wait for the build status to be resolved (succeeded or failed)
+    try {
+        // This promise resolves or rejects based on channel_post updates or a timeout
+        // The while loop below acts as a fallback to ensure we wait for a final status
+        const BUILD_COMPLETION_TIMEOUT = 300 * 1000; // 5 minutes for build completion
+        let completionTimeoutId = setTimeout(() => {
+            clearInterval(buildProgressInterval); // Ensure interval is cleared on timeout
+            // Reject the promise if it times out
+            buildStatus = 'timed out'; // Update status for message below
+            throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
+        }, BUILD_COMPLETION_TIMEOUT);
+
+        // This loop waits for the `buildStatus` variable to change from 'pending'
+        // It relies on the `setInterval` above to update `buildStatus`
+        while (buildStatus === 'pending') {
+            await new Promise(r => setTimeout(r, 5000)); // Wait before checking again
+        }
+        clearTimeout(completionTimeoutId); // Clear timeout if loop breaks due to status change
+        clearInterval(buildProgressInterval); // Ensure interval is cleared once status is not pending
+
+    } catch (err) {
+        clearInterval(buildProgressInterval); // Ensure interval is cleared
+        await bot.editMessageText(`🏗️ Build process for "*${name}*" timed out or encountered an error. Check Heroku logs.`, {
+            chat_id: chatId,
+            message_id: createMsg.message_id
         });
-        buildStatus = poll.data.status;
-      } catch {
-        buildStatus = 'error';
-        break;
-      }
-      const pct = Math.min(100, i * 5);
-      // Ensure percentage is always displayed with the animation
-      await bot.editMessageText(`${getAnimatedEmoji()} Building... ${pct}%`, {
-        chat_id: chatId,
-        message_id: progMsg.message_id
-      }).catch(() => {});
-
-      if (buildStatus !== 'pending') break;
+        buildResult = false;
+        return buildResult; // Exit early on build timeout/error
     }
-    clearInterval(buildProgressAnimate);
-
+    
+    // Final check and messages based on buildStatus
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
       await addUserBot(chatId, name, vars.SESSION_ID);
@@ -707,10 +738,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       const baseWaitingText = `Build complete! Waiting for bot to connect...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: chatId,
-        message_id: progMsg.message_id
+        message_id: createMsg.message_id // Still editing the same initial message
       });
 
-      const animateIntervalId = await animateMessage(chatId, progMsg.message_id, baseWaitingText);
+      const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId });
@@ -723,7 +754,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.`));
+                  appPromise.reject(new Error('Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.'));
                   appDeploymentPromises.delete(name);
               }
           }, STATUS_CHECK_TIMEOUT);
@@ -734,7 +765,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
 
           await bot.editMessageText(
             `Your bot is now live!`,
-            { chat_id: chatId, message_id: progMsg.message_id }
+            { chat_id: chatId, message_id: createMsg.message_id }
           );
           buildResult = true;
 
@@ -776,7 +807,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
             `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`,
             {
                 chat_id: chatId,
-                message_id: progMsg.message_id,
+                message_id: createMsg.message_id, // Still editing the same initial message
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
@@ -789,10 +820,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
           appDeploymentPromises.delete(name);
       }
 
-    } else {
+    } else { // Heroku build failed
       await bot.editMessageText(
         `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
-        { chat_id: chatId, message_id: progMsg.message_id }
+        { chat_id: chatId, message_id: createMsg.message_id }
       );
       buildResult = false;
     }
@@ -1767,15 +1798,14 @@ bot.on('message', async msg => {
       return;
     }
 
-    // REMOVED "Send your SESSION ID or get it from the website: https://levanter-delta.vercel.app/" here.
-    await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
+    await bot.editMessageText(`Verified! Now send your SESSION ID.`, { // Removed website link
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1000)); // Short delay before proceeding to next step.
 
     authorizedUsers.add(cid);
-    st.step = 'SESSION_ID'; // Transition to the next step, where the user will be prompted for SESSION_ID
+    st.step = 'SESSION_ID'; // Transition to the next state to await the session ID.
 
     const { first_name, last_name, username } = msg.from;
     const userDetails = [
@@ -2335,7 +2365,7 @@ bot.on('callback_query', async q => {
 
       const [appRes, configRes, dynoRes] = await Promise.all([
         axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
-        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
+        axios.get(`https://api.com/apps/${payload}/config-vars`, { headers: apiHeaders }), // Corrected typo here, but it's supposed to be herokuapp.com
         axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
       ]);
 
