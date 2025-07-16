@@ -2951,7 +2951,7 @@ bot.on('callback_query', async q => {
       // await addUserBot(cid, appName, currentSessionId); 
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId}`, { // Corrected variable name to match `updateMsg.message_id`
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // Corrected variable name to match `updateMsg.message_id`
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
