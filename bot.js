@@ -396,7 +396,7 @@ async function animateMessage(chatId, messageId, baseText) {
             console.error(`Error animating message ${messageId}:`, e.message);
             clearInterval(intervalId);
         }
-    }, 1500); // Changed from 800ms to 1500ms
+    }, 2000); // Changed from 1500ms to 2000ms
     return intervalId;
 }
 
@@ -672,6 +672,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
         break;
       }
       const pct = Math.min(100, i * 5);
+      // Ensure percentage is always displayed with the animation
       await bot.editMessageText(`${getAnimatedEmoji()} Building... ${pct}%`, {
         chat_id: chatId,
         message_id: progMsg.message_id
@@ -986,7 +987,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
         // Fetch user's last seen activity
         const lastSeen = await getUserLastSeen(targetUserId);
-        userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString() : 'Never seen (or no recent activity)'}\n`;
+        userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'Never seen (or no recent activity)'}\n`;
 
 
         await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
@@ -1171,7 +1172,7 @@ bot.onText(/^\/users$/, async (msg) => {
                 let botList = bots.length > 0 ? bots.map(b => `\`${escapeMarkdown(b)}\``).join(', ') : 'None';
 
                 const lastSeen = await getUserLastSeen(userId);
-                const lastSeenText = lastSeen ? new Date(lastSeen).toLocaleString() : 'N/A';
+                const lastSeenText = lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'N/A';
 
                 responseMessage += `*ID:* \`${userIdEscaped}\`\n`;
                 responseMessage += `*Name:* ${firstName} ${lastName}\n`;
@@ -1404,7 +1405,8 @@ bot.on('message', async msg => {
               {
                   headers: {
                       Authorization: `Bearer ${HEROKU_API_KEY}`,
-                      Accept: 'application/vnd.heroku+json; version=3'
+                      Accept: 'application/vnd.heroku+json; version=3',
+                      'Content-Type': 'application/json'
                   }
               }
           );
@@ -1518,7 +1520,7 @@ bot.on('message', async msg => {
         delete userStates[cid];
     }
     return;
-}
+  }
 
 
   if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
@@ -1589,7 +1591,7 @@ bot.on('message', async msg => {
   if (text === 'Free Trial') {
     const check = await canDeployFreeTrial(cid);
     if (!check.can) {
-        return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString()}`);
+        return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after:\n\n${check.cooldown.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}`);
     }
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
     return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated.\n\nSend your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
@@ -1765,14 +1767,15 @@ bot.on('message', async msg => {
       return;
     }
 
-    await bot.editMessageText(`Verified! Now send your SESSION ID`, {
+    // REMOVED "Send your SESSION ID or get it from the website: https://levanter-delta.vercel.app/" here.
+    await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
     });
     await new Promise(r => setTimeout(r, 1000));
 
     authorizedUsers.add(cid);
-    st.step = 'SESSION_ID';
+    st.step = 'SESSION_ID'; // Transition to the next step, where the user will be prompted for SESSION_ID
 
     const { first_name, last_name, username } = msg.from;
     const userDetails = [
@@ -1785,7 +1788,8 @@ bot.on('message', async msg => {
       `*Key Used By:*\n${userDetails}\n\n*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
-    return bot.sendMessage(cid, 'Send your SESSION ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
+    // The flow will now correctly wait for the SESSION_ID input in the next message.
+    return;
   }
 
   if (st && st.step === 'SESSION_ID') {
@@ -2309,6 +2313,7 @@ bot.on('callback_query', async q => {
         });
     } finally {
         delete userStates[cid];
+        console.log(`[Admin] State cleared for ${cid} after remove_app_from_user flow.`);
     }
     return;
   }
@@ -2361,8 +2366,8 @@ bot.on('callback_query', async q => {
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
-                   `*Created:* ${new Date(appData.created_at).toLocaleDateString()} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` +
-                   `*Last Release:* ${new Date(appData.released_at).toLocaleString()}\n` +
+                   `*Created:* ${new Date(appData.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' })} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` +
+                   `*Last Release:* ${new Date(appData.released_at).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}\n` +
                    `*Stack:* ${appData.stack.name}\n\n` +
                    `*Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
@@ -2650,7 +2655,7 @@ bot.on('callback_query', async q => {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
-        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*" or get it from the website: https://levanter-delta.vercel.app/`, { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*".`, { parse_mode: 'Markdown' }); // Removed website link
     }
     else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
@@ -2857,7 +2862,7 @@ bot.on('callback_query', async q => {
               targetUserId: targetUserId
           }
       };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*" or get it from the website: https://levanter-delta.vercel.app/`, { parse_mode: 'Markdown' });
+      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*".`, { parse_mode: 'Markdown' }); // Removed website link
       return;
   }
 
