@@ -843,6 +843,7 @@ bot.on('polling_error', console.error);
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid); // Update user activity on /start
+  await notifyAdminUserOnline(msg); // Notify admin when a user uses /start
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
@@ -885,6 +886,7 @@ We're here to assist you every step of the way!
 bot.onText(/^\/menu$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
+  await notifyAdminUserOnline(msg); // Notify admin when a user uses /menu
   const isAdmin = cid === ADMIN_ID;
   bot.sendMessage(cid, 'Menu:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
@@ -894,6 +896,7 @@ bot.onText(/^\/menu$/i, async msg => {
 bot.onText(/^\/apps$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
+  await notifyAdminUserOnline(msg); // Notify admin when a user uses /apps
   if (cid === ADMIN_ID) {
     sendAppList(cid);
   }
@@ -903,6 +906,7 @@ bot.onText(/^\/apps$/i, async msg => {
 bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     await updateUserActivity(chatId);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /maintenance
     const status = match[1].toLowerCase();
 
     if (chatId !== ADMIN_ID) {
@@ -925,6 +929,7 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /id
     await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
 });
 
@@ -932,6 +937,7 @@ bot.onText(/^\/id$/, async msg => {
 bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /add
     const targetUserId = match[1];
 
     console.log(`[Admin] /add command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -982,6 +988,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
     await updateUserActivity(callerId);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /info
     const targetUserId = match[1];
 
     if (callerId !== ADMIN_ID) {
@@ -1046,6 +1053,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /remove
     const targetUserId = match[1];
 
     console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -1098,6 +1106,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
     const userChatId = msg.chat.id.toString();
     await updateUserActivity(userChatId);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /askadmin
     const userMessageId = msg.message_id;
 
     if (userChatId === ADMIN_ID) {
@@ -1130,6 +1139,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /stats
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1175,6 +1185,7 @@ ${keyDetails}
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
+    await notifyAdminUserOnline(msg); // Notify admin when a user uses /users
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1250,6 +1261,7 @@ bot.on('message', async msg => {
   if (!text) return;
 
   await updateUserActivity(cid); // Update user activity on any message
+  await notifyAdminUserOnline(msg); // Call the notification function here
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
       await bot.sendMessage(cid, "Bot On Maintenance, Come Back Later.");
@@ -1930,10 +1942,10 @@ bot.on('message', async msg => {
           clearTimeout(timeoutId);
           clearInterval(animateIntervalId);
 
-          await bot.editMessageText(`${VAR_NAME} for "${APP_NAME}" updated successfully and bot is back online!`, {
-              chat_id: cid,
-              message_id: updateMsg.message_id
-          });
+          await bot.editMessageText(
+            `Your bot is now live!`,
+            { chat_id: cid, message_id: updateMsg.message_id }
+          );
           console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${APP_NAME}`);
 
       } catch (err) {
@@ -1978,6 +1990,7 @@ bot.on('callback_query', async q => {
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await updateUserActivity(cid); // Update user activity on any callback query
+  await notifyAdminUserOnline(q.message); // Call the notification function here
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
@@ -2365,7 +2378,7 @@ bot.on('callback_query', async q => {
 
       const [appRes, configRes, dynoRes] = await Promise.all([
         axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
-        axios.get(`https://api.com/apps/${payload}/config-vars`, { headers: apiHeaders }), // Corrected typo here, but it's supposed to be herokuapp.com
+        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }), // Corrected typo here, but it's supposed to be herokuapp.com
         axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
       ]);
 
