@@ -1795,7 +1795,7 @@ bot.on('message', async msg => {
     clearInterval(animateIntervalId);
 
     if (usesLeft === null) {
-      const contactOwnerMessage = `❌ Invalid, Please contact the owner for a KEY.`;
+      const contactOwnerMessage = `Invalid, Please contact the owner for a KEY.`;
       const contactOwnerKeyboard = {
           inline_keyboard: [
               [
