@@ -1844,14 +1844,14 @@ bot.on('message', async msg => {
     const sessionID = text.trim(); // Get the session ID from user input
     // Validate session ID starts with 'levanter_'
     if (!sessionID.startsWith('levanter_')) {
-      return bot.sendMessage(cid, '❌ Incorrect session ID. Your session ID must start with `levanter_`. Please try again.', { parse_mode: 'Markdown' });
+      return bot.sendMessage(cid, 'Incorrect session ID. Your session ID must start with `levanter_`. Please try again.', { parse_mode: 'Markdown' });
     }
     if (sessionID.length < 10) {
       return bot.sendMessage(cid, 'Session ID must be at least 10 characters long.');
     }
     st.data.SESSION_ID = sessionID;
     st.step = 'APP_NAME';
-    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., my-awesome-bot or utarbot12):');
+    return bot.sendMessage(cid, 'Great. Now enter a name for your bot (e.g., utarbot123):');
   }
 
   if (st && st.step === 'APP_NAME') {
