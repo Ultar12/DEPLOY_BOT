@@ -1777,7 +1777,7 @@ bot.on('message', async msg => {
   }
 
 
-  if (st && st.step === 'AWAITING_KEY') {
+    if (st && st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await bot.sendMessage(cid, `Verifying key...`);
@@ -1795,10 +1795,13 @@ bot.on('message', async msg => {
     clearInterval(animateIntervalId);
 
     if (usesLeft === null) {
-      const contactOwnerMessage = `Invalid, Please contact the owner for a KEY.`;
+      const contactOwnerMessage = `❌ Invalid, Please contact the owner for a KEY.`;
       const contactOwnerKeyboard = {
           inline_keyboard: [
-              [{ text: 'Contact Owner', url: 'https://wa.me/message/JIIC2JFMHUPEM1' }]
+              [
+                  { text: 'Contact Owner (WhatsApp)', url: 'https://wa.me/message/JIIC2JFMHUPEM1' },
+                  { text: 'Contact Owner (Telegram)', url: 'https://t.me/m/o5zlXr8yNDlk' } // Added Telegram button
+              ]
           ]
       };
       await bot.editMessageText(contactOwnerMessage, {
@@ -1809,6 +1812,7 @@ bot.on('message', async msg => {
       });
       return;
     }
+
 
     await bot.editMessageText(`Verified! Now send your SESSION ID.`, { // Removed website link
         chat_id: cid,
