@@ -408,14 +408,22 @@ function generateKey() {
     .join('');
 }
 
+// SIMPLIFIED escapeMarkdown for Markdown (Legacy) to avoid "can't parse entities"
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape all special Markdown v2 characters that are NOT part of a [text](url) or @[username](tg://user?id=...)
-    // This is a more robust escaper for general text content that might contain problematic characters.
-    // Explicit Markdown links (e.g. [Link Text](URL)) should be pre-formatted outside this function.
-    return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+    // Escape only the characters that are special in Markdown (Legacy)
+    // if they are not part of a valid link or code block
+    return text
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/`/g, '\\`')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]');
+        // Other characters like (), ~, >, #, +, -, =, |, {}, ., ! are NOT special in Markdown (Legacy)
+        // unless explicitly used as part of a formatting syntax.
+        // For FAQ answers, we are relying on explicit [text](url) for links.
 }
 
 
@@ -899,7 +907,7 @@ const FAQ_QUESTIONS = [
         answer: "This depends on your subscription plan. Please contact the admin for clarification regarding your specific bot's expiration."
     },
     {
-        question: "What bot is being deployed?", // New FAQ
+        question: "What bot is being deployed?",
         answer: "The system currently deploys Levanter Bot. If you have any other bot in mind, please use the Support button to send suggestions/feedback."
     }
 ];
@@ -913,11 +921,12 @@ async function sendFaqPage(chatId, messageId, page) {
 
     let faqText = "";
     currentQuestions.forEach((faq, index) => {
-        // Apply bolding to the question, and escape it to prevent Markdown issues
+        // Bold question, and escape it to prevent Markdown issues
         faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`;
-        // The answer itself is assumed to have correct Markdown formatting already (e.g., for links)
-        // So, we just append it as is, or apply a general escape if it's purely plain text that could break Markdown.
-        faqText += `${faq.answer}\n\n`; // Directly use faq.answer as it already contains intended formatting
+        // Answer is expected to have explicit Markdown (like links) or be plain text.
+        // It's passed directly here. If any other characters might break it, they should be pre-escaped
+        // or the answers structured carefully.
+        faqText += `${faq.answer}\n\n`;
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -939,7 +948,7 @@ async function sendFaqPage(chatId, messageId, page) {
 
 
     const options = {
-        parse_mode: 'Markdown',
+        parse_mode: 'Markdown', // Use Markdown (Legacy)
         disable_web_page_preview: false, // Keep web page preview for clickable links
         reply_markup: {
             inline_keyboard: keyboard
@@ -2143,7 +2152,7 @@ bot.on('message', async msg => {
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
+      console.error(`[API_CALL] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
@@ -2832,7 +2841,6 @@ bot.on('callback_query', async q => {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
-    const appName = payload;
 
     await bot.sendChatAction(cid, 'typing');
     await bot.editMessageText(`Fetching current variables for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
@@ -3112,7 +3120,7 @@ bot.on('callback_query', async q => {
       delete userStates[cid]; // Clear user state
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
+      console.error(`[API_CALL] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
