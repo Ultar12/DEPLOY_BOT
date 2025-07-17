@@ -343,7 +343,13 @@ const userLastSeenNotification = new Map();
 const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 async function notifyAdminUserOnline(msg) {
-    const userId = msg.chat.id.toString();
+    // Ensure msg.from exists and has an ID to prevent errors for non-user messages (e.g., channel posts)
+    if (!msg || !msg.from || !msg.from.id) {
+        console.warn("[Admin Notification] Skipping: msg.from or msg.from.id is undefined.", msg);
+        return;
+    }
+
+    const userId = msg.from.id.toString(); // Use msg.from.id as the userId
     const now = Date.now();
 
     if (userId === ADMIN_ID) {
@@ -354,13 +360,16 @@ async function notifyAdminUserOnline(msg) {
 
     if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
         try {
-            const { first_name, last_name, username } = msg.from;
+            // Safely get user details, providing fallbacks for undefined properties
+            const first_name = msg.from.first_name ? escapeMarkdown(msg.from.first_name) : 'N/A';
+            const last_name = msg.from.last_name ? escapeMarkdown(msg.from.last_name) : '';
+            const username = msg.from.username ? `@${escapeMarkdown(msg.from.username)}` : 'N/A';
 
             const userDetails = `
 *User Online:*
 *ID:* \`${userId}\`
-*Name:* ${first_name ? escapeMarkdown(first_name) : 'N/A'} ${last_name ? escapeMarkdown(last_name) : ''}
-*Username:* ${username ? `@${escapeMarkdown(username)}` : 'N/A'}
+*Name:* ${first_name} ${last_name}
+*Username:* ${username}
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
             `;
             await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
@@ -2330,10 +2339,7 @@ bot.on('callback_query', async q => {
       const st = userStates[cid];
       // Check if state is valid and message ID matches the one being edited
       if (!st || st.step !== 'AWAITING_WIZARD_CHOICE' || q.message.message_id !== st.message_id) {
-          return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
-              chat_id: cid,
-              message_id: q.message.message_id
-          }).catch(() => {}); // Catch if edit fails
+          return bot.sendMessage(cid, 'This menu has expired. Please start over by tapping /menu.'); // Changed to sendMessage
       }
 
       const [step, value] = [payload, extra];
@@ -3070,7 +3076,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // FIXED: baseWaitingId replaced with baseWaitingText
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
