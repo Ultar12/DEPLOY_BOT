@@ -412,28 +412,20 @@ function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
-    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
-    return text
-        .replace(/_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/~/g, '\\~')
-        .replace(/`/g, '\\`')
-        .replace(/>/g, '\\>')
-        .replace(/#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/-/g, '\\-')
-        .replace(/=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/!/g, '\\!');
+    // This regex matches potential Markdown v2 special characters
+    // but avoids escaping them if they are part of a valid Markdown link or mention structure.
+    // It's a simplified approach; for full robustness, a proper Markdown parser is needed.
+    // However, for known simple structures like [text](url) and @username links, it often suffices.
+    return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, (match, char) => {
+        // If the character is part of a URL (e.g., in http:// or .com) or a simple Telegram link,
+        // it might be complex to parse correctly without a full Markdown parser.
+        // For simplicity, we'll generally escape all, but ensure explicit links are formatted.
+        // The URL in the FAQ should be pre-formatted like `[text](url)` to be clickable.
+        // This escape function is for *content* that might inadvertently break Markdown.
+        return '\\' + char;
+    });
 }
+
 
 const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
 let isMaintenanceMode = false;
@@ -856,7 +848,7 @@ bot.on('polling_error', console.error);
 const FAQ_QUESTIONS = [
     {
         question: "How do I get a session ID?",
-        answer: "Tap 'Get Session' and follow the prompts to provide your WhatsApp number for a pairing code. Alternatively, visit our website https://levanter-delta.vercel.app/ to generate one yourself."
+        answer: "Tap 'Get Session' and follow the prompts to provide your WhatsApp number for a pairing code. Alternatively, visit our website [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/) to generate one yourself."
     },
     {
         question: "What is a 'Deploy Key'?",
@@ -880,7 +872,7 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "My bot is offline/logged out. How do I fix it?",
-        answer: "This usually means your session ID is invalid. Go to 'My Bots', select your bot, then choose 'Set Variable' and update the SESSION_ID with a new one from https://levanter-delta.vercel.app/."
+        answer: "This usually means your session ID is invalid. Go to 'My Bots', select your bot, then choose 'Set Variable' and update the SESSION_ID with a new one from [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)."
     },
     {
         question: "What do 'Restart', 'Logs', 'Redeploy' do?",
@@ -911,8 +903,12 @@ const FAQ_QUESTIONS = [
         answer: "The primary support contact is @star_ies1."
     },
     {
-        question: "When will my bot expire?", // New FAQ
+        question: "When will my bot expire?",
         answer: "This depends on your subscription plan. Please contact the admin for clarification regarding your specific bot's expiration."
+    },
+    {
+        question: "What bot is being deployed?", // New FAQ
+        answer: "The system currently deploys Levanter Bot. If you have any other bot in mind, please use the Support button to send suggestions/feedback."
     }
 ];
 
@@ -925,8 +921,8 @@ async function sendFaqPage(chatId, messageId, page) {
 
     let faqText = "";
     currentQuestions.forEach((faq, index) => {
-        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`; // Escape question too
-        faqText += `${escapeMarkdown(faq.answer)}\n\n`; // Ensure answer is escaped
+        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`; // Bold question and escape it
+        faqText += `${faq.answer}\n\n`; // Answer already has formatting, no extra escaping here.
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -949,7 +945,7 @@ async function sendFaqPage(chatId, messageId, page) {
 
     const options = {
         parse_mode: 'Markdown',
-        disable_web_page_preview: true,
+        disable_web_page_preview: false, // Keep web page preview for clickable links
         reply_markup: {
             inline_keyboard: keyboard
         }
@@ -963,23 +959,24 @@ async function sendFaqPage(chatId, messageId, page) {
     userStates[chatId].step = 'VIEWING_FAQ';
     userStates[chatId].faqPage = page;
 
+    // Check if the message can be edited. Try to edit the message if messageId is passed and matches stored ID.
+    // Otherwise, send a new message.
     if (messageId && userStates[chatId].faqMessageId === messageId) {
-        // Attempt to edit the existing message if ID matches the last sent FAQ message
         await bot.editMessageText(faqText, {
             chat_id: chatId,
             message_id: messageId,
             ...options
         }).catch(err => {
-            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Sending new message instead.`);
-            // If message edit fails (e.g., message not found or too old), send new message
+            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Attempting to send new message.`);
+            // If editing fails (e.g., message too old or deleted by user), send a new message
             bot.sendMessage(chatId, faqText, options).then(sentMsg => {
-                userStates[chatId].faqMessageId = sentMsg.message_id; // Update to new message ID
-            }).catch(sendErr => console.error(`Error sending new FAQ message after edit failure: ${sendErr.message}`));
+                userStates[chatId].faqMessageId = sentMsg.message_id; // Store the new message ID
+            }).catch(sendErr => console.error(`Failed to send new FAQ message after edit failure: ${sendErr.message}`));
         });
     } else {
-        // Send a new message if no messageId is provided, or if the stored one doesn't match, or if it's the first time
+        // Send a new message (e.g., first time opening FAQ, or previous message uneditable/not found)
         const sentMsg = await bot.sendMessage(chatId, faqText, options);
-        userStates[chatId].faqMessageId = sentMsg.message_id;
+        userStates[chatId].faqMessageId = sentMsg.message_id; // Store the new message ID
     }
 }
 // --- End FAQ Data and Functions ---
@@ -1737,14 +1734,14 @@ bot.on('message', async msg => {
       return;
   }
 
-  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
+  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') { // This is now Suggestions/Feedback
     const userQuestion = msg.text;
     const userChatId = cid;
     const userMessageId = msg.message_id;
 
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*New Suggestion/Feedback from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
             `*Message:* ${userQuestion}\n\n` +
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
@@ -1757,10 +1754,10 @@ bot.on('message', async msg => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
+        await bot.sendMessage(userChatId, 'Your suggestion/feedback has been sent to the admin. Thank you for your input!');
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, 'Failed to send your question to the admin. Please try again later.');
+        await bot.sendMessage(userChatId, 'Failed to send your suggestion/feedback to the admin. Please try again later.');
     } finally {
         delete userStates[cid];
     }
@@ -1838,7 +1835,7 @@ bot.on('message', async msg => {
   if (text === 'Support') {
     const supportKeyboard = {
         inline_keyboard: [
-            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
+            [{ text: 'Suggestions/Feedback', callback_data: 'ask_admin_question' }], // Updated button text
             [{ text: 'Contact Admin Directly', url: 'https://t.me/star_ies1' }]
         ]
     };
@@ -2209,10 +2206,10 @@ bot.on('callback_query', async q => {
     }
   }
 
-  if (action === 'ask_admin_question') {
+  if (action === 'ask_admin_question') { // This is Suggestions/Feedback now
       delete userStates[cid]; // Clear user state
       userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your question for the admin:');
+      await bot.sendMessage(cid, 'Please type your suggestion or feedback for the admin:'); // Updated prompt
       return;
   }
 
@@ -3049,7 +3046,7 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
+      console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${appName}. Status: ${patchResponse.status}`);
 
 
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
@@ -3057,7 +3054,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId, baseText}`, {
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
