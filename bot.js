@@ -2744,25 +2744,13 @@ bot.on('callback_query', async q => {
       const escapedLogs = escapeHtml(logs || 'No recent logs.'); // Escape once
 
       if (escapedLogs.length > MAX_MESSAGE_LENGTH) {
-        // Send initial message indicating logs are chunked
-        await bot.editMessageText(`Logs for "<b>${escapeHtml(payload)}</b>" (too long, sending in parts):`, {
+        // Only get the last part of the logs if too long
+        const lastChunk = escapedLogs.substring(escapedLogs.length - MAX_MESSAGE_LENGTH);
+
+        await bot.editMessageText(`Logs for "<b>${escapeHtml(payload)}</b>" (showing last part due to length):\n<pre>${lastChunk}</pre>`, {
           chat_id: cid,
           message_id: messageId,
-          parse_mode: 'HTML'
-        });
-
-        const logChunks = [];
-        for (let i = 0; i < escapedLogs.length; i += MAX_MESSAGE_LENGTH) {
-          logChunks.push(escapedLogs.substring(i, i + MAX_MESSAGE_LENGTH));
-        }
-
-        for (const chunk of logChunks) {
-          await bot.sendMessage(cid, `<pre>${chunk}</pre>`, { parse_mode: 'HTML' });
-          await new Promise(r => setTimeout(r, 500)); // Small delay between messages to avoid flooding
-        }
-
-        // Send a final message with the "Back" button
-        await bot.sendMessage(cid, 'All logs sent.', {
+          parse_mode: 'HTML',
           reply_markup: {
               inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
           }
