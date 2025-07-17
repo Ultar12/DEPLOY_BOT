@@ -331,7 +331,7 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
 
 // 6) Initialize bot & in-memory state
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
-const userStates = {}; // chatId -> { step, data, message_id }
+const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
 // Map to store Promises for app deployment status based on channel notifications
@@ -935,8 +935,6 @@ async function sendFaqPage(chatId, messageId, page) {
 
 
     const options = {
-        chat_id: chatId,
-        message_id: messageId,
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
         reply_markup: {
@@ -944,31 +942,30 @@ async function sendFaqPage(chatId, messageId, page) {
         }
     };
 
-    if (messageId) {
-        await bot.editMessageText(faqText, options).catch(err => {
-            console.error(`Error editing FAQ message: ${err.message}`);
-            // If message edit fails (e.g., message not found), send new message
-            bot.sendMessage(chatId, faqText, {
-                parse_mode: 'Markdown',
-                disable_web_page_preview: true,
-                reply_markup: { inline_keyboard: keyboard }
-            });
+    // Store the message ID for FAQ in userStates for proper editing
+    if (!userStates[chatId]) {
+        userStates[chatId] = {};
+    }
+    userStates[chatId].step = 'VIEWING_FAQ';
+    userStates[chatId].faqPage = page;
+
+    if (messageId && userStates[chatId].faqMessageId === messageId) {
+        // Attempt to edit the existing message
+        await bot.editMessageText(faqText, {
+            chat_id: chatId,
+            message_id: messageId,
+            ...options
+        }).catch(err => {
+            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Sending new message instead.`);
+            // If message edit fails (e.g., message not found or too old), send new message
+            bot.sendMessage(chatId, faqText, options).then(sentMsg => {
+                userStates[chatId].faqMessageId = sentMsg.message_id; // Update to new message ID
+            }).catch(sendErr => console.error(`Error sending new FAQ message after edit failure: ${sendErr.message}`));
         });
     } else {
+        // Send a new message if no messageId is provided, or if the stored one doesn't match
         const sentMsg = await bot.sendMessage(chatId, faqText, options);
-        // Store message_id for future edits
-        if (userStates[chatId]) {
-            userStates[chatId].message_id = sentMsg.message_id;
-        } else {
-            userStates[chatId] = { message_id: sentMsg.message_id };
-        }
-    }
-    // Update current FAQ page in user state
-    if (userStates[chatId]) {
-        userStates[chatId].faqPage = page;
-        userStates[chatId].step = 'VIEWING_FAQ'; // Set state to denote user is in FAQ
-    } else {
-         userStates[chatId] = { faqPage: page, step: 'VIEWING_FAQ' };
+        userStates[chatId].faqMessageId = sentMsg.message_id;
     }
 }
 // --- End FAQ Data and Functions ---
@@ -980,7 +977,7 @@ bot.onText(/^\/start$/, async msg => {
   await updateUserActivity(cid); // Update user activity on /start
   await notifyAdminUserOnline(msg); // Notify admin when a user uses /start
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid];
+  delete userStates[cid]; // Clear user state
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
 
@@ -1023,6 +1020,7 @@ bot.onText(/^\/menu$/i, async msg => {
   await updateUserActivity(cid);
   await notifyAdminUserOnline(msg); // Notify admin when a user uses /menu
   const isAdmin = cid === ADMIN_ID;
+  delete userStates[cid]; // Clear user state
   bot.sendMessage(cid, 'Menu:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
@@ -1082,7 +1080,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
 
-    delete userStates[cid];
+    delete userStates[cid]; // Clear user state
     console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
 
     try {
@@ -1198,7 +1196,7 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
 
-    delete userStates[cid];
+    delete userStates[cid]; // Clear user state
     console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
 
     const userBots = await getUserBots(targetUserId);
@@ -1837,8 +1835,16 @@ bot.on('message', async msg => {
   }
 
   if (text === 'FAQ') {
-      await bot.sendMessage(cid, 'Please note that your bot might go offline temporarily at the end or beginning of every month. We appreciate your patience during these periods.');
-      await sendFaqPage(cid, null, 1); // Send first page of FAQs
+      // Clear previous state for consistency, but retain message_id if existing for edit
+      if (userStates[cid] && userStates[cid].step === 'VIEWING_FAQ') {
+          // If already in FAQ, just refresh the current page, no notice
+          await sendFaqPage(cid, userStates[cid].faqMessageId, userStates[cid].faqPage || 1);
+      } else {
+          // First time opening FAQ
+          delete userStates[cid]; // Clear previous general states
+          await bot.sendMessage(cid, 'Please note that your bot might go offline temporarily at the end or beginning of every month. We appreciate your patience during these periods.');
+          await sendFaqPage(cid, null, 1); // Send first page of FAQs, null means new message
+      }
       return;
   }
 
@@ -2155,21 +2161,29 @@ bot.on('callback_query', async q => {
 
   if (action === 'faq_page') {
       const page = parseInt(payload);
-      const messageId = q.message.message_id;
+      const messageId = q.message.message_id; // Use message ID from the callback query
       await sendFaqPage(cid, messageId, page);
       return;
   }
 
   if (action === 'back_to_main_menu') {
-      delete userStates[cid]; // Clear FAQ state
+      delete userStates[cid].faqPage; // Clear FAQ specific state
+      delete userStates[cid].faqMessageId; // Clear FAQ message ID
+      delete userStates[cid].step; // Clear main step if desired, or reset to default
       const isAdmin = cid === ADMIN_ID;
       await bot.editMessageText('Returning to main menu.', {
           chat_id: cid,
           message_id: q.message.message_id,
           reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
-      }).catch(() => {}); // Catch error if message cannot be edited (e.g., too old)
+      }).catch(err => {
+          console.error(`Error editing message back to main menu: ${err.message}. Sending new menu.`, err);
+          bot.sendMessage(cid, 'Returning to main menu.', {
+              reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+          });
+      });
       return;
   }
+
 
   if (action === 'deploy_first_bot') {
     if (cid === ADMIN_ID) {
@@ -2182,7 +2196,7 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'ask_admin_question') {
-      delete userStates[cid];
+      delete userStates[cid]; // Clear user state
       userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
       await bot.sendMessage(cid, 'Please type your question for the admin:');
       return;
@@ -2271,8 +2285,7 @@ bot.on('callback_query', async q => {
           await bot.sendMessage(targetUserChatId, 'Your pairing code request was declined by the admin. Please contact support if you have questions.');
           await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${targetUserChatId}\` declined.`);
 
-          delete userStates[targetUserChatId];
-
+          delete userStates[targetUserChatId]; // Clear user state
           await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
               chat_id: cid,
               message_id: adminMessageId
@@ -2288,11 +2301,12 @@ bot.on('callback_query', async q => {
 
   if (action === 'setup') {
       const st = userStates[cid];
-      if (!st || !st.message_id || q.message.message_id !== st.message_id) {
+      // Check if state is valid and message ID matches the one being edited
+      if (!st || st.step !== 'AWAITING_WIZARD_CHOICE' || q.message.message_id !== st.message_id) {
           return bot.editMessageText('This menu has expired. Please start over by tapping /menu.', {
               chat_id: cid,
               message_id: q.message.message_id
-          });
+          }).catch(() => {}); // Catch if edit fails
       }
 
       const [step, value] = [payload, extra];
@@ -2330,7 +2344,7 @@ bot.on('callback_query', async q => {
               chat_id: cid,
               message_id: st.message_id
           });
-
+          delete userStates[cid]; // Clear user state before starting build
           await buildWithProgress(cid, st.data, st.data.isFreeTrial);
       }
 
@@ -2339,7 +2353,7 @@ bot.on('callback_query', async q => {
               chat_id: cid,
               message_id: q.message.message_id
           });
-          delete userStates[cid];
+          delete userStates[cid]; // Clear user state
       }
       return;
   }
@@ -2349,7 +2363,13 @@ bot.on('callback_query', async q => {
     const uses = parseInt(payload, 10);
     const key = generateKey();
     await addDeployKey(key, uses, cid);
-    return bot.sendMessage(cid, `Generated key: \`${key}\`\nUses: ${uses}`, { parse_mode: 'Markdown' });
+    // Clear the message with uses selection after generating key
+    await bot.editMessageText(`Generated key: \`${key}\`\nUses: ${uses}`, {
+      chat_id: cid,
+      message_id: q.message.message_id,
+      parse_mode: 'Markdown'
+    }).catch(() => {});
+    return;
   }
 
   if (action === 'selectapp' || action === 'selectbot') {
@@ -2406,7 +2426,7 @@ bot.on('callback_query', async q => {
             chat_id: cid,
             message_id: q.message.message_id
         });
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
         return;
     }
 
@@ -2442,7 +2462,7 @@ bot.on('callback_query', async q => {
                 message_id: q.message.message_id,
                 parse_mode: 'Markdown'
             });
-            delete userStates[cid];
+            delete userStates[cid]; // Clear user state
             return;
         }
          // Validate session ID starts with 'levanter_' when assigning
@@ -2452,7 +2472,7 @@ bot.on('callback_query', async q => {
                 message_id: q.message.message_id,
                 parse_mode: 'Markdown'
             });
-            delete userStates[cid];
+            delete userStates[cid]; // Clear user state
             return;
         }
 
@@ -2481,7 +2501,7 @@ bot.on('callback_query', async q => {
             parse_mode: 'Markdown'
         });
     } finally {
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
         console.log(`[Admin] State cleared for ${cid} after add_assign_app flow.`);
     }
     return;
@@ -2509,7 +2529,7 @@ bot.on('callback_query', async q => {
             chat_id: cid,
             message_id: q.message.message_id
         });
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
         return;
     }
 
@@ -2541,7 +2561,7 @@ bot.on('callback_query', async q => {
             parse_mode: 'Markdown'
         });
     } finally {
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
         console.log(`[Admin] State cleared for ${cid} after remove_app_from_user flow.`);
     }
     return;
@@ -2549,7 +2569,8 @@ bot.on('callback_query', async q => {
 
   if (action === 'info') {
     const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2630,7 +2651,8 @@ bot.on('callback_query', async q => {
 
   if (action === 'restart') {
     const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2672,13 +2694,14 @@ bot.on('callback_query', async q => {
         }
       });
     } finally {
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
     }
   }
 
   if (action === 'logs') {
     const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2719,7 +2742,8 @@ bot.on('callback_query', async q => {
 
   if (action === 'delete' || action === 'userdelete') {
     const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2741,7 +2765,8 @@ bot.on('callback_query', async q => {
       const appToDelete = payload;
       const originalAction = extra;
       const st = userStates[cid];
-      if (!st || st.data.appName !== appToDelete) {
+      // Check if state is valid and appName matches
+      if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appToDelete) { // Check step and appName in state
           return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
       }
       const messageId = q.message.message_id;
@@ -2796,7 +2821,8 @@ bot.on('callback_query', async q => {
 
   if (action === 'setvar') {
     const st = userStates[cid];
-    if (!st || st.data.appName !== payload) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2875,7 +2901,8 @@ bot.on('callback_query', async q => {
   if (action === 'varselect') {
     const [varKey, appName] = [payload, extra];
     const st = userStates[cid];
-    if (!st || st.data.appName !== appName) {
+    // Check if state is valid and appName matches
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) { // Assuming it should still be in APP_MANAGEMENT
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
@@ -2884,7 +2911,7 @@ bot.on('callback_query', async q => {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
-        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*".`, { parse_mode: 'Markdown' }); // Removed website link
+        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`levanter_\`.`, { parse_mode: 'Markdown' });
     }
     else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
@@ -2912,7 +2939,7 @@ bot.on('callback_query', async q => {
         userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid;
-        userStates[cid].message_id = q.message.message_id;
+        userStates[cid].message_id = q.message.message_id; // Store current message ID for context
 
         await bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
     } else if (varKey === 'SUDO_VAR') {
@@ -2935,6 +2962,13 @@ bot.on('callback_query', async q => {
       const sudoAction = payload;
       const appName = extra;
 
+      // Ensure that the user is managing the correct app or is admin
+      const st = userStates[cid];
+      if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) { // Added state check
+          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      }
+
+
       userStates[cid].data.APP_NAME = appName;
       userStates[cid].data.targetUserId = cid;
       userStates[cid].data.attempts = 0;
@@ -2954,12 +2988,13 @@ bot.on('callback_query', async q => {
       const appName = flag;
 
       const st = userStates[cid];
+      // More robust check for overwrite state
       if (!st || st.step !== 'AWAITING_OVERWRITE_CONFIRMATION' || st.data.VAR_NAME !== varName || st.data.APP_NAME !== appName) {
           await bot.editMessageText('This overwrite session has expired or is invalid. Please try setting the variable again.', {
               chat_id: cid,
               message_id: q.message.message_id
           });
-          delete userStates[cid];
+          delete userStates[cid]; // Clear user state
           return;
       }
 
@@ -2969,6 +3004,7 @@ bot.on('callback_query', async q => {
               message_id: q.message.message_id,
               parse_mode: 'Markdown'
           });
+          // Transition to the step where user provides the new value
           userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
           return bot.sendMessage(cid, `Please enter the *new* value for *${varName}*:`, { parse_mode: 'Markdown' });
       } else {
@@ -2977,7 +3013,7 @@ bot.on('callback_query', async q => {
               message_id: q.message.message_id,
               parse_mode: 'Markdown'
           });
-          delete userStates[cid];
+          delete userStates[cid]; // Clear user state
           return;
       }
   }
@@ -3003,7 +3039,8 @@ bot.on('callback_query', async q => {
 
 
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
-      const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
+      // No need to fetch session_id here, it's not being updated based on the variable change
+      // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
@@ -3066,7 +3103,7 @@ bot.on('callback_query', async q => {
       } finally {
           appDeploymentPromises.delete(appName);
       }
-
+      delete userStates[cid]; // Clear user state
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
       console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
@@ -3082,7 +3119,8 @@ bot.on('callback_query', async q => {
           await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
           return;
       }
-
+      // Clear current state and set up for session ID input
+      delete userStates[cid];
       userStates[cid] = {
           step: 'SETVAR_ENTER_VALUE',
           data: {
@@ -3229,7 +3267,7 @@ bot.on('callback_query', async q => {
         });
     } finally {
         if (animateIntervalId) clearInterval(animateIntervalId);
-        delete userStates[cid];
+        delete userStates[cid]; // Clear user state
     }
     return;
   }
@@ -3237,6 +3275,9 @@ bot.on('callback_query', async q => {
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
     const currentMessageId = q.message.message_id;
+
+    // Clear APP_MANAGEMENT state, return to general menu or My Bots list
+    delete userStates[cid];
 
     if (isAdmin) {
       return sendAppList(cid, currentMessageId);
