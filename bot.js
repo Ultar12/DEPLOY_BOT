@@ -1729,7 +1729,8 @@ bot.on('message', async msg => {
       const repliedToBotMessageId = msg.reply_to_message.message_id;
       const context = forwardingContext[repliedToBotMessageId];
 
-      if (context && context.request_type === 'support_question' && cid === ADMIN_ID) {
+      // Ensure it's the admin replying AND the context matches a support question
+      if (cid === ADMIN_ID && context && context.request_type === 'support_question') {
           const { original_user_chat_id, original_user_message_id } = context;
           try {
               await bot.sendMessage(original_user_chat_id, `*Admin replied:*\n${msg.text}`, {
@@ -1745,7 +1746,7 @@ bot.on('message', async msg => {
           }
           return;
       }
-      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply. Ignoring.`);
+      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply or not from admin. Ignoring.`);
       return;
   }
 
@@ -3069,7 +3070,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId, baseText}`, {
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { // FIXED: baseWaitingId replaced with baseWaitingText
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
