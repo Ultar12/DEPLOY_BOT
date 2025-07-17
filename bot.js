@@ -598,6 +598,18 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
+    await axios.post(
+      `https://api.heroku.com/apps/${name}/addons`,
+      { plan: 'heroku-postgresql' },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
     await axios.put(
       `https://api.heroku.com/apps/${name}/buildpack-installations`,
       {
