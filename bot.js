@@ -408,24 +408,32 @@ function generateKey() {
     .join('');
 }
 
-// SIMPLIFIED escapeMarkdown for Markdown (Legacy) to avoid "can't parse entities"
 function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape only the characters that are special in Markdown (Legacy)
-    // if they are not part of a valid link or code block
+    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
+    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
     return text
         .replace(/_/g, '\\_')
         .replace(/\*/g, '\\*')
-        .replace(/`/g, '\\`')
         .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]');
-        // Other characters like (), ~, >, #, +, -, =, |, {}, ., ! are NOT special in Markdown (Legacy)
-        // unless explicitly used as part of a formatting syntax.
-        // For FAQ answers, we are relying on explicit [text](url) for links.
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
 }
-
 
 const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
 let isMaintenanceMode = false;
@@ -848,7 +856,7 @@ bot.on('polling_error', console.error);
 const FAQ_QUESTIONS = [
     {
         question: "How do I get a session ID?",
-        answer: "Tap 'Get Session' and follow the prompts to provide your WhatsApp number for a pairing code. Alternatively, visit our website [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/) to generate one yourself."
+        answer: "Tap 'Get Session' and follow the prompts to provide your WhatsApp number for a pairing code. Alternatively, visit our website https://levanter-delta.vercel.app/ to generate one yourself."
     },
     {
         question: "What is a 'Deploy Key'?",
@@ -872,7 +880,7 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "My bot is offline/logged out. How do I fix it?",
-        answer: "This usually means your session ID is invalid. Go to 'My Bots', select your bot, then choose 'Set Variable' and update the SESSION_ID with a new one from [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)."
+        answer: "This usually means your session ID is invalid. Go to 'My Bots', select your bot, then choose 'Set Variable' and update the SESSION_ID with a new one from https://levanter-delta.vercel.app/."
     },
     {
         question: "What do 'Restart', 'Logs', 'Redeploy' do?",
@@ -903,12 +911,8 @@ const FAQ_QUESTIONS = [
         answer: "The primary support contact is @star_ies1."
     },
     {
-        question: "When will my bot expire?",
+        question: "When will my bot expire?", // New FAQ
         answer: "This depends on your subscription plan. Please contact the admin for clarification regarding your specific bot's expiration."
-    },
-    {
-        question: "What bot is being deployed?",
-        answer: "The system currently deploys Levanter Bot. If you have any other bot in mind, please use the Support button to send suggestions/feedback."
     }
 ];
 
@@ -921,12 +925,8 @@ async function sendFaqPage(chatId, messageId, page) {
 
     let faqText = "";
     currentQuestions.forEach((faq, index) => {
-        // Bold question, and escape it to prevent Markdown issues
-        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`;
-        // Answer is expected to have explicit Markdown (like links) or be plain text.
-        // It's passed directly here. If any other characters might break it, they should be pre-escaped
-        // or the answers structured carefully.
-        faqText += `${faq.answer}\n\n`;
+        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`; // Escape question too
+        faqText += `${escapeMarkdown(faq.answer)}\n\n`; // Ensure answer is escaped
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -948,8 +948,8 @@ async function sendFaqPage(chatId, messageId, page) {
 
 
     const options = {
-        parse_mode: 'Markdown', // Use Markdown (Legacy)
-        disable_web_page_preview: false, // Keep web page preview for clickable links
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
         reply_markup: {
             inline_keyboard: keyboard
         }
@@ -963,24 +963,23 @@ async function sendFaqPage(chatId, messageId, page) {
     userStates[chatId].step = 'VIEWING_FAQ';
     userStates[chatId].faqPage = page;
 
-    // Check if the message can be edited. Try to edit the existing message if messageId is passed and matches stored ID.
-    // Otherwise, send a new message.
     if (messageId && userStates[chatId].faqMessageId === messageId) {
+        // Attempt to edit the existing message if ID matches the last sent FAQ message
         await bot.editMessageText(faqText, {
             chat_id: chatId,
             message_id: messageId,
             ...options
         }).catch(err => {
-            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Attempting to send new message.`);
-            // If editing fails (e.g., message too old or deleted by user), send a new message
+            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Sending new message instead.`);
+            // If message edit fails (e.g., message not found or too old), send new message
             bot.sendMessage(chatId, faqText, options).then(sentMsg => {
-                userStates[chatId].faqMessageId = sentMsg.message_id; // Store the new message ID
-            }).catch(sendErr => console.error(`Failed to send new FAQ message after edit failure: ${sendErr.message}`));
+                userStates[chatId].faqMessageId = sentMsg.message_id; // Update to new message ID
+            }).catch(sendErr => console.error(`Error sending new FAQ message after edit failure: ${sendErr.message}`));
         });
     } else {
-        // Send a new message (e.g., first time opening FAQ, or previous message uneditable/not found)
+        // Send a new message if no messageId is provided, or if the stored one doesn't match, or if it's the first time
         const sentMsg = await bot.sendMessage(chatId, faqText, options);
-        userStates[chatId].faqMessageId = sentMsg.message_id; // Store the new message ID
+        userStates[chatId].faqMessageId = sentMsg.message_id;
     }
 }
 // --- End FAQ Data and Functions ---
@@ -1263,7 +1262,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Suggestion/Feedback from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
             `*Message:* ${userQuestion}\n\n` +
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
@@ -1276,10 +1275,10 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, 'Your suggestion/feedback has been sent to the admin. Thank you for your input!');
+        await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, 'Failed to send your suggestion/feedback to the admin. Please try again later.');
+        await bot.sendMessage(userChatId, 'Failed to send your question to the admin. Please try again later.');
     }
 });
 
@@ -1738,14 +1737,14 @@ bot.on('message', async msg => {
       return;
   }
 
-  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') { // This is Suggestions/Feedback now
+  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
     const userQuestion = msg.text;
     const userChatId = cid;
     const userMessageId = msg.message_id;
 
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Suggestion/Feedback from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
             `*Message:* ${userQuestion}\n\n` +
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
@@ -1758,10 +1757,10 @@ bot.on('message', async msg => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, 'Your suggestion/feedback has been sent to the admin. Thank you for your input!');
+        await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, 'Failed to send your suggestion/feedback to the admin. Please try again later.');
+        await bot.sendMessage(userChatId, 'Failed to send your question to the admin. Please try again later.');
     } finally {
         delete userStates[cid];
     }
@@ -1772,7 +1771,7 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Enter your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
+      return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, 'Enter your Deploy key');
@@ -1785,7 +1784,7 @@ bot.on('message', async msg => {
         return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}`);
     }
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated. Send your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
+    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated. Send your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1839,7 +1838,7 @@ bot.on('message', async msg => {
   if (text === 'Support') {
     const supportKeyboard = {
         inline_keyboard: [
-            [{ text: 'Suggestions/Feedback', callback_data: 'ask_admin_question' }], // Updated button text
+            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
             [{ text: 'Contact Admin Directly', url: 'https://t.me/star_ies1' }]
         ]
     };
@@ -1868,7 +1867,7 @@ bot.on('message', async msg => {
     const phoneRegex = /^\+\d{13}$/;
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`. Or get your session ID from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`. Or get your session ID from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
@@ -1907,7 +1906,7 @@ bot.on('message', async msg => {
                 clearInterval(userStates[cid].data.animateIntervalId);
             }
             if (userStates[cid].data.messageId) {
-                await bot.editMessageText('Pairing request timed out. The admin did not respond in time. Or get your session ID from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', {
+                await bot.editMessageText('Pairing request timed out. The admin did not respond in time. Or get your session ID from the website: https://levanter-delta.vercel.app/', {
                     chat_id: cid,
                     message_id: userStates[cid].data.messageId,
                     parse_mode: 'Markdown'
@@ -2152,7 +2151,7 @@ bot.on('message', async msg => {
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      console.error(`[API_CALL] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
+      console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
@@ -2203,17 +2202,17 @@ bot.on('callback_query', async q => {
   if (action === 'deploy_first_bot') {
     if (cid === ADMIN_ID) {
         userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-        return bot.sendMessage(cid, 'Enter your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
     } else {
         userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
         return bot.sendMessage(cid, 'Enter your Deploy key');
     }
   }
 
-  if (action === 'ask_admin_question') { // This is Suggestions/Feedback now
+  if (action === 'ask_admin_question') {
       delete userStates[cid]; // Clear user state
       userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your suggestion or feedback for the admin:'); // Updated prompt
+      await bot.sendMessage(cid, 'Please type your question for the admin:');
       return;
   }
 
@@ -2841,6 +2840,7 @@ bot.on('callback_query', async q => {
         return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
     }
     const messageId = q.message.message_id;
+    const appName = payload;
 
     await bot.sendChatAction(cid, 'typing');
     await bot.editMessageText(`Fetching current variables for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
@@ -3049,7 +3049,7 @@ bot.on('callback_query', async q => {
         { [varKey]: newVal },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
-      console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${appName}. Status: ${patchResponse.status}`);
+      console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
 
 
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
@@ -3057,7 +3057,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId, baseText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
@@ -3120,7 +3120,7 @@ bot.on('callback_query', async q => {
       delete userStates[cid]; // Clear user state
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
-      console.error(`[API_CALL] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
+      console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
