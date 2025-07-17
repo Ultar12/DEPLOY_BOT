@@ -412,14 +412,27 @@ function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
+    // Escape all special Markdown v2 characters: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
+    // Only escape if not part of a known URL or if it's explicitly used as a markdown character
     return text
         .replace(/_/g, '\\_')
         .replace(/\*/g, '\\*')
-        .replace(/`/g, '\\`')
         .replace(/\[/g, '\\[')
         .replace(/\]/g, '\\]')
         .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)');
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
 }
 
 const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
@@ -912,8 +925,8 @@ async function sendFaqPage(chatId, messageId, page) {
 
     let faqText = "";
     currentQuestions.forEach((faq, index) => {
-        faqText += `*${startIndex + index + 1}. ${faq.question}*\n`;
-        faqText += `${faq.answer}\n\n`;
+        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`; // Escape question too
+        faqText += `${escapeMarkdown(faq.answer)}\n\n`; // Ensure answer is escaped
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -942,15 +955,16 @@ async function sendFaqPage(chatId, messageId, page) {
         }
     };
 
-    // Store the message ID for FAQ in userStates for proper editing
+    // Initialize userStates for chatId if it doesn't exist
     if (!userStates[chatId]) {
         userStates[chatId] = {};
     }
+
     userStates[chatId].step = 'VIEWING_FAQ';
     userStates[chatId].faqPage = page;
 
     if (messageId && userStates[chatId].faqMessageId === messageId) {
-        // Attempt to edit the existing message
+        // Attempt to edit the existing message if ID matches the last sent FAQ message
         await bot.editMessageText(faqText, {
             chat_id: chatId,
             message_id: messageId,
@@ -963,7 +977,7 @@ async function sendFaqPage(chatId, messageId, page) {
             }).catch(sendErr => console.error(`Error sending new FAQ message after edit failure: ${sendErr.message}`));
         });
     } else {
-        // Send a new message if no messageId is provided, or if the stored one doesn't match
+        // Send a new message if no messageId is provided, or if the stored one doesn't match, or if it's the first time
         const sentMsg = await bot.sendMessage(chatId, faqText, options);
         userStates[chatId].faqMessageId = sentMsg.message_id;
     }
@@ -3043,7 +3057,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingId, baseText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
           parse_mode: 'Markdown'
