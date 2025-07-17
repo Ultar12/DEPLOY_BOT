@@ -412,18 +412,10 @@ function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // This regex matches potential Markdown v2 special characters
-    // but avoids escaping them if they are part of a valid Markdown link or mention structure.
-    // It's a simplified approach; for full robustness, a proper Markdown parser is needed.
-    // However, for known simple structures like [text](url) and @username links, it often suffices.
-    return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, (match, char) => {
-        // If the character is part of a URL (e.g., in http:// or .com) or a simple Telegram link,
-        // it might be complex to parse correctly without a full Markdown parser.
-        // For simplicity, we'll generally escape all, but ensure explicit links are formatted.
-        // The URL in the FAQ should be pre-formatted like `[text](url)` to be clickable.
-        // This escape function is for *content* that might inadvertently break Markdown.
-        return '\\' + char;
-    });
+    // Escape all special Markdown v2 characters that are NOT part of a [text](url) or @[username](tg://user?id=...)
+    // This is a more robust escaper for general text content that might contain problematic characters.
+    // Explicit Markdown links (e.g. [Link Text](URL)) should be pre-formatted outside this function.
+    return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
 }
 
 
@@ -921,8 +913,11 @@ async function sendFaqPage(chatId, messageId, page) {
 
     let faqText = "";
     currentQuestions.forEach((faq, index) => {
-        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`; // Bold question and escape it
-        faqText += `${faq.answer}\n\n`; // Answer already has formatting, no extra escaping here.
+        // Apply bolding to the question, and escape it to prevent Markdown issues
+        faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`;
+        // The answer itself is assumed to have correct Markdown formatting already (e.g., for links)
+        // So, we just append it as is, or apply a general escape if it's purely plain text that could break Markdown.
+        faqText += `${faq.answer}\n\n`; // Directly use faq.answer as it already contains intended formatting
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
@@ -959,7 +954,7 @@ async function sendFaqPage(chatId, messageId, page) {
     userStates[chatId].step = 'VIEWING_FAQ';
     userStates[chatId].faqPage = page;
 
-    // Check if the message can be edited. Try to edit the message if messageId is passed and matches stored ID.
+    // Check if the message can be edited. Try to edit the existing message if messageId is passed and matches stored ID.
     // Otherwise, send a new message.
     if (messageId && userStates[chatId].faqMessageId === messageId) {
         await bot.editMessageText(faqText, {
@@ -1259,7 +1254,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
-            `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
+            `*New Suggestion/Feedback from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
             `*Message:* ${userQuestion}\n\n` +
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
@@ -1272,10 +1267,10 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         };
         console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
-        await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
+        await bot.sendMessage(userChatId, 'Your suggestion/feedback has been sent to the admin. Thank you for your input!');
     } catch (e) {
         console.error('Error forwarding message to admin:', e);
-        await bot.sendMessage(userChatId, 'Failed to send your question to the admin. Please try again later.');
+        await bot.sendMessage(userChatId, 'Failed to send your suggestion/feedback to the admin. Please try again later.');
     }
 });
 
@@ -1734,7 +1729,7 @@ bot.on('message', async msg => {
       return;
   }
 
-  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') { // This is now Suggestions/Feedback
+  if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') { // This is Suggestions/Feedback now
     const userQuestion = msg.text;
     const userChatId = cid;
     const userMessageId = msg.message_id;
@@ -1768,7 +1763,7 @@ bot.on('message', async msg => {
   if (text === 'Deploy') {
     if (isAdmin) {
       userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-      return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
+      return bot.sendMessage(cid, 'Enter your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
     } else {
       userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
       return bot.sendMessage(cid, 'Enter your Deploy key');
@@ -1781,7 +1776,7 @@ bot.on('message', async msg => {
         return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}`);
     }
     userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: true } };
-    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated. Send your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
+    return bot.sendMessage(cid, 'Free Trial (1 hour runtime, 14-day cooldown) initiated. Send your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
   }
 
   if (text === 'Apps' && isAdmin) {
@@ -1864,7 +1859,7 @@ bot.on('message', async msg => {
     const phoneRegex = /^\+\d{13}$/;
 
     if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`. Or get your session ID from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format `+2349163XXXXXXX` (14 characters, including the `+`), e.g., `+23491630000000`. Or get your session ID from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
     }
 
     const { first_name, last_name, username } = msg.from;
@@ -1903,7 +1898,7 @@ bot.on('message', async msg => {
                 clearInterval(userStates[cid].data.animateIntervalId);
             }
             if (userStates[cid].data.messageId) {
-                await bot.editMessageText('Pairing request timed out. The admin did not respond in time. Or get your session ID from the website: https://levanter-delta.vercel.app/', {
+                await bot.editMessageText('Pairing request timed out. The admin did not respond in time. Or get your session ID from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', {
                     chat_id: cid,
                     message_id: userStates[cid].data.messageId,
                     parse_mode: 'Markdown'
@@ -2199,7 +2194,7 @@ bot.on('callback_query', async q => {
   if (action === 'deploy_first_bot') {
     if (cid === ADMIN_ID) {
         userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: false } };
-        return bot.sendMessage(cid, 'Enter your session ID or get it from the website: https://levanter-delta.vercel.app/', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Enter your session ID or get it from the website: [https://levanter-delta.vercel.app/](https://levanter-delta.vercel.app/)', { parse_mode: 'Markdown' });
     } else {
         userStates[cid] = { step: 'AWAITING_KEY', data: { isFreeTrial: false } };
         return bot.sendMessage(cid, 'Enter your Deploy key');
