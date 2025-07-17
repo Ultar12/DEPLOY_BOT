@@ -1486,7 +1486,7 @@ bot.on('message', async msg => {
           });
       } catch (e) {
           const errorMsg = e.response?.data?.message || e.message;
-          console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
+          console.error(`[API_CALL] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
           await bot.sendMessage(cid, `Error updating variable: ${escapeHtml(errorMsg)}`, { parse_mode: 'HTML' });
       } finally {
           delete userStates[cid];
@@ -2361,7 +2361,7 @@ bot.on('callback_query', async q => {
               message_id: st.message_id,
               parse_mode: 'HTML'
           });
-          delete userStates[cid]; // Clear user state before starting build
+          delete userStates[cid]; // Clear user state
           await buildWithProgress(cid, st.data, st.data.isFreeTrial);
       }
 
@@ -2734,20 +2734,51 @@ bot.on('callback_query', async q => {
     await bot.editMessageText('Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
       const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
-        { tail: false, lines: 100 },
+        { tail: false, lines: 100 }, // Fetch last 100 lines
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
       const logRes = await axios.get(sess.data.logplex_url);
-      const logs = logRes.data.trim(); // No need to slice and re-escape if using <pre> or <code>
+      const logs = logRes.data.trim();
 
-      return bot.editMessageText(`Logs for "<b>${escapeHtml(payload)}</b>":\n<pre>${escapeHtml(logs || 'No recent logs.')}</pre>`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+      const MAX_MESSAGE_LENGTH = 4000; // Telegram's limit is 4096, leave some buffer
+      const escapedLogs = escapeHtml(logs || 'No recent logs.'); // Escape once
+
+      if (escapedLogs.length > MAX_MESSAGE_LENGTH) {
+        // Send initial message indicating logs are chunked
+        await bot.editMessageText(`Logs for "<b>${escapeHtml(payload)}</b>" (too long, sending in parts):`, {
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'HTML'
+        });
+
+        const logChunks = [];
+        for (let i = 0; i < escapedLogs.length; i += MAX_MESSAGE_LENGTH) {
+          logChunks.push(escapedLogs.substring(i, i + MAX_MESSAGE_LENGTH));
         }
-      });
+
+        for (const chunk of logChunks) {
+          await bot.sendMessage(cid, `<pre>${chunk}</pre>`, { parse_mode: 'HTML' });
+          await new Promise(r => setTimeout(r, 500)); // Small delay between messages to avoid flooding
+        }
+
+        // Send a final message with the "Back" button
+        await bot.sendMessage(cid, 'All logs sent.', {
+          reply_markup: {
+              inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+          }
+        });
+
+      } else {
+        // If logs are not too long, send in a single message
+        return bot.editMessageText(`Logs for "<b>${escapeHtml(payload)}</b>":\n<pre>${escapedLogs}</pre>`, {
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'HTML',
+          reply_markup: {
+              inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+          }
+        });
+      }
     } catch (e) {
       if (e.response && e.response.status === 404) {
           await handleAppNotFoundAndCleanDb(cid, payload, messageId, true);
