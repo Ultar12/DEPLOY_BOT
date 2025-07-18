@@ -1968,13 +1968,15 @@ bot.on('message', async msg => {
     await bot.sendChatAction(cid, 'typing');
     const animateIntervalId = await animateMessage(cid, verificationMsg.message_id, 'Verifying key...');
 
+    // --- MODIFIED CODE BLOCK START ---
     const startTime = Date.now();
     const usesLeft = await useDeployKey(keyAttempt);
     const elapsedTime = Date.now() - startTime;
-    const remainingDelay = 5000 - elapsedTime;
+    const remainingDelay = 5000 - elapsedTime; // Ensure at least 5 seconds total for verification
     if (remainingDelay > 0) {
         await new Promise(r => setTimeout(r, remainingDelay));
     }
+    // --- MODIFIED CODE BLOCK END ---
 
     clearInterval(animateIntervalId);
 
