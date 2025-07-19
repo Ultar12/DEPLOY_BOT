@@ -349,6 +349,12 @@ async function notifyAdminUserOnline(msg) {
         return;
     }
 
+    // ⭐ FIX 2: Prevent bot from notifying itself
+    if (msg.from.is_bot) {
+        console.log("[Admin Notification] Skipping: Message originated from a bot.");
+        return;
+    }
+
     const userId = msg.from.id.toString(); // Use msg.from.id as the userId
     const now = Date.now();
 
@@ -1009,8 +1015,8 @@ async function sendFaqPage(chatId, messageId, page) {
 // 11) Command handlers
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
-  await updateUserActivity(cid); // Update user activity on /start
-  await notifyAdminUserOnline(msg); // Notify admin when a user uses /start
+  await updateUserActivity(cid);
+  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   const { first_name, last_name, username } = msg.from;
@@ -1053,7 +1059,7 @@ We are here to assist you every step of the way!
 bot.onText(/^\/menu$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
-  await notifyAdminUserOnline(msg); // Notify admin when a user uses /menu
+  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   bot.sendMessage(cid, 'Menu:', {
@@ -1064,7 +1070,7 @@ bot.onText(/^\/menu$/i, async msg => {
 bot.onText(/^\/apps$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
-  await notifyAdminUserOnline(msg); // Notify admin when a user uses /apps
+  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   if (cid === ADMIN_ID) {
     sendAppList(cid);
   }
@@ -1074,7 +1080,7 @@ bot.onText(/^\/apps$/i, async msg => {
 bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     await updateUserActivity(chatId);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /maintenance
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const status = match[1].toLowerCase();
 
     if (chatId !== ADMIN_ID) {
@@ -1097,7 +1103,7 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /id
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
 });
 
@@ -1105,7 +1111,7 @@ bot.onText(/^\/id$/, async msg => {
 bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /add
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     console.log(`[Admin] /add command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -1156,7 +1162,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
     await updateUserActivity(callerId);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /info
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     if (callerId !== ADMIN_ID) {
@@ -1221,7 +1227,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /remove
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -1274,7 +1280,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
     const userChatId = msg.chat.id.toString();
     await updateUserActivity(userChatId);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /askadmin
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const userMessageId = msg.message_id;
 
     if (userChatId === ADMIN_ID) {
@@ -1307,7 +1313,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /stats
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1353,7 +1359,7 @@ ${keyDetails}
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    await notifyAdminUserOnline(msg); // Notify admin when a user uses /users
+    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1429,7 +1435,8 @@ bot.on('message', async msg => {
   if (!text) return;
 
   await updateUserActivity(cid); // Update user activity on any message
-  await notifyAdminUserOnline(msg); // Call the notification function here
+  // ⭐ FIX 1: Call notifyAdminUserOnline only once here for all messages
+  await notifyAdminUserOnline(msg); 
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
@@ -2192,7 +2199,7 @@ bot.on('callback_query', async q => {
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await updateUserActivity(cid); // Update user activity on any callback query
-  await notifyAdminUserOnline(q.message); // Call the notification function here
+  // ⭐ Removed: notifyAdminUserOnline(q.message); // Will be handled by general on('message')
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
