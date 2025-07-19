@@ -95,6 +95,17 @@ const pool = new Pool({
     `);
     console.log("[DB] 'user_activity' table checked/created.");
 
+    // NEW: Add banned_users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS banned_users (
+        user_id TEXT PRIMARY KEY,
+        banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        banned_by TEXT
+      );
+    `);
+    console.log("[DB] 'banned_users' table checked/created.");
+
+
     console.log("[DB] All necessary tables checked/created successfully.");
 
   } catch (dbError) {
@@ -287,6 +298,47 @@ async function getUserLastSeen(userId) {
     console.error(`[DB] Failed to get user last seen for ${userId}:`, error.message);
     return null;
   }
+}
+
+// NEW: Function to check if a user is banned
+async function isUserBanned(userId) {
+    try {
+        const result = await pool.query('SELECT 1 FROM banned_users WHERE user_id = $1', [userId]);
+        return result.rows.length > 0;
+    } catch (error) {
+        console.error(`[DB] Error checking ban status for user ${userId}:`, error.message);
+        return false; // Assume not banned if there's a DB error
+    }
+}
+
+// NEW: Function to ban a user
+async function banUser(userId, bannedByAdminId) {
+    try {
+        await pool.query(
+            'INSERT INTO banned_users(user_id, banned_by) VALUES($1, $2) ON CONFLICT (user_id) DO NOTHING;',
+            [userId, bannedByAdminId]
+        );
+        console.log(`[Admin] User ${userId} banned by ${bannedByAdminId}.`);
+        return true;
+    } catch (error) {
+        console.error(`[Admin] Error banning user ${userId}:`, error.message);
+        return false;
+    }
+}
+
+// NEW: Function to unban a user
+async function unbanUser(userId) {
+    try {
+        const result = await pool.query('DELETE FROM banned_users WHERE user_id = $1 RETURNING user_id;', [userId]);
+        if (result.rowCount > 0) {
+            console.log(`[Admin] User ${userId} unbanned.`);
+            return true;
+        }
+        return false; // User was not found or not banned
+    } catch (error) {
+        console.error(`[Admin] Error unbanning user ${userId}:`, error.message);
+        return false;
+    }
 }
 
 
@@ -1170,7 +1222,7 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
                 return bot.sendMessage(cid, `Cannot assign app: The bot is blocked by user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
             }
         }
-        return bot.sendMessage(cid, `An error occurred while verifying user \`${targetUserId}\`: ${error.message}. Please check logs.`, { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, `An error occurred while starting the add process for user \`${targetUserId}\`: ${error.message}. Please check logs.`, { parse_mode: 'Markdown' });
     }
 
     console.log(`[Admin] Admin ${cid} initiated /add for user ${targetUserId}. Prompting for app selection.`);
@@ -1233,6 +1285,10 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         const lastSeen = await getUserLastSeen(targetUserId);
         userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'Never seen (or no recent activity)'}\n`;
 
+        // Check ban status
+        const bannedStatus = await isUserBanned(targetUserId);
+        userDetails += `*Banned:* ${bannedStatus ? 'Yes' : 'No'}\n`;
+
 
         await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
 
@@ -1245,6 +1301,8 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
                 await bot.sendMessage(callerId, `User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
             } else if (apiError.includes("bot was blocked by the user")) {
                 await bot.sendMessage(callerId, `The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
+            } else {
+                await bot.sendMessage(callerId, `An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
             console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
@@ -1363,12 +1421,17 @@ bot.onText(/^\/stats$/, async (msg) => {
         const totalFreeTrialUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_trial_users FROM temp_deploys');
         const totalFreeTrialUsers = totalFreeTrialUsersResult.rows[0].total_trial_users;
 
+        const totalBannedUsersResult = await pool.query('SELECT COUNT(user_id) AS total_banned_users FROM banned_users');
+        const totalBannedUsers = totalBannedUsersResult.rows[0].total_banned_users;
+
+
         const statsMessage = `
 *Bot Statistics:*
 
-*Total Unique Users:* ${totalUsers}
+*Total Unique Users (deployed bots):* ${totalUsers}
 *Total Deployed Bots:* ${totalBots}
 *Users Who Used Free Trial:* ${totalFreeTrialUsers}
+*Total Banned Users:* ${totalBannedUsers}
 
 *Active Deploy Keys:*
 ${keyDetails}
@@ -1391,11 +1454,19 @@ bot.onText(/^\/users$/, async (msg) => {
     }
 
     try {
-        const userEntries = await pool.query('SELECT DISTINCT user_id FROM user_bots ORDER BY user_id');
-        const userIds = userEntries.rows.map(row => row.user_id);
+        // Fetch all unique user IDs from user_bots and banned_users tables
+        const allUserIdsResult = await pool.query(`
+            SELECT DISTINCT user_id FROM user_bots
+            UNION
+            SELECT user_id FROM banned_users
+            UNION
+            SELECT user_id FROM user_activity
+            ORDER BY user_id;
+        `);
+        const userIds = allUserIdsResult.rows.map(row => row.user_id);
 
         if (userIds.length === 0) {
-            return bot.sendMessage(cid, "No users have deployed bots yet.");
+            return bot.sendMessage(cid, "No users have interacted with the bot yet.");
         }
 
         let responseMessage = '*Registered Users:*\n\n';
@@ -1415,12 +1486,17 @@ bot.onText(/^\/users$/, async (msg) => {
 
                 const lastSeen = await getUserLastSeen(userId);
                 const lastSeenText = lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'N/A';
+                
+                const bannedStatus = await isUserBanned(userId);
+                const banText = bannedStatus ? 'Yes' : 'No';
+
 
                 responseMessage += `*ID:* \`${userIdEscaped}\`\n`;
                 responseMessage += `*Name:* ${firstName} ${lastName}\n`;
                 responseMessage += `*Username:* ${username}\n`;
                 responseMessage += `*Deployed Bots:* ${botList}\n`;
-                responseMessage += `*Last Activity:* ${lastSeenText}\n\n`;
+                responseMessage += `*Last Activity:* ${lastSeenText}\n`;
+                responseMessage += `*Banned:* ${banText}\n\n`; // Add ban status
 
                 userCounter++;
 
@@ -1454,11 +1530,180 @@ bot.onText(/^\/users$/, async (msg) => {
 });
 
 
-// 12) Message handler for buttons & state machine
+// NEW ADMIN COMMAND: /send <user_id> <message>
+bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    const targetUserId = match[1];
+    const messageText = match[2];
+
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    try {
+        await bot.sendMessage(targetUserId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(adminId, `Message sent to user \`${targetUserId}\`.`);
+    } catch (error) {
+        console.error(`Error sending message to user ${targetUserId}:`, error.message);
+        let errorReason = "Unknown error";
+        if (error.response && error.response.body && error.response.body.description) {
+            errorReason = error.response.body.description;
+            if (errorReason.includes("chat not found") || errorReason.includes("user not found")) {
+                errorReason = `User with ID \`${targetUserId}\` not found or has not started a chat with the bot.`;
+            } else if (errorReason.includes("bot was blocked by the user")) {
+                errorReason = `Bot is blocked by user \`${targetUserId}\`.`;
+            }
+        }
+        await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${errorReason}`);
+    }
+});
+
+// NEW ADMIN COMMAND: /sendall <message>
+bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    const messageText = match[1];
+
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    await bot.sendMessage(adminId, "Sending message to all users. This may take a while...");
+
+    let successCount = 0;
+    let failCount = 0;
+    let blockedCount = 0;
+
+    try {
+        // Fetch all unique user IDs that have ever interacted (from user_activity)
+        const allUserIdsResult = await pool.query('SELECT DISTINCT user_id FROM user_activity');
+        const userIds = allUserIdsResult.rows.map(row => row.user_id);
+
+        if (userIds.length === 0) {
+            return bot.sendMessage(adminId, "No users found in activity logs to send messages to.");
+        }
+
+        for (const userId of userIds) {
+            // Skip sending to admin themselves
+            if (userId === adminId) {
+                continue;
+            }
+
+            try {
+                // Check if user is banned
+                const banned = await isUserBanned(userId);
+                if (banned) {
+                    console.log(`[SendAll] Skipping banned user: ${userId}`);
+                    continue; // Skip banned users
+                }
+
+                await bot.sendMessage(userId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
+                successCount++;
+                await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to avoid API limits
+            } catch (error) {
+                console.error(`[SendAll] Failed to send message to user ${userId}:`, error.message);
+                if (error.response && error.response.body && error.response.body.description) {
+                    const errorReason = error.response.body.description;
+                    if (errorReason.includes("bot was blocked by the user")) {
+                        blockedCount++;
+                    } else {
+                        failCount++;
+                    }
+                } else {
+                    failCount++;
+                }
+            }
+        }
+        await bot.sendMessage(adminId,
+            `Broadcast complete!\n` +
+            `*Successfully sent:* ${successCount}\n` +
+            `*Blocked by user:* ${blockedCount}\n` +
+            `*Other failures:* ${failCount}`,
+            { parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error(`[SendAll] Error fetching user list for broadcast:`, error.message);
+        await bot.sendMessage(adminId, `An error occurred during broadcast: ${error.message}`);
+    }
+});
+
+// NEW ADMIN COMMAND: /ban <user_id>
+bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    const targetUserId = match[1];
+
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    if (targetUserId === ADMIN_ID) {
+        return bot.sendMessage(adminId, "You cannot ban yourself, admin.");
+    }
+
+    const isBanned = await isUserBanned(targetUserId);
+    if (isBanned) {
+        return bot.sendMessage(adminId, `User \`${targetUserId}\` is already banned.`, { parse_mode: 'Markdown' });
+    }
+
+    const banned = await banUser(targetUserId, adminId);
+    if (banned) {
+        await bot.sendMessage(adminId, `User \`${targetUserId}\` has been banned.`, { parse_mode: 'Markdown' });
+        try {
+            await bot.sendMessage(targetUserId, `You have been banned from using this bot by the admin. All bot functions are now unavailable.`);
+        } catch (error) {
+            console.warn(`Could not notify banned user ${targetUserId}: ${error.message}`);
+        }
+    } else {
+        await bot.sendMessage(adminId, `Failed to ban user \`${targetUserId}\`. Check logs.`, { parse_mode: 'Markdown' });
+    }
+});
+
+// NEW ADMIN COMMAND: /unban <user_id>
+bot.onText(/^\/unban (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    const targetUserId = match[1];
+
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const isBanned = await isUserBanned(targetUserId);
+    if (!isBanned) {
+        return bot.sendMessage(adminId, `User \`${targetUserId}\` is not currently banned.`, { parse_mode: 'Markdown' });
+    }
+
+    const unbanned = await unbanUser(targetUserId);
+    if (unbanned) {
+        await bot.sendMessage(adminId, `User \`${targetUserId}\` has been unbanned.`, { parse_mode: 'Markdown' });
+        try {
+            await bot.sendMessage(targetUserId, `You have been unbanned from using this bot. Welcome back!`);
+        } catch (error) {
+            console.warn(`Could not notify unbanned user ${targetUserId}: ${error.message}`);
+        }
+    } else {
+        await bot.sendMessage(adminId, `Failed to unban user \`${targetUserId}\`. Check logs.`, { parse_mode: 'Markdown' });
+    }
+});
+
+
+// 12) Message handler for buttons & state machine (MODIFIED FOR BAN CHECK)
 bot.on('message', async msg => {
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
-  if (!text) return;
+
+  // IMPORTANT: Ban check before any other logic for non-admin users
+  if (cid !== ADMIN_ID) {
+      const banned = await isUserBanned(cid);
+      if (banned) {
+          console.log(`[Security] Banned user ${cid} attempted to interact with message: "${text}"`);
+          // Optionally, you can send a message like "You are banned." here, but
+          // to prevent spamming banned users, it's often better to just silently ignore
+          // or send it only once per session. For now, we'll silently ignore further interaction.
+          return; // Stop processing for banned users
+      }
+  }
+
+  if (!text) return; // Only process text messages
 
   await updateUserActivity(cid); // Update user activity on any message
   // FIX 1: Call notifyAdminUserOnline only once here for all messages
@@ -1488,7 +1733,7 @@ bot.on('message', async msg => {
           clearInterval(userAnimateIntervalId); // Stop the animation for the previous "Admin getting your pairing code..." message
       }
       if (userWaitingMessageId) {
-          await bot.editMessageText(`✅ Pairing code available!`, { // Updated message, using a clear indicator
+          await bot.editMessageText(`Pairing code available!`, { // Updated message, no emoji, final message
               chat_id: targetUserId,
               message_id: userWaitingMessageId
           }).catch(err => console.error(`Failed to edit user's waiting message to "Pairing code available!": ${err.message}`));
@@ -2122,7 +2367,7 @@ bot.on('message', async msg => {
     if (VAR_NAME === 'SESSION_ID') {
         // Validate session ID starts with 'levanter_' or is empty to clear
         if (!newVal.startsWith('levanter_') && newVal !== '') {
-            return bot.sendMessage(cid, 'Incorrect session ID. Your session ID must start with `levanter_`, or be empty to clear it. Please try again.', { parse_mode: 'Markdown' });
+            return bot.sendMessage(cid, 'Incorrect session ID. Your session ID must start with `levanter_`. Please try again.', { parse_mode: 'Markdown' });
         }
         if (newVal.length < 10 && newVal !== '') {
             return bot.sendMessage(cid, 'Session ID must be at least 10 characters long, or empty to clear.');
@@ -2218,7 +2463,7 @@ bot.on('message', async msg => {
   }
 });
 
-// 13) Callback query handler for inline buttons
+// 13) Callback query handler for inline buttons (MODIFIED FOR BAN CHECK)
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
   const dataParts = q.data ? q.data.split(':') : [];
@@ -2226,6 +2471,16 @@ bot.on('callback_query', async q => {
   const payload = dataParts[1];
   const extra = dataParts[2];
   const flag = dataParts[3];
+
+  // IMPORTANT: Ban check before any other logic for non-admin users
+  if (cid !== ADMIN_ID) {
+      const banned = await isUserBanned(cid);
+      if (banned) {
+          console.log(`[Security] Banned user ${cid} attempted callback query: "${q.data}"`);
+          await bot.answerCallbackQuery(q.id, { text: "You are currently banned from using this bot.", showAlert: true });
+          return; // Stop processing for banned users
+      }
+  }
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await updateUserActivity(cid); // Update user activity on any callback query
@@ -2337,20 +2592,13 @@ bot.on('callback_query', async q => {
           );
 
           if (userMessageId) {
-            // NOTE: The previous `animateMessage` interval for "Admin getting your pairing code..." should already be cleared
-            // by the `clearInterval(userAnimateIntervalId);` in the `bot.on('message')` handler
-            // when the admin sends the actual pairing code.
-            // This ensures that this initial message "Admin accepted! Please wait while the admin gets your pairing code..."
-            // is not edited back *to* the animated one, but rather *from* it when the admin replies.
-            // The request is to change the text to "Pairing code available!" WHEN THE ADMIN SENDS THE CODE,
-            // which is handled in the `bot.on('message')` block.
             // This part just sets the initial message after acceptance.
+            // The `animateMessage` interval is handled and cleared in the `bot.on('message')`
+            // when the admin provides the code, and then replaced with "Pairing code available!".
             await bot.editMessageText(`Admin accepted! Please wait while the admin gets your pairing code...`, {
                 chat_id: targetUserChatId,
                 message_id: userMessageId
             });
-            // No new animation interval is set here, as the user is waiting for admin's direct reply.
-            // The existing `animateMessage` for the user's waiting message is handled in `bot.on('message')` as the admin replies.
           }
 
 
