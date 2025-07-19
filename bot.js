@@ -342,6 +342,9 @@ const forwardingContext = {};
 const userLastSeenNotification = new Map();
 const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
+// ⭐ MODIFICATION 2.1: Map to store the message ID of the last online notification sent to admin for a user
+const adminOnlineMessageIds = new Map(); // userId -> adminMessageId
+
 async function notifyAdminUserOnline(msg) {
     // Ensure msg.from exists and has an ID to prevent errors for non-user messages (e.g., channel posts)
     if (!msg || !msg.from || !msg.from.id) {
@@ -363,24 +366,53 @@ async function notifyAdminUserOnline(msg) {
     }
 
     const lastNotified = userLastSeenNotification.get(userId) || 0;
+    const lastAdminMessageId = adminOnlineMessageIds.get(userId);
 
-    if (now - lastNotified > ONLINE_NOTIFICATION_COOLDOWN_MS) {
-        try {
-            // Safely get user details, providing fallbacks for undefined properties
-            const first_name = msg.from.first_name ? escapeMarkdown(msg.from.first_name) : 'N/A';
-            const last_name = msg.from.last_name ? escapeMarkdown(msg.from.last_name) : '';
-            const username = msg.from.username ? `@${escapeMarkdown(msg.from.username)}` : 'N/A';
+    // ⭐ MODIFICATION 2.2: Capture the text of the message (button/command pressed)
+    const userAction = msg.text || (msg.callback_query ? `Callback: ${msg.callback_query.data}` : 'Interacted');
 
-            const userDetails = `
+    // Safely get user details, providing fallbacks for undefined properties
+    const first_name = msg.from.first_name ? escapeMarkdown(msg.from.first_name) : 'N/A';
+    const last_name = msg.from.last_name ? escapeMarkdown(msg.from.last_name) : '';
+    const username = msg.from.username ? `@${escapeMarkdown(msg.from.username)}` : 'N/A';
+
+    const userDetails = `
 *User Online:*
 *ID:* \`${userId}\`
 *Name:* ${first_name} ${last_name}
 *Username:* ${username}
+*Last Action:* \`${escapeMarkdown(userAction)}\` ⭐
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-            `;
-            await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+    `;
+
+    // ⭐ MODIFICATION 2.3: If within cooldown, attempt to edit the existing message
+    if (now - lastNotified < ONLINE_NOTIFICATION_COOLDOWN_MS && lastAdminMessageId) {
+        try {
+            await bot.editMessageText(userDetails, {
+                chat_id: ADMIN_ID,
+                message_id: lastAdminMessageId,
+                parse_mode: 'Markdown'
+            });
+            userLastSeenNotification.set(userId, now); // Still update timestamp to reset cooldown
+            console.log(`[Admin Notification] Edited admin notification for user ${userId} (action: ${userAction}).`);
+        } catch (error) {
+            console.error(`Error editing admin notification for user ${userId}:`, error.message);
+            // If editing fails (e.g., message too old), send a new one
+            try {
+                const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+                adminOnlineMessageIds.set(userId, sentMsg.message_id);
+                userLastSeenNotification.set(userId, now);
+                console.log(`[Admin Notification] Sent new admin notification for user ${userId} after edit failure.`);
+            } catch (sendError) {
+                console.error(`Error sending new admin notification for user ${userId} after edit failure:`, sendError.message);
+            }
+        }
+    } else { // Outside cooldown or no previous message to edit, send new message
+        try {
+            const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
+            adminOnlineMessageIds.set(userId, sentMsg.message_id);
             userLastSeenNotification.set(userId, now);
-            console.log(`[Admin Notification] Notified admin about user ${userId} being online.`);
+            console.log(`[Admin Notification] Notified admin about user ${userId} being online (action: ${userAction}).`);
         } catch (error) {
             console.error(`Error notifying admin about user ${userId} online:`, error.message);
         }
@@ -1456,15 +1488,17 @@ bot.on('message', async msg => {
 
       const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
 
+      // ⭐ MODIFICATION 1: Change user's waiting message to "Pairing code available!"
       if (userAnimateIntervalId) {
-          clearInterval(userAnimateIntervalId);
-          if (userWaitingMessageId) {
-              await bot.editMessageText(`Your pairing-code is now ready!`, {
-                  chat_id: targetUserId,
-                  message_id: userWaitingMessageId
-              }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
-          }
+          clearInterval(userAnimateIntervalId); // Stop the animation
       }
+      if (userWaitingMessageId) {
+          await bot.editMessageText(`✅ Pairing code available!`, { // Updated message
+              chat_id: targetUserId,
+              message_id: userWaitingMessageId
+          }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
+      }
+      // ⭐ END MODIFICATION 1
 
       try {
           await bot.sendMessage(targetUserId,
@@ -1886,7 +1920,7 @@ bot.on('message', async msg => {
           // First time opening FAQ
           delete userStates[cid]; // Clear previous general states
           await bot.sendMessage(cid, 'Please note that your bot might go offline temporarily at the end or beginning of every month. We appreciate your patience during these periods.');
-          await sendFaqPage(cid, null, 1); // Send first page of FAQs, null means new message
+          await sendFagPage(cid, null, 1); // Send first page of FAQs, null means new message
       }
       return;
   }
@@ -2199,7 +2233,8 @@ bot.on('callback_query', async q => {
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await updateUserActivity(cid); // Update user activity on any callback query
-  // ⭐ Removed: notifyAdminUserOnline(q.message); // Will be handled by general on('message')
+  // ⭐ MODIFICATION 2.4: Call notifyAdminUserOnline for callback queries
+  await notifyAdminUserOnline(q); // Pass the entire callback query object `q`
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
