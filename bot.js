@@ -9,7 +9,7 @@ const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
-const path = require('path'); // ADDED: Import the 'path' module
+const path = require('path');
 
 // 2) Load fallback env vars from app.json
 let defaultEnvVars = {};
@@ -342,7 +342,7 @@ const forwardingContext = {};
 const userLastSeenNotification = new Map();
 const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
-// ⭐ MODIFICATION 2.1: Map to store the message ID of the last online notification sent to admin for a user
+// MODIFICATION 2.1: Map to store the message ID of the last online notification sent to admin for a user
 const adminOnlineMessageIds = new Map(); // userId -> adminMessageId
 
 async function notifyAdminUserOnline(msg) {
@@ -352,7 +352,7 @@ async function notifyAdminUserOnline(msg) {
         return;
     }
 
-    // ⭐ FIX 2: Prevent bot from notifying itself
+    // FIX 2: Prevent bot from notifying itself
     if (msg.from.is_bot) {
         console.log("[Admin Notification] Skipping: Message originated from a bot.");
         return;
@@ -368,7 +368,7 @@ async function notifyAdminUserOnline(msg) {
     const lastNotified = userLastSeenNotification.get(userId) || 0;
     const lastAdminMessageId = adminOnlineMessageIds.get(userId);
 
-    // ⭐ MODIFICATION 2.2: Capture the text of the message (button/command pressed)
+    // MODIFICATION 2.2: Capture the text of the message (button/command pressed)
     const userAction = msg.text || (msg.callback_query ? `Callback: ${msg.callback_query.data}` : 'Interacted');
 
     // Safely get user details, providing fallbacks for undefined properties
@@ -381,11 +381,11 @@ async function notifyAdminUserOnline(msg) {
 *ID:* \`${userId}\`
 *Name:* ${first_name} ${last_name}
 *Username:* ${username}
-*Last Action:* \`${escapeMarkdown(userAction)}\` ⭐
+*Last Action:* \`${escapeMarkdown(userAction)}\`
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
     `;
 
-    // ⭐ MODIFICATION 2.3: If within cooldown, attempt to edit the existing message
+    // MODIFICATION 2.3: If within cooldown, attempt to edit the existing message
     if (now - lastNotified < ONLINE_NOTIFICATION_COOLDOWN_MS && lastAdminMessageId) {
         try {
             await bot.editMessageText(userDetails, {
@@ -423,9 +423,10 @@ async function notifyAdminUserOnline(msg) {
 // 7) Utilities
 
 let emojiIndex = 0;
-const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜'];
+// REMOVED EMOJIS: const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜'];
+const animatedEmojis = ['Loading', 'Loading.', 'Loading..', 'Loading...']; // Using text instead of emojis
 
-function getAnimatedEmoji() {
+function getAnimatedEmoji() { // This function still exists but will return text
     const emoji = animatedEmojis[emojiIndex];
     emojiIndex = (emojiIndex + 1) % animatedEmojis.length;
     return emoji;
@@ -435,6 +436,7 @@ function getAnimatedEmoji() {
 async function animateMessage(chatId, messageId, baseText) {
     const intervalId = setInterval(async () => {
         try {
+            // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
             await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
                 chat_id: chatId,
                 message_id: messageId
@@ -535,8 +537,9 @@ function chunkArray(arr, size) {
   return out;
 }
 
+// REMOVED EMOJI: async function sendAnimatedMessage(chatId, baseText) {
 async function sendAnimatedMessage(chatId, baseText) {
-    const msg = await bot.sendMessage(chatId, `⚙️ ${baseText}...`);
+    const msg = await bot.sendMessage(chatId, `_ ${baseText}...`); // Removed emoji
     await new Promise(r => setTimeout(r, 1200));
     return msg;
 }
@@ -631,6 +634,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
   const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
 
   try {
+    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
@@ -642,6 +646,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     });
     clearInterval(createMsgAnimate);
 
+    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
@@ -676,6 +681,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     );
     clearInterval(configMsgAnimate);
 
+    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
 
@@ -808,6 +814,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       );
 
       const baseWaitingText = `Build complete! Waiting for bot to connect...`;
+      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: chatId,
         message_id: createMsg.message_id // Still editing the same initial message
@@ -1048,7 +1055,6 @@ async function sendFaqPage(chatId, messageId, page) {
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
-  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   const { first_name, last_name, username } = msg.from;
@@ -1091,7 +1097,6 @@ We are here to assist you every step of the way!
 bot.onText(/^\/menu$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
-  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   bot.sendMessage(cid, 'Menu:', {
@@ -1102,7 +1107,6 @@ bot.onText(/^\/menu$/i, async msg => {
 bot.onText(/^\/apps$/i, async msg => {
   const cid = msg.chat.id.toString();
   await updateUserActivity(cid);
-  // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
   if (cid === ADMIN_ID) {
     sendAppList(cid);
   }
@@ -1112,7 +1116,6 @@ bot.onText(/^\/apps$/i, async msg => {
 bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     const chatId = msg.chat.id.toString();
     await updateUserActivity(chatId);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const status = match[1].toLowerCase();
 
     if (chatId !== ADMIN_ID) {
@@ -1135,7 +1138,6 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 bot.onText(/^\/id$/, async msg => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
 });
 
@@ -1143,7 +1145,6 @@ bot.onText(/^\/id$/, async msg => {
 bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     console.log(`[Admin] /add command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -1194,7 +1195,6 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
     await updateUserActivity(callerId);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     if (callerId !== ADMIN_ID) {
@@ -1245,8 +1245,6 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
                 await bot.sendMessage(callerId, `User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
             } else if (apiError.includes("bot was blocked by the user")) {
                 await bot.sendMessage(callerId, `The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
-            } else {
-                await bot.sendMessage(callerId, `An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
             }
         } else {
             console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
@@ -1259,7 +1257,6 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const targetUserId = match[1];
 
     console.log(`[Admin] /remove command received from ${cid}. Target user ID: ${targetUserId}`);
@@ -1312,7 +1309,6 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
     const userChatId = msg.chat.id.toString();
     await updateUserActivity(userChatId);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     const userMessageId = msg.message_id;
 
     if (userChatId === ADMIN_ID) {
@@ -1345,7 +1341,6 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1391,7 +1386,6 @@ ${keyDetails}
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await updateUserActivity(cid);
-    // ⭐ Removed: notifyAdminUserOnline(msg); // Will be handled by general on('message')
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
@@ -1467,7 +1461,7 @@ bot.on('message', async msg => {
   if (!text) return;
 
   await updateUserActivity(cid); // Update user activity on any message
-  // ⭐ FIX 1: Call notifyAdminUserOnline only once here for all messages
+  // FIX 1: Call notifyAdminUserOnline only once here for all messages
   await notifyAdminUserOnline(msg); 
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
@@ -1488,17 +1482,18 @@ bot.on('message', async msg => {
 
       const { targetUserId, userWaitingMessageId, userAnimateIntervalId } = st.data;
 
-      // ⭐ MODIFICATION 1: Change user's waiting message to "Pairing code available!"
+      // MODIFICATION 1: Change user's waiting message to "Pairing code available!"
+      // Ensure this message is NOT edited back by animateMessage if it's still running
       if (userAnimateIntervalId) {
-          clearInterval(userAnimateIntervalId); // Stop the animation
+          clearInterval(userAnimateIntervalId); // Stop the animation for the previous "Admin getting your pairing code..." message
       }
       if (userWaitingMessageId) {
-          await bot.editMessageText(`✅ Pairing code available!`, { // Updated message
+          await bot.editMessageText(`✅ Pairing code available!`, { // Updated message, using a clear indicator
               chat_id: targetUserId,
               message_id: userWaitingMessageId
-          }).catch(err => console.error(`Failed to edit user's waiting message to "ready": ${err.message}`));
+          }).catch(err => console.error(`Failed to edit user's waiting message to "Pairing code available!": ${err.message}`));
       }
-      // ⭐ END MODIFICATION 1
+      // END MODIFICATION 1
 
       try {
           await bot.sendMessage(targetUserId,
@@ -1920,7 +1915,7 @@ bot.on('message', async msg => {
           // First time opening FAQ
           delete userStates[cid]; // Clear previous general states
           await bot.sendMessage(cid, 'Please note that your bot might go offline temporarily at the end or beginning of every month. We appreciate your patience during these periods.');
-          await sendFagPage(cid, null, 1); // Send first page of FAQs, null means new message
+          await sendFaqPage(cid, null, 1); // Send first page of FAQs, null means new message
       }
       return;
   }
@@ -2159,6 +2154,7 @@ bot.on('message', async msg => {
       }
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
+      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id
@@ -2233,7 +2229,7 @@ bot.on('callback_query', async q => {
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await updateUserActivity(cid); // Update user activity on any callback query
-  // ⭐ MODIFICATION 2.4: Call notifyAdminUserOnline for callback queries
+  // MODIFICATION 2.4: Call notifyAdminUserOnline for callback queries
   await notifyAdminUserOnline(q); // Pass the entire callback query object `q`
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
@@ -2341,12 +2337,20 @@ bot.on('callback_query', async q => {
           );
 
           if (userMessageId) {
-            const waitingForCodeMsg = await bot.editMessageText(`${getAnimatedEmoji()} Admin accepted! Please wait while the admin gets your pairing code...`, {
+            // NOTE: The previous `animateMessage` interval for "Admin getting your pairing code..." should already be cleared
+            // by the `clearInterval(userAnimateIntervalId);` in the `bot.on('message')` handler
+            // when the admin sends the actual pairing code.
+            // This ensures that this initial message "Admin accepted! Please wait while the admin gets your pairing code..."
+            // is not edited back *to* the animated one, but rather *from* it when the admin replies.
+            // The request is to change the text to "Pairing code available!" WHEN THE ADMIN SENDS THE CODE,
+            // which is handled in the `bot.on('message')` block.
+            // This part just sets the initial message after acceptance.
+            await bot.editMessageText(`Admin accepted! Please wait while the admin gets your pairing code...`, {
                 chat_id: targetUserChatId,
                 message_id: userMessageId
             });
-            const newAnimateIntervalId = await animateMessage(targetUserChatId, waitingForCodeMsg.message_id, 'Admin getting your pairing code...');
-            userStates[targetUserChatId].data.animateIntervalId = newAnimateIntervalId;
+            // No new animation interval is set here, as the user is waiting for admin's direct reply.
+            // The existing `animateMessage` for the user's waiting message is handled in `bot.on('message')` as the admin replies.
           }
 
 
@@ -3120,6 +3124,7 @@ bot.on('callback_query', async q => {
       // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
+      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
