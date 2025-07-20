@@ -29,6 +29,7 @@ const {
   GITHUB_REPO_URL,
   ADMIN_ID,
   DATABASE_URL,
+  DATABASE_URL2, // NEW: Second database URL
 } = process.env;
 const SUPPORT_USERNAME = '@star_ies1';
 
@@ -44,6 +45,13 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+// NEW: Second pool for DATABASE_URL2
+const backupPool = new Pool({
+  connectionString: DATABASE_URL2,
+  ssl: { rejectUnauthorized: false }
+});
+
+
 (async () => {
   try {
     // --- IMPORTANT FOR DEVELOPMENT/DEBUGGING ---
@@ -54,7 +62,7 @@ const pool = new Pool({
     // console.warn("[DB] DEVELOPMENT: user_bots table dropped (if existed).");
     // ---------------------------------------------
 
-    // Attempt to create the user_bots table with the PRIMARY KEY constraint
+    // Main Database (pool - DATABASE_URL) tables
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_bots (
         user_id    TEXT NOT NULL,
@@ -64,9 +72,8 @@ const pool = new Pool({
         PRIMARY KEY (user_id, bot_name)
       );
     `);
-    console.log("[DB] 'user_bots' table checked/created with PRIMARY KEY.");
+    console.log("[DB-Main] 'user_bots' table checked/created with PRIMARY KEY.");
 
-    // Add deploy_keys table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
         key        TEXT PRIMARY KEY,
@@ -75,27 +82,24 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("[DB] 'deploy_keys' table checked/created.");
+    console.log("[DB-Main] 'deploy_keys' table checked/created.");
 
-    // Add temp_deploys table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
         user_id       TEXT PRIMARY KEY,
         last_deploy_at TIMESTAMP NOT NULL
       );
     `);
-    console.log("[DB] 'temp_deploys' table checked/created.");
+    console.log("[DB-Main] 'temp_deploys' table checked/created.");
 
-    // Add user_activity table for last seen
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_activity (
         user_id TEXT PRIMARY KEY,
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("[DB] 'user_activity' table checked/created.");
+    console.log("[DB-Main] 'user_activity' table checked/created.");
 
-    // NEW: Add banned_users table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS banned_users (
         user_id TEXT PRIMARY KEY,
@@ -103,15 +107,26 @@ const pool = new Pool({
         banned_by TEXT
       );
     `);
-    console.log("[DB] 'banned_users' table checked/created.");
+    console.log("[DB-Main] 'banned_users' table checked/created.");
+
+    // NEW: Backup Database (backupPool - DATABASE_URL2) tables
+    await backupPool.query(`
+      CREATE TABLE IF NOT EXISTS user_deployments (
+        user_id TEXT NOT NULL,
+        app_name TEXT NOT NULL,
+        session_id TEXT,
+        config_vars JSONB, -- Store all variables as JSON
+        deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expiration_date TIMESTAMP,
+        PRIMARY KEY (user_id, app_name)
+      );
+    `);
+    console.log("[DB-Backup] 'user_deployments' table checked/created.");
 
 
-    console.log("[DB] All necessary tables checked/created successfully.");
+    console.log("[DB] All necessary tables checked/created successfully in both pools.");
 
   } catch (dbError) {
-    // This catch block handles errors during the *initial* CREATE TABLE IF NOT EXISTS.
-    // The most common is if a table already exists but the constraint part (like PK) failed to add.
-
     if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
         console.warn(`[DB] Table already exists or issue creating it initially. Attempting to ensure PRIMARY KEY constraint.`);
         try {
@@ -136,6 +151,7 @@ const pool = new Pool({
 })();
 
 // 5) DB helper functions
+// Existing functions using 'pool' (DATABASE_URL)
 async function addUserBot(u, b, s) {
   try {
     const result = await pool.query(
@@ -300,18 +316,17 @@ async function getUserLastSeen(userId) {
   }
 }
 
-// NEW: Function to check if a user is banned
+// NEW: Functions for banned users (using 'pool')
 async function isUserBanned(userId) {
     try {
         const result = await pool.query('SELECT 1 FROM banned_users WHERE user_id = $1', [userId]);
         return result.rows.length > 0;
     } catch (error) {
-        console.error(`[DB] Error checking ban status for user ${userId}:`, error.message);
+        console.error(`[DB-Main] Error checking ban status for user ${userId}:`, error.message);
         return false; // Assume not banned if there's a DB error
     }
 }
 
-// NEW: Function to ban a user
 async function banUser(userId, bannedByAdminId) {
     try {
         await pool.query(
@@ -326,7 +341,6 @@ async function banUser(userId, bannedByAdminId) {
     }
 }
 
-// NEW: Function to unban a user
 async function unbanUser(userId) {
     try {
         const result = await pool.query('DELETE FROM banned_users WHERE user_id = $1 RETURNING user_id;', [userId]);
@@ -338,6 +352,70 @@ async function unbanUser(userId) {
     } catch (error) {
         console.error(`[Admin] Error unbanning user ${userId}:`, error.message);
         return false;
+    }
+}
+
+// NEW FUNCTIONS: For user deployments backup/restore/expiration (using 'backupPool')
+async function saveUserDeployment(userId, appName, sessionId, configVars, isPermanentWithKey) {
+    try {
+        const deployDate = new Date();
+        let expirationDate = null;
+        if (isPermanentWithKey) {
+            // 45 days from deploy date
+            expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
+        }
+
+        // Ensure configVars is a plain object, remove non-string values if any, for JSONB
+        const cleanConfigVars = {};
+        for (const key in configVars) {
+            if (Object.prototype.hasOwnProperty.call(configVars, key)) {
+                // Heroku's config vars are always strings, but a more general approach
+                // would be to ensure it's JSON-serializable if not already.
+                cleanConfigVars[key] = String(configVars[key]);
+            }
+        }
+
+
+        await backupPool.query(
+            `INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, deploy_date, expiration_date)
+             VALUES($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, app_name) DO UPDATE SET
+                session_id = EXCLUDED.session_id,
+                config_vars = EXCLUDED.config_vars,
+                deploy_date = EXCLUDED.deploy_date,
+                expiration_date = EXCLUDED.expiration_date;`,
+            [userId, appName, sessionId, cleanConfigVars, deployDate, expirationDate]
+        );
+        console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to save user deployment for ${appName}:`, error.message, error.stack);
+    }
+}
+
+async function getUserDeploymentsForRestore(userId) {
+    try {
+        const result = await backupPool.query(
+            `SELECT app_name, session_id, config_vars, deploy_date, expiration_date
+             FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC;`,
+            [userId]
+        );
+        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for user ${userId} for restore.`);
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to get user deployments for restore ${userId}:`, error.message);
+        return [];
+    }
+}
+
+async function deleteUserDeploymentFromBackup(userId, appName) {
+    try {
+        await backupPool.query(
+            'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2;',
+            [userId, appName]
+        );
+        console.log(`[DB-Backup] Deleted deployment for user ${userId}, app ${appName} from backup DB.`);
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to delete user deployment from backup for ${appName}:`, error.message);
     }
 }
 
@@ -355,8 +433,9 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
         console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
     }
 
-    await deleteUserBot(ownerUserId, appName);
-    console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots DB for user "${ownerUserId}".`);
+    await deleteUserBot(ownerUserId, appName); // Delete from main DB
+    await deleteUserDeploymentFromBackup(ownerUserId, appName); // NEW: Delete from backup DB as well
+    console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots (main) and user_deployments (backup) DBs for user "${ownerUserId}".`);
 
     const message = `App "*${appName}*" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
 
@@ -475,7 +554,6 @@ async function notifyAdminUserOnline(msg) {
 // 7) Utilities
 
 let emojiIndex = 0;
-// REMOVED EMOJIS: const animatedEmojis = ['⬜⬜⬜⬜⬜', '⬛⬜⬜⬜⬜', '⬜⬛⬜⬜⬜', '⬜⬜⬛⬜⬜', '⬜⬜⬜⬛⬜', '⬜⬜⬜⬜⬛', '⬜⬜⬜⬜⬜'];
 const animatedEmojis = ['Loading', 'Loading.', 'Loading..', 'Loading...']; // Using text instead of emojis
 
 function getAnimatedEmoji() { // This function still exists but will return text
@@ -488,7 +566,6 @@ function getAnimatedEmoji() { // This function still exists but will return text
 async function animateMessage(chatId, messageId, baseText) {
     const intervalId = setInterval(async () => {
         try {
-            // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
             await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
                 chat_id: chatId,
                 message_id: messageId
@@ -589,9 +666,8 @@ function chunkArray(arr, size) {
   return out;
 }
 
-// REMOVED EMOJI: async function sendAnimatedMessage(chatId, baseText) {
 async function sendAnimatedMessage(chatId, baseText) {
-    const msg = await bot.sendMessage(chatId, `_ ${baseText}...`); // Removed emoji
+    const msg = await bot.sendMessage(chatId, `${getAnimatedEmoji()} ${baseText}...`);
     await new Promise(r => setTimeout(r, 1200));
     return msg;
 }
@@ -679,14 +755,13 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 }
 
 // 9) Build & deploy helper with animated countdown
-async function buildWithProgress(chatId, vars, isFreeTrial = false) {
+async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false) { // Added isRestore parameter
   const name = vars.APP_NAME;
 
   let buildResult = false;
   const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
 
   try {
-    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
@@ -698,7 +773,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     });
     clearInterval(createMsgAnimate);
 
-    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
@@ -733,15 +807,22 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
     );
     clearInterval(configMsgAnimate);
 
-    // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
+
+    // Filter out undefined/null/empty strings from vars for config-vars patch
+    const filteredVars = {};
+    for (const key in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
+            filteredVars[key] = vars[key];
+        }
+    }
 
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
         ...defaultEnvVars,
-        ...vars
+        ...filteredVars // Use filteredVars here
       },
       {
         headers: {
@@ -847,6 +928,18 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
       await addUserBot(chatId, name, vars.SESSION_ID);
 
+      // NEW: If permanent bot, save to user_deployments for backup/expiration
+      if (!isFreeTrial && !isRestore) { // Only save new permanent deploys (not free trials or restores of existing data)
+          const herokuConfigVars = await axios.get(
+              `https://api.heroku.com/apps/${name}/config-vars`,
+              { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+          );
+          await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars.data, true);
+      } else if (isRestore) { // If it's a restore, just update the deploy_date in user_deployments
+          await saveUserDeployment(chatId, name, vars.SESSION_ID, vars, false); // Use vars directly for config_vars as it contains what we fetched
+      }
+
+
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
         console.log(`[FreeTrial] Recorded free trial deploy for user ${chatId}.`);
@@ -866,7 +959,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false) {
       );
 
       const baseWaitingText = `Build complete! Waiting for bot to connect...`;
-      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: chatId,
         message_id: createMsg.message_id // Still editing the same initial message
@@ -2009,7 +2101,6 @@ bot.on('message', async msg => {
         const errorMsg = e.response?.data?.message || e.message;
         console.error(`[API_CALL_ERROR] Error removing SUDO number for ${APP_NAME}:`, errorMsg, e.response?.data);
         await bot.sendMessage(cid, `Error removing number from SUDO variable: ${errorMsg}`);
-        delete userStates[cid];
     }
     return;
   }
@@ -2123,9 +2214,13 @@ bot.on('message', async msg => {
     console.log(`[Flow] My Bots button clicked by user: ${cid}`);
     const bots = await getUserBots(cid);
     if (!bots.length) {
-        return bot.sendMessage(cid, "You have not deployed any bots yet. Would you like to deploy your first bot?", {
+        // NEW: Add Restore button here
+        return bot.sendMessage(cid, "You have not deployed any bots yet. Would you like to deploy your first bot or restore a backup?", {
             reply_markup: {
-                inline_keyboard: [[{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }]]
+                inline_keyboard: [
+                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }] // New button
+                ]
             }
         });
     }
@@ -2397,9 +2492,17 @@ bot.on('message', async msg => {
           console.log(`[Flow] SETVAR_ENTER_VALUE: Config var updated for "${APP_NAME}". Updating bot in user_bots DB for user "${cid}".`);
           await addUserBot(cid, APP_NAME, newVal);
       }
+      
+      // NEW: Update config_vars in user_deployments backup
+      if (!st.data.isFreeTrial) { // Only update if it's a permanent bot
+          const herokuConfigVars = await axios.get(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+          );
+          await saveUserDeployment(cid, APP_NAME, newVal, herokuConfigVars.data, true); // Update entire config_vars
+      }
 
       const baseWaitingText = `Updated ${VAR_NAME} for "${APP_NAME}". Waiting for bot status confirmation...`;
-      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id
@@ -2463,7 +2566,7 @@ bot.on('message', async msg => {
   }
 });
 
-// 13) Callback query handler for inline buttons (MODIFIED FOR BAN CHECK)
+// 13) Callback query handler for inline buttons (MODIFIED FOR BAN CHECK AND NEW FEATURES)
 bot.on('callback_query', async q => {
   const cid = q.message.chat.id.toString();
   const dataParts = q.data ? q.data.split(':') : [];
@@ -2525,6 +2628,62 @@ bot.on('callback_query', async q => {
         return bot.sendMessage(cid, 'Enter your Deploy key');
     }
   }
+
+  if (action === 'restore_from_backup') { // NEW: Handle Restore button click
+    const userDeployments = await getUserDeploymentsForRestore(cid);
+    if (userDeployments.length === 0) {
+        return bot.editMessageText('No backup deployments found for your account. Please deploy a new bot.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
+
+    const restoreOptions = userDeployments.map(dep => {
+        const deployDate = new Date(dep.deploy_date).toLocaleDateString();
+        return [{
+            text: `${dep.app_name} (Deployed: ${deployDate})`,
+            callback_data: `select_restore_app:${dep.app_name}`
+        }];
+    });
+
+    await bot.editMessageText('Select a bot to restore:', {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: {
+            inline_keyboard: restoreOptions
+        }
+    });
+    return;
+  }
+
+  if (action === 'select_restore_app') { // NEW: Handle selection of app to restore
+    const appName = payload;
+    const deployments = await getUserDeploymentsForRestore(cid);
+    const selectedDeployment = deployments.find(dep => dep.app_name === appName);
+
+    if (!selectedDeployment) {
+        return bot.editMessageText('Selected backup not found. Please try again.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
+
+    // Prepare variables for deployment
+    const varsToDeploy = {
+        APP_NAME: selectedDeployment.app_name,
+        SESSION_ID: selectedDeployment.session_id,
+        ...selectedDeployment.config_vars // Include all saved config vars
+    };
+
+    await bot.editMessageText(`Attempting to restore and deploy "${appName}"...`, {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    // Call buildWithProgress with isRestore flag
+    await buildWithProgress(cid, varsToDeploy, false, true); // isFreeTrial: false, isRestore: true
+    return;
+  }
+
 
   if (action === 'ask_admin_question') {
       delete userStates[cid]; // Clear user state
@@ -2674,7 +2833,7 @@ bot.on('callback_query', async q => {
               message_id: st.message_id
           });
           delete userStates[cid]; // Clear user state before starting build
-          await buildWithProgress(cid, st.data, st.data.isFreeTrial);
+          await buildWithProgress(cid, st.data, st.data.isFreeTrial, false); // isRestore: false
       }
 
       if (step === 'cancel') {
@@ -2727,10 +2886,52 @@ bot.on('callback_query', async q => {
             { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
             { text: 'Set Variable', callback_data: `setvar:${appName}` }
           ],
+          [{ text: 'Backup', callback_data: `backup_app:${appName}` }], // NEW: Backup button
           [{ text: 'Back', callback_data: 'back_to_app_list' }]
         ]
       }
     });
+  }
+
+  if (action === 'backup_app') { // NEW: Handle Backup button click
+    const appName = payload;
+    await bot.editMessageText(`Backing up app "${appName}"...`, {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    try {
+        const appVars = await axios.get(
+            `https://api.heroku.com/apps/${appName}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const currentSessionId = appVars.data.SESSION_ID; // Assuming SESSION_ID is important for restore
+
+        if (!currentSessionId) {
+            return bot.editMessageText(`Cannot backup "${appName}": No SESSION_ID found. Please set it first.`, {
+                chat_id: cid,
+                message_id: q.message.message_id
+            });
+        }
+
+        await saveUserDeployment(cid, appName, currentSessionId, appVars.data, true); // True because it's a backup of a permanent bot
+        await bot.editMessageText(`App "${appName}" successfully backed up! You can restore it later if needed.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        await bot.editMessageText(`Failed to backup app "${appName}": ${errorMsg}`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+    }
+    return;
   }
 
   if (action === 'add_assign_app') {
@@ -2806,6 +3007,8 @@ bot.on('callback_query', async q => {
         }
 
         await addUserBot(targetUserId, appName, currentSessionId);
+        await saveUserDeployment(targetUserId, appName, currentSessionId, configRes.data, true); // NEW: Save/update to backup DB on admin assign
+
         console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
 
         await bot.editMessageText(`App "*${appName}*" successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
@@ -2869,7 +3072,9 @@ bot.on('callback_query', async q => {
     });
 
     try {
-        await deleteUserBot(targetUserId, appName);
+        await deleteUserBot(targetUserId, appName); // Delete from main DB
+        await deleteUserDeploymentFromBackup(targetUserId, appName); // NEW: Delete from backup DB as well
+
         console.log(`[Admin] Successfully called deleteUserBot for ${appName} from user ${targetUserId}.`);
 
         await bot.editMessageText(`App "*${appName}*" successfully removed from user \`${targetUserId}\`'s dashboard.`, {
@@ -2942,12 +3147,23 @@ bot.on('callback_query', async q => {
               dynoStatus = 'Worker dyno not active/scaled to 0';
           }
       }
+      
+      let expirationInfo = "N/A";
+      const deploymentBackup = await backupPool.query('SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [cid, payload]);
+      if (deploymentBackup.rows.length > 0 && deploymentBackup.rows[0].expiration_date) {
+        const expiryDate = new Date(deploymentBackup.rows[0].expiration_date);
+        const now = new Date();
+        const timeLeftMs = expiryDate.getTime() - now.getTime();
+        const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+        expirationInfo = `${expiryDate.toLocaleDateString()} (${daysLeft} days left)`;
+      }
 
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
                    `*Created:* ${new Date(appData.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' })} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` +
                    `*Last Release:* ${new Date(appData.released_at).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}\n` +
-                   `*Stack:* ${appData.stack.name}\n\n` +
+                   `*Stack:* ${appData.stack.name}\n` +
+                   `*Expiration:* ${expirationInfo}\n\n` + // NEW: Add expiration info
                    `*Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
@@ -3107,10 +3323,14 @@ bot.on('callback_query', async q => {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
           if (originalAction === 'userdelete') {
-              await deleteUserBot(cid, appToDelete);
+              await deleteUserBot(cid, appToDelete); // Delete from main DB
+              await deleteUserDeploymentFromBackup(cid, appToDelete); // NEW: Delete from backup DB
           } else {
               const ownerId = await getUserIdByBotName(appToDelete);
-              if (ownerId) await deleteUserBot(ownerId, appToDelete);
+              if (ownerId) {
+                  await deleteUserBot(ownerId, appToDelete); // Delete from main DB
+                  await deleteUserDeploymentFromBackup(ownerId, appToDelete); // NEW: Delete from backup DB
+              }
           }
           await bot.editMessageText(`App "*${appToDelete}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
           if (originalAction === 'userdelete') {
@@ -3240,12 +3460,14 @@ bot.on('callback_query', async q => {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
         return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`levanter_\`.`, { parse_mode: 'Markdown' });
     }
     else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
         userStates[cid].step = 'SETVAR_ENTER_VALUE';
         userStates[cid].data.VAR_NAME = varKey;
         userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
 
         let promptMessage = `Please enter the new value for *${varKey}*:`;
         if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
@@ -3269,6 +3491,7 @@ bot.on('callback_query', async q => {
         userStates[cid].data.APP_NAME = appName;
         userStates[cid].data.targetUserId = cid;
         userStates[cid].message_id = q.message.message_id; // Store current message ID for context
+        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
 
         await bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
     } else if (varKey === 'SUDO_VAR') {
@@ -3301,6 +3524,7 @@ bot.on('callback_query', async q => {
       userStates[cid].data.APP_NAME = appName;
       userStates[cid].data.targetUserId = cid;
       userStates[cid].data.attempts = 0;
+      userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
 
       if (sudoAction === 'add') {
           userStates[cid].step = 'AWAITING_SUDO_ADD_NUMBER';
@@ -3335,6 +3559,7 @@ bot.on('callback_query', async q => {
           });
           // Transition to the step where user provides the new value
           userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
+          userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
           return bot.sendMessage(cid, `Please enter the *new* value for *${varName}*:`, { parse_mode: 'Markdown' });
       } else {
           await bot.editMessageText(`Variable *${varName}* was not overwritten.`, {
@@ -3368,11 +3593,15 @@ bot.on('callback_query', async q => {
 
 
       console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
-      // No need to fetch session_id here, it's not being updated based on the variable change
-      // const { session_id: currentSessionId } = await pool.query('SELECT session_id FROM user_bots WHERE user_id=$1 AND bot_name=$2', [cid, appName]).then(res => res.rows[0] || {});
+      // NEW: Update config_vars in user_deployments backup
+      const herokuConfigVars = await axios.get( // Fetch latest config vars
+          `https://api.heroku.com/apps/${appName}/config-vars`,
+          { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+      );
+      await saveUserDeployment(cid, appName, herokuConfigVars.data.SESSION_ID, herokuConfigVars.data, true); // Update entire config_vars, isPermanentWithKey is true as it's an update to a permanent bot
+
 
       const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      // REMOVED EMOJI: await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
           chat_id: cid,
           message_id: updateMsg.message_id,
@@ -3456,7 +3685,8 @@ bot.on('callback_query', async q => {
           data: {
               APP_NAME: appName,
               VAR_NAME: 'SESSION_ID',
-              targetUserId: targetUserId
+              targetUserId: targetUserId,
+              isFreeTrial: false // Ensure it's treated as permanent for backup on update
           }
       };
       await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`levanter_\`.`, { parse_mode: 'Markdown' });
@@ -3479,7 +3709,10 @@ bot.on('callback_query', async q => {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
           });
           const ownerId = await getUserIdByBotName(appToDelete);
-          if (ownerId) await deleteUserBot(ownerId, appToDelete);
+          if (ownerId) {
+              await deleteUserBot(ownerId, appToDelete);
+              await deleteUserDeploymentFromBackup(ownerId, appToDelete); // NEW: Delete from backup DB as well on admin trial delete
+          }
 
           await bot.editMessageText(`Free Trial app "*${appToDelete}*" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
           if (ownerId && ownerId !== cid) {
@@ -3624,7 +3857,17 @@ bot.on('callback_query', async q => {
             reply_markup: { inline_keyboard: rows }
           });
       } else {
-          return bot.editMessageText("You have not deployed any bots yet.", { chat_id: cid, message_id: currentMessageId });
+          // NEW: Add Restore button here again for clarity if they have no bots active
+          return bot.editMessageText("You have not deployed any bots yet. Would you like to deploy your first bot or restore a backup?", {
+            chat_id: cid,
+            message_id: currentMessageId,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                ]
+            }
+        });
       }
     }
   }
@@ -3713,7 +3956,7 @@ bot.on('channel_post', async msg => {
     }
 });
 
-// 15) Scheduled Task for Logout Reminders
+// 15) Scheduled Task for Logout Reminders & Expiration Cleanup
 async function checkAndRemindLoggedOutBots() {
     console.log('Running scheduled check for logged out bots...');
     if (!HEROKU_API_KEY) {
@@ -3769,8 +4012,8 @@ async function checkAndRemindLoggedOutBots() {
                 console.log(`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.`);
                 const currentOwnerId = await getUserIdByBotName(herokuApp);
                 if (currentOwnerId) {
-                    await deleteUserBot(currentOwnerId, herokuApp);
-                    await bot.sendMessage(currentOwnerId, `Your bot "*${herokuApp}*" was not found on Heroku and has been automatically removed from your "My Bots" list.`, { parse_mode: 'Markdown' });
+                    await deleteUserBot(currentOwnerId, herokuApp); // Delete from main DB
+                    await deleteUserDeploymentFromBackup(currentOwnerId, herokuApp); // NEW: Delete from backup DB
                 }
                 return;
             }
@@ -3779,7 +4022,74 @@ async function checkAndRemindLoggedOutBots() {
     }
 }
 
-setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000);
+// NEW: Scheduled Task for 45-day bot expiration
+async function checkAndExpireBots() {
+    console.log('Running scheduled check for expiring bots...');
+    if (!HEROKU_API_KEY) {
+        console.warn('Skipping scheduled expiration check: HEROKU_API_KEY not set.');
+        return;
+    }
+
+    try {
+        const now = new Date();
+        const expiredBots = await backupPool.query(
+            `SELECT user_id, app_name FROM user_deployments
+             WHERE expiration_date IS NOT NULL AND expiration_date <= $1;`,
+            [now]
+        );
+
+        if (expiredBots.rows.length === 0) {
+            console.log('[Scheduled Expiration] No bots found to expire.');
+            return;
+        }
+
+        console.log(`[Scheduled Expiration] Found ${expiredBots.rows.length} bots to expire.`);
+
+        for (const botEntry of expiredBots.rows) {
+            const { user_id, app_name } = botEntry;
+            console.log(`[Scheduled Expiration] Expiring bot ${app_name} for user ${user_id}.`);
+
+            try {
+                // 1. Delete from Heroku
+                await axios.delete(`https://api.heroku.com/apps/${app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                console.log(`[Scheduled Expiration] Successfully deleted Heroku app: ${app_name}`);
+
+                // 2. Delete from main DB (user_bots)
+                await deleteUserBot(user_id, app_name);
+                console.log(`[Scheduled Expiration] Successfully deleted from user_bots: ${app_name}`);
+
+                // 3. Delete from backup DB (user_deployments)
+                await deleteUserDeploymentFromBackup(user_id, app_name);
+                console.log(`[Scheduled Expiration] Successfully deleted from user_deployments: ${app_name}`);
+
+                // 4. Notify user
+                await bot.sendMessage(user_id, `Your bot "*${app_name}*" has reached its 45-day expiration and has been automatically deleted. To deploy a new bot, use the 'Deploy' or 'Restore From Backup' options.`, { parse_mode: 'Markdown' });
+            } catch (error) {
+                if (error.response && error.response.status === 404) {
+                    console.warn(`[Scheduled Expiration] App ${app_name} not found on Heroku, but was in DB. Cleaning up DBs.`);
+                    await deleteUserBot(user_id, app_name);
+                    await deleteUserDeploymentFromBackup(user_id, app_name);
+                    await bot.sendMessage(user_id, `Your bot "*${app_name}*" was not found on Heroku and has been automatically removed from your lists (likely already expired/deleted).`, { parse_mode: 'Markdown' });
+                } else {
+                    console.error(`[Scheduled Expiration] Error expiring bot ${app_name} for user ${user_id}:`, error.message, error.stack);
+                    bot.sendMessage(ADMIN_ID, `Error auto-expiring bot "${app_name}" for user ${user_id}: ${error.message}`);
+                }
+            }
+        }
+        console.log('[Scheduled Expiration] All expired bots processed.');
+
+    } catch (dbError) {
+        console.error('[Scheduled Expiration] DB Error fetching expired bots:', dbError.message, dbError.stack);
+        bot.sendMessage(ADMIN_ID, `CRITICAL DB ERROR during scheduled bot expiration check: ${dbError.message}`);
+    }
+}
+
+
+// Run scheduled tasks
+setInterval(checkAndRemindLoggedOutBots, 60 * 60 * 1000); // Every hour for logout reminders
+setInterval(checkAndExpireBots, 24 * 60 * 60 * 1000); // Every 24 hours for expiration check
 
 
 console.log('Bot is running...');
