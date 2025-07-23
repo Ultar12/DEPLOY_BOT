@@ -2938,7 +2938,6 @@ bot.on('callback_query', async q => {
       });
   }
 
-  if (action === 'setvar') {
     if (action === 'setvar') {
     const appName = payload; // The app name is the payload for 'setvar'
     const messageId = q.message.message_id; // The message ID to edit
@@ -3023,7 +3022,6 @@ bot.on('callback_query', async q => {
       }
     });
 }
-
 
 if (action === 'varselect') {
   const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
