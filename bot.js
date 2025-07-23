@@ -8,6 +8,10 @@ console.log('--- SCRIPT STARTING: Verifying code execution (This should be the v
 process.on('unhandledRejection', err => console.error('Unhandled Rejection:', err));
 process.on('uncaughtException', err => console.error('Uncaught Exception:', err));
 
+// bot.js
+
+// ... (existing global error handlers, require statements) ...
+
 require('dotenv').config();
 const fs = require('fs');
 const axios = require('axios');
@@ -16,20 +20,48 @@ const { Pool } = require('pg');
 const path = require('path');
 
 // --- Import modularized components ---
+// Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
 const { init: servicesInit, ...dbServices } = require('./bot_services');
 const { init: faqInit, sendFaqPage } = require('./bot_faq');
 
-// 2) Load fallback env vars from app.json
-let defaultEnvVars = {};
+// 2) Load fallback env vars from app.json / custom config files
+let levanterDefaultEnvVars = {};
+let raganorkDefaultEnvVars = {}; // <-- ADD THIS DECLARATION
+
 try {
-  const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-  defaultEnvVars = Object.fromEntries(
-    Object.entries(appJson.env).map(([k, v]) => [k, v.value])
-  );
+  const appJsonPath = path.join(__dirname, 'app.json'); // Standard app.json for Levanter
+  if (fs.existsSync(appJsonPath)) {
+    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+    levanterDefaultEnvVars = Object.fromEntries(
+      Object.entries(appJson.env || {}).map(([k, v]) => [k, v.value]) // Ensure env exists
+    );
+    console.log('[Config] Loaded default env vars from app.json for Levanter.');
+  } else {
+    console.warn('[Config] No app.json found for Levanter. Default env vars will be empty.');
+  }
 } catch (e) {
-  console.warn('Could not load fallback env vars from app.json:', e.message);
+  console.warn('[Config] Could not load fallback env vars from app.json for Levanter:', e.message);
 }
+
+// NEW: Load Raganork-specific default env vars from app.json1
+try {
+  const appJson1Path = path.join(__dirname, 'app.json1'); // Your custom file for Raganork
+  if (fs.existsSync(appJson1Path)) {
+    const appJson1 = JSON.parse(fs.readFileSync(appJson1Path, 'utf8'));
+    raganorkDefaultEnvVars = Object.fromEntries(
+      Object.entries(appJson1.env || {}).map(([k, v]) => [k, v.value]) // Ensure env exists
+    );
+    console.log('[Config] Loaded default env vars from app.json1 for Raganork.'); // EMOJI ADDED
+  } else {
+    console.warn('[Config] No app.json1 found for Raganork. Default env vars for Raganork will be empty.'); // EMOJI ADDED
+  }
+} catch (e) {
+  console.warn('[Config] Could not load fallback env vars from app.json1 for Raganork:', e.message); // EMOJI ADDED
+}
+
+// ... (rest of bot.js) ...
+
 
 // 3) Environment config
 const {
