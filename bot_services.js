@@ -1,9 +1,9 @@
 // bot_services.js
 
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { Pool } = require('pg');
+const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
+const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
+const { Pool } = require('pg'); // Not declared here, but passed in. Good practice to show dependency.
 
 // --- Module-level variables for dependencies passed during init ---
 let pool;
@@ -13,7 +13,7 @@ let HEROKU_API_KEY;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
-let defaultEnvVars;
+let defaultEnvVars; // This will now hold an object like { levanter: {}, raganork: {} }
 let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
@@ -32,7 +32,7 @@ let escapeMarkdown;
  * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
  * @param {string} params.GITHUB_RAGANORK_REPO_URL - GitHub URL for Raganork.
  * @param {string} params.ADMIN_ID - Admin Telegram ID.
- * @param {object} params.defaultEnvVars - Fallback env vars from app.json.
+ * @param {object} params.defaultEnvVars - Object containing fallback env vars for each bot type (e.g., { levanter: {}, raganork: {} }).
  * @param {Map} params.appDeploymentPromises - Map for deployment promises.
  * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
  * @param {function} params.getAnimatedEmoji - Function to get animated emoji/text.
@@ -50,14 +50,14 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
-    defaultEnvVars = params.defaultEnvVars;
+    defaultEnvVars = params.defaultEnvVars; // This is now an object for each bot type
     appDeploymentPromises = params.appDeploymentPromises;
     RESTART_DELAY_MINUTES = params.RESTART_DELAY_MINUTES;
     getAnimatedEmoji = params.getAnimatedEmoji;
     animateMessage = params.animateMessage;
     sendAnimatedMessage = params.sendAnimatedMessage;
     monitorSendTelegramAlert = params.monitorSendTelegramAlert;
-    escapeMarkdown = params.escapeMarkdown;
+    escapeMarkdown = params.escapeMarkdown; // Assign the utility function
 
     console.log('--- bot_services.js initialized! ---');
 }
@@ -475,10 +475,14 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 }
 
 // 9) Build & deploy helper with animated countdown
-// IMPORTANT: This now takes botType to select the GitHub URL
+// IMPORTANT: This now takes botType to select the GitHub URL AND the correct defaultEnvVars
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
   const name = vars.APP_NAME;
   const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+
+  // *** CRITICAL CHANGE HERE: Select the correct default environment variables based on botType ***
+  const currentDefaultEnvVars = defaultEnvVars[botType] || {}; // Use the specific bot type's defaults, or an empty object
+  // *** END CRITICAL CHANGE ***
 
   let buildResult = false;
   const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
@@ -543,7 +547,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
-        ...defaultEnvVars,
+        ...currentDefaultEnvVars, // *** CRITICAL CHANGE: Use currentDefaultEnvVars ***
         ...filteredVars
       },
       {
@@ -676,24 +680,28 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId });
-      });
-
-      const STATUS_CHECK_TIMEOUT = 120 * 1000;
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
+          // Store timeoutId as well for clearing from bot_monitor
+          const timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) {
                   appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.`));
                   appDeploymentPromises.delete(name);
               }
           }, STATUS_CHECK_TIMEOUT);
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId }); // Add timeoutId here
+      });
 
-          await appStatusPromise;
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId);
+      const STATUS_CHECK_TIMEOUT = 120 * 1000;
+      let timeoutId; // Declared outside try-catch to be accessible in finally, but actual timeoutId for promise is within promise constructor
+
+      try {
+          await appStatusPromise; // This waits for the resolution from bot.js's channel_post handler
+          // Clear the specific timeoutId for this promise, if it wasn't cleared by bot_monitor
+          const promiseData = appDeploymentPromises.get(name);
+          if (promiseData && promiseData.timeoutId) {
+             clearTimeout(promiseData.timeoutId);
+          }
+          clearInterval(animateIntervalId); // Clear this specific animation
 
           await bot.editMessageText(
             `Your bot is now live!`,
@@ -727,14 +735,18 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                     await bot.sendMessage(chatId, `Could not auto-delete the app "*${escapeMarkdown(name)}*". Please delete it manually from your Heroku dashboard.`, {parse_mode: 'Markdown'});
-                    bot.sendMessage(ADMIN_ID, `Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`, {parse_mode: 'Markdown'});
+                    monitorSendTelegramAlert(ADMIN_ID, `Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`);
                 }
             }, 60 * 60 * 1000);
           }
 
       } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId);
+          // Clear any remaining interval/timeout if error occurred.
+          const promiseData = appDeploymentPromises.get(name);
+          if (promiseData) {
+             clearInterval(promiseData.animateIntervalId);
+             if (promiseData.timeoutId) clearTimeout(promiseData.timeoutId);
+          }
           console.error(`App status check failed for ${name}:`, err.message);
           await bot.editMessageText(
             `Bot "*${escapeMarkdown(name)}*" failed to start or session is invalid: ${escapeMarkdown(err.message)}\n\n` +
@@ -778,7 +790,7 @@ module.exports = {
     getUserBots,
     getUserIdByBotName,
     getAllUserBots,
-    getBotNameBySessionId, // <<< NEW: Export the new function
+    getBotNameBySessionId,
     deleteUserBot,
     updateUserSession,
     addDeployKey,
