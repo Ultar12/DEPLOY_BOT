@@ -337,6 +337,25 @@ async function saveMaintenanceStatus(status) {
     }
 }
 
+function formatExpirationInfo(deployDateStr, expirationDateStr) {
+    if (!deployDateStr) return 'N/A';
+
+    const deployDate = new Date(deployDateStr);
+    const fixedExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from original deploy
+    const now = new Date();
+
+    const expirationDisplay = fixedExpirationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
+
+    const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
+    const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+
+    if (daysLeft > 0) {
+        return `${expirationDisplay} (Expires in ${daysLeft} days)`;
+    } else {
+        return `Expired on ${expirationDisplay}`;
+    }
+}
+
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
