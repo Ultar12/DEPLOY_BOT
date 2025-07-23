@@ -477,7 +477,6 @@ async function notifyAdminUserOnline(msg) {
     }
 }
 
-
 // 7) Initialize modular components
 (async () => {
     // Initialize bot_monitor.js
@@ -500,21 +499,27 @@ async function notifyAdminUserOnline(msg) {
 
     //// Initialize bot_services.js
    servicesInit({
-   mainPool: pool,
+    mainPool: pool,
     backupPool: backupPool,
     bot: bot,
     HEROKU_API_KEY: HEROKU_API_KEY,
     GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
-    defaultEnvVars: defaultEnvVars,
+    // --- CRITICAL CHANGE START ---
+    defaultEnvVars: { // <-- Pass an object containing both
+        levanter: levanterDefaultEnvVars,
+        raganork: raganorkDefaultEnvVars
+    },
+    // --- CRITICAL CHANGE END ---
     appDeploymentPromises: appDeploymentPromises,
     RESTART_DELAY_MINUTES: parseInt(process.env.RESTART_DELAY_MINUTES || '1', 10),
     getAnimatedEmoji: getAnimatedEmoji,
     animateMessage: animateMessage,
-    sendAnimatedMessage: sendAnimatedMessage, // <<< FIX: Pass sendAnimatedMessage
+    sendAnimatedMessage: sendAnimatedMessage,
     monitorSendTelegramAlert: monitorSendTelegramAlert,
-});
+    escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
+   });
   
     // Initialize bot_faq.js
     faqInit({
