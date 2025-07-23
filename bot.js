@@ -2243,8 +2243,7 @@ bot.on('callback_query', async q => {
     });
     return;
   }
-
-// ... (existing code within bot.on('callback_query', async q => { ... })) ...
+  
 
   if (action === 'select_bapp') {
     const appName = payload;
@@ -2453,6 +2452,178 @@ ${configVarsDisplay}
     // dbServices.saveUserDeployment handles setting deleted_from_heroku_at to NULL on update.
     return;
   }
+// bot.js
+
+// ... (existing code in bot.on('callback_query', async q => { ... })) ...
+
+  if (action === 'restore_from_bapp') {
+      const appName = payload;
+      const appUserId = extra; // Owner of the app
+      const messageId = q.message.message_id;
+
+      await bot.editMessageText(`🚀 Preparing to restore "*${escapeMarkdown(appName)}*" for user \`${escapeMarkdown(appUserId)}\`...`, { // Added preliminary message
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'Markdown'
+      }).catch(err => console.warn(`Failed to edit message with preliminary restore text: ${err.message}`));
+
+      let selectedDeployment;
+      try {
+          const result = await backupPool.query(
+              `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
+               FROM user_deployments WHERE app_name = $1 AND user_id = $2;`,
+              [appName, appUserId]
+          );
+          selectedDeployment = result.rows[0];
+      } catch (e) {
+          console.error(`❌ DB Error fetching backup deployment for restore ${appName} (${appUserId}):`, e.message);
+          return bot.editMessageText(`Error preparing restore for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
+              chat_id: cid,
+              message_id: messageId,
+              parse_mode: 'Markdown'
+          });
+      }
+
+      if (!selectedDeployment) {
+          console.warn(`⚠️ Backup for ${appName} for user ${appUserId} not found during restore attempt.`);
+          return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" not found for restore. It might have been deleted or expired.`, {
+              chat_id: cid,
+              message_id: messageId,
+              parse_mode: 'Markdown'
+          });
+      }
+
+      const now = new Date();
+      // Recalculate fixed expiration from deploy_date for consistency
+      const originalExpirationDate = new Date(new Date(selectedDeployment.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
+      if (originalExpirationDate <= now) {
+          // If expired, try to delete from backup table and notify
+          await dbServices.deleteUserDeploymentFromBackup(appUserId, appName).catch(err => console.error(`Error deleting expired backup ${appName}: ${err.message}`));
+          return bot.editMessageText(`🚫 Cannot restore "*${escapeMarkdown(appName)}*". Its original 45-day deployment period has expired. It has been removed from backup list.`, {
+              chat_id: cid,
+              message_id: messageId,
+              parse_mode: 'Markdown'
+          });
+      }
+
+      // Determine the default env vars for the bot type being restored
+      const botTypeToRestore = selectedDeployment.bot_type || 'levanter';
+      const defaultVarsForRestore = (botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : levanterDefaultEnvVars) || {};
+
+      const combinedVarsForRestore = {
+          ...defaultVarsForRestore,    // Apply type-specific defaults first
+          ...selectedDeployment.config_vars, // Overlay with the saved config vars (these take precedence)
+          APP_NAME: selectedDeployment.app_name, // Ensure APP_NAME is always correct
+          SESSION_ID: selectedDeployment.session_id // Explicitly ensure saved SESSION_ID is used
+      };
+
+      await bot.editMessageText(`Attempting to restore and deploy "*${escapeMarkdown(appName)}*" for user \`${escapeMarkdown(appUserId)}\`... This may take a few minutes.`, {
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'Markdown'
+      });
+      // Call buildWithProgress with isRestore flag and the original botType
+      await dbServices.buildWithProgress(appUserId, combinedVarsForRestore, false, true, botTypeToRestore); // IMPORTANT: Use appUserId as target chatId for build
+
+      // The buildWithProgress function itself will update the message upon success/failure.
+      // No explicit return here, as buildWithProgress takes over the message flow.
+      // Ensure buildWithProgress always updates the message.
+      // If you need immediate feedback before buildWithProgress, it's done by the first editMessageText.
+      return; // Ensure this function exits
+  }
+
+  if (action === 'delete_bapp') {
+    const appName = payload;
+    const appUserId = extra; // Owner of the app
+    const messageId = q.message.message_id;
+
+    // Confirmation step for deleting from backup database
+    await bot.editMessageText(`Are you sure you want to PERMANENTLY delete backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) from the backup database? This cannot be undone.`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Yes, Delete Backup', callback_data: `confirm_delete_bapp:${appName}:${appUserId}` }],
+                [{ text: 'No, Cancel', callback_data: `select_bapp:${appName}:${appUserId}` }] // Go back to app details
+            ]
+        }
+    });
+    return; // Ensure this function exits
+  }
+
+  if (action === 'confirm_delete_bapp') {
+    const appName = payload;
+    const appUserId = extra; // Owner of the app
+    const messageId = q.message.message_id;
+
+    await bot.editMessageText(`Permanently deleting backup for "*${escapeMarkdown(appName)}*"...`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(err => console.warn(`Failed to edit message with delete confirmation text: ${err.message}`));
+
+    try {
+        const deleted = await dbServices.deleteUserDeploymentFromBackup(appUserId, appName);
+        if (deleted) {
+            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) has been permanently deleted from the backup database.`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown'
+            });
+        } else {
+            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. It might have already been removed.`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown'
+            });
+        }
+        // Redirect back to the /bapp list after deletion
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Small delay for user to read
+        // It's better to refactor /bapp into a reusable function instead of calling onText.
+        // For simplicity, let's just send the back_to_bapp_list action.
+        await bot.editMessageText('Refreshing backup app list...', {chat_id: cid, message_id: messageId, parse_mode: 'Markdown'})
+             .catch(() => bot.sendMessage(cid, "Refreshing backup app list...")); // Fallback if edit fails
+        q.data = 'back_to_bapp_list'; // Set q.data to trigger the back_to_bapp_list action
+        return bot.onCallbackQuery(q); // Re-process the query as if back_to_bapp_list was clicked
+    } catch (e) {
+        console.error(`Error deleting backup for ${appName} (${appUserId}):`, e.message);
+        await bot.editMessageText(`Failed to permanently delete backup for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+    return; // Ensure this function exits
+  }
+
+  if (action === 'back_to_bapp_list') {
+      const messageId = q.message.message_id;
+
+      await bot.editMessageText("⬅️ Returning to backup app list...", { // Added preliminary message
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'Markdown'
+      }).catch(err => console.warn(`Failed to edit message with preliminary back text: ${err.message}`));
+
+      // Trigger the /bapp command again to refresh the list
+      // A common pattern is to refactor the /bapp logic into a reusable function.
+      // For now, let's simulate the /bapp command.
+      await bot.sendChatAction(cid, 'typing');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      // Construct a dummy message object similar to what /bapp would receive
+      const dummyMsg = {
+          chat: { id: cid },
+          from: q.from, // Preserve user info
+          text: '/bapp',
+          message_id: messageId // Pass messageId for potential editing
+      };
+      // Call the onText handler's function. This assumes `bot.onText` returns its handler.
+      // For more reliability, define a separate async function for /bapp display.
+      return bot.onText(/^\/bapp$/, async (msg) => { /* dummy handler for trigger */ })(dummyMsg);
+  }
+
+// ... (rest of bot.on('callback_query') handler) ...
 
 
   if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
