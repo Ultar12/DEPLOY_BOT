@@ -2244,9 +2244,159 @@ bot.on('callback_query', async q => {
     return;
   }
 
-  // bot.js
+// ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
-// ... (existing code) ...
+  if (action === 'select_bapp') {
+    const appName = payload;
+    const appUserId = extra; // This is the user_id of the app owner
+    const messageId = q.message.message_id;
+
+    await bot.editMessageText(`Fetching details for backed-up app "*${escapeMarkdown(appName)}*"...`, { // <-- Added preliminary message
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(err => console.warn(`Failed to edit message with preliminary text: ${err.message}`));
+
+
+    // Fetch the specific deployment from the backup database
+    let selectedDeployment;
+    try {
+        const result = await backupPool.query(
+            `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
+             FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
+            [appName, appUserId]
+        );
+        selectedDeployment = result.rows[0];
+    } catch (e) {
+        console.error(`❌ DB Error fetching backup deployment for ${appName} (${appUserId}):`, e.message); // EMOJI ADDED
+        return bot.editMessageText(`An error occurred fetching details for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    if (!selectedDeployment) {
+        console.warn(`⚠️ Backed-up app ${appName} for user ${appUserId} not found in DB during select_bapp. It might have been deleted.`); // EMOJI ADDED
+        return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) not found in database. It might have been deleted.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    // Helper to format values (ensure this `formatVarValue` exists in an accessible scope)
+    function formatVarValue(val) {
+        if (val === 'true') return 'true';
+        if (val === 'false') return 'false';
+        if (val === 'p') return 'enabled (anti-delete)';
+        if (val === 'no-dl') return 'enabled (no download)';
+        return val === null || val === undefined || String(val).trim() === '' ? 'Not Set' : String(val); // Handle null, undefined, empty strings gracefully
+    }
+
+    // Helper to format expiration info (as added previously)
+    function formatExpirationInfo(deployDateStr) { // Only need deployDateStr, as expiration is derived
+        if (!deployDateStr) return 'N/A';
+
+        const deployDate = new Date(deployDateStr);
+        const fixedExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from original deploy
+        const now = new Date();
+
+        const expirationDisplay = fixedExpirationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
+
+        const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
+        const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+
+        if (daysLeft > 0) {
+            return `${expirationDisplay} (${daysLeft} days left)`;
+        } else {
+            return `Expired on ${expirationDisplay}`;
+        }
+    }
+
+
+    const { user_id, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at } = selectedDeployment;
+
+    // Try to get user's Telegram info
+    let userDisplay = `\`${escapeMarkdown(user_id)}\``;
+    try {
+        const targetChat = await bot.getChat(user_id);
+        const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : '';
+        const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : '';
+        const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
+        userDisplay = `${firstName} ${lastName} (${username})`;
+    } catch (userError) {
+        console.warn(`⚠️ Could not fetch Telegram info for user ${user_id}: ${userError.message}`); // EMOJI ADDED
+    }
+
+    const deployDateDisplay = new Date(deploy_date).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' });
+    const expirationInfo = formatExpirationInfo(deploy_date); // Pass only deploy_date
+
+    let herokuStatus = '';
+    if (deleted_from_heroku_at === null) {
+        herokuStatus = '🟢 Currently on Heroku';
+    } else {
+        herokuStatus = `🔴 Deleted from Heroku on ${new Date(deleted_from_heroku_at).toLocaleDateString()}`;
+    }
+
+    // Format Config Vars for display
+    let configVarsDisplay = '';
+    const relevantConfigKeys = ['SESSION_ID', 'AUTO_READ_STATUS', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'HANDLERS', 'PREFIX', 'ANTI_DELETE', 'SUDO', 'DISABLE_START_MESSAGE'];
+    for (const key of relevantConfigKeys) {
+        // Check if key exists and is not null/undefined/empty string
+        if (config_vars && config_vars[key] !== undefined) {
+            const displayValue = key === 'SESSION_ID' && config_vars[key] ? `${String(config_vars[key]).substring(0, 15)}...` : formatVarValue(config_vars[key]);
+            configVarsDisplay += `  \`${escapeMarkdown(key)}\`: ${escapeMarkdown(displayValue)}\n`;
+        }
+    }
+    if (!configVarsDisplay) configVarsDisplay = '  (No specific config vars saved)';
+
+
+    const detailMessage = `
+*Backed-up App Details:*
+
+*App Name:* \`${escapeMarkdown(appName)}\`
+*Bot Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}
+*Owner User ID:* \`${escapeMarkdown(user_id)}\`
+*Owner Telegram:* ${userDisplay}
+*Deployed On:* ${deployDateDisplay}
+*Expiration:* ${expirationInfo}
+*Heroku Status:* ${herokuStatus}
+
+*Saved Config Vars:*
+${configVarsDisplay}
+`;
+
+    // Determine if restore button should be active (only if deleted from Heroku and not expired)
+    const now = new Date();
+    const isExpired = new Date(deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000 <= now.getTime(); // Check against fixed 45 days
+    const canRestore = deleted_from_heroku_at !== null && !isExpired;
+
+
+    const actionButtons = [];
+    if (canRestore) {
+        actionButtons.push([{ text: '🚀 Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
+    } else {
+        // Change text to be more informative if not restorable
+        actionButtons.push([{ text: `🚫 Cannot Restore (${isExpired ? 'Expired' : 'Active on Heroku'})`, callback_data: `no_action` }]);
+    }
+    actionButtons.push([{ text: '🗑️ Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
+    actionButtons.push([{ text: '⬅️ Back to Backup List', callback_data: `back_to_bapp_list` }]);
+
+
+    await bot.editMessageText(detailMessage, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: {
+            inline_keyboard: actionButtons
+        }
+    });
+    return;
+  }
+// ... (rest of bot.js) ...
+
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
     const appName = payload;
