@@ -20,6 +20,7 @@ const path = require('path');
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
 const { init: servicesInit, ...dbServices } = require('./bot_services');
 const { init: faqInit, sendFaqPage } = require('./bot_faq');
+const { startWebServer } = require('./web_server');
 
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
