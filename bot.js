@@ -348,11 +348,13 @@ function buildKeyboard(isAdmin) {
       return [
           ['Deploy', 'Apps'],
           ['Generate Key', 'Get Session'],
-          ['Support', 'FAQ'] // Added FAQ button for admin too
+          ['Support', 'FAQ'], // Existing FAQ button
+          ['/stats', '/users', '/bapp'] // <-- ADD /bapp here
       ];
   }
   return baseMenu;
 }
+
 
 function chunkArray(arr, size) {
   const out = [];
