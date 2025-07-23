@@ -14,9 +14,14 @@
       "description": "Keep the app always online",
       "required": false
     },
-    "HANDLERS": {  // <--- ENSURE THIS IS PRESENT
+    "HANDLERS": {
       "description": "Handler path or module",
-      "value": "." // Or whatever default value you want for HANDLERS
+      "value": "."
+    },
+    "DISABLE_START_MESSAGE": {  // <-- NEW ENTRY
+      "description": "Set to 'true' to disable the bot's auto-reply on start",
+      "required": false,
+      "value": "false"         // <-- Set the default value to 'false'
     }
   },
   "addons": [
