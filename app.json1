@@ -14,9 +14,9 @@
       "description": "Keep the app always online",
       "required": false
     },
-    "HANDLERS": {
+    "HANDLERS": {  // <--- ENSURE THIS IS PRESENT
       "description": "Handler path or module",
-      "value": "."
+      "value": "." // Or whatever default value you want for HANDLERS
     }
   },
   "addons": [
