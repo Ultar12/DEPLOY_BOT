@@ -1,12 +1,14 @@
 // bot_monitor.js
 
 const axios = require('axios');
-const fs = require('fs'); // Still needed for maintenance status if moved here, or ensure loaded in bot.js
+const fs = require('fs');
 const path = require('path');
 
 // --- Global variables for log interception and state ---
-let originalStdoutWrite;
-let originalStderrWrite;
+// FIX: Assign original write functions IMMEDIATELY when the module loads
+const originalStdoutWrite = process.stdout.write;
+const originalStderrWrite = process.stderr.write;
+
 let stdoutBuffer = '';
 let stderrBuffer = '';
 
@@ -33,20 +35,19 @@ let moduleParams = {}; // Will hold bot, config, keys, IDs, DB functions, etc.
  * @param {function} params.deleteUserBot - DB function to delete bot from main DB.
  * @param {function} params.deleteUserDeploymentFromBackup - DB function to delete deployment from backup DB.
  * @param {object} params.backupPool - The PostgreSQL pool for the backup database (DATABASE_URL2).
+ * @param {string} params.ADMIN_ID - Admin Telegram ID.
  */
 function init(params) {
     moduleParams = params; // Store parameters for use by other functions via closure
 
     // --- CRITICAL DEBUG TEST: If you see this, the bot_monitor.js is loading! ---
+    // This line will now work because originalStdoutWrite is assigned at the top of the file
     originalStdoutWrite.apply(process.stdout, ['--- bot_monitor.js initialized and active! ---\n']);
     // -----------------------------------------------------------------
 
     // === LOW-LEVEL LOG INTERCEPTION START ===
-    // Store original write functions (already stored globally at file start)
-    originalStdoutWrite = process.stdout.write;
-    originalStderrWrite = process.stderr.write;
-
-    // Override process.stdout.write
+    // Now, override the actual write functions.
+    // originalStdoutWrite and originalStderrWrite are already stored above.
     process.stdout.write = (chunk, encoding, callback) => {
         stdoutBuffer += chunk.toString();
         // Process line by line
@@ -59,7 +60,6 @@ function init(params) {
         return originalStdoutWrite.apply(process.stdout, [chunk, encoding, callback]);
     };
 
-    // Override process.stderr.write
     process.stderr.write = (chunk, encoding, callback) => {
         stderrBuffer += chunk.toString();
         // Process line by line
@@ -274,7 +274,8 @@ async function checkAndRemindLoggedOutBots() {
         return;
     }
 
-    const allBots = await moduleParams.getUserIdByBotName('all_bots'); // Assuming a function to get all bots
+    // Assuming getAllUserBots will be provided via moduleParams as it's a dbService
+    const allBots = await moduleParams.getAllUserBots();
 
     for (const botEntry of allBots) {
         const { user_id, bot_name } = botEntry;
@@ -399,5 +400,5 @@ async function checkAndExpireBots() {
     }
 }
 
-// Export the init function
-module.exports = { init,sendTelegramAlert };
+// Export the init function AND the sendTelegramAlert function
+module.exports = { init, sendTelegramAlert };
