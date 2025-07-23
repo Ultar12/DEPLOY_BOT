@@ -3158,20 +3158,25 @@ ${configVarsDisplay}
       });
   }
 
+// ... (existing code within bot.on('callback_query', async q => { ... })) ...
+
   if (action === 'confirmdelete') {
       const appToDelete = payload;
       const originalAction = extra; // 'delete' or 'userdelete'
+      const messageId = q.message.message_id; // Get messageId from q.message
+
+      // Re-validate state for robustness, though not strictly required if other checks are fine
       const st = userStates[cid];
-      // Check if state is valid and appName matches
-      if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appToDelete) { // Check step and appName in state
-          await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appToDelete) {
+          // Send a new message as the original might be gone or context is lost
+          await bot.sendMessage(cid, "This deletion session has expired or is invalid. Please select an app again from 'My Bots' or 'Apps'.");
           delete userStates[cid]; // Clear invalid state
           return;
       }
-      const messageId = q.message.message_id;
+
 
       await bot.sendChatAction(cid, 'typing');
-      await bot.editMessageText(`Deleting "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+      await bot.editMessageText(`🗑️ Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -3181,31 +3186,48 @@ ${configVarsDisplay}
               await dbServices.deleteUserBot(ownerId, appToDelete); // Delete from main DB
               await dbServices.markDeploymentDeletedFromHeroku(ownerId, appToDelete); // NEW: Mark from backup DB as deleted
           }
-          await bot.editMessageText(`App "*${appToDelete}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+          await bot.editMessageText(`🗑️ App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
+
+          // --- CRITICAL FIX START: User deletion redirection ---
           if (originalAction === 'userdelete') {
-              const bots = await dbServices.getUserBots(cid); // Use dbServices
-              if (bots.length > 0) {
-                  const rows = chunkArray(bots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
-                  return bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
+              const remainingUserBots = await dbServices.getUserBots(cid); // Get only *this user's* bots
+              if (remainingUserBots.length > 0) {
+                  const rows = chunkArray(remainingUserBots, 3).map(r => r.map(n => ({ text: n, callback_data: `selectbot:${n}` })));
+                  // Edit the message to show remaining bots
+                  await bot.sendMessage(cid, 'Your remaining deployed bots:', { reply_markup: { inline_keyboard: rows } });
               } else {
-                  return bot.sendMessage(cid, "You no longer have any deployed bots.");
+                  await bot.sendMessage(cid, "You no longer have any deployed bots. Would you like to deploy your first bot or restore a backup?", {
+                      reply_markup: {
+                          inline_keyboard: [
+                              [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                              [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                          ]
+                      }
+                  });
               }
-          } else {
-            return dbServices.sendAppList(cid); // Use dbServices
+          } else { // Admin deletion ('delete' action)
+            // Admin still gets the full list (as per previous logic)
+            return dbServices.sendAppList(cid, messageId); // Edit original message, pass messageId
           }
+          // --- CRITICAL FIX END ---
+
       } catch (e) {
           if (e.response && e.response.status === 404) {
-              await dbServices.handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete'); // Use dbServices
+              // Handle 404 for deletion: app was likely already gone
+              await dbServices.handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, originalAction === 'userdelete');
               return;
           }
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`Failed to delete app: ${errorMsg}`, {
+          await bot.editMessageText(`Failed to delete app "*${escapeMarkdown(appToDelete)}*": ${escapeMarkdown(errorMsg)}`, { // EMOJI ADDED
               chat_id: cid,
               message_id: messageId,
+              parse_mode: 'Markdown',
               reply_markup: {
                   inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appToDelete}` }]]
               }
           });
+      } finally {
+          delete userStates[cid]; // Clear user state
       }
       return;
   }
