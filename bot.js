@@ -2897,65 +2897,19 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'setvar') {
-    const st = userStates[cid];
-    // Check if state is valid and appName matches
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
-        return;
-    }
-    const messageId = q.message.message_id;
-    const appName = payload;
-
-    await bot.sendChatAction(cid, 'typing');
-    await bot.editMessageText(`Fetching current variables for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
-
-    let configVars = {};
-    try {
-        const configRes = await axios.get(
-            `https://api.heroku.com/apps/${appName}/config-vars`,
-            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
-        );
-        configVars = configRes.data;
-    } catch (e) {
-        if (e.response && e.response.status === 404) {
-            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true); // Use dbServices
-            return;
-        }
-        const errorMsg = e.response?.data?.message || e.message;
-        return bot.editMessageText(`Error fetching config vars: ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            reply_markup: {
-                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-    }
-
-    const formatVarValue = (value) => {
-        if (typeof value === 'boolean') {
-            return value ? '`true`' : '`false`';
-        }
-        if (value === null || value === undefined || value === '') {
-            return '`Not Set`';
-        }
-        let escapedValue = escapeMarkdown(String(value));
-        if (escapedValue.length > 20) {
-            escapedValue = escapedValue.substring(0, 20) + '...';
-        }
-        return `\`${escapedValue}\``;
-    };
-
+    // ... (existing code to fetch configVars and formatVarValue) ...
     const sessionIDValue = configVars.SESSION_ID ? `\`${escapeMarkdown(String(configVars.SESSION_ID))}\`` : '`Not Set`';
-    // Get bot type from main DB for this app
     const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
 
+    const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW'; // <<< CHANGED
+    const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX'; // <<< CHANGED
+
     const varInfo = `*Current Config Variables for ${appName}:*\n` +
-                     `*Bot Type:* \`${botTypeForSetVar.toUpperCase()}\`\n` + // Display bot type
+                     `*Bot Type:* \`${botTypeForSetVar.toUpperCase()}\`\n` +
                      `\`SESSION_ID\`: ${sessionIDValue}\n` +
-                     `\`AUTO_STATUS_VIEW\`: ${formatVarValue(configVars.AUTO_STATUS_VIEW)}\n` +
+                     `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` + // <<< CHANGED
                      `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
-                     `\`PREFIX\`: ${formatVarValue(configVars.PREFIX)}\n` +
+                     `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` + // <<< CHANGED
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
                      `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n\n` +
                      `Select a variable to set:`;
@@ -2966,10 +2920,10 @@ bot.on('callback_query', async q => {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}:${botTypeForSetVar}` }], // Pass botType here
-          [{ text: 'AUTO_STATUS_VIEW', callback_data: `varselect:AUTO_STATUS_VIEW:${payload}` },
+          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}:${botTypeForSetVar}` }],
+          [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${payload}` }, // <<< CHANGED
            { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
-          [{ text: 'PREFIX', callback_data: `varselect:PREFIX:${payload}` },
+          [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${payload}` }, // <<< CHANGED
            { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
           [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }],
           [{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${payload}` }],
@@ -2977,7 +2931,8 @@ bot.on('callback_query', async q => {
         ]
       }
     });
-  }
+}
+
 
 if (action === 'varselect') {
   const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
