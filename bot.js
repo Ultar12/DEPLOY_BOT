@@ -971,6 +971,81 @@ bot.onText(/^\/users$/, async (msg) => {
     }
 });
 
+// NEW ADMIN COMMAND: /bapp (Backup Apps List)
+bot.onText(/^\/bapp$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    await dbServices.updateUserActivity(cid);
+
+    if (cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "You are not authorized to use this command.");
+    }
+
+    try {
+        const allBackupDeployments = await backupPool.query(`
+            SELECT user_id, app_name, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
+            FROM user_deployments ORDER BY deploy_date DESC;
+        `);
+
+        if (allBackupDeployments.rows.length === 0) {
+            return bot.sendMessage(cid, "No apps found in the backup database.");
+        }
+
+        let responseMessage = '💾 *All Backed-up Apps:*\n\n'; // EMOJI ADDED
+        const maxEntriesPerMessage = 5; // To prevent message size limits
+        let entryCount = 0;
+
+        for (const entry of allBackupDeployments.rows) {
+            const { user_id, app_name, bot_type, deploy_date, expiration_date, deleted_from_heroku_at } = entry;
+
+            // Fetch user's Telegram info for display
+            let userDisplay = `User ID: \`${escapeMarkdown(user_id)}\``;
+            try {
+                const targetChat = await bot.getChat(user_id);
+                const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : '';
+                const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : '';
+                const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
+                userDisplay = `User: ${firstName} ${lastName} (${username})`;
+            } catch (userError) {
+                // Ignore errors if user chat not found (e.g., bot blocked)
+                console.warn(`Could not fetch Telegram info for user ${user_id}: ${userError.message}`);
+            }
+
+            const deployDateDisplay = new Date(deploy_date).toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
+            const expirationInfo = formatExpirationInfo(deploy_date, expiration_date); // Use the new helper
+
+            let status = 'Active'; // Default assumption
+            if (deleted_from_heroku_at) {
+                status = `Deleted from Heroku on ${new Date(deleted_from_heroku_at).toLocaleDateString()}`;
+            }
+
+            responseMessage += `*App Name:* \`${escapeMarkdown(app_name)}\`\n`;
+            responseMessage += `*Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}\n`;
+            responseMessage += `*Deployed By:* ${userDisplay}\n`;
+            responseMessage += `*Deployed On:* ${deployDateDisplay}\n`;
+            responseMessage += `*Expiration:* ${expirationInfo}\n`;
+            responseMessage += `*Heroku Status:* ${status}\n\n`;
+
+            entryCount++;
+
+            // Send message in chunks
+            if (entryCount % maxEntriesPerMessage === 0 && entryCount < allBackupDeployments.rows.length) {
+                await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+                responseMessage = `💾 *All Backed-up Apps (continued):*\n\n`; // EMOJI ADDED
+                await new Promise(resolve => setTimeout(resolve, 500)); // Delay to prevent API limits
+            }
+            await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between entries
+        }
+
+        // Send any remaining entries
+        if (responseMessage.trim() !== '💾 *All Backed-up Apps (continued):*' && responseMessage.trim() !== '*All Backed-up Apps:*') {
+            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+        }
+
+    } catch (error) {
+        console.error(`Error fetching backup app list:`, error.message);
+        await bot.sendMessage(cid, `An error occurred while fetching backup app list: ${escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
+    }
+});
 
 // NEW ADMIN COMMAND: /send <user_id> <message>
 bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
