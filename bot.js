@@ -2268,7 +2268,7 @@ bot.on('callback_query', async q => {
         );
         selectedDeployment = result.rows[0];
     } catch (e) {
-        console.error(`❌ DB Error fetching backup deployment for ${appName} (${appUserId}):`, e.message); // EMOJI ADDED
+        console.error(`DB Error fetching backup deployment for ${appName} (${appUserId}):`, e.message); // EMOJI ADDED
         return bot.editMessageText(`An error occurred fetching details for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
             chat_id: cid,
             message_id: messageId,
@@ -2277,7 +2277,7 @@ bot.on('callback_query', async q => {
     }
 
     if (!selectedDeployment) {
-        console.warn(`⚠️ Backed-up app ${appName} for user ${appUserId} not found in DB during select_bapp. It might have been deleted.`); // EMOJI ADDED
+        console.warn(`⚠Backed-up app ${appName} for user ${appUserId} not found in DB during select_bapp. It might have been deleted.`); // EMOJI ADDED
         return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) not found in database. It might have been deleted.`, {
             chat_id: cid,
             message_id: messageId,
@@ -2326,7 +2326,7 @@ bot.on('callback_query', async q => {
         const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
         userDisplay = `${firstName} ${lastName} (${username})`;
     } catch (userError) {
-        console.warn(`⚠️ Could not fetch Telegram info for user ${user_id}: ${userError.message}`); // EMOJI ADDED
+        console.warn(`Could not fetch Telegram info for user ${user_id}: ${userError.message}`); // EMOJI ADDED
     }
 
     const deployDateDisplay = new Date(deploy_date).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -2375,13 +2375,13 @@ ${configVarsDisplay}
 
     const actionButtons = [];
     if (canRestore) {
-        actionButtons.push([{ text: '🚀 Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
+        actionButtons.push([{ text: 'Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
     } else {
         // Change text to be more informative if not restorable
-        actionButtons.push([{ text: `🚫 Cannot Restore (${isExpired ? 'Expired' : 'Active on Heroku'})`, callback_data: `no_action` }]);
+        actionButtons.push([{ text: `Cannot Restore (${isExpired ? 'Expired' : 'Active on Heroku'})`, callback_data: `no_action` }]);
     }
-    actionButtons.push([{ text: '🗑️ Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
-    actionButtons.push([{ text: '⬅️ Back to Backup List', callback_data: `back_to_bapp_list` }]);
+    actionButtons.push([{ text: 'Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
+    actionButtons.push([{ text: 'Back to Backup List', callback_data: `back_to_bapp_list` }]);
 
 
     await bot.editMessageText(detailMessage, {
@@ -2395,7 +2395,6 @@ ${configVarsDisplay}
     });
     return;
   }
-// ... (rest of bot.js) ...
 
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
