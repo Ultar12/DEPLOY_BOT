@@ -36,6 +36,8 @@ let moduleParams = {}; // Will hold bot, config, keys, IDs, DB functions, etc.
  * @param {function} params.deleteUserDeploymentFromBackup - DB function to delete deployment from backup DB.
  * @param {object} params.backupPool - The PostgreSQL pool for the backup database (DATABASE_URL2).
  * @param {string} params.ADMIN_ID - Admin Telegram ID.
+ * @param {function} params.escapeMarkdown - Utility function to escape markdown characters (from bot.js).
+ * @param {object} params.mainPool - The main PostgreSQL pool (added for getting bot_type in checkAndRemindLoggedOutBots).
  */
 function init(params) {
     moduleParams = params; // Store parameters for use by other functions via closure
@@ -194,10 +196,10 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
 
     let message =
         `🚨 Hey Ult-AR, ${greeting}!\n\n` +
-        `Bot "*${botNameForAlert || moduleParams.APP_NAME}*" has logged out.`; // Use the passed botNameForAlert or moduleParams.APP_NAME
+        `Bot "*${moduleParams.escapeMarkdown(botNameForAlert || moduleParams.APP_NAME)}*" has logged out.`; // Use the passed botNameForAlert or moduleParams.APP_NAME
 
     if (specificSessionId) {
-        message += `\n\`${specificSessionId}\` invalid`; // Formatted for Markdown code block
+        message += `\n\`${moduleParams.escapeMarkdown(specificSessionId)}\` invalid`; // Formatted for Markdown code block, escaped
     } else {
         message += `\n\`UNKNOWN_SESSION\` invalid`;
     }
@@ -240,7 +242,7 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         }
         const cfgUrl = `https://api.heroku.com/apps/${moduleParams.APP_NAME}/config-vars`;
         const headers = {
-            Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
             Accept: 'application/vnd.heroku+json; version=3',
             'Content-Type': 'application/json'
         };
@@ -254,11 +256,16 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
 // Function to handle bot connected messages (general alert, not for initial deployment success)
 async function sendBotConnectedAlert() {
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-    const message = `✅ Bot "*${moduleParams.APP_NAME}*" connected.\nTime: ${now}`; // Added Markdown, concise
-    await sendTelegramAlert(message, moduleParams.TELEGRAM_USER_ID);
+    // --- CRITICAL FIX START ---
+    // Make sure the message format matches what bot.js's channel_post handler expects
+    // e.g., "[APP_NAME] connected." or "[APP_NAME] connected.\nSession IDs: ..."
+    const messageContent = `✅ [${moduleParams.APP_NAME}] connected.\nTime: ${now}`;
+    // --- CRITICAL FIX END ---
+
+    await sendTelegramAlert(messageContent, moduleParams.TELEGRAM_USER_ID);
     // Also send to the channel if it's configured and different from admin user ID
     if (moduleParams.TELEGRAM_CHANNEL_ID && String(moduleParams.TELEGRAM_CHANNEL_ID) !== String(moduleParams.TELEGRAM_USER_ID)) {
-        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+        await sendTelegramAlert(messageContent, moduleParams.TELEGRAM_CHANNEL_ID);
         originalStdoutWrite.apply(process.stdout, [`Sent "connected" message to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
     } else if (moduleParams.TELEGRAM_CHANNEL_ID) {
         originalStdoutWrite.apply(process.stdout, [`Telegram channel ID is same as admin user ID, skipping redundant channel alert.\n`]);
@@ -274,7 +281,7 @@ async function loadLastLogoutAlertTime() {
     }
     const url = `https://api.heroku.com/apps/${moduleParams.APP_NAME}/config-vars`;
     const headers = {
-        Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
     };
 
@@ -331,11 +338,12 @@ async function checkAndRemindLoggedOutBots() {
 
                 if (timeSinceLogout > twentyFourHours) {
                     // Fetch bot type from DB for user notification
+                    // Ensure mainPool is passed to bot_monitor.init for this query
                     const dbEntry = await moduleParams.mainPool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
                     const detectedBotType = dbEntry.rows.length > 0 ? dbEntry.rows[0].bot_type : 'Unknown';
 
                     const reminderMessage =
-                        `📢 Reminder: Your *${detectedBotType.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` + // EMOJI ADDED
+                        `📢 Reminder: Your *${detectedBotType.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
                     await moduleParams.bot.sendMessage(user_id, reminderMessage, {
