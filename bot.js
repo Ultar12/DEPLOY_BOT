@@ -3293,4 +3293,57 @@ bot.on('channel_post', async msg => {
     }
 
     if (!botName) {
-        console.log(`[Channel Post] Could not determine bot
+        console.log(`[Channel Post] Could not determine bot name or no relevant status detected.`);
+        return; // No relevant bot name or status to process further
+    }
+
+    if (isLogout) {
+        console.log(`[Channel Post] Processing LOGOUT for bot: ${botName}`);
+
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId);
+            pendingPromise.reject(new Error('Bot session became invalid.'));
+            appDeploymentPromises.delete(botName);
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, potentially a general logout.`);
+        }
+
+        const userId = await dbServices.getUserIdByBotName(botName); // Use dbServices
+        if (userId) {
+            const warningMessage =
+                `Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
+                `Please update your session ID to get it back online.`;
+
+            await bot.sendMessage(userId, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
+                    ]
+                }
+            });
+            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
+            bot.sendMessage(ADMIN_ID, `Untracked bot "${botName}" logged out. User ID not found in DB.`);
+        }
+        return;
+    }
+
+    if (isConnected) {
+        console.log(`[Channel Post] Processing CONNECTED status for bot: ${botName}`);
+
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId);
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(botName);
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName} on channel post.`);
+        }
+        return;
+    }
+});
