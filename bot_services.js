@@ -19,7 +19,8 @@ let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
 let animateMessage;
-let monitorSendTelegramAlert; // Corrected: Renamed from sendTelegramAlert to avoid conflict
+let sendAnimatedMessage; // <<< NEW: Declare sendAnimatedMessage here
+let monitorSendTelegramAlert;
 
 /**
  * Initializes database and API helper functions.
@@ -36,6 +37,7 @@ let monitorSendTelegramAlert; // Corrected: Renamed from sendTelegramAlert to av
  * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
  * @param {function} params.getAnimatedEmoji - Function to get animated emoji/text.
  * @param {function} params.animateMessage - Function to animate message.
+ * @param {function} params.sendAnimatedMessage - Function to send an animated message. <<< NEW: Add to JSDoc
  * @param {function} params.monitorSendTelegramAlert - Function to send Telegram alerts (from bot_monitor).
  */
 function init(params) {
@@ -52,7 +54,8 @@ function init(params) {
     RESTART_DELAY_MINUTES = params.RESTART_DELAY_MINUTES;
     getAnimatedEmoji = params.getAnimatedEmoji;
     animateMessage = params.animateMessage;
-    monitorSendTelegramAlert = params.monitorSendTelegramAlert; // Corrected assignment
+    sendAnimatedMessage = params.sendAnimatedMessage; // <<< NEW: Assign sendAnimatedMessage
+    monitorSendTelegramAlert = params.monitorSendTelegramAlert;
 
     console.log('--- bot_services.js initialized! ---');
 }
@@ -466,7 +469,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
   try {
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id }); // 'bot' and 'getAnimatedEmoji' are now globally accessible
-    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application'); // 'animateMessage' is now globally accessible
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources'); // 'animateMessage' is now globally accessible
 
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
