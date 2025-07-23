@@ -2135,6 +2135,10 @@ bot.on('callback_query', async q => {
     return;
   }
 
+  // bot.js
+
+// ... (existing code) ...
+
   if (action === 'select_restore_app') { // Handle selection of app to restore
     const appName = payload;
     const deployments = await dbServices.getUserDeploymentsForRestore(cid); // Use dbServices
@@ -2153,29 +2157,45 @@ bot.on('callback_query', async q => {
     if (originalExpirationDate <= now) { // Compare against current time
         // If expired, delete it from the backup table and tell user
         await dbServices.deleteUserDeploymentFromBackup(cid, appName); // This is a permanent delete
-        return bot.editMessageText(`Cannot restore "${appName}". Its original 45-day deployment period has expired.`, {
+        return bot.editMessageText(`Cannot restore "*${escapeMarkdown(appName)}*". Its original 45-day deployment period has expired.`, {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
         });
     }
 
-    // Prepare variables for deployment
-    const varsToDeploy = {
-        APP_NAME: selectedDeployment.app_name,
-        SESSION_ID: selectedDeployment.session_id,
-        ...selectedDeployment.config_vars // Include all saved config vars
+    // Determine the default env vars for the bot type being restored
+    const botTypeToRestore = selectedDeployment.bot_type || 'levanter';
+    // Access the correct defaultEnvVars object from the one passed to servicesInit
+    // This assumes defaultEnvVars (levanter/raganork) are globally accessible here,
+    // which they should be because they're declared at the top of bot.js.
+    const defaultVarsForRestore = (botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : levanterDefaultEnvVars) || {};
+
+    // Prepare variables for deployment:
+    // 1. Start with the appropriate default vars (e.g., HANDLERS for Raganork from app.json1)
+    // 2. Overlay with saved config_vars (e.g., specific SESSION_ID)
+    // 3. User-provided SESSION_ID for new deployments will override if needed, but not for restore.
+    const combinedVarsForRestore = {
+        ...defaultVarsForRestore,    // Apply type-specific defaults first
+        ...selectedDeployment.config_vars, // Overlay with the saved config vars (these take precedence)
+        APP_NAME: selectedDeployment.app_name, // Ensure APP_NAME is always correct
+        SESSION_ID: selectedDeployment.session_id // Explicitly ensure saved SESSION_ID is used
     };
 
-    await bot.editMessageText(`Attempting to restore and deploy "${appName}"...`, {
+    await bot.editMessageText(`Attempting to restore and deploy "*${escapeMarkdown(appName)}*"...`, {
         chat_id: cid,
-        message_id: q.message.message_id
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
     });
-    // Call buildWithProgress with isRestore flag and the original botType
-    await dbServices.buildWithProgress(cid, varsToDeploy, false, true, selectedDeployment.bot_type || 'levanter'); // Use dbServices
 
-    // After successful build, update deleted_from_heroku_at to NULL (handled by saveUserDeployment on conflict)
+    // Call buildWithProgress with isRestore flag, the combined variables, and the original botType
+    await dbServices.buildWithProgress(cid, combinedVarsForRestore, false, true, botTypeToRestore);
+
+    // After successful build, save it to backup DB to clear 'deleted_from_heroku_at' flag (handled by saveUserDeployment on conflict)
+    // dbServices.saveUserDeployment handles setting deleted_from_heroku_at to NULL on update.
     return;
   }
+
 
   if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
     const botType = payload; // 'levanter' or 'raganork'
