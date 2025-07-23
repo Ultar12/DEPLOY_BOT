@@ -990,7 +990,7 @@ bot.onText(/^\/users$/, async (msg) => {
     }
 });
 
-// NEW ADMIN COMMAND: /bapp (Backup Apps List)
+// NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
 bot.onText(/^\/bapp$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
@@ -1000,71 +1000,62 @@ bot.onText(/^\/bapp$/, async (msg) => {
     }
 
     try {
-        const allBackupDeployments = await backupPool.query(`
+        const allBackupDeploymentsResult = await backupPool.query(`
             SELECT user_id, app_name, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
             FROM user_deployments ORDER BY deploy_date DESC;
         `);
+        const allBackupDeployments = allBackupDeploymentsResult.rows;
 
-        if (allBackupDeployments.rows.length === 0) {
+        if (allBackupDeployments.length === 0) {
             return bot.sendMessage(cid, "No apps found in the backup database.");
         }
 
-        let responseMessage = '💾 *All Backed-up Apps:*\n\n'; // EMOJI ADDED
-        const maxEntriesPerMessage = 5; // To prevent message size limits
-        let entryCount = 0;
-
-        for (const entry of allBackupDeployments.rows) {
-            const { user_id, app_name, bot_type, deploy_date, expiration_date, deleted_from_heroku_at } = entry;
-
-            // Fetch user's Telegram info for display
-            let userDisplay = `User ID: \`${escapeMarkdown(user_id)}\``;
-            try {
-                const targetChat = await bot.getChat(user_id);
-                const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : '';
-                const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : '';
-                const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
-                userDisplay = `User: ${firstName} ${lastName} (${username})`;
-            } catch (userError) {
-                // Ignore errors if user chat not found (e.g., bot blocked)
-                console.warn(`Could not fetch Telegram info for user ${user_id}: ${userError.message}`);
+        const appButtons = [];
+        for (const entry of allBackupDeployments) {
+            const { app_name, user_id, bot_type, deleted_from_heroku_at } = entry;
+            let statusIndicator = '';
+            if (deleted_from_heroku_at === null) {
+                statusIndicator = '🟢'; // Active on Heroku
+            } else {
+                statusIndicator = '🔴'; // Deleted from Heroku (only in backup)
             }
-
-            const deployDateDisplay = new Date(deploy_date).toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
-            const expirationInfo = formatExpirationInfo(deploy_date, expiration_date); // Use the new helper
-
-            let status = 'Active'; // Default assumption
-            if (deleted_from_heroku_at) {
-                status = `Deleted from Heroku on ${new Date(deleted_from_heroku_at).toLocaleDateString()}`;
-            }
-
-            responseMessage += `*App Name:* \`${escapeMarkdown(app_name)}\`\n`;
-            responseMessage += `*Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}\n`;
-            responseMessage += `*Deployed By:* ${userDisplay}\n`;
-            responseMessage += `*Deployed On:* ${deployDateDisplay}\n`;
-            responseMessage += `*Expiration:* ${expirationInfo}\n`;
-            responseMessage += `*Heroku Status:* ${status}\n\n`;
-
-            entryCount++;
-
-            // Send message in chunks
-            if (entryCount % maxEntriesPerMessage === 0 && entryCount < allBackupDeployments.rows.length) {
-                await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
-                responseMessage = `💾 *All Backed-up Apps (continued):*\n\n`; // EMOJI ADDED
-                await new Promise(resolve => setTimeout(resolve, 500)); // Delay to prevent API limits
-            }
-            await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between entries
+            appButtons.push([{
+                text: `${statusIndicator} ${app_name} (${bot_type ? bot_type.toUpperCase() : 'Unknown'}) - User ID: ${user_id}`,
+                callback_data: `select_bapp:${app_name}:${user_id}` // Pass both app_name and user_id
+            }]);
         }
 
-        // Send any remaining entries
-        if (responseMessage.trim() !== '💾 *All Backed-up Apps (continued):*' && responseMessage.trim() !== '*All Backed-up Apps:*') {
-            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
+        // Chunk buttons if there are too many (optional, but good for very long lists)
+        const chunkedButtons = [];
+        const chunkSize = 10; // Number of apps per message/chunk
+        for (let i = 0; i < appButtons.length; i += chunkSize) {
+            chunkedButtons.push(appButtons.slice(i, i + chunkSize));
         }
+
+        let firstMessageId = null;
+        for (const chunk of chunkedButtons) {
+            const msgText = `💾 Select a backed-up app to view details:`;
+            const sentMsg = await bot.sendMessage(cid, msgText, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: chunk
+                }
+            });
+            if (!firstMessageId) {
+                firstMessageId = sentMsg.message_id; // Keep track of the first message to potentially edit later
+            }
+            await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between messages
+        }
+        // If there's only one chunk, the firstMessageId is already set.
+        // We could potentially edit the first message or keep them as separate messages.
+        // For now, it sends multiple messages if the list is long.
 
     } catch (error) {
-        console.error(`Error fetching backup app list:`, error.message);
+        console.error(`Error fetching backup app list for /bapp:`, error.message);
         await bot.sendMessage(cid, `An error occurred while fetching backup app list: ${escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
     }
 });
+
 
 // NEW ADMIN COMMAND: /send <user_id> <message>
 bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
