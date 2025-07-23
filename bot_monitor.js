@@ -24,13 +24,13 @@ let moduleParams = {}; // Will hold bot, config, keys, IDs, DB functions, etc.
  * @param {object} params - An object containing all necessary dependencies.
  * @param {object} params.bot - The TelegramBot instance.
  * @param {object} params.config - The config object from bot.js (e.g., { SESSION, logger }).
- * @param {string} params.APP_NAME - The Heroku app name.
+ * @param {string} params.APP_NAME - The Heroku app name of THIS running instance (the monitoring bot or a deployed user bot).
  * @param {string} params.HEROKU_API_KEY - The Heroku API key.
  * @param {string} params.TELEGRAM_BOT_TOKEN - The Telegram bot token.
  * @param {string} params.TELEGRAM_USER_ID - The Telegram user ID for admin alerts.
  * @param {string} params.TELEGRAM_CHANNEL_ID - The Telegram channel ID for broadcast alerts.
  * @param {number} params.RESTART_DELAY_MINUTES - Delay before restarting after logout.
- * @param {Map} params.appDeploymentPromises - Map to resolve/reject build promises.
+ * @param {Map} params.appDeploymentPromises - Map to resolve/reject build promises (from bot.js).
  * @param {function} params.getUserIdByBotName - DB function to get user ID by bot name.
  * @param {function} params.deleteUserBot - DB function to delete bot from main DB.
  * @param {function} params.deleteUserDeploymentFromBackup - DB function to delete deployment from backup DB.
@@ -92,7 +92,19 @@ function handleLogLine(line, streamType) {
     // Check for 'Bot started' message
     if (line.includes('Bot initialization complete') || line.includes('Bot started')) {
         originalStdoutWrite.apply(process.stdout, ['[DEBUG] "Bot started" or "initialization complete" message detected!\n']);
-        sendBotConnectedAlert().catch(err => originalStderrWrite.apply(process.stderr, [`Error sending connected alert: ${err.message}\n`]));
+        // 🚀 NEW LOGIC HERE: Resolve the deployment promise directly if active
+        const appName = moduleParams.APP_NAME; // Get the current app name (this is the app that's logging)
+        const appPromiseData = moduleParams.appDeploymentPromises.get(appName);
+        if (appPromiseData && appPromiseData.resolve) {
+            originalStdoutWrite.apply(process.stdout, [`[DEBUG] Resolving deployment promise for app: ${appName} from bot_monitor's log detection.\n`]);
+            clearTimeout(appPromiseData.timeoutId); // Clear any pending timeout for this promise
+            clearInterval(appPromiseData.animateIntervalId); // Stop the animation
+            appPromiseData.resolve(); // Resolve the promise held by bot_services.js
+            moduleParams.appDeploymentPromises.delete(appName); // Clean up the map
+        } else {
+            originalStdoutWrite.apply(process.stdout, [`[DEBUG] No active deployment promise found for app: ${appName}. Sending general connected alert.\n`]);
+            sendBotConnectedAlert().catch(err => originalStderrWrite.apply(process.stderr, [`Error sending general connected alert from bot_monitor: ${err.message}\n`]));
+        }
     }
 
     // Check for logout patterns
@@ -118,7 +130,8 @@ function handleLogLine(line, streamType) {
             if (raganorkLogoutMatch) specificSessionId = raganorkLogoutMatch[1];
         }
 
-        sendInvalidSessionAlert(specificSessionId).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert: ${err.message}\n`]));
+        // Send alert for THIS app_name (which is the one logging out)
+        sendInvalidSessionAlert(specificSessionId, moduleParams.APP_NAME).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
         // Trigger restart, but only if HEROKU_API_KEY is set for production
         if (moduleParams.HEROKU_API_KEY) {
@@ -143,7 +156,7 @@ async function sendTelegramAlert(text, chatId) { // chatId is now required
     }
 
     const url = `https://api.telegram.org/bot${moduleParams.TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const payload = { chat_id: chatId, text };
+    const payload = { chat_id: chatId, text, parse_mode: 'Markdown' }; // Ensure Markdown is default for alerts
 
     try {
         const res = await axios.post(url, payload);
@@ -159,14 +172,17 @@ async function sendTelegramAlert(text, chatId) { // chatId is now required
 }
 
 // === "Logged out" alert with 24-hr cooldown & auto-delete ===
-async function sendInvalidSessionAlert(specificSessionId = null) {
+async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert = null) { // NEW PARAMETER: botNameForAlert
     const now = new Date();
+    // Use Onitsha, Anambra, Nigeria timezone for alerts
+    const timeZone = 'Africa/Lagos';
+    const nowStr = now.toLocaleString('en-GB', { timeZone: timeZone });
+
     if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < 24 * 3600e3) {
         originalStdoutWrite.apply(process.stdout, ['Skipping logout alert -- cooldown not expired.\n']);
         return;
     }
 
-    const nowStr = now.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
     const hour = now.getHours();
     const greeting = hour < 12 ? 'good morning'
         : hour < 17 ? 'good afternoon'
@@ -177,13 +193,13 @@ async function sendInvalidSessionAlert(specificSessionId = null) {
         : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
 
     let message =
-        `Hey Ult-AR, ${greeting}!\n\n` +
-        `User [${moduleParams.APP_NAME}] has logged out.`;
+        `🚨 Hey Ult-AR, ${greeting}!\n\n` +
+        `Bot "*${botNameForAlert || moduleParams.APP_NAME}*" has logged out.`; // Use the passed botNameForAlert or moduleParams.APP_NAME
 
     if (specificSessionId) {
-        message += `\n[${specificSessionId}] invalid`;
+        message += `\n\`${specificSessionId}\` invalid`; // Formatted for Markdown code block
     } else {
-        message += `\n[UNKNOWN_SESSION] invalid`; // Fallback if no specific ID or APP_NAME.
+        message += `\n\`UNKNOWN_SESSION\` invalid`;
     }
 
     message += `\nTime: ${nowStr}\n` +
@@ -209,8 +225,14 @@ async function sendInvalidSessionAlert(specificSessionId = null) {
         lastLogoutMessageId = msgId;
         lastLogoutAlertTime = now;
 
-        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-        originalStdoutWrite.apply(process.stdout, [`Sent new logout alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
+        // Also send to the channel if it's configured and different from admin user ID
+        if (moduleParams.TELEGRAM_CHANNEL_ID && String(moduleParams.TELEGRAM_CHANNEL_ID) !== String(moduleParams.TELEGRAM_USER_ID)) {
+          await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+          originalStdoutWrite.apply(process.stdout, [`Sent new logout alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
+        } else if (moduleParams.TELEGRAM_CHANNEL_ID) {
+           originalStdoutWrite.apply(process.stdout, [`Telegram channel ID is same as admin user ID, skipping redundant channel alert.\n`]);
+        }
+
 
         if (!moduleParams.HEROKU_API_KEY || !moduleParams.APP_NAME) {
             originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY or APP_NAME is not set. Cannot persist LAST_LOGOUT_ALERT timestamp.\n']);
@@ -229,13 +251,19 @@ async function sendInvalidSessionAlert(specificSessionId = null) {
     }
 }
 
-// Function to handle bot connected messages
+// Function to handle bot connected messages (general alert, not for initial deployment success)
 async function sendBotConnectedAlert() {
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-    const message = `[${moduleParams.APP_NAME}] connected.\nSession IDs: ${moduleParams.config.SESSION.join(', ')}\nTime: ${now}`;
+    const message = `✅ Bot "*${moduleParams.APP_NAME}*" connected.\nTime: ${now}`; // Added Markdown, concise
     await sendTelegramAlert(message, moduleParams.TELEGRAM_USER_ID);
-    await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-    originalStdoutWrite.apply(process.stdout, [`Sent "connected" message to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
+    // Also send to the channel if it's configured and different from admin user ID
+    if (moduleParams.TELEGRAM_CHANNEL_ID && String(moduleParams.TELEGRAM_CHANNEL_ID) !== String(moduleParams.TELEGRAM_USER_ID)) {
+        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+        originalStdoutWrite.apply(process.stdout, [`Sent "connected" message to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
+    } else if (moduleParams.TELEGRAM_CHANNEL_ID) {
+        originalStdoutWrite.apply(process.stdout, [`Telegram channel ID is same as admin user ID, skipping redundant channel alert.\n`]);
+    }
+    originalStdoutWrite.apply(process.stdout, [`Sent general "connected" message for ${moduleParams.APP_NAME}\n`]);
 }
 
 // === Load LAST_LOGOUT_ALERT from Heroku config vars ===
@@ -302,8 +330,12 @@ async function checkAndRemindLoggedOutBots() {
                 const twentyFourHours = 24 * 60 * 60 * 1000;
 
                 if (timeSinceLogout > twentyFourHours) {
+                    // Fetch bot type from DB for user notification
+                    const dbEntry = await moduleParams.mainPool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
+                    const detectedBotType = dbEntry.rows.length > 0 ? dbEntry.rows[0].bot_type : 'Unknown';
+
                     const reminderMessage =
-                        `Reminder: Your bot "${bot_name}" has been logged out for more than 24 hours!\n` +
+                        `📢 Reminder: Your *${detectedBotType.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` + // EMOJI ADDED
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
                     await moduleParams.bot.sendMessage(user_id, reminderMessage, {
@@ -379,16 +411,16 @@ async function checkAndExpireBots() {
                 originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Successfully deleted from user_deployments: ${app_name} (expired)\n`]);
 
                 // 4. Notify user
-                await moduleParams.bot.sendMessage(user_id, `Your bot "${app_name}" has reached its 45-day expiration and has been automatically deleted. To deploy a new bot, use the 'Deploy' or 'Restore From Backup' options.`, { parse_mode: 'Markdown' });
+                await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(app_name)}*" has reached its 45-day expiration and has been automatically deleted. To deploy a new bot, use the 'Deploy' or 'Restore From Backup' options.`, { parse_mode: 'Markdown' });
             } catch (error) {
                 if (error.response && error.response.status === 404) {
                     originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] App ${app_name} not found on Heroku, but was in DB (likely already deleted). Cleaning up DBs.\n`]);
                     await moduleParams.deleteUserBot(user_id, app_name);
                     await moduleParams.deleteUserDeploymentFromBackup(user_id, app_name);
-                    await moduleParams.bot.sendMessage(user_id, `Your bot "${app_name}" was not found on Heroku and has been automatically removed from your lists (likely already expired/deleted).`, { parse_mode: 'Markdown' });
+                    await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(app_name)}*" was not found on Heroku and has been automatically removed from your lists (likely already expired/deleted).`, { parse_mode: 'Markdown' });
                 } else {
                     originalStderrWrite.apply(process.stderr, [`[Scheduled Expiration] Error expiring bot ${app_name} for user ${user_id}: ${error.message}\n${error.stack}\n`]);
-                    moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL ERROR during scheduled bot expiration of "${app_name}" for user ${user_id}: ${error.message}`);
+                    moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL ERROR during scheduled bot expiration of "*${moduleParams.escapeMarkdown(app_name)}*" for user ${moduleParams.escapeMarkdown(user_id)}: ${moduleParams.escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
                 }
             }
         }
@@ -396,7 +428,7 @@ async function checkAndExpireBots() {
 
     } catch (dbError) {
         originalStderrWrite.apply(process.stderr, [`[Scheduled Expiration] DB Error fetching expired bots: ${dbError.message}\n${dbError.stack}\n`]);
-        moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL DB ERROR during scheduled bot expiration check: ${dbError.message}`);
+        moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL DB ERROR during scheduled bot expiration check: ${moduleParams.escapeMarkdown(dbError.message)}`, { parse_mode: 'Markdown' });
     }
 }
 
