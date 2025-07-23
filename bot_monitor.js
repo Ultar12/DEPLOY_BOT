@@ -400,4 +400,4 @@ async function checkAndExpireBots() {
 }
 
 // Export the init function
-module.exports = { init };
+module.exports = { init,sendTelegramAlert };
