@@ -8,10 +8,6 @@ console.log('--- SCRIPT STARTING: Verifying code execution (This should be the v
 process.on('unhandledRejection', err => console.error('Unhandled Rejection:', err));
 process.on('uncaughtException', err => console.error('Uncaught Exception:', err));
 
-// bot.js
-
-// ... (existing global error handlers, require statements) ...
-
 require('dotenv').config();
 const fs = require('fs');
 const axios = require('axios');
