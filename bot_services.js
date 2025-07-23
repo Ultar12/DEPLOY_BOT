@@ -228,7 +228,8 @@ async function getUserLastSeen(userId) {
       return result.rows[0].last_seen;
     }
     return null;
-  } catch (error) {
+  }
+  catch (error) {
     console.error(`[DB] Failed to get user last seen for ${userId}:`, error.message);
     return null;
   }
