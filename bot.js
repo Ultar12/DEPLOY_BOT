@@ -3113,103 +3113,111 @@ bot.on('callback_query', async q => {
       }
   }
 
-  if (action === 'setvarbool') {
-    const [varKey, appName, valStr] = [payload, extra, flag];
-    const flagVal = valStr === 'true';
-    let newVal;
-    if (varKey === 'AUTO_STATUS_VIEW') newVal = flagVal ? 'no-dl' : 'false';
-    else if (varKey === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
-    else newVal = flagVal ? 'true' : 'false';
+if (action === 'setvarbool') {
+  const [varKeyFromCallback, appName, valStr] = [payload, extra, flag]; // <<< CHANGED: Renamed varKey to varKeyFromCallback
+  const flagVal = valStr === 'true';
+  let newVal;
+
+  // Get the actual bot type to determine the var name for Heroku/DB
+  const currentBotType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter'; // <<< ADDED
+
+  // Determine the actual variable name used on Heroku
+  const actualVarNameForHeroku = (currentBotType === 'raganork' && varKeyFromCallback === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' : // <<< CHANGED
+                                 (currentBotType === 'raganork' && varKeyFromCallback === 'PREFIX') ? 'HANDLERS' : varKeyFromCallback; // <<< CHANGED
+
+  if (actualVarNameForHeroku === 'AUTO_STATUS_VIEW' || actualVarNameForHeroku === 'AUTO_READ_STATUS') newVal = flagVal ? 'true' : 'false'; // <<< CHANGED: Set to true/false
+  else if (actualVarNameForHeroku === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
+  else newVal = flagVal ? 'true' : 'false';
+
+  try {
+    await bot.sendChatAction(cid, 'typing');
+    const updateMsg = await bot.sendMessage(cid, `Updating *${actualVarNameForHeroku}* for "*${appName}*"...`, { parse_mode: 'Markdown' }); // <<< CHANGED
+
+    console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${actualVarNameForHeroku}: '${newVal}' }`); // <<< CHANGED
+    const patchResponse = await axios.patch(
+      `https://api.heroku.com/apps/${appName}/config-vars`,
+      { [actualVarNameForHeroku]: newVal }, // <<< CHANGED: Use actualVarNameForHeroku
+      { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+    );
+    console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
+
+
+    console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
+    const herokuConfigVars = (await axios.get(
+        `https://api.heroku.com/apps/${appName}/config-vars`,
+        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+    )).data;
+    // Pass currentBotType, fetched directly, not from pool query here
+    await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, currentBotType); // Use dbServices, pass currentBotType
+
+
+    const baseWaitingText = `Updated *${actualVarNameForHeroku}* for "*${appName}*". Waiting for bot status confirmation...`; // <<< CHANGED
+    await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
+        chat_id: cid,
+        message_id: updateMsg.message_id,
+        parse_mode: 'Markdown'
+    });
+    const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
+
+    const appStatusPromise = new Promise((resolve, reject) => {
+        appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId });
+    });
+
+    const STATUS_CHECK_TIMEOUT = 180 * 1000;
+    let timeoutId;
 
     try {
-      await bot.sendChatAction(cid, 'typing');
-      const updateMsg = await bot.sendMessage(cid, `Updating *${varKey}* for "*${appName}*"...`, { parse_mode: 'Markdown' });
-      console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${varKey}: '${newVal}' }`);
-      const patchResponse = await axios.patch(
-        `https://api.heroku.com/apps/${appName}/config-vars`,
-        { [varKey]: newVal },
-        { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-      );
-      console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
+        timeoutId = setTimeout(() => {
+            const appPromise = appDeploymentPromises.get(appName);
+            if (appPromise) {
+                appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
+                appDeploymentPromises.delete(appName);
+            }
+        }, STATUS_CHECK_TIMEOUT);
 
+        await appStatusPromise;
+        clearTimeout(timeoutId);
+        clearInterval(animateIntervalId);
 
-      console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
-      // NEW: Update config_vars in user_deployments backup
-      const herokuConfigVars = (await axios.get( // Fetch latest config vars
-          `https://api.heroku.com/apps/${appName}/config-vars`,
-          { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
-      )).data;
-      const currentBotType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
-      await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, currentBotType); // Use dbServices, pass botType
+        await bot.editMessageText(`Variable "*${actualVarNameForHeroku}*" for "*${appName}*" updated successfully and bot is back online!`, { // <<< CHANGED
+            chat_id: cid,
+            message_id: updateMsg.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
+            }
+        });
+        console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
 
-
-      const baseWaitingText = `Updated *${varKey}* for "*${appName}*". Waiting for bot status confirmation...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
-          chat_id: cid,
-          message_id: updateMsg.message_id,
-          parse_mode: 'Markdown'
-      });
-      const animateIntervalId = await animateMessage(cid, updateMsg.message_id, baseWaitingText);
-
-      const appStatusPromise = new Promise((resolve, reject) => {
-          appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId });
-      });
-
-      const STATUS_CHECK_TIMEOUT = 180 * 1000;
-      let timeoutId;
-
-      try {
-          timeoutId = setTimeout(() => {
-              const appPromise = appDeploymentPromises.get(appName);
-              if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after variable update.`));
-                  appDeploymentPromises.delete(appName);
-              }
-          }, STATUS_CHECK_TIMEOUT);
-
-          await appStatusPromise;
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId);
-
-          await bot.editMessageText(`Variable "*${varKey}*" for "*${appName}*" updated successfully and bot is back online!`, {
-              chat_id: cid,
-              message_id: updateMsg.message_id,
-              parse_mode: 'Markdown',
-              reply_markup: {
-                  inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
-              }
-          });
-          console.log(`Sent "variable updated and online" notification to user ${cid} for bot ${appName}`);
-
-      } catch (err) {
-          clearTimeout(timeoutId);
-          clearInterval(animateIntervalId);
-          console.error(`App status check failed for ${appName} after variable update:`, err.message);
-          await bot.editMessageText(
-              `Bot "${appName}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
-              `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
-              {
-                  chat_id: cid,
-                  message_id: updateMsg.message_id,
-                  parse_mode: 'Markdown',
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
-                          [{ text: 'Back', callback_data: `selectapp:${appName}` }]
-                      ]
-                  }
-              }
-          );
-      } finally {
-          appDeploymentPromises.delete(appName);
-      }
-      delete userStates[cid]; // Clear user state
-    } catch (e) {
-      const errorMsg = e.response?.data?.message || e.message;
-      console.error(`[API_CALL_ERROR] Error updating boolean variable ${varKey} for ${appName}:`, errorMsg, e.response?.data);
-      return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
+    } catch (err) {
+        clearTimeout(timeoutId);
+        clearInterval(animateIntervalId);
+        console.error(`App status check failed for ${appName} after variable update:`, err.message);
+        await bot.editMessageText(
+            `Bot "${appName}" failed to come online after variable "*${actualVarNameForHeroku}*" update: ${err.message}\n\n` + // <<< CHANGED
+            `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
+            {
+                chat_id: cid,
+                message_id: updateMsg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${appName}:${cid}` }],
+                        [{ text: 'Back', callback_data: `selectapp:${appName}` }]
+                    ]
+                }
+            }
+        );
+    } finally {
+        appDeploymentPromises.delete(appName);
     }
+    delete userStates[cid];
+  } catch (e) {
+    const errorMsg = e.response?.data?.message || e.message;
+    console.error(`[API_CALL_ERROR] Error updating boolean variable ${actualVarNameForHeroku} for ${appName}:`, errorMsg, e.response?.data); // <<< CHANGED
+    return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
   }
+}
 
   if (action === 'change_session') {
       const appName = payload;
