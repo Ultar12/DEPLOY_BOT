@@ -538,7 +538,6 @@ async function notifyAdminUserOnline(msg) {
     monitorSendTelegramAlert: monitorSendTelegramAlert,
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
-  
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
@@ -549,7 +548,7 @@ async function notifyAdminUserOnline(msg) {
     await loadMaintenanceStatus(); // Load initial maintenance status
 
     console.log('Bot is running...');
-
+   startWebServer();
     // <<< IMPORTANT: Start polling ONLY AFTER all services are initialized >>>
     bot.startPolling();
 
