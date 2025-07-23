@@ -13,10 +13,11 @@
     "@google/generative-ai": "^0.14.1",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
+    "express": "^4.19.2",  // <--- ADDED EXPRESS HERE
     "node-telegram-bot-api": "^0.61.0",
     "pg": "^8.11.1",
-    "youtube-dl-exec": "^3.0.22",  
-    "uuid": "^10.0.0",            
-    "rimraf": "^6.0.0"             
+    "youtube-dl-exec": "^3.0.22",
+    "uuid": "^10.0.0",
+    "rimraf": "^6.0.0"
   }
 }
