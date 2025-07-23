@@ -466,23 +466,24 @@ async function notifyAdminUserOnline(msg) {
         ADMIN_ID: ADMIN_ID, // Pass ADMIN_ID for critical errors
     });
 
-    // Initialize bot_services.js
-    servicesInit({
-        mainPool: pool,
-        backupPool: backupPool,
-        bot: bot,
-        HEROKU_API_KEY: HEROKU_API_KEY,
-        GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL, // New
-        GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL, // New
-        ADMIN_ID: ADMIN_ID,
-        defaultEnvVars: defaultEnvVars,
-        appDeploymentPromises: appDeploymentPromises,
-        RESTART_DELAY_MINUTES: parseInt(process.env.RESTART_DELAY_MINUTES || '1', 10),
-        getAnimatedEmoji: getAnimatedEmoji,
-        animateMessage: animateMessage,
-        sendTelegramAlert: monitorSendTelegramAlert, // CORRECTED: Pass the sendTelegramAlert from bot_monitor
-    });
-
+    //// Initialize bot_services.js
+   servicesInit({
+   mainPool: pool,
+    backupPool: backupPool,
+    bot: bot,
+    HEROKU_API_KEY: HEROKU_API_KEY,
+    GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
+    GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
+    ADMIN_ID: ADMIN_ID,
+    defaultEnvVars: defaultEnvVars,
+    appDeploymentPromises: appDeploymentPromises,
+    RESTART_DELAY_MINUTES: parseInt(process.env.RESTART_DELAY_MINUTES || '1', 10),
+    getAnimatedEmoji: getAnimatedEmoji,
+    animateMessage: animateMessage,
+    sendAnimatedMessage: sendAnimatedMessage, // <<< FIX: Pass sendAnimatedMessage
+    monitorSendTelegramAlert: monitorSendTelegramAlert,
+});
+  
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
@@ -1546,17 +1547,18 @@ bot.on('message', async msg => {
   }
 
   if (text === 'Support') {
-    const supportKeyboard = {
-        inline_keyboard: [
-            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
-            [{ text: 'Contact Admin Directly', url: SUPPORT_USERNAME }] // Using SUPPORT_USERNAME
-        ]
-    };
-    return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
-        reply_markup: supportKeyboard,
-        parse_mode: 'Markdown'
-    });
-  }
+  const supportKeyboard = {
+      inline_keyboard: [
+          [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
+          [{ text: 'Contact Admin Directly', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }] // <<< FIX: Corrected URL format
+      ]
+  };
+  return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
+      reply_markup: supportKeyboard,
+      parse_mode: 'Markdown'
+  });
+}
+
 
   if (text === 'FAQ') {
       // Clear previous state for consistency, but retain message_id if existing for edit
@@ -2133,35 +2135,46 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
-      const botType = payload; // 'levanter' or 'raganork'
-      const st = userStates[cid];
+    const botType = payload; // 'levanter' or 'raganork'
+    const st = userStates[cid];
 
-      if (!st || st.step !== 'AWAITING_GET_SESSION_BOT_TYPE') {
-          await bot.editMessageText('This session request has expired or is invalid. Please start over by tapping "Get Session".', {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
-          delete userStates[cid]; // Clear the invalid state
-          return;
-      }
-      
-      st.data.botType = botType; // Store chosen bot type in state
-      st.step = 'AWAITING_PHONE_NUMBER'; // Next step: enter phone number
+    if (!st || st.step !== 'AWAITING_GET_SESSION_BOT_TYPE') {
+        await bot.editMessageText('This session request has expired or is invalid. Please start over by tapping "Get Session".', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        delete userStates[cid]; // Clear the invalid state
+        return;
+    }
 
-      let promptMessage = `You chose *${botType.toUpperCase()}*. Please send your WhatsApp number in the full international format including the \`+\` (e.g., \`+23491630000000\`).`;
-      if (botType === 'raganork') {
-          promptMessage += `\n\nAlternatively, you can generate your Raganork session ID directly from: ${RAGANORK_SESSION_SITE_URL}`;
-      } else { // Levanter or default
-          promptMessage += `\n\nAlternatively, you can generate your Levanter session ID directly from: https://levanter-delta.vercel.app/`;
-      }
+    st.data.botType = botType; // Store chosen bot type in state
 
-      await bot.editMessageText(promptMessage, {
-          chat_id: cid,
-          message_id: q.message.message_id,
-          parse_mode: 'Markdown'
-      });
-      return;
-  }
+    if (botType === 'raganork') { // <<< FIX: New logic for Raganork direct URL
+        // Directly provide Raganork session URL and end the flow here
+        await bot.editMessageText(`You chose *Raganork MD*. Please visit the following link to generate your session ID:\n\n${RAGANORK_SESSION_SITE_URL}\n\nOnce you have your session ID, tap 'Deploy' to continue.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            disable_web_page_preview: false, // Allow link preview
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Deploy Now', callback_data: `deploy_first_bot` }]]
+            }
+        });
+        delete userStates[cid]; // Clear state as this flow is complete for Raganork
+        return;
+    } else { // Levanter or any other type will proceed to phone number request
+        st.step = 'AWAITING_PHONE_NUMBER'; // <<< CHANGED: Only Levanter goes here
+        let promptMessage = `You chose *Levanter*. Please send your WhatsApp number in the full international format including the \`+\` (e.g., \`+23491630000000\`).\n\nAlternatively, you can generate your Levanter session ID directly from: https://levanter-delta.vercel.app/`;
+
+        await bot.editMessageText(promptMessage, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+        return;
+    }
+}
+
 
 
   if (action === 'ask_admin_question') {
