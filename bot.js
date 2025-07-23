@@ -2979,72 +2979,48 @@ bot.on('callback_query', async q => {
     });
   }
 
-  if (action === 'varselect') {
-    const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag]; // Get botType from flag
-    const st = userStates[cid];
-    // Check if state is valid and appName matches
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) { // Assuming it should still be in APP_MANAGEMENT
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
-        return;
-    }
-    const messageId = q.message.message_id;
-
-    if (varKey === 'SESSION_ID') {
-        userStates[cid].step = 'SETVAR_ENTER_VALUE';
-        userStates[cid].data.VAR_NAME = varKey;
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
-        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter'; // Store bot type for session validation
-        return bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`${userStates[cid].data.botType === 'raganork' ? RAGANORK_SESSION_PREFIX : LEVANTER_SESSION_PREFIX}\`.`, { parse_mode: 'Markdown' });
-    }
-    else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX'].includes(varKey)) {
-        userStates[cid].step = 'SETVAR_ENTER_VALUE';
-        userStates[cid].data.VAR_NAME = varKey;
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
-        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter'; // Store bot type if needed for context
-
-        let promptMessage = `Please enter the new value for *${varKey}*:`;
-        if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE'].includes(varKey)) {
-          return bot.editMessageText(`Set *${varKey}* to:`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { text: 'true', callback_data: `setvarbool:${varKey}:${appName}:true` },
-                { text: 'false', callback_data: `setvarbool:${varKey}:${appName}:false` }
-              ],
-              [{ text: 'Back', callback_data: `setvar:${appName}` }]]
-            }
-          });
-        }
-        return bot.sendMessage(cid, promptMessage, { parse_mode: 'Markdown' });
-
-    } else if (varKey === 'OTHER_VAR') {
-        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.targetUserId = cid;
-        userStates[cid].message_id = q.message.message_id; // Store current message ID for context
-        userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
-
-        await bot.sendMessage(cid, 'Please enter the name of the variable (e.g., `MY_CUSTOM_VAR`). It will be capitalized automatically if not already:', { parse_mode: 'Markdown' });
-    } else if (varKey === 'SUDO_VAR') {
-        return bot.editMessageText(`How do you want to manage the *SUDO* variable for "*${appName}*"?`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
-                    [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
-                    [{ text: 'Back', callback_data: `setvar:${appName}` }]
-                ]
-            }
-        });
-    }
+if (action === 'varselect') {
+  const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
+  const st = userStates[cid];
+  // Check if state is valid and appName matches
+  if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+      await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+      delete userStates[cid]; // Clear invalid state
+      return;
   }
+  const messageId = q.message.message_id;
+
+  if (varKey === 'SESSION_ID') { /* ...existing SESSION_ID logic... */ }
+  else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX', 'AUTO_READ_STATUS', 'HANDLERS'].includes(varKey)) { // <<< CHANGED: Added Raganork var names
+      userStates[cid].step = 'SETVAR_ENTER_VALUE';
+      // Determine the actual VAR_NAME to use when setting (ensures we store AUTO_READ_STATUS/HANDLERS for Raganork)
+      const actualVarName = (botTypeFromVarSelect === 'raganork' && varKey === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' : // <<< CHANGED
+                           (botTypeFromVarSelect === 'raganork' && varKey === 'PREFIX') ? 'HANDLERS' : varKey; // <<< CHANGED
+      userStates[cid].data.VAR_NAME = actualVarName; // <<< CHANGED to actualVarName
+      userStates[cid].data.APP_NAME = appName;
+      userStates[cid].data.isFreeTrial = false;
+      userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
+
+      let promptMessage = `Please enter the new value for *${actualVarName}*:`; // <<< CHANGED to actualVarName
+      if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(actualVarName)) { // <<< CHANGED
+        return bot.editMessageText(`Set *${actualVarName}* to:`, { // <<< CHANGED to actualVarName
+          chat_id: cid,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: 'true', callback_data: `setvarbool:${actualVarName}:${appName}:true` }, // <<< CHANGED to actualVarName
+              { text: 'false', callback_data: `setvarbool:${actualVarName}:${appName}:false` } // <<< CHANGED to actualVarName
+            ],
+            [{ text: 'Back', callback_data: `setvar:${appName}` }]]
+          }
+        });
+      }
+      return bot.sendMessage(cid, promptMessage, { parse_mode: 'Markdown' });
+
+  } else if (varKey === 'OTHER_VAR') { /* ...existing OTHER_VAR logic... */ }
+  else if (varKey === 'SUDO_VAR') { /* ...existing SUDO_VAR logic... */ }
+}
 
   if (action === 'sudo_action') {
       const sudoAction = payload;
