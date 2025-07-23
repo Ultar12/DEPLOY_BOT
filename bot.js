@@ -2893,13 +2893,40 @@ ${configVarsDisplay}
     });
   }
 
+// ... (existing code within bot.on('callback_query', async q => { ... })) ...
+
   if (action === 'backup_app') { // Handle Backup button click
     const appName = payload;
-    await bot.editMessageText(`Backing up app "${appName}"...`, {
+    const messageId = q.message.message_id;
+    const cid = q.message.chat.id.toString(); // Ensure cid is defined here
+
+    await bot.editMessageText(`Checking backup status for "*${escapeMarkdown(appName)}*"...`, { // Preliminary message
         chat_id: cid,
-        message_id: q.message.message_id
-    });
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(err => console.warn(`Failed to edit message with preliminary backup text: ${err.message}`));
+
     try {
+        // --- NEW: Check if already backed up and active on Heroku ---
+        const existingBackup = await backupPool.query(
+            `SELECT deleted_from_heroku_at FROM user_deployments WHERE user_id = $1 AND app_name = $2;`,
+            [cid, appName] // Query by user_id and app_name
+        );
+
+        // If a record exists AND deleted_from_heroku_at is NULL, it means it's currently backed up and active.
+        if (existingBackup.rows.length > 0 && existingBackup.rows[0].deleted_from_heroku_at === null) {
+            return bot.editMessageText(`ℹ️ App "*${escapeMarkdown(appName)}*" is already backed up and currently active on Heroku. No action needed.`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
+                }
+            });
+        }
+        // --- END NEW CHECK ---
+
+        // Proceed with actual backup. If it was previously marked as deleted, saveUserDeployment will update it.
         const appVars = (await axios.get(
             `https://api.heroku.com/apps/${appName}/config-vars`,
             { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
@@ -2909,33 +2936,38 @@ ${configVarsDisplay}
 
 
         if (!currentSessionId) {
-            return bot.editMessageText(`Cannot backup "${appName}": No SESSION_ID found. Please set it first.`, {
+            return bot.editMessageText(`Cannot backup "*${escapeMarkdown(appName)}*": No SESSION_ID found. Please set it first.`, {
                 chat_id: cid,
-                message_id: q.message.message_id
+                message_id: messageId,
+                parse_mode: 'Markdown'
             });
         }
         // Save/Update to user_deployments. deploy_date & expiration_date are preserved on conflict.
+        // saveUserDeployment will also set deleted_from_heroku_at to NULL, marking it as active/backed-up.
         await dbServices.saveUserDeployment(cid, appName, currentSessionId, appVars, botTypeResult); // Use dbServices
 
-        await bot.editMessageText(`App "${appName}" successfully backed up! You can restore it later if needed.`, {
+        await bot.editMessageText(`✅ App "*${escapeMarkdown(appName)}*" successfully backed up! You can restore it later if needed.`, {
             chat_id: cid,
-            message_id: q.message.message_id,
+            message_id: messageId,
+            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
             }
         });
     } catch (e) {
         const errorMsg = e.response?.data?.message || e.message;
-        await bot.editMessageText(`Failed to backup app "${appName}": ${errorMsg}`, {
+        await bot.editMessageText(`❌ Failed to backup app "*${escapeMarkdown(appName)}*": ${escapeMarkdown(errorMsg)}`, {
             chat_id: cid,
-            message_id: q.message.message_id,
+            message_id: messageId,
+            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
             }
         });
     }
-    return;
+    return; // Ensure this function exits cleanly
   }
+
 
   if (action === 'add_assign_app') {
     const appName = payload;
