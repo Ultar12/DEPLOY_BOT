@@ -1735,7 +1735,6 @@ bot.on('message', async msg => {
       return;
     }
 
-
     await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
@@ -1745,20 +1744,26 @@ bot.on('message', async msg => {
     authorizedUsers.add(cid);
     st.step = 'SESSION_ID'; // Transition to the next state to await the session ID.
 
+    // --- START MODIFICATION FOR ADMIN KEY USED NOTIFICATION ---
     const { first_name, last_name, username } = msg.from;
-    const userDetails = [
-      `Name: ${first_name || ''} ${last_name || ''}`,
-      `Username: @${username || 'N/A'}`,
-      `Chat ID: ${cid}`
-    ].join('\n');
+    const userFullName = [first_name, last_name].filter(Boolean).join(' '); // Combines first and last name if both exist
+    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : 'N/A'; // Use N/A if no username
 
     await bot.sendMessage(ADMIN_ID,
-      `Key Used By:\n${userDetails}\n\nUses Left: ${usesLeft}`,
+      `*Key Used By:*\n` + // 🔑 Emojis are at the beginning of some words in my bot.
+      `*Name:* ${escapeMarkdown(userFullName || 'N/A')}\n` + // Use userFullName
+      `*Username:* ${userNameDisplay}\n` +
+      `*Chat ID:* \`${escapeMarkdown(cid)}\`\n\n` + // Use escaped chat ID
+      `*Key Used:* \`${escapeMarkdown(keyAttempt)}\`\n` + // <-- ADDED: The key that was used
+      `*Uses Left:* ${usesLeft}`,
       { parse_mode: 'Markdown' }
     );
+    // --- END MODIFICATION ---
+
     // The flow will now correctly wait for the SESSION_ID input in the next message.
     return;
   }
+
 
   if (st && st.step === 'SESSION_ID') { // This state is reached after AWAITING_KEY or select_deploy_type for admin
   const sessionID = text.trim(); // Get the session ID from user input
