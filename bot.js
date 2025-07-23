@@ -991,6 +991,11 @@ bot.onText(/^\/users$/, async (msg) => {
 });
 
 // NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
+// bot.js
+
+// ... (existing code before /bapp command) ...
+
+// NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
 bot.onText(/^\/bapp$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
@@ -1019,42 +1024,59 @@ bot.onText(/^\/bapp$/, async (msg) => {
             } else {
                 statusIndicator = '🔴'; // Deleted from Heroku (only in backup)
             }
-            appButtons.push([{
-                text: `${statusIndicator} ${app_name} (${bot_type ? bot_type.toUpperCase() : 'Unknown'}) - User ID: ${user_id}`,
+            appButtons.push({
+                text: `${statusIndicator} ${app_name}`, // Keep text short for buttons
                 callback_data: `select_bapp:${app_name}:${user_id}` // Pass both app_name and user_id
-            }]);
+            });
         }
 
-        // Chunk buttons if there are too many (optional, but good for very long lists)
-        const chunkedButtons = [];
-        const chunkSize = 10; // Number of apps per message/chunk
-        for (let i = 0; i < appButtons.length; i += chunkSize) {
-            chunkedButtons.push(appButtons.slice(i, i + chunkSize));
-        }
+        // --- CRITICAL CHANGE: Use chunkArray to make buttons 3 per row ---
+        // Reuse the existing chunkArray function you already have.
+        // It's defined near buildKeyboard or in a utilities section.
+        const rows = chunkArray(appButtons, 3); // Organize buttons into rows of 3
+        // --- END CRITICAL CHANGE ---
 
-        let firstMessageId = null;
-        for (const chunk of chunkedButtons) {
-            const msgText = `💾 Select a backed-up app to view details:`;
-            const sentMsg = await bot.sendMessage(cid, msgText, {
+        let firstMessageId = null; // We'll try to edit a message if possible, or send new ones.
+
+        // If the list is short, just edit the existing message (if it's a callback response)
+        // If it's a new command, send a fresh message.
+        if (msg.message_id) { // If it's a message from /bapp command, we'll try to edit it
+            await bot.editMessageText(`💾 Select a backed-up app to view details:`, {
+                chat_id: cid,
+                message_id: msg.message_id,
                 parse_mode: 'Markdown',
                 reply_markup: {
-                    inline_keyboard: chunk
+                    inline_keyboard: rows
+                }
+            }).catch(async (err) => {
+                console.warn(`Failed to edit message ${msg.message_id} for /bapp list, sending new one: ${err.message}`);
+                // Fallback: If edit fails (e.g., message too old), send new message
+                const sentMsg = await bot.sendMessage(cid, `💾 Select a backed-up app to view details:`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: rows
+                    }
+                });
+                firstMessageId = sentMsg.message_id;
+            });
+            firstMessageId = msg.message_id; // Keep track of the message we tried to edit
+        } else { // If msg.message_id is not available (e.g., direct call from another handler without specific message to edit)
+            const sentMsg = await bot.sendMessage(cid, `💾 Select a backed-up app to view details:`, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: rows
                 }
             });
-            if (!firstMessageId) {
-                firstMessageId = sentMsg.message_id; // Keep track of the first message to potentially edit later
-            }
-            await new Promise(resolve => setTimeout(resolve, 200)); // Small delay between messages
+            firstMessageId = sentMsg.message_id;
         }
-        // If there's only one chunk, the firstMessageId is already set.
-        // We could potentially edit the first message or keep them as separate messages.
-        // For now, it sends multiple messages if the list is long.
 
     } catch (error) {
         console.error(`Error fetching backup app list for /bapp:`, error.message);
         await bot.sendMessage(cid, `An error occurred while fetching backup app list: ${escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
     }
 });
+
+// ... (rest of bot.js) ...
 
 
 // NEW ADMIN COMMAND: /send <user_id> <message>
