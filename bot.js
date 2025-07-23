@@ -1730,33 +1730,33 @@ bot.on('message', async msg => {
   // Validate session ID based on bot type
   let isValidSession = false;
   let requiredPrefix = '';
-  let errorMessage = 'Incorrect session ID.';
+  let errorMessageBase = 'Incorrect session ID.'; // Base error message
 
   if (botType === 'levanter') {
       requiredPrefix = LEVANTER_SESSION_PREFIX;
       if (sessionID.startsWith(requiredPrefix) && sessionID.length >= 10) {
           isValidSession = true;
       }
-      errorMessage += ` Your session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: https://levanter-delta.vercel.app/`; // <<< CHANGED URL
+      errorMessageBase += ` Your session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: https://levanter-delta.vercel.app/`; // <<< CHANGED URL
   } else if (botType === 'raganork') {
       requiredPrefix = RAGANORK_SESSION_PREFIX;
       if (sessionID.startsWith(requiredPrefix) && sessionID.length >= 10) {
           isValidSession = true;
       }
-      errorMessage += ` Your Raganork session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: ${RAGANORK_SESSION_SITE_URL}`; // <<< CHANGED URL
+      errorMessageBase += ` Your Raganork session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: ${RAGANORK_SESSION_SITE_URL}`; // <<< CHANGED URL
   } else {
-      // Fallback or error if botType is unexpected (should not happen if flow is correct)
-      errorMessage = 'Unknown bot type in state. Please start the deployment process again.';
+      errorMessageBase = 'Unknown bot type in state. Please start the deployment process again.';
   }
 
   if (!isValidSession) {
-      return bot.sendMessage(cid, errorMessage, { parse_mode: 'Markdown' });
+      return bot.sendMessage(cid, errorMessageBase, { parse_mode: 'Markdown' }); // Use errorMessageBase
   }
 
   st.data.SESSION_ID = sessionID;
   st.step = 'APP_NAME';
   return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
 }
+
 
 
   if (st && st.step === 'APP_NAME') {
