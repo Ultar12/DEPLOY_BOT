@@ -6,7 +6,6 @@ const path = require('path');
 const { Pool } = require('pg');
 
 // --- Module-level variables for dependencies passed during init ---
-// Declare these at the top of the file so all functions can access them
 let pool;
 let backupPool;
 let bot; // The TelegramBot instance
@@ -19,8 +18,9 @@ let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
 let animateMessage;
-let sendAnimatedMessage; // <<< NEW: Declare sendAnimatedMessage here
+let sendAnimatedMessage; // Correctly declared here
 let monitorSendTelegramAlert;
+let escapeMarkdown; // <<< NEW: Declare escapeMarkdown here
 
 /**
  * Initializes database and API helper functions.
@@ -37,8 +37,9 @@ let monitorSendTelegramAlert;
  * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
  * @param {function} params.getAnimatedEmoji - Function to get animated emoji/text.
  * @param {function} params.animateMessage - Function to animate message.
- * @param {function} params.sendAnimatedMessage - Function to send an animated message. <<< NEW: Add to JSDoc
+ * @param {function} params.sendAnimatedMessage - Function to send an animated message.
  * @param {function} params.monitorSendTelegramAlert - Function to send Telegram alerts (from bot_monitor).
+ * @param {function} params.escapeMarkdown - Utility function to escape markdown characters. <<< NEW: Add to JSDoc
  */
 function init(params) {
     // Assign parameters to module-level variables
@@ -54,8 +55,9 @@ function init(params) {
     RESTART_DELAY_MINUTES = params.RESTART_DELAY_MINUTES;
     getAnimatedEmoji = params.getAnimatedEmoji;
     animateMessage = params.animateMessage;
-    sendAnimatedMessage = params.sendAnimatedMessage; // <<< NEW: Assign sendAnimatedMessage
+    sendAnimatedMessage = params.sendAnimatedMessage;
     monitorSendTelegramAlert = params.monitorSendTelegramAlert;
+    escapeMarkdown = params.escapeMarkdown; // <<< NEW: Assign escapeMarkdown
 
     console.log('--- bot_services.js initialized! ---');
 }
@@ -641,14 +643,14 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {}; // 'bot' is now globally accessible
       const userDetails = [
-        `Name: ${first_name || ''} ${last_name || ''}`,
-        `Username: @${username || 'N/A'}`,
-        `Chat ID: ${chatId}`
+        `*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, // <<< CHANGED: Escaped names
+        `*Username:* @${escapeMarkdown(username || 'N/A')}`, // <<< CHANGED: Escaped username
+        `*Chat ID:* \`${escapeMarkdown(chatId)}\`` // <<< CHANGED: Escaped chatId
       ].join('\n');
-      const appDetails = `App Name: ${name}\nSession ID: ${vars.SESSION_ID}\nType: ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`; // <<< CHANGED: Escaped name and session ID
 
       await bot.sendMessage(ADMIN_ID, // 'bot' and 'ADMIN_ID' are now globally accessible
-          `New App Deployed (Heroku Build Succeeded)\n\nApp Details:\n${appDetails}\n\nDeployed By:\n${userDetails}`,
+          `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
           { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
 
@@ -689,10 +691,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           // Free trial expiry logic
           if (isFreeTrial) {
             setTimeout(async () => {
-                const adminWarningMessage = `Free Trial App "${name}" has 5 minutes left until deletion!`;
+                const adminWarningMessage = `Free Trial App "${escapeMarkdown(name)}" has 5 minutes left until deletion!`; // <<< CHANGED: Escaped name
                 const keyboard = {
                     inline_keyboard: [
-                        [{ text: `Delete "${name}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
+                        [{ text: `Delete "${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }] // <<< CHANGED: Escaped name
                     ]
                 };
                 await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' }); // 'bot' and 'ADMIN_ID' are now globally accessible
@@ -701,18 +703,18 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
             setTimeout(async () => {
                 try {
-                    await bot.sendMessage(chatId, `Your Free Trial app "${name}" is being deleted now as its 1-hour runtime has ended.`); // 'bot' is now globally accessible
+                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted now as its 1-hour runtime has ended.`); // <<< CHANGED: Escaped name
                     await axios.delete(`https://api.heroku.com/apps/${name}`, {
                         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } // 'HEROKU_API_KEY' is now globally accessible
                     });
                     await deleteUserBot(chatId, name); // 'deleteUserBot' is now globally accessible
                     await markDeploymentDeletedFromHeroku(chatId, name); // 'markDeploymentDeletedFromHeroku' is now globally accessible
-                    await bot.sendMessage(chatId, `Free Trial app "${name}" successfully deleted.`); // 'bot' is now globally accessible
+                    await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`); // <<< CHANGED: Escaped name
                     console.log(`[FreeTrial] Auto-deleted app ${name} after 1 hour.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                    await bot.sendMessage(chatId, `Could not auto-delete the app "${name}". Please delete it manually from your Heroku dashboard.`); // 'bot' is now globally accessible
-                    bot.sendMessage(ADMIN_ID, `Failed to auto-delete free trial app "${name}" for user ${chatId}: ${e.message}`); // 'bot' and 'ADMIN_ID' are now globally accessible
+                    await bot.sendMessage(chatId, `Could not auto-delete the app "*${escapeMarkdown(name)}*". Please delete it manually from your Heroku dashboard.`); // <<< CHANGED: Escaped name
+                    bot.sendMessage(ADMIN_ID, `Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`); // <<< CHANGED: Escaped name, chatId, e.message
                 }
             }, 60 * 60 * 1000);
           }
@@ -722,11 +724,12 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${name}:`, err.message);
           await bot.editMessageText( // 'bot' is now globally accessible
-            `Bot "${name}" failed to start or session is invalid: ${err.message}\n\n` +
+            `Bot "*${escapeMarkdown(name)}*" failed to start or session is invalid: ${escapeMarkdown(err.message)}\n\n` + // <<< CHANGED: Escaped name and err.message
             `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`,
             {
                 chat_id: chatId,
                 message_id: createMsg.message_id,
+                parse_mode: 'Markdown', // Ensure parse_mode is set for this message
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
@@ -749,7 +752,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
-    bot.sendMessage(chatId, `An error occurred during deployment: ${errorMsg}\n\nPlease check the Heroku dashboard or try again.`); // 'bot' is now globally accessible
+    bot.sendMessage(chatId, `An error occurred during deployment: ${escapeMarkdown(errorMsg)}\n\nPlease check the Heroku dashboard or try again.`, {parse_mode: 'Markdown'}); // <<< CHANGED: Escaped errorMsg, added parse_mode
     buildResult = false;
   }
   return buildResult;
