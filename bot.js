@@ -3446,4 +3446,115 @@ bot.on('channel_post', async msg => {
     }
 
     let botName = null;
-    let isLogout =
+    let isLogout = false;
+    let isConnected = false;
+    let extractedSessionId = null;
+
+    // --- Raganork MD Log Patterns ---
+    const raganorkLogoutMatch = text.match(/User \[([^\]]+)\] has logged out\.\n\[([^\]]+)\] invalid/si);
+    if (raganorkLogoutMatch) {
+        botName = raganorkLogoutMatch[1];
+        extractedSessionId = raganorkLogoutMatch[2];
+        isLogout = true;
+        console.log(`[Channel Post] Raganork MD LOGOUT detected for bot: ${botName}, session: ${extractedSessionId}`);
+    } else {
+        const raganorkConnectedMatch = text.match(/\[([^\]]+)\] connected\.\nSession IDs: (\S+)\nTime: .*/si);
+        if (raganorkConnectedMatch) {
+            botName = raganorkConnectedMatch[1];
+            isConnected = true;
+            console.log(`[Channel Post] Raganork MD CONNECTED detected for bot: ${botName}`);
+        }
+    }
+
+    // --- Levanter Log Patterns (fallback if not Raganork MD) ---
+    // Note: Levanter's 'INVALID SESSION ID' does not always contain bot name
+    // and 'External Plugins Installed' doesn't contain bot name.
+    // The bot_monitor.js overrides should catch the logs from the main app process.
+    // This channel_post handler is specifically for messages *posted to the channel* by child processes or other services.
+    if (!botName) {
+        // If a status message from the general "User [appname] has logged out" format
+        const genericLogoutMatch = text.match(/User \[([^\]]+)\] has logged out/si);
+        if (genericLogoutMatch) {
+            botName = genericLogoutMatch[1];
+            isLogout = true;
+            console.log(`[Channel Post] Generic LOGOUT detected for bot: ${botName}`);
+        } else {
+            // This assumes Levanter bots might also send a 'connected' message in a similar channel format
+            const genericConnectedMatch = text.match(/\[([^\]]+)\] connected/si);
+            if(genericConnectedMatch) {
+                botName = genericConnectedMatch[1];
+                isConnected = true;
+                console.log(`[Channel Post] Generic CONNECTED detected for bot: ${botName}`);
+            }
+        }
+    }
+
+    if (!botName && (isLogout || isConnected)) {
+        // Fallback: If status is detected but bot name isn't in pattern, try to get from previous context
+        // Or assume it's the primary bot being deployed if only one is relevant
+        console.warn(`[Channel Post] Bot name could not be reliably extracted from the log pattern. Status: ${isLogout ? 'LOGOUT' : 'CONNECTED'}`);
+        // If a deployment is in progress, we can assume this status is for that appName
+        for (const [appName, promiseObj] of appDeploymentPromises.entries()) {
+            if (promiseObj.resolve && promiseObj.reject) { // Check if it's an active promise
+                botName = appName; // Assume this status is for the currently tracked deployment
+                console.log(`[Channel Post] Assuming status is for currently tracked deployment: ${botName}`);
+                break;
+            }
+        }
+    }
+
+    if (!botName) {
+        console.log(`[Channel Post] Could not determine bot name or no relevant status detected.`);
+        return; // No relevant bot name or status to process further
+    }
+
+    if (isLogout) {
+        console.log(`[Channel Post] Processing LOGOUT for bot: ${botName}`);
+
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId);
+            pendingPromise.reject(new Error('Bot session became invalid.'));
+            appDeploymentPromises.delete(botName);
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName}, potentially a general logout.`);
+        }
+
+        const userId = await dbServices.getUserIdByBotName(botName); // Use dbServices
+        if (userId) {
+            const warningMessage =
+                `Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
+                `Please update your session ID to get it back online.`;
+
+            await bot.sendMessage(userId, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
+                    ]
+                }
+            });
+            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
+        } else {
+            console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
+            bot.sendMessage(ADMIN_ID, `Untracked bot "${botName}" logged out. User ID not found in DB.`);
+        }
+        return;
+    }
+
+    if (isConnected) {
+        console.log(`[Channel Post] Processing CONNECTED status for bot: ${botName}`);
+
+        const pendingPromise = appDeploymentPromises.get(botName);
+        if (pendingPromise) {
+            clearInterval(pendingPromise.animateIntervalId);
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(botName);
+            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
+        } else {
+            console.log(`[Channel Post] No active deployment promise for ${botName} on channel post.`);
+        }
+        return;
+    }
+});
