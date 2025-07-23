@@ -2133,6 +2133,10 @@ bot.on('callback_query', async q => {
       return;
   }
 
+  // bot.js
+
+// ... (existing code in bot.on('callback_query', async q => { ... })) ...
+
   if (action === 'select_deploy_type') { // NEW: Handle bot type selection for deployment
       const botType = payload; // 'levanter' or 'raganork'
       const st = userStates[cid];
@@ -2160,11 +2164,11 @@ bot.on('callback_query', async q => {
           st.step = 'SESSION_ID'; // Next step: enter session ID
           let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
           if (botType === 'raganork') {
-              sessionPrompt += ` (Raganork session IDs must start with \`${RAGANORK_SESSION_PREFIX}\`).`;
+              sessionPrompt += ` (Raganork session IDs must start with \`${RAGANORK_SESSION_PREFIX}\`).\n\nGet it from the website: ${RAGANORK_SESSION_SITE_URL}`; // <-- CRITICAL CHANGE HERE
           } else { // Levanter
-              sessionPrompt += ` (Levanter session IDs must start with \`${LEVANTER_SESSION_PREFIX}\`).`;
+              sessionPrompt += ` (Levanter session IDs must start with \`${LEVANTER_SESSION_PREFIX}\`).\n\nGet it from the website: https://levanter-delta.vercel.app/`;
           }
-          await bot.editMessageText(`${sessionPrompt}\n\nOr get it from the website: https://levanter-delta.vercel.app/`, {
+          await bot.editMessageText(sessionPrompt, { // Use the constructed sessionPrompt
               chat_id: cid,
               message_id: q.message.message_id,
               parse_mode: 'Markdown'
@@ -2172,6 +2176,9 @@ bot.on('callback_query', async q => {
       }
       return;
   }
+
+// ... (rest of bot.js) ...
+
 
   if (action === 'deploy_first_bot') { // Handled by select_deploy_type now
       const isAdmin = cid === ADMIN_ID;
