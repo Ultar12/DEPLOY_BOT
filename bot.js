@@ -2939,19 +2939,66 @@ bot.on('callback_query', async q => {
   }
 
   if (action === 'setvar') {
-    // ... (existing code to fetch configVars and formatVarValue) ...
+    if (action === 'setvar') {
+    const appName = payload; // The app name is the payload for 'setvar'
+    const messageId = q.message.message_id; // The message ID to edit
+
+    // Ensure the current state is correct for 'setvar'
+    const st = userStates[cid];
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
+    }
+
+    // --- CRITICAL ADDITION: FETCH CONFIG VARS ---
+    let configVars = {}; // Declare and initialize configVars
+    try {
+        const apiHeaders = {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+        };
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: apiHeaders });
+        configVars = configRes.data; // Assign the fetched data
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
+            return;
+        }
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`Error fetching config vars for ${appName}:`, errorMsg, e.stack);
+        await bot.editMessageText(`Error fetching config variables: ${errorMsg}`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]] }
+        });
+        return; // Exit if fetching config vars fails
+    }
+    // --- END CRITICAL ADDITION ---
+
+    // Define a helper function to format boolean-like variables (ensure this is defined in your bot.js scope)
+    function formatVarValue(val) {
+        if (val === 'true') return 'true';
+        if (val === 'false') return 'false';
+        if (val === 'p') return 'enabled (anti-delete)'; // For ANTI_DELETE
+        if (val === 'no-dl') return 'enabled (no download)'; // For AUTO_STATUS_VIEW specific
+        return val || 'Not Set'; // Default for any other undefined/null value
+    }
+
     const sessionIDValue = configVars.SESSION_ID ? `\`${escapeMarkdown(String(configVars.SESSION_ID))}\`` : '`Not Set`';
+    // Ensure 'pool' is accessible here. It should be from your global setup.
     const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
 
-    const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW'; // <<< CHANGED
-    const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX'; // <<< CHANGED
+    const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
+    const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
 
     const varInfo = `*Current Config Variables for ${appName}:*\n` +
                      `*Bot Type:* \`${botTypeForSetVar.toUpperCase()}\`\n` +
                      `\`SESSION_ID\`: ${sessionIDValue}\n` +
-                     `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` + // <<< CHANGED
+                     `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` +
                      `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
-                     `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` + // <<< CHANGED
+                     `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` +
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
                      `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n\n` +
                      `Select a variable to set:`;
@@ -2962,14 +3009,16 @@ bot.on('callback_query', async q => {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${payload}:${botTypeForSetVar}` }],
-          [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${payload}` }, // <<< CHANGED
-           { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${payload}` }],
-          [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${payload}` }, // <<< CHANGED
-           { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${payload}` }],
-          [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${payload}` }],
-          [{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${payload}` }],
-          [{ text: 'Back', callback_data: `selectapp:${payload}` }]
+          // IMPORTANT: Ensure you pass appName as 'extra' and botTypeForSetVar as 'flag' in callback_data
+          // This allows subsequent varselect/setvarbool actions to use them.
+          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
+          [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` },
+           { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
+          [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` },
+           { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }],
+          [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }],
+          [{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }],
+          [{ text: 'Back', callback_data: `selectapp:${appName}` }]
         ]
       }
     });
