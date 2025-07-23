@@ -16,7 +16,7 @@ const { Pool } = require('pg');
 const path = require('path');
 
 // --- Import modularized components ---
-const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor'); // <<< FIXED: Import sendTelegramAlert from monitor
+const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
 const { init: servicesInit, ...dbServices } = require('./bot_services');
 const { init: faqInit, sendFaqPage } = require('./bot_faq');
 
@@ -191,7 +191,8 @@ const backupPool = new Pool({
 
 
 // 5) Initialize bot & in-memory state
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+// <<< IMPORTANT: Set polling to false here. It will be started manually later.
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
@@ -492,7 +493,11 @@ async function notifyAdminUserOnline(msg) {
     await loadMaintenanceStatus(); // Load initial maintenance status
 
     console.log('Bot is running...');
-})();
+
+    // <<< IMPORTANT: Start polling ONLY AFTER all services are initialized >>>
+    bot.startPolling();
+
+})(); // End of the main async IIFE
 
 
 // 8) Polling error handler
@@ -850,7 +855,7 @@ bot.onText(/^\/users$/, async (msg) => {
     }
 
     try {
-        // Fetch all unique user IDs from user_activity table
+        // Fetch all unique user IDs that have ever interacted (from user_activity)
         const allUserIdsResult = await pool.query(`
             SELECT DISTINCT user_id FROM user_activity
             ORDER BY user_id;
@@ -1466,7 +1471,201 @@ bot.on('message', async msg => {
   }
 
 
-  if (st && st.step === 'AWAITING_KEY') { // This state is reached after selecting deploy type
+  if (text === 'Deploy' || text === 'Free Trial') { // Combined deploy and free trial entry
+    const isFreeTrial = (text === 'Free Trial');
+    const check = await dbServices.canDeployFreeTrial(cid); // Use dbServices
+    if (isFreeTrial && !check.can) {
+        return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}`);
+    }
+
+    delete userStates[cid]; // Clear previous state
+    userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: isFreeTrial } };
+
+    await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+            ]
+        }
+    });
+    return;
+  }
+
+  if (text === 'Apps' && isAdmin) {
+    return dbServices.sendAppList(cid); // Use dbServices
+  }
+
+  if (text === 'Generate Key' && isAdmin) {
+    const buttons = [
+      [1, 2, 3, 4, 5].map(n => ({
+        text: String(n),
+        callback_data: `genkeyuses:${n}`
+      }))
+    ];
+    return bot.sendMessage(cid, 'How many uses for this key?', {
+      reply_markup: { inline_keyboard: buttons }
+    });
+  }
+
+  if (text === 'Get Session') {
+      delete userStates[cid]; // Clear user state
+      userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
+
+      await bot.sendMessage(cid, 'Which bot type do you need a session ID for?', {
+          reply_markup: {
+              inline_keyboard: [
+                  [{ text: 'Levanter', callback_data: `select_get_session_type:levanter` }],
+                  [{ text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }]
+              ]
+          }
+      });
+      return;
+  }
+
+  if (text === 'My Bots') {
+    console.log(`[Flow] My Bots button clicked by user: ${cid}`);
+    const bots = await dbServices.getUserBots(cid); // Use dbServices
+    if (!bots.length) {
+        return bot.sendMessage(cid, "You have not deployed any bots yet. Would you like to deploy your first bot or restore a backup?", {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }] // New button
+                ]
+            }
+        });
+    }
+    const rows = chunkArray(bots, 3).map(r => r.map(n => ({
+      text: n,
+      callback_data: `selectbot:${n}`
+    })));
+    return bot.sendMessage(cid, 'Your deployed bots:', {
+      reply_markup: { inline_keyboard: rows }
+    });
+  }
+
+  if (text === 'Support') {
+    const supportKeyboard = {
+        inline_keyboard: [
+            [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
+            [{ text: 'Contact Admin Directly', url: SUPPORT_USERNAME }] // Using SUPPORT_USERNAME
+        ]
+    };
+    return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
+        reply_markup: supportKeyboard,
+        parse_mode: 'Markdown'
+    });
+  }
+
+  if (text === 'FAQ') {
+      // Clear previous state for consistency, but retain message_id if existing for edit
+      if (userStates[cid] && userStates[cid].step === 'VIEWING_FAQ') {
+          // If already in FAQ, just refresh the current page, no notice
+          await sendFaqPage(cid, userStates[cid].faqMessageId, userStates[cid].faqPage || 1); // Use sendFaqPage
+      } else {
+          // First time opening FAQ
+          delete userStates[cid]; // Clear previous general states
+          await bot.sendMessage(cid, 'Please note that your bot might go offline temporarily at the end or beginning of every month. We appreciate your patience during these periods.');
+          await sendFaqPage(cid, null, 1); // Use sendFaqPage
+      }
+      return;
+  }
+
+  if (st && st.step === 'AWAITING_PHONE_NUMBER') {
+    const phoneNumber = text;
+    const phoneRegex = /^\+\d{13}$/; // Validates + followed by exactly 13 digits
+
+    if (!phoneRegex.test(phoneNumber)) {
+        let errorMsg = 'Invalid format. Please send your WhatsApp number in the full international format including the `+` (e.g., `+23491630000000`).';
+        if (st.data.botType === 'raganork') {
+            errorMsg += ` Or get your session ID from the website: ${RAGANORK_SESSION_SITE_URL}`;
+        } else { // Levanter or default
+            errorMsg += ` Or get your session ID from the website: https://levanter-delta.vercel.app/`;
+        }
+        return bot.sendMessage(cid, errorMsg, { parse_mode: 'Markdown' });
+    }
+
+    const { first_name, last_name, username } = msg.from;
+    const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`;
+
+    const adminMessage = await bot.sendMessage(ADMIN_ID,
+        `*Pairing Request from User:*\n` +
+        `${userDetails}\n` +
+        `*WhatsApp Number:* \`${phoneNumber}\`\n` +
+        `*Bot Type Requested:* \`${st.data.botType || 'Unknown'}\`\n\n` +
+        `Do you want to accept this pairing request and provide a code?`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Accept Request', callback_data: `pairing_action:accept:${cid}:${st.data.botType}` }], // Pass botType to admin action
+                    [{ text: 'Decline Request', callback_data: `pairing_action:decline:${cid}:${st.data.botType}` }] // Pass botType to admin action
+                ]
+            }
+        }
+    );
+
+    const waitingMsg = await bot.sendMessage(cid, `Your request has been sent to the admin. Please wait for the Pairing-code...`);
+    const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
+    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
+    userStates[cid].data = {
+        messageId: waitingMsg.message_id,
+        animateIntervalId: animateIntervalId,
+        isFreeTrial: st?.data?.isFreeTrial || false,
+        isAdminDeploy: st?.data?.isAdminDeploy || false,
+        botType: st.data.botType // Store bot type in state for later use
+    };
+
+    const timeoutDuration = 60 * 1000; // 60 seconds
+    const timeoutIdForPairing = setTimeout(async () => {
+        if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
+            console.log(`[Pairing Timeout] Request from user ${cid} timed out.`);
+            if (userStates[cid].data.animateIntervalId) {
+                clearInterval(userStates[cid].data.animateIntervalId);
+            }
+            if (userStates[cid].data.messageId) {
+                let timeoutMessage = 'Pairing request timed out. The admin did not respond in time.';
+                if (st.data.botType === 'raganork') {
+                    timeoutMessage += ` Or generate your Raganork session ID directly from: ${RAGANORK_SESSION_SITE_URL}`;
+                } else { // Levanter or default
+                    timeoutMessage += ` Or get your session ID from the website: https://levanter-delta.vercel.app/`;
+                }
+                await bot.editMessageText(timeoutMessage, {
+                    chat_id: cid,
+                    message_id: userStates[cid].data.messageId,
+                    parse_mode: 'Markdown'
+                }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
+            }
+            await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`, Type: \`${st.data.botType}\`) timed out after ${timeoutDuration / 1000} seconds.`);
+            delete userStates[cid];
+            for (const key in forwardingContext) {
+                if (forwardingContext[key].original_user_chat_id === cid && forwardingContext[key].request_type === 'pairing_request') {
+                    delete forwardingContext[key];
+                    console.log(`[Pairing Timeout] Cleaned up stale forwardingContext for admin message ${key}.`);
+                    break;
+                }
+            }
+        }
+    }, timeoutDuration);
+
+    forwardingContext[adminMessage.message_id] = {
+        original_user_chat_id: cid,
+        original_user_message_id: msg.message_id,
+        user_phone_number: phoneNumber,
+        request_type: 'pairing_request',
+        user_waiting_message_id: waitingMsg.message_id,
+        user_animate_interval_id: animateIntervalId,
+        timeout_id_for_pairing_request: timeoutIdForPairing,
+        bot_type: st.data.botType // Store bot type in forwarding context
+    };
+    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
+
+    return;
+  }
+
+
+    if (st && st.step === 'AWAITING_KEY') { // This state is reached after selecting deploy type
     const keyAttempt = text.toUpperCase();
 
     const verificationMsg = await sendAnimatedMessage(cid, `Verifying key`);
@@ -1638,15 +1837,15 @@ bot.on('message', async msg => {
 
       console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
       const patchResponse = await axios.patch(
-        `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
-        { [VAR_NAME]: newVal },
-        {
-          headers: {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3',
-            'Content-Type': 'application/json'
+          `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+          { [VAR_NAME]: newVal },
+          {
+              headers: {
+                  Authorization: `Bearer ${HEROKU_API_KEY}`,
+                  Accept: 'application/vnd.heroku+json; version=3',
+                  'Content-Type': 'application/json'
+              }
           }
-        }
       );
       console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
 
@@ -2409,7 +2608,9 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
     }
     const messageId = q.message.message_id;
 
@@ -2508,7 +2709,9 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
     }
     const messageId = q.message.message_id;
 
@@ -2557,7 +2760,9 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
     }
     const messageId = q.message.message_id;
 
@@ -2599,7 +2804,9 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
     }
     const messageId = q.message.message_id;
 
@@ -2622,7 +2829,9 @@ bot.on('callback_query', async q => {
       const st = userStates[cid];
       // Check if state is valid and appName matches
       if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appToDelete) { // Check step and appName in state
-          return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+          await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+          delete userStates[cid]; // Clear invalid state
+          return;
       }
       const messageId = q.message.message_id;
 
@@ -2677,7 +2886,9 @@ bot.on('callback_query', async q => {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        return bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid]; // Clear invalid state
+        return;
     }
     const messageId = q.message.message_id;
     const appName = payload;
@@ -2961,7 +3172,7 @@ bot.on('callback_query', async q => {
           clearInterval(animateIntervalId);
           console.error(`App status check failed for ${appName} after variable update:`, err.message);
           await bot.editMessageText(
-              `Bot "${appName}" failed to come online after variable "${varKey}" update: ${err.message}\n\n` +
+              `Bot "${appName}" failed to come online after variable "${VAR_NAME}" update: ${err.message}\n\n` +
               `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
               {
                   chat_id: cid,
@@ -3235,115 +3446,4 @@ bot.on('channel_post', async msg => {
     }
 
     let botName = null;
-    let isLogout = false;
-    let isConnected = false;
-    let extractedSessionId = null;
-
-    // --- Raganork MD Log Patterns ---
-    const raganorkLogoutMatch = text.match(/User \[([^\]]+)\] has logged out\.\n\[([^\]]+)\] invalid/si);
-    if (raganorkLogoutMatch) {
-        botName = raganorkLogoutMatch[1];
-        extractedSessionId = raganorkLogoutMatch[2];
-        isLogout = true;
-        console.log(`[Channel Post] Raganork MD LOGOUT detected for bot: ${botName}, session: ${extractedSessionId}`);
-    } else {
-        const raganorkConnectedMatch = text.match(/\[([^\]]+)\] connected\.\nSession IDs: (\S+)\nTime: .*/si);
-        if (raganorkConnectedMatch) {
-            botName = raganorkConnectedMatch[1];
-            isConnected = true;
-            console.log(`[Channel Post] Raganork MD CONNECTED detected for bot: ${botName}`);
-        }
-    }
-
-    // --- Levanter Log Patterns (fallback if not Raganork MD) ---
-    // Note: Levanter's 'INVALID SESSION ID' does not always contain bot name
-    // and 'External Plugins Installed' doesn't contain bot name.
-    // The bot_monitor.js overrides should catch the logs from the main app process.
-    // This channel post handler is specifically for messages *posted to the channel* by child processes or other services.
-    if (!botName) {
-        // If a status message from the general "User [appname] has logged out" format
-        const genericLogoutMatch = text.match(/User \[([^\]]+)\] has logged out/si);
-        if (genericLogoutMatch) {
-            botName = genericLogoutMatch[1];
-            isLogout = true;
-            console.log(`[Channel Post] Generic LOGOUT detected for bot: ${botName}`);
-        } else {
-            // This assumes Levanter bots might also send a 'connected' message in a similar channel format
-            const genericConnectedMatch = text.match(/\[([^\]]+)\] connected/si);
-            if(genericConnectedMatch) {
-                botName = genericConnectedMatch[1];
-                isConnected = true;
-                console.log(`[Channel Post] Generic CONNECTED detected for bot: ${botName}`);
-            }
-        }
-    }
-
-    if (!botName && (isLogout || isConnected)) {
-        // Fallback: If status is detected but bot name isn't in pattern, try to get from previous context
-        // Or assume it's the primary bot being deployed if only one is relevant
-        console.warn(`[Channel Post] Bot name could not be reliably extracted from the log pattern. Status: ${isLogout ? 'LOGOUT' : 'CONNECTED'}`);
-        // If a deployment is in progress, we can assume this status is for that appName
-        for (const [appName, promiseObj] of appDeploymentPromises.entries()) {
-            if (promiseObj.resolve && promiseObj.reject) { // Check if it's an active promise
-                botName = appName; // Assume this status is for the currently tracked deployment
-                console.log(`[Channel Post] Assuming status is for currently tracked deployment: ${botName}`);
-                break;
-            }
-        }
-    }
-
-    if (!botName) {
-        console.log(`[Channel Post] Could not determine bot name or no relevant status detected.`);
-        return; // No relevant bot name or status to process further
-    }
-
-    if (isLogout) {
-        console.log(`[Channel Post] Processing LOGOUT for bot: ${botName}`);
-
-        const pendingPromise = appDeploymentPromises.get(botName);
-        if (pendingPromise) {
-            clearInterval(pendingPromise.animateIntervalId);
-            pendingPromise.reject(new Error('Bot session became invalid.'));
-            appDeploymentPromises.delete(botName);
-            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
-        } else {
-            console.log(`[Channel Post] No active deployment promise for ${botName}, potentially a general logout.`);
-        }
-
-        const userId = await dbServices.getUserIdByBotName(botName); // Use dbServices
-        if (userId) {
-            const warningMessage =
-                `Your bot "*${botName}*" has been logged out due to an invalid session.\n` +
-                `Please update your session ID to get it back online.`;
-
-            await bot.sendMessage(userId, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
-                    ]
-                }
-            });
-            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
-        } else {
-            console.error(`[Channel Post] CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
-            bot.sendMessage(ADMIN_ID, `Untracked bot "${botName}" logged out. User ID not found in DB.`);
-        }
-        return;
-    }
-
-    if (isConnected) {
-        console.log(`[Channel Post] Processing CONNECTED status for bot: ${botName}`);
-
-        const pendingPromise = appDeploymentPromises.get(botName);
-        if (pendingPromise) {
-            clearInterval(pendingPromise.animateIntervalId);
-            pendingPromise.resolve('connected');
-            appDeploymentPromises.delete(botName);
-            console.log(`[Channel Post] Resolved pending promise for ${botName} with SUCCESS.`);
-        } else {
-            console.log(`[Channel Post] No active deployment promise for ${botName} on channel post.`);
-        }
-        return;
-    }
-});
+    let isLogout =
