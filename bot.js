@@ -3423,53 +3423,6 @@ bot.on('channel_post', async msg => {
 
     const text = msg.text?.trim();
 
-    console.log(`[Channel Post - Raw] Received message from channel ${channelId}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
-
-    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
-        console.log(`[Channel Post] Ignoring message from non-listening channel: ${channelId}`);
-        return;
-    }
-
-    if (!text) {
-        console.log(`[Channel Post] Ignoring empty message.`);
-        return;
-    }
-
-    let botName = null;
-    let isLogout = false;
-    let isConnected = false;
-    let extractedSessionId = null;
-
-    // --- Raganork MD Log Patterns ---
-    const raganorkLogoutMatch = text.match(/User \[([^\]]+)\] has logged out\.\n\[([^\]]+)\] invalid/si);
-    if (raganorkLogoutMatch) {
-        botName = raganorkLogoutMatch[1];
-        extractedSessionId = raganorkLogoutMatch[2];
-        isLogout = true;
-        console.log(`[Channel Post] Raganork MD LOGOUT detected for bot: ${botName}, session: ${extractedSessionId}`);
-    } else {
-        const raganorkConnectedMatch = text.match(/\[([^\]]+)\] connected\.\nSession IDs: (\S+)\nTime: .*/si);
-        if (raganorkConnectedMatch) {
-
-// 12) Channel Post Handler (for bot status updates from Heroku/monitoring)
-bot.on('channel_post', async msg => {
-    // Listen to the specific channel ID defined
-    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // <--- Your channel ID here (Moved from top to ensure it's here)
-
-    if (!msg || !msg.chat || msg.chat.id === undefined || msg.chat.id === null) {
-        console.error('[Channel Post Error] Invalid message structure: msg, msg.chat, or msg.chat.id is undefined/null. Message:', JSON.stringify(msg, null, 2));
-        return;
-    }
-    let channelId;
-    try {
-        channelId = msg.chat.id.toString();
-    } catch (e) {
-        console.error(`[Channel Post Error] Failed to get channelId from msg.chat.id: ${e.message}. Message:`, JSON.stringify(msg, null, 2));
-        return;
-    }
-
-    const text = msg.text?.trim();
-
     console.log(`[Channel Post - Raw] Received message from channel ${channelId} at ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' })}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
 
     if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
