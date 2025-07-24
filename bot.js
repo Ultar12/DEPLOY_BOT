@@ -4397,13 +4397,12 @@ if (action === 'setvarbool') {
                 ]
             }
         });
-      }
-    }
-  } // <--- THIS CLOSING BRACE '}' IS AN ISSUE! It prematurely closes the `if (action === 'back_to_app_list')` block.
+    
+   // <--- THIS CLOSING BRACE '}' IS AN ISSUE! It prematurely closes the `if (action === 'back_to_app_list')` block.
     // There should NOT be a closing brace here. The next line of code:
     // `}` (line 2858) is then outside any context, causing the SyntaxError.
 
-}); // <--- This closing parenthesis `)` is for `bot.on('callback_query', async q => { ... })`
+ // <--- This closing parenthesis `)` is for `bot.on('callback_query', async q => { ... })`
 
 // 12) Channel Post Handler (for bot status updates from Heroku/monitoring)
 bot.on('channel_post', async msg => {
