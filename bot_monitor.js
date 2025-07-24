@@ -242,7 +242,7 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         }
         const cfgUrl = `https://api.heroku.com/apps/${moduleParams.APP_NAME}/config-vars`;
         const headers = {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
             Accept: 'application/vnd.heroku+json; version=3',
             'Content-Type': 'application/json'
         };
@@ -256,11 +256,9 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
 // Function to handle bot connected messages (general alert, not for initial deployment success)
 async function sendBotConnectedAlert() {
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-    // --- CRITICAL FIX START ---
     // Make sure the message format matches what bot.js's channel_post handler expects
     // e.g., "[APP_NAME] connected." or "[APP_NAME] connected.\nSession IDs: ..."
-    const messageContent = `✅ [${moduleParams.APP_NAME}] connected.\nTime: ${now}`;
-    // --- CRITICAL FIX END ---
+    const messageContent = `[${moduleParams.APP_NAME}] connected.\nTime: ${now}`;
 
     await sendTelegramAlert(messageContent, moduleParams.TELEGRAM_USER_ID);
     // Also send to the channel if it's configured and different from admin user ID
@@ -281,7 +279,7 @@ async function loadLastLogoutAlertTime() {
     }
     const url = `https://api.heroku.com/apps/${moduleParams.APP_NAME}/config-vars`;
     const headers = {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
     };
 
