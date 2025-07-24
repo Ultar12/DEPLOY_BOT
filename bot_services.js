@@ -407,7 +407,7 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     }
 
     if (isUserFacing && ownerUserId !== callingChatId) {
-         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' }) // <<< CHANGED: Escaped appName
+         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
              .catch(err => console.error(`Failed to send notification to original owner in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
 }
@@ -480,9 +480,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
   const name = vars.APP_NAME;
   const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
 
-  // *** CRITICAL CHANGE HERE: Select the correct default environment variables based on botType ***
-  const currentDefaultEnvVars = defaultEnvVars[botType] || {}; // Use the specific bot type's defaults, or an empty object
-  // *** END CRITICAL CHANGE ***
+  // Select the correct default environment variables based on botType
+  const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
 
   let buildResult = false;
   const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
@@ -536,7 +535,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
 
-    // Filter out undefined/null/empty strings from vars for config-vars patch
+    // Filter out undefined/null/empty strings from vars
     const filteredVars = {};
     for (const key in vars) {
         if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
@@ -544,11 +543,24 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         }
     }
 
+    // Apply defaults intelligently based on isRestore
+    let finalConfigVars = {};
+    if (isRestore) {
+        // For restore, 'vars' already comes with defaults + saved_config_vars applied in correct order.
+        finalConfigVars = filteredVars; // Use the 'vars' object directly after filtering
+    } else {
+        // For new deploy, apply defaults, then overlay user-provided 'vars'
+        finalConfigVars = {
+            ...botTypeSpecificDefaults, // Apply type-specific defaults first
+            ...filteredVars             // Overlay with user input (like SESSION_ID, APP_NAME, AUTO_STATUS_VIEW, etc.)
+        };
+    }
+
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
-        ...currentDefaultEnvVars, // *** CRITICAL CHANGE: Use currentDefaultEnvVars ***
-        ...filteredVars
+        ...finalConfigVars, // Use the carefully constructed finalConfigVars
+        APP_NAME: name // <--- CRITICAL: Ensure the deployed app knows its own name
       },
       {
         headers: {
@@ -670,7 +682,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       );
 
       // <<< Fix for "Build successful" message:
-      const baseWaitingText = `Build successful! Waiting for bot to connect...`; // <<< CHANGED MESSAGE
+      const baseWaitingText = `Build successful! Waiting for bot to connect...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: chatId,
         message_id: createMsg.message_id,
@@ -681,6 +693,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
       const appStatusPromise = new Promise((resolve, reject) => {
           // Store timeoutId as well for clearing from bot_monitor
+          const STATUS_CHECK_TIMEOUT = 120 * 1000; // Define locally if not module scope
           const timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) {
@@ -691,9 +704,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId }); // Add timeoutId here
       });
 
-      const STATUS_CHECK_TIMEOUT = 120 * 1000;
-      let timeoutId; // Declared outside try-catch to be accessible in finally, but actual timeoutId for promise is within promise constructor
-
+      // No need to redeclare STATUS_CHECK_TIMEOUT or timeoutId here, they are part of the promise constructor above.
       try {
           await appStatusPromise; // This waits for the resolution from bot.js's channel_post handler
           // Clear the specific timeoutId for this promise, if it wasn't cleared by bot_monitor
@@ -735,7 +746,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                     await bot.sendMessage(chatId, `Could not auto-delete the app "*${escapeMarkdown(name)}*". Please delete it manually from your Heroku dashboard.`, {parse_mode: 'Markdown'});
-                    monitorSendTelegramAlert(ADMIN_ID, `Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`);
+                    // Assuming monitorSendTelegramAlert is correctly bound in init for this to work
+                    monitorSendTelegramAlert(`Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`, ADMIN_ID);
                 }
             }, 60 * 60 * 1000);
           }
