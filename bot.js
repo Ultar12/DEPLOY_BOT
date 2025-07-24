@@ -2328,18 +2328,154 @@ bot.on('callback_query', async q => {
         const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
         userDisplay = `${firstName} ${lastName} (${username})`;
     } catch (userError) {
-        console.warn(`Could not fetch Telegram info for user ${user_id}: ${userError.message}`); // EMOJI ADDED
+// bot.js
+
+// ... (existing code within bot.on('callback_query', async q => { ... })) ...
+
+  if (action === 'select_bapp') {
+    const appName = payload;
+    const appUserId = extra; // This is the user_id of the app owner
+    const messageId = q.message.message_id;
+    const cid = q.message.chat.id.toString(); // Ensure cid is correctly obtained
+
+    await bot.editMessageText(`💾 Fetching details for backed-up app "*${escapeMarkdown(appName)}*" and checking live Heroku status...`, { // <-- Updated preliminary message
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(err => console.warn(`Failed to edit message with preliminary text: ${err.message}`));
+
+
+    // Fetch the specific deployment from the backup database
+    let selectedDeployment;
+    try {
+        const result = await backupPool.query(
+            `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
+             FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
+            [appName, appUserId]
+        );
+        selectedDeployment = result.rows[0];
+    } catch (e) {
+        console.error(`❌ DB Error fetching backup deployment for ${appName} (${appUserId}):`, e.message);
+        return bot.editMessageText(`An error occurred fetching details for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    if (!selectedDeployment) {
+        console.warn(`⚠️ Backed-up app ${appName} for user ${appUserId} not found in DB during select_bapp. It might have been deleted.`);
+        return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) not found in database. It might have been deleted.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    // --- NEW: LIVE HEROKU STATUS CHECK ---
+    let liveHerokuStatus = 'Unknown/Error';
+    let isAppLiveOnHeroku = false;
+    try {
+        const apiHeaders = {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+        };
+        const appRes = await axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders });
+        // If we reach here, the app exists on Heroku. Check its dyno status.
+        const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders });
+        const workerDyno = dynoRes.data.find(d => d.type === 'worker');
+
+        if (workerDyno && workerDyno.state === 'up') {
+            liveHerokuStatus = '🟢 Currently Active on Heroku';
+            isAppLiveOnHeroku = true;
+        } else if (workerDyno) {
+            liveHerokuStatus = `🟡 On Heroku (State: ${workerDyno.state})`;
+            isAppLiveOnHeroku = true;
+        } else {
+            liveHerokuStatus = '🔵 On Heroku (Scaled to 0 / No worker dyno)';
+            isAppLiveOnHeroku = true;
+        }
+
+        // If our DB thinks it was deleted, but Heroku says it's active, update our DB
+        if (selectedDeployment.deleted_from_heroku_at !== null) {
+            console.log(`[select_bapp] App ${appName} found on Heroku, but DB marked as deleted. Clearing deleted_from_heroku_at.`);
+            await dbServices.saveUserDeployment(user_id, appName, selectedDeployment.session_id, selectedDeployment.config_vars, selectedDeployment.bot_type); // This will clear deleted_from_heroku_at
+            selectedDeployment.deleted_from_heroku_at = null; // Update local object for display
+        }
+
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            liveHerokuStatus = '🔴 Not Found on Heroku';
+            isAppLiveOnHeroku = false;
+            // If app not found on Heroku, but DB thinks it's active, mark as deleted in DB
+            if (selectedDeployment.deleted_from_heroku_at === null) {
+                console.log(`[select_bapp] App ${appName} not found on Heroku, but DB marked as active. Setting deleted_from_heroku_at.`);
+                await dbServices.markDeploymentDeletedFromHeroku(appUserId, appName);
+                selectedDeployment.deleted_from_heroku_at = new Date().toISOString(); // Update local object for display
+            }
+        } else {
+            liveHerokuStatus = `⚠️ Heroku API Error: ${e.message}`;
+            console.error(`[select_bapp] Error checking live Heroku status for ${appName}:`, e.message);
+        }
+    }
+    // --- END NEW: LIVE HEROKU STATUS CHECK ---
+
+
+    // Helper to format values (ensure this `formatVarValue` exists in an accessible scope)
+    function formatVarValue(val) {
+        if (val === 'true') return 'true';
+        if (val === 'false') return 'false';
+        if (val === 'p') return 'enabled (anti-delete)';
+        if (val === 'no-dl') return 'enabled (no download)';
+        return val === null || val === undefined || String(val).trim() === '' ? 'Not Set' : String(val);
+    }
+
+    // Helper to format expiration info (as added previously)
+    function formatExpirationInfo(deployDateStr) {
+        if (!deployDateStr) return 'N/A';
+
+        const deployDate = new Date(deployDateStr);
+        const fixedExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from original deploy
+        const now = new Date();
+
+        const expirationDisplay = fixedExpirationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
+
+        const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
+        const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+
+        if (daysLeft > 0) {
+            return `${expirationDisplay} (${daysLeft} days left)`;
+        } else {
+            return `Expired on ${expirationDisplay}`;
+        }
+    }
+
+
+    const { user_id, session_id, config_vars, bot_type, deploy_date, expiration_date } = selectedDeployment; // Removed deleted_from_heroku_at here, using dynamic status
+
+    // Try to get user's Telegram info
+    let userDisplay = `\`${escapeMarkdown(user_id)}\``;
+    try {
+        const targetChat = await bot.getChat(user_id);
+        const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : '';
+        const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : '';
+        const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
+        userDisplay = `${firstName} ${lastName} (${username})`;
+    } catch (userError) {
+        console.warn(`⚠️ Could not fetch Telegram info for user ${user_id}: ${userError.message}`);
     }
 
     const deployDateDisplay = new Date(deploy_date).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' });
-    const expirationInfo = formatExpirationInfo(deploy_date); // Pass only deploy_date
+    const expirationInfo = formatExpirationInfo(deploy_date);
 
-    let herokuStatus = '';
-    if (deleted_from_heroku_at === null) {
-        herokuStatus = '🟢 Currently on Heroku';
-    } else {
-        herokuStatus = `🔴 Deleted from Heroku on ${new Date(deleted_from_heroku_at).toLocaleDateString()}`;
-    }
+    // Use the live status here
+    // let herokuStatus = ''; // No longer needed, use liveHerokuStatus directly
+    // if (deleted_from_heroku_at === null) {
+    //     herokuStatus = '🟢 Currently on Heroku';
+    // } else {
+    //     herokuStatus = `🔴 Deleted from Heroku on ${new Date(deleted_from_heroku_at).toLocaleDateString()}`;
+    // }
+
 
     // Format Config Vars for display
     let configVarsDisplay = '';
@@ -2355,7 +2491,7 @@ bot.on('callback_query', async q => {
 
 
     const detailMessage = `
-*Backed-up App Details:*
+ *Backed-up App Details:*
 
 *App Name:* \`${escapeMarkdown(appName)}\`
 *Bot Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}
@@ -2363,27 +2499,28 @@ bot.on('callback_query', async q => {
 *Owner Telegram:* ${userDisplay}
 *Deployed On:* ${deployDateDisplay}
 *Expiration:* ${expirationInfo}
-*Heroku Status:* ${herokuStatus}
+*Heroku Status:* ${liveHerokuStatus} <-- NOW USES LIVE STATUS
 
 *Saved Config Vars:*
 ${configVarsDisplay}
 `;
 
-    // Determine if restore button should be active (only if deleted from Heroku and not expired)
+    // Determine if restore button should be active (only if NOT live on Heroku and not expired)
     const now = new Date();
     const isExpired = new Date(deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000 <= now.getTime(); // Check against fixed 45 days
-    const canRestore = deleted_from_heroku_at !== null && !isExpired;
+    // Changed `canRestore` condition: it can be restored if it's NOT live on Heroku AND it's NOT expired.
+    const canRestore = !isAppLiveOnHeroku && !isExpired;
 
 
     const actionButtons = [];
     if (canRestore) {
-        actionButtons.push([{ text: 'Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
+        actionButtons.push([{ text: '🚀 Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
     } else {
-        // Change text to be more informative if not restorable
-        actionButtons.push([{ text: `Cannot Restore (${isExpired ? 'Expired' : 'Active on Heroku'})`, callback_data: `no_action` }]);
+        // Change text to be more informative if not restorable based on live status
+        actionButtons.push([{ text: `🚫 Cannot Restore (${isExpired ? 'Expired' : 'Currently Active/Deploying'})`, callback_data: `no_action` }]);
     }
-    actionButtons.push([{ text: 'Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
-    actionButtons.push([{ text: 'Back to Backup List', callback_data: `back_to_bapp_list` }]);
+    actionButtons.push([{ text: '🗑️ Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
+    actionButtons.push([{ text: '⬅️ Back to Backup List', callback_data: `back_to_bapp_list` }]);
 
 
     await bot.editMessageText(detailMessage, {
@@ -2397,6 +2534,8 @@ ${configVarsDisplay}
     });
     return;
   }
+// ... (rest of bot.js) ...
+
 
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
