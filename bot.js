@@ -2295,8 +2295,59 @@ bot.on('callback_query', async q => {
             Authorization: `Bearer ${HEROKU_API_KEY}`,
             Accept: 'application/vnd.heroku+json; version=3'
         };
+  if (action === 'select_bapp') {
+    const appName = payload;
+    const appUserId = extra; // This is the user_id of the app owner
+    const messageId = q.message.message_id;
+    const cid = q.message.chat.id.toString(); // Ensure cid is correctly obtained
+
+    await bot.editMessageText(`💾 Fetching details for backed-up app "*${escapeMarkdown(appName)}*" and checking live Heroku status...`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(err => console.warn(`Failed to edit message with preliminary text: ${err.message}`));
+
+
+    // Fetch the specific deployment from the backup database
+    let selectedDeployment;
+    try {
+        const result = await backupPool.query(
+            `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
+             FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
+            [appName, appUserId]
+        );
+        selectedDeployment = result.rows[0];
+    } catch (e) {
+        console.error(`❌ DB Error fetching backup deployment for ${appName} (${appUserId}):`, e.message);
+        return bot.editMessageText(`An error occurred fetching details for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    if (!selectedDeployment) {
+        console.warn(`⚠️ Backed-up app ${appName} for user ${appUserId} not found in DB during select_bapp. It might have been deleted.`);
+        return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) not found in database. It might have been deleted.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    // --- NEW: LIVE HEROKU STATUS CHECK ---
+    let liveHerokuStatus = '🔴 Not Found on Heroku'; // Default to not found
+    let isAppLiveOnHeroku = false; // True if it exists AND is running/deploying
+    let herokuAppExists = false; // True if Heroku API returns 200 for the app
+
+    try {
+        const apiHeaders = {
+            Authorization: `Bearer ${HEROKU_API_KEY}`,
+            Accept: 'application/vnd.heroku+json; version=3'
+        };
         const appRes = await axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders });
-        // If we reach here, the app exists on Heroku. Check its dyno status.
+        herokuAppExists = true; // App exists on Heroku
+
         const dynoRes = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders });
         const workerDyno = dynoRes.data.find(d => d.type === 'worker');
 
@@ -2304,39 +2355,43 @@ bot.on('callback_query', async q => {
             liveHerokuStatus = '🟢 Currently Active on Heroku';
             isAppLiveOnHeroku = true;
         } else if (workerDyno) {
-            liveHerokuStatus = `🟡 On Heroku (State: ${workerDyno.state})`;
+            liveHerokuStatus = `🟡 On Heroku (State: ${workerDyno.state})`; // e.g., idle, starting, crashed, errored
+            // While not 'up', it still exists and has a dyno, so it's 'present'.
             isAppLiveOnHeroku = true;
         } else {
-            liveHerokuStatus = '🔵 On Heroku (Scaled to 0 / No worker dyno)';
-            isAppLiveOnHeroku = true;
+            // No worker dyno or scaled to 0
+            liveHerokuStatus = '🔵 On Heroku (Scaled to 0)'; // Blue for existing but not running worker
+            isAppLiveOnHeroku = false; // Not considered "live active" for restore purposes if scaled to 0
         }
 
-        // If our DB thinks it was deleted, but Heroku says it's active, update our DB
+        // If our DB thinks it was deleted, but Heroku says it exists, update our DB
         if (selectedDeployment.deleted_from_heroku_at !== null) {
             console.log(`[select_bapp] App ${appName} found on Heroku, but DB marked as deleted. Clearing deleted_from_heroku_at.`);
-            await dbServices.saveUserDeployment(user_id, appName, selectedDeployment.session_id, selectedDeployment.config_vars, selectedDeployment.bot_type); // This will clear deleted_from_heroku_at
+            await dbServices.saveUserDeployment(selectedDeployment.user_id, appName, selectedDeployment.session_id, selectedDeployment.config_vars, selectedDeployment.bot_type); // Use selectedDeployment.user_id
             selectedDeployment.deleted_from_heroku_at = null; // Update local object for display
         }
 
     } catch (e) {
         if (e.response && e.response.status === 404) {
             liveHerokuStatus = '🔴 Not Found on Heroku';
-            isAppLiveOnHeroku = false;
+            isAppLiveOnHeroku = false; // Explicitly false
+            herokuAppExists = false; // Explicitly false
             // If app not found on Heroku, but DB thinks it's active, mark as deleted in DB
             if (selectedDeployment.deleted_from_heroku_at === null) {
                 console.log(`[select_bapp] App ${appName} not found on Heroku, but DB marked as active. Setting deleted_from_heroku_at.`);
-                await dbServices.markDeploymentDeletedFromHeroku(appUserId, appName);
+                await dbServices.markDeploymentDeletedFromHeroku(selectedDeployment.user_id, appName); // Use selectedDeployment.user_id
                 selectedDeployment.deleted_from_heroku_at = new Date().toISOString(); // Update local object for display
             }
         } else {
-            liveHerokuStatus = `⚠️ Heroku API Error: ${e.message}`;
+            // General API error (e.g., 401, 403, network issues)
+            liveHerokuStatus = `⚠️ Heroku API Error: ${e.response?.status || 'Network'} - ${e.message}`;
             console.error(`[select_bapp] Error checking live Heroku status for ${appName}:`, e.message);
         }
     }
     // --- END NEW: LIVE HEROKU STATUS CHECK ---
 
 
-    // Helper to format values (ensure this `formatVarValue` exists in an accessible scope)
+    // Helper to format values (ensure this `formatVarValue` exists in an accessible scope in bot.js)
     function formatVarValue(val) {
         if (val === 'true') return 'true';
         if (val === 'false') return 'false';
@@ -2345,7 +2400,7 @@ bot.on('callback_query', async q => {
         return val === null || val === undefined || String(val).trim() === '' ? 'Not Set' : String(val);
     }
 
-    // Helper to format expiration info (as added previously)
+    // Helper to format expiration info (ensure this `formatExpirationInfo` exists in an accessible scope in bot.js)
     function formatExpirationInfo(deployDateStr) {
         if (!deployDateStr) return 'N/A';
 
@@ -2383,11 +2438,69 @@ bot.on('callback_query', async q => {
     const deployDateDisplay = new Date(deploy_date).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' });
     const expirationInfo = formatExpirationInfo(deploy_date);
 
-    // Use the live status here
-    // let herokuStatus = ''; // No longer needed, use liveHerokuStatus directly
-    // if (deleted_from_heroku_at === null) {
-    //     herokuStatus = '🟢 Currently on Heroku';
-    // } else {
+    // Format Config Vars for display
+    let configVarsDisplay = '';
+    const relevantConfigKeys = ['SESSION_ID', 'AUTO_READ_STATUS', 'AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'HANDLERS', 'PREFIX', 'ANTI_DELETE', 'SUDO', 'DISABLE_START_MESSAGE'];
+    for (const key of relevantConfigKeys) {
+        // Check if key exists and is not null/undefined/empty string
+        if (config_vars && config_vars[key] !== undefined) {
+            const displayValue = key === 'SESSION_ID' && config_vars[key] ? `${String(config_vars[key]).substring(0, 15)}...` : formatVarValue(config_vars[key]);
+            configVarsDisplay += `  \`${escapeMarkdown(key)}\`: ${escapeMarkdown(displayValue)}\n`;
+        }
+    }
+    if (!configVarsDisplay) configVarsDisplay = '  (No specific config vars saved)';
+
+
+    const detailMessage = `
+💾 *Backed-up App Details:*
+
+*App Name:* \`${escapeMarkdown(appName)}\`
+*Bot Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}
+*Owner User ID:* \`${escapeMarkdown(user_id)}\`
+*Owner Telegram:* ${userDisplay}
+*Deployed On:* ${deployDateDisplay}
+*Expiration:* ${expirationInfo}
+*Heroku Status:* ${liveHerokuStatus} <-- NOW USES LIVE STATUS
+
+*Saved Config Vars:*
+${configVarsDisplay}
+`;
+
+    // Determine if restore button should be active (only if NOT live on Heroku and not expired)
+    const now = new Date();
+    const isExpired = new Date(deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000 <= now.getTime();
+    // Critical change: Only allow restore if app does NOT exist on Heroku (404) AND it's NOT expired.
+    // If it exists but is scaled to 0/crashed, still show "cannot restore" as user should fix via other means.
+    const canRestore = !herokuAppExists && !isExpired;
+
+
+    const actionButtons = [];
+    if (canRestore) {
+        actionButtons.push([{ text: '🚀 Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
+    } else {
+        let cannotRestoreReason = '';
+        if (isExpired) cannotRestoreReason = 'Expired';
+        else if (herokuAppExists) cannotRestoreReason = 'Active/Present on Heroku'; // If it exists at all (even if not 'up')
+        else cannotRestoreReason = 'Unknown Reason'; // Fallback for other errors (e.g., API error)
+
+        actionButtons.push([{ text: `Cannot Restore (${cannotRestoreReason})`, callback_data: `no_action` }]);
+    }
+    actionButtons.push([{ text: 'Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
+    actionButtons.push([{ text: 'Back to Backup List', callback_data: `back_to_bapp_list` }]);
+
+
+    await bot.editMessageText(detailMessage, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: {
+            inline_keyboard: actionButtons
+        }
+    });
+    return;
+  }
+
   if (action === 'select_bapp') {
     const appName = payload;
     const appUserId = extra; // This is the user_id of the app owner
@@ -2552,58 +2665,7 @@ bot.on('callback_query', async q => {
 
         if (workerDyno && workerDyno.state === 'up') {
             liveHerokuStatus = '🟢 Currently Active on Heroku';
-            isAppLiveOnHeroku = true;
-        } else if (workerDyno) {
-            liveHerokuStatus = `🟡 On Heroku (State: ${workerDyno.state})`; // e.g., idle, starting, crashed, errored
-            // While not 'up', it still exists and has a dyno, so it's 'present'.
-            isAppLiveOnHeroku = true;
-        } else {
-            // No worker dyno or scaled to 0
-            liveHerokuStatus = '🔵 On Heroku (Scaled to 0)'; // Blue for existing but not running worker
-            isAppLiveOnHeroku = false; // Not considered "live active" for restore purposes if scaled to 0
-        }
 
-        // If our DB thinks it was deleted, but Heroku says it exists, update our DB
-        if (selectedDeployment.deleted_from_heroku_at !== null) {
-            console.log(`[select_bapp] App ${appName} found on Heroku, but DB marked as deleted. Clearing deleted_from_heroku_at.`);
-            await dbServices.saveUserDeployment(user_id, appName, selectedDeployment.session_id, selectedDeployment.config_vars, selectedDeployment.bot_type); // This will clear deleted_from_heroku_at
-            selectedDeployment.deleted_from_heroku_at = null; // Update local object for display
-        }
-
-    } catch (e) {
-        if (e.response && e.response.status === 404) {
-            liveHerokuStatus = '🔴 Not Found on Heroku';
-            isAppLiveOnHeroku = false; // Explicitly false
-            herokuAppExists = false; // Explicitly false
-            // If app not found on Heroku, but DB thinks it's active, mark as deleted in DB
-            if (selectedDeployment.deleted_from_heroku_at === null) {
-                console.log(`[select_bapp] App ${appName} not found on Heroku, but DB marked as active. Setting deleted_from_heroku_at.`);
-                await dbServices.markDeploymentDeletedFromHeroku(appUserId, appName);
-                selectedDeployment.deleted_from_heroku_at = new Date().toISOString(); // Update local object for display
-            }
-        } else {
-            // General API error (e.g., 401, 403, network issues)
-            liveHerokuStatus = `⚠️ Heroku API Error: ${e.response?.status || 'Network'} - ${e.message}`;
-            console.error(`[select_bapp] Error checking live Heroku status for ${appName}:`, e.message);
-        }
-    }
-    // --- END NEW: LIVE HEROKU STATUS CHECK ---
-
-
-    // Helper to format values (ensure this `formatVarValue` exists in an accessible scope in bot.js)
-    function formatVarValue(val) {
-        if (val === 'true') return 'true';
-        if (val === 'false') return 'false';
-        if (val === 'p') return 'enabled (anti-delete)';
-        if (val === 'no-dl') return 'enabled (no download)';
-        return val === null || val === undefined || String(val).trim() === '' ? 'Not Set' : String(val);
-    }
-
-    // Helper to format expiration info (ensure this `formatExpirationInfo` exists in an accessible scope in bot.js)
-    function formatExpirationInfo(deployDateStr) {
-        if (!deployDateStr) return 'N/A';
-
-        const deployDate = new Date(deployDateStr);
   if (action === 'select_bapp') {
     const appName = payload;
     const appUserId = extra; // This is the user_id of the app owner
@@ -2773,43 +2835,6 @@ bot.on('callback_query', async q => {
 
 *Saved Config Vars:*
 ${configVarsDisplay}
-`;
-
-    // Determine if restore button should be active (only if NOT live on Heroku and not expired)
-    const now = new Date();
-    const isExpired = new Date(deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000 <= now.getTime();
-    // Critical change: Only allow restore if app does NOT exist on Heroku (404) AND it's NOT expired.
-    // If it exists but is scaled to 0/crashed, still show "cannot restore" as user should fix via other means.
-    const canRestore = !herokuAppExists && !isExpired;
-
-
-    const actionButtons = [];
-    if (canRestore) {
-        actionButtons.push([{ text: '🚀 Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }]);
-    } else {
-        let cannotRestoreReason = '';
-        if (isExpired) cannotRestoreReason = 'Expired';
-        else if (herokuAppExists) cannotRestoreReason = 'Active/Present on Heroku'; // If it exists at all (even if not 'up')
-        else cannotRestoreReason = 'Unknown Reason'; // Fallback for other errors (e.g., API error)
-
-        actionButtons.push([{ text: `🚫 Cannot Restore (${cannotRestoreReason})`, callback_data: `no_action` }]);
-    }
-    actionButtons.push([{ text: '🗑️ Delete From Backup DB', callback_data: `delete_bapp:${appName}:${user_id}` }]);
-    actionButtons.push([{ text: '⬅️ Back to Backup List', callback_data: `back_to_bapp_list` }]);
-
-
-    await bot.editMessageText(detailMessage, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true,
-        reply_markup: {
-            inline_keyboard: actionButtons
-        }
-    });
-    return;
-  }
-
 
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
