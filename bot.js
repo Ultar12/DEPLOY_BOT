@@ -4348,6 +4348,7 @@ if (action === 'setvarbool') {
     }
   }
 });
+  }
 
 // 12) Channel Post Handler (for bot status updates from Heroku/monitoring)
 bot.on('channel_post', async msg => {
