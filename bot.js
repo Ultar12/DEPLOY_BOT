@@ -544,13 +544,54 @@ async function notifyAdminUserOnline(msg) {
     });
 
     await loadMaintenanceStatus(); // Load initial maintenance status
+    await loadMaintenanceStatus(); // This line should already be there
 
-    console.log('Bot is running...');
-   startWebServer();
-    // <<< IMPORTANT: Start polling ONLY AFTER all services are initialized >>>
-    bot.startPolling();
+    // --- NEW: Webhook & Server Setup ---
+    if (process.env.NODE_ENV === 'production') {
+        // --- Webhook Mode (for Heroku) ---
+        const app = express();
+        app.use(express.json()); // Middleware to parse JSON updates from Telegram
 
-})(); // End of the main async IIFE
+        const APP_URL = process.env.APP_URL;
+        if (!APP_URL) {
+            console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
+            process.exit(1);
+        }
+        const PORT = process.env.PORT || 3000;
+
+        // A secret path to receive updates from Telegram
+        const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
+        const fullWebhookUrl = `${APP_URL}${webhookPath}`;
+
+        // Tell Telegram where our webhook is
+        await bot.setWebHook(fullWebhookUrl);
+        console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
+
+        // Listen for incoming updates from Telegram
+        app.post(webhookPath, (req, res) => {
+            bot.processUpdate(req.body);
+            res.sendStatus(200); // Respond to Telegram to acknowledge receipt
+        });
+
+        // A simple endpoint to check if the server is running
+        app.get('/', (req, res) => {
+            res.send('Bot is running (webhook mode)!');
+        });
+
+        // Start the web server
+        app.listen(PORT, () => {
+            console.log(`[Web Server] Server is running on port ${PORT}`);
+        });
+
+    } else {
+        // --- Polling Mode (for local development) ---
+        console.log('Bot is running in development mode (polling)...');
+        bot.startPolling();
+    }
+
+})(); // This closing line should already be there
+
+    
 
 
 // 8) Polling error handler
