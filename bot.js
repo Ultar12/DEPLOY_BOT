@@ -73,6 +73,17 @@ const {
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7730944193:AAG1RKwymeGG1HlYZRvHcOZZy_St9c77Rg'; // Use ENV if set, else hardcoded
 const TELEGRAM_USER_ID = '7302005705';
 const TELEGRAM_CHANNEL_ID = '-1002892034574';
+// ... near the top of bot.js
+
+// These are correctly declared once here:
+const userLastSeenNotification = new Map(); // userId -> last timestamp notified
+const adminOnlineMessageIds = new Map(); // userId -> adminMessageId (for editing)
+const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- ADD THESE TWO LINES ---
+const userNotificationDebounce = new Map(); // Prevents rapid-fire API calls
+const NOTIFICATION_DEBOUNCE_MS = 2500; // 2.5 second debounce delay
+// ----------------------------
 
 // GitHub Repository URLs for different bots
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
