@@ -3996,7 +3996,10 @@ if (action === 'setvarbool') {
   }
 });
 
-// 12) Channel Post Handler (for bot status updates from Heroku/monitoring)
+// AROUND LINE 4053
+// ===================================================================
+// REPLACE THE ENTIRE bot.on('channel_post', ...) FUNCTION WITH THIS:
+// ===================================================================
 bot.on('channel_post', async msg => {
     const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
 
@@ -4009,7 +4012,7 @@ bot.on('channel_post', async msg => {
     const text = msg.text?.trim();
 
     if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID || !text) {
-        return; // Ignore messages from other channels or empty messages
+        return;
     }
 
     console.log(`[Channel Post - Raw] Received: ${text}`);
@@ -4018,30 +4021,26 @@ bot.on('channel_post', async msg => {
     let isConnected = false;
     let isLogout = false;
 
-    // --- New, More Precise Matching Logic ---
-    // Specifically looks for the patterns you provided.
-    
-    // Check for connection: e.g., "[ultartest] connected."
+    // --- Robust Matching Logic ---
     const connectedMatch = text.match(/^\[([^\]]+)\] connected/);
     if (connectedMatch) {
         botName = connectedMatch[1];
         isConnected = true;
     } else {
-        // Check for logout: e.g., "User [hhggghhhhhhhjhh] has logged out"
         const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
         if (logoutMatch) {
             botName = logoutMatch[1];
             isLogout = true;
         }
     }
-    // --- End of New Logic ---
+    // --- End of Logic ---
 
     if (!botName) {
         console.log(`[Channel Post] No relevant status detected in message.`);
         return;
     }
 
-    let detectedBotType = 'levanter'; // Default
+    let detectedBotType = 'levanter';
     try {
         const dbEntry = await pool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [botName]);
         if (dbEntry.rows.length > 0 && dbEntry.rows[0].bot_type) {
@@ -4079,6 +4078,6 @@ bot.on('channel_post', async msg => {
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(botName);
         }
-      return;
     }
 });
+// ===================================================================
