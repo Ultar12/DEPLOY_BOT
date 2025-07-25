@@ -1858,7 +1858,7 @@ bot.on('message', async msg => {
     // WITH THIS CORRECTED BLOCK:
 // ===================================================================
 if (usesLeft === null) {
-    const contactOwnerMessage = Invalid Key. Please contact the owner for a valid KEY.;
+    const contactOwnerMessage = `Invalid Key. Please contact the owner for a valid KEY.`;
     const contactOwnerKeyboard = {
         inline_keyboard: [
             [
