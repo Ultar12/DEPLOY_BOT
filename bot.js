@@ -370,7 +370,7 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session', 'Deploy'],
       ['Free Trial', 'My Bots'],
-      ['Support', 'FAQ'] 
+      ['Support', 'FAQ'],
       ['More Features'] 
   ];
   if (isAdmin) {
