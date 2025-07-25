@@ -1757,7 +1757,7 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
       const moreFeaturesText = "You can explore my other bot!";
       const moreFeaturesKeyboard = {
           inline_keyboard: [
-              [{ text: "Test out our Partner's Bot", url: 'https://t.me/tagtgbot' }]
+              [{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]
           ]
       };
       await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
