@@ -3961,157 +3961,86 @@ if (action === 'setvarbool') {
     }
   }
 });
+
 // 12) Channel Post Handler (for bot status updates from Heroku/monitoring)
 bot.on('channel_post', async msg => {
-    // Listen to the specific channel ID defined
     const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
 
-    if (!msg || !msg.chat || msg.chat.id === undefined || msg.chat.id === null) {
-        console.error('[Channel Post Error] Invalid message structure: msg, msg.chat, or msg.chat.id is undefined/null. Message:', JSON.stringify(msg, null, 2));
-        return;
-    }
-    let channelId;
-    try {
-        channelId = msg.chat.id.toString();
-    } catch (e) {
-        console.error(`[Channel Post Error] Failed to get channelId from msg.chat.id: ${e.message}. Message:`, JSON.stringify(msg, null, 2));
+    if (!msg || !msg.chat || !msg.chat.id) {
+        console.error('[Channel Post Error] Invalid message structure:', JSON.stringify(msg, null, 2));
         return;
     }
 
+    const channelId = msg.chat.id.toString();
     const text = msg.text?.trim();
 
-    console.log(`[Channel Post - Raw] Received message from channel ${channelId} at ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' })}:\n---BEGIN MESSAGE---\n${text}\n---END MESSAGE---`);
-
-    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID) {
-        console.log(`[Channel Post] Ignoring message from non-listening channel: ${channelId}`);
-        return;
+    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID || !text) {
+        return; // Ignore messages from other channels or empty messages
     }
 
-    if (!text) {
-        console.log(`[Channel Post] Ignoring empty message.`);
-        return;
-    }
+    console.log(`[Channel Post - Raw] Received: ${text}`);
 
-    let botName = null;
     let isLogout = false;
     let isConnected = false;
-    let detectedBotType = null;
 
-    // --- Raganork MD Log Patterns ---
-    const raganorkLogoutMatch = text.match(/User \[([^\]]+)\] has logged out\.\n\[([^\]]+)\] invalid/si);
-    if (raganorkLogoutMatch) {
-        botName = raganorkLogoutMatch[1];
-        isLogout = true;
-        detectedBotType = 'raganork';
-        console.log(`[Channel Post] 💀 Raganork MD LOGOUT detected for bot: ${botName}`);
-    } else {
-        const raganorkConnectedMatch = text.match(/\[([^\]]+)\] connected\.\nSession IDs: (\S+)\nTime: .*/si);
-        if (raganorkConnectedMatch) {
-            botName = raganorkConnectedMatch[1];
+    // --- Robust Keyword-based Detection ---
+    const lowerCaseText = text.toLowerCase();
+    let botNameMatch = text.match(/User \[([^\]]+)\]/) || text.match(/\[([^\]]+)\]/);
+    let botName = botNameMatch ? botNameMatch[1] : null;
+
+    if (botName) {
+        if (lowerCaseText.includes('connected')) {
             isConnected = true;
-            detectedBotType = 'raganork';
-            console.log(`✅ [Channel Post] Raganork MD CONNECTED detected for bot: ${botName}`);
-        }
-    }
-
-    // --- Levanter Log Patterns (fallback if not Raganork MD) ---
-    if (!botName) {
-        const genericLogoutMatch = text.match(/User \[([^\]]+)\] has logged out/si);
-        if (genericLogoutMatch) {
-            botName = genericLogoutMatch[1];
+        } else if (lowerCaseText.includes('logged out') || lowerCaseText.includes('invalid')) {
             isLogout = true;
-            console.log(`[Channel Post] 💀 Generic LOGOUT detected for bot: ${botName}`);
-        } else {
-            const genericConnectedMatch = text.match(/\[([^\]]+)\] connected/si);
-            if(genericConnectedMatch) {
-                botName = genericConnectedMatch[1];
-                isConnected = true;
-                console.log(`[Channel Post] Generic CONNECTED detected for bot: ${botName}`);
-            }
         }
     }
+    // --- End of Robust Detection ---
 
-    if (!botName) {
-        console.log(`[Channel Post] Could not determine bot name from message or no relevant status detected. Message: ${text.substring(0, 100)}...`);
+    if (!botName || (!isConnected && !isLogout)) {
+        console.log(`[Channel Post] Could not determine bot name or relevant status.`);
         return;
     }
 
-    if (!detectedBotType) {
-        try {
-            const dbEntry = await pool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [botName]);
-            if (dbEntry.rows.length > 0) {
-                detectedBotType = dbEntry.rows[0].bot_type;
-                console.log(`[Channel Post] Fetched bot type '${detectedBotType}' from DB for bot '${botName}'.`);
-            } else {
-                if (botName.toLowerCase().includes('raganork')) {
-                    detectedBotType = 'raganork';
-                } else if (botName.toLowerCase().includes('levanter')) {
-                    detectedBotType = 'levanter';
-                } else {
-                    detectedBotType = 'levanter';
-                }
-                console.warn(`[Channel Post] Could not find bot_type in DB for '${botName}'. Falling back to inferred/default: '${detectedBotType}'.`);
-            }
-        } catch (dbError) {
-             console.error(`[Channel Post] DB Error fetching bot_type for '${botName}': ${dbError.message}`);
-             detectedBotType = 'Unknown';
+    let detectedBotType = 'levanter'; // Default
+    try {
+        const dbEntry = await pool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [botName]);
+        if (dbEntry.rows.length > 0 && dbEntry.rows[0].bot_type) {
+            detectedBotType = dbEntry.rows[0].bot_type;
         }
+    } catch (dbError) {
+         console.error(`[Channel Post] DB Error fetching bot_type for '${botName}': ${dbError.message}`);
     }
 
+    const pendingPromise = appDeploymentPromises.get(botName);
 
     if (isLogout) {
-        console.log(`[Channel Post] Processing LOGOUT for bot: ${botName}`);
-
-        const pendingPromise = appDeploymentPromises.get(botName);
+        console.log(`[Channel Post] LOGOUT detected for bot: ${botName}`);
         if (pendingPromise) {
-            clearInterval(pendingPromise.animateIntervalId);
-            if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
             pendingPromise.reject(new Error(`Bot session became invalid.`));
             appDeploymentPromises.delete(botName);
-            console.log(`[Channel Post] Resolved pending promise for ${botName} with REJECTION (logout detected).`);
-            
-            // --- FIX #1: Stop processing to prevent the duplicate logout notification ---
-            return; 
-            // --------------------------------------------------------------------------
-        } else {
-            console.log(`[Channel Post] No active deployment promise for ${botName}, potentially a general logout.`);
+            return; // Stop processing to prevent duplicate notifications
         }
 
         const userId = await dbServices.getUserIdByBotName(botName);
         if (userId) {
             const warningMessage =
-                `🚨 Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out due to an invalid session.\n` +
-                `Please update your session ID to get it back online.`;
-
+                `Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out due to an invalid session.\nPlease update your session ID to get it back online.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]
-                    ]
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]]
                 }
             });
-            console.log(`[Channel Post] Sent logout notification to user ${userId} for bot ${botName}`);
-        } else {
-            console.error(`[Channel Post] ⚠️ CRITICAL: Could not find user for bot "${botName}" during logout alert. Is this bot tracked in the database?`);
-            await bot.sendMessage(ADMIN_ID, `⚠️ Untracked bot "*${escapeMarkdown(botName)}*" (${detectedBotType.toUpperCase()}) logged out. User ID not found in DB.`);
         }
-        return;
     }
 
     if (isConnected) {
-        console.log(`[Channel Post] Processing CONNECTED status for bot: ${botName}`);
-
-        const pendingPromise = appDeploymentPromises.get(botName);
+        console.log(`[Channel Post] CONNECTED detected for bot: ${botName}`);
         if (pendingPromise) {
-            // --- FIX #2: Removed clearInterval from here. It will now be correctly handled by buildWithProgress ---
-            if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(botName);
-            console.log(`[Channel Post] ✅ Resolved pending promise for ${botName} with SUCCESS.`);
-        } else {
-            console.log(`[Channel Post] No active deployment promise found in map for ${botName} on channel post.`);
         }
-        return;
+      return;
     }
 });
