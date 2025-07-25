@@ -3980,25 +3980,30 @@ bot.on('channel_post', async msg => {
 
     console.log(`[Channel Post - Raw] Received: ${text}`);
 
-    let isLogout = false;
+    let botName = null;
     let isConnected = false;
+    let isLogout = false;
 
-    // --- Robust Keyword-based Detection ---
-    const lowerCaseText = text.toLowerCase();
-    let botNameMatch = text.match(/User \[([^\]]+)\]/) || text.match(/\[([^\]]+)\]/);
-    let botName = botNameMatch ? botNameMatch[1] : null;
-
-    if (botName) {
-        if (lowerCaseText.includes('connected')) {
-            isConnected = true;
-        } else if (lowerCaseText.includes('logged out') || lowerCaseText.includes('invalid')) {
+    // --- New, More Precise Matching Logic ---
+    // Specifically looks for the patterns you provided.
+    
+    // Check for connection: e.g., "[ultartest] connected."
+    const connectedMatch = text.match(/^\[([^\]]+)\] connected/);
+    if (connectedMatch) {
+        botName = connectedMatch[1];
+        isConnected = true;
+    } else {
+        // Check for logout: e.g., "User [hhggghhhhhhhjhh] has logged out"
+        const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
+        if (logoutMatch) {
+            botName = logoutMatch[1];
             isLogout = true;
         }
     }
-    // --- End of Robust Detection ---
+    // --- End of New Logic ---
 
-    if (!botName || (!isConnected && !isLogout)) {
-        console.log(`[Channel Post] Could not determine bot name or relevant status.`);
+    if (!botName) {
+        console.log(`[Channel Post] No relevant status detected in message.`);
         return;
     }
 
@@ -4019,13 +4024,12 @@ bot.on('channel_post', async msg => {
         if (pendingPromise) {
             pendingPromise.reject(new Error(`Bot session became invalid.`));
             appDeploymentPromises.delete(botName);
-            return; // Stop processing to prevent duplicate notifications
+            return;
         }
-
+        
         const userId = await dbServices.getUserIdByBotName(botName);
         if (userId) {
-            const warningMessage =
-                `Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out due to an invalid session.\nPlease update your session ID to get it back online.`;
+            const warningMessage = `Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out due to an invalid session.\nPlease update your session ID to get it back online.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
