@@ -8,12 +8,15 @@ console.log('--- SCRIPT STARTING: Verifying code execution (This should be the v
 process.on('unhandledRejection', err => console.error('Unhandled Rejection:', err));
 process.on('uncaughtException', err => console.error('Uncaught Exception:', err));
 
+
 require('dotenv').config();
 const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path');
+const express = require('express'); // <-- ADD THIS LINE
+
 
 // --- Import modularized components ---
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
