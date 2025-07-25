@@ -251,7 +251,77 @@ const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
 let isMaintenanceMode = false;
 
+// AROUND LINE 470
+// ===================================================================
+// ADD THIS ENTIRE NEW FUNCTION:
+// ===================================================================
 
+const USERS_PER_PAGE = 8; // Define how many users to show per page
+
+async function sendUserListPage(chatId, page = 1, messageId = null) {
+    if (chatId.toString() !== ADMIN_ID) {
+        return; // Just in case
+    }
+
+    try {
+        // First, get the total count of all users to calculate pages
+        const totalResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total FROM user_activity');
+        const totalUsers = parseInt(totalResult.rows[0].total, 10);
+
+        if (totalUsers === 0) {
+            const text = "No users have interacted with the bot yet.";
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, text);
+        }
+
+        const totalPages = Math.ceil(totalUsers / USERS_PER_PAGE);
+        page = Math.max(1, Math.min(page, totalPages)); // Ensure page is within valid range
+
+        // Get the specific users for the current page
+        const offset = (page - 1) * USERS_PER_PAGE;
+        const pageResult = await pool.query(
+            `SELECT DISTINCT user_id FROM user_activity ORDER BY user_id ASC LIMIT $1 OFFSET $2`, 
+            [USERS_PER_PAGE, offset]
+        );
+        const userIds = pageResult.rows.map(row => row.user_id);
+
+        // Build the message content
+        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
+        for (const userId of userIds) {
+            const bannedStatus = await dbServices.isUserBanned(userId);
+            responseMessage += `ID: \`${userId}\` ${bannedStatus ? '(Banned)' : ''}\n`;
+        }
+        responseMessage += `\n_Use /info <ID> for full details._`;
+
+        // Create the navigation buttons
+        const navRow = [];
+        if (page > 1) {
+            navRow.push({ text: '⬅️ Previous', callback_data: `users_page:${page - 1}` });
+        }
+        navRow.push({ text: `Page ${page}`, callback_data: 'no_action' });
+        if (page < totalPages) {
+            navRow.push({ text: 'Next ➡️', callback_data: `users_page:${page + 1}` });
+        }
+
+        // Send or edit the message
+        const options = {
+            chat_id: chatId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [navRow]
+            }
+        };
+
+        if (messageId) {
+            await bot.editMessageText(responseMessage, { ...options, message_id: messageId });
+        } else {
+            await bot.sendMessage(chatId, responseMessage, options);
+        }
+    } catch (error) {
+        console.error(`Error sending user list page:`, error);
+        await bot.sendMessage(chatId, "An error occurred while fetching the user list.");
+    }
+}
 // 6) Utilities (some are passed to other modules)
 
 // Function to escape Markdown V2 special characters
@@ -950,95 +1020,21 @@ ${keyDetails}
     }
 });
 
-// NEW ADMIN COMMAND: /users
+// AROUND LINE 1245
+// ===================================================================
+// REPLACE THE OLD /users HANDLER WITH THIS:
+// ===================================================================
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
     if (cid !== ADMIN_ID) {
         return bot.sendMessage(cid, "You are not authorized to use this command.");
     }
-
-    try {
-        // Fetch all unique user IDs that have ever interacted (from user_activity)
-        const allUserIdsResult = await pool.query(`
-            SELECT DISTINCT user_id FROM user_activity
-            ORDER BY user_id;
-        `);
-        const userIds = allUserIdsResult.rows.map(row => row.user_id);
-
-        if (userIds.length === 0) {
-            return bot.sendMessage(cid, "No users have interacted with the bot yet.");
-        }
-
-        let responseMessage = '*Registered Users:*\n\n';
-        const maxUsersPerMessage = 10;
-        let userCounter = 0;
-
-        for (const userId of userIds) {
-            try {
-                const targetChat = await bot.getChat(userId);
-                const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
-                const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
-                const username = targetChat.username ? `@${escapeMarkdown(targetChat.username)}` : 'N/A';
-                const userIdEscaped = escapeMarkdown(userId);
-
-                const bots = await dbServices.getUserBots(userId); // Use dbServices
-                let botList = bots.length > 0 ? bots.map(b => `\`${escapeMarkdown(b)}\``).join(', ') : 'None';
-
-                const lastSeen = await dbServices.getUserLastSeen(userId); // Use dbServices
-                const lastSeenText = lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'N/A';
-                
-                const bannedStatus = await dbServices.isUserBanned(userId); // Use dbServices
-                const banText = bannedStatus ? 'Yes' : 'No';
-
-
-                responseMessage += `*ID:* \`${userIdEscaped}\`\n`;
-                responseMessage += `*Name:* ${firstName} ${lastName}\n`;
-                responseMessage += `*Username:* ${username}\n`;
-                responseMessage += `*Deployed Bots:* ${botList}\n`;
-                responseMessage += `*Last Activity:* ${lastSeenText}\n`;
-                responseMessage += `*Banned:* ${banText}\n\n`; // Add ban status
-
-                userCounter++;
-
-                if (userCounter % maxUsersPerMessage === 0 && userIds.indexOf(userId) < userIds.length - 1) {
-                    await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
-                    responseMessage = '*Registered Users (continued):*\n\n';
-                    await new Promise(resolve => setTimeout(resolve, 500)); // Small delay for API limits
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 300)); // Small delay for API limits
-
-            } catch (error) {
-                console.error(`Error fetching Telegram info or bots for user ${userId}:`, error.message);
-                if (error.response && error.response.body && error.response.body.description) {
-                    const apiError = error.response.body.description;
-                    if (apiError.includes("chat not found") || apiError.includes("user not found")) {
-                         responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* User chat not found or bot blocked.\n\n`;
-                    } else {
-                         responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* Error fetching info: ${escapeMarkdown(error.message)}\n\n`;
-                    }
-                } else {
-                     responseMessage += `*ID:* \`${escapeMarkdown(userId)}\`\n*Status:* Error fetching info: ${escapeMarkdown(error.message)}\n\n`;
-                }
-                 await new Promise(resolve => setTimeout(resolve, 300)); // Small delay for API limits
-            }
-        }
-
-        if (responseMessage.trim() !== '*Registered Users (continued):*' && responseMessage.trim() !== '*Registered Users:*') {
-            await bot.sendMessage(cid, responseMessage, { parse_mode: 'Markdown' });
-        }
-
-    } catch (error) {
-        console.error(`Error fetching user list:`, error.message);
-        await bot.sendMessage(cid, `An error occurred while fetching the user list: ${error.message}`);
-    }
+    // Call our new paginated function to show the first page
+    await sendUserListPage(cid, 1);
 });
+// ===================================================================
 
-// NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
-// bot.js
-
-// ... (existing code before /bapp command) ...
 
 // NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
 bot.onText(/^\/bapp$/, async (msg) => {
@@ -2192,9 +2188,17 @@ bot.on('callback_query', async q => {
       return;
   }
 
-  // bot.js
-
-// ... (existing code in bot.on('callback_query', async q => { ... })) ...
+ // AROUND LINE 1995
+// ===================================================================
+// ADD THIS NEW BLOCK INSIDE bot.on('callback_query', ...):
+// ===================================================================
+if (action === 'users_page') {
+    const newPage = parseInt(payload, 10);
+    await sendUserListPage(q.message.chat.id, newPage, q.message.message_id);
+    return;
+}
+// ===================================================================
+ 
 
   if (action === 'select_deploy_type') { // NEW: Handle bot type selection for deployment
       const botType = payload; // 'levanter' or 'raganork'
