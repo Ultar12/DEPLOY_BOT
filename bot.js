@@ -430,35 +430,38 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-
-// NEW: User online notification logic (uses global maps declared above)
 async function notifyAdminUserOnline(msg) {
-    // Ensure msg.from exists and has an ID to prevent errors for non-user messages (e.g., channel posts)
     if (!msg || !msg.from || !msg.from.id) {
         console.warn("[Admin Notification] Skipping: msg.from or msg.from.id is undefined.", msg);
         return;
     }
-
-    // Prevent bot from notifying itself (or other bots)
     if (msg.from.is_bot) {
-        console.log("[Admin Notification] Skipping: Message originated from a bot.");
         return;
     }
 
     const userId = msg.from.id.toString();
     const now = Date.now();
 
-    if (userId === ADMIN_ID) { // Don't notify admin about themselves
+    if (userId === ADMIN_ID) {
         return;
     }
+    
+    // --- NEW DEBOUNCE LOGIC ---
+    // Check if we've attempted a notification for this user very recently.
+    const lastAttempt = userNotificationDebounce.get(userId) || 0;
+    if (now - lastAttempt < NOTIFICATION_DEBOUNCE_MS) {
+        // If so, ignore this trigger to prevent spamming the API.
+        console.log(`[Admin Notification] Debounced for user ${userId}. Skipping.`);
+        return;
+    }
+    // Record the timestamp of this attempt.
+    userNotificationDebounce.set(userId, now);
+    // --- END OF NEW LOGIC ---
 
     const lastNotified = userLastSeenNotification.get(userId) || 0;
     const lastAdminMessageId = adminOnlineMessageIds.get(userId);
-
-    // Capture the text of the message (button/command pressed)
     const userAction = msg.text || (msg.callback_query ? `Callback: ${msg.callback_query.data}` : 'Interacted');
 
-    // Safely get user details, providing fallbacks for undefined properties
     const first_name = msg.from.first_name ? escapeMarkdown(msg.from.first_name) : 'N/A';
     const last_name = msg.from.last_name ? escapeMarkdown(msg.from.last_name) : '';
     const username = msg.from.username ? `@${escapeMarkdown(msg.from.username)}` : 'N/A';
@@ -472,7 +475,7 @@ async function notifyAdminUserOnline(msg) {
 *Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' })}
     `;
 
-    // If within cooldown, attempt to edit the existing message
+    // If within the 5-minute cooldown, edit the existing message
     if (now - lastNotified < ONLINE_NOTIFICATION_COOLDOWN_MS && lastAdminMessageId) {
         try {
             await bot.editMessageText(userDetails, {
@@ -480,31 +483,27 @@ async function notifyAdminUserOnline(msg) {
                 message_id: lastAdminMessageId,
                 parse_mode: 'Markdown'
             });
-            userLastSeenNotification.set(userId, now); // Still update timestamp to reset cooldown
-            console.log(`[Admin Notification] Edited admin notification for user ${userId} (action: ${userAction}).`);
+            console.log(`[Admin Notification] Edited admin notification for user ${userId}.`);
         } catch (error) {
-            console.error(`Error editing admin notification for user ${userId}:`, error.message);
-            // If editing fails (e.g., message too old), send a new one
-            try {
-                const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
-                adminOnlineMessageIds.set(userId, sentMsg.message_id);
-                userLastSeenNotification.set(userId, now);
-                console.log(`[Admin Notification] Sent new admin notification for user ${userId} after edit failure.`);
-            } catch (sendError) {
-                console.error(`Error sending new admin notification for user ${userId} after edit failure:`, sendError.message);
+            // If editing fails (e.g., message deleted), just log it. The next notification will send a new message.
+            if (error.response && error.response.statusCode !== 429) {
+                 console.error(`Error editing admin notification for user ${userId}:`, error.message);
             }
         }
-    } else { // Outside cooldown or no previous message to edit, send new message
+    } else { // Outside cooldown, send new message
         try {
             const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
             adminOnlineMessageIds.set(userId, sentMsg.message_id);
-            userLastSeenNotification.set(userId, now);
-            console.log(`[Admin Notification] Notified admin about user ${userId} being online (action: ${userAction}).`);
+            userLastSeenNotification.set(userId, now); // Only update the 5-min cooldown when a NEW message is sent
+            console.log(`[Admin Notification] Sent new admin notification for user ${userId}.`);
         } catch (error) {
-            console.error(`Error notifying admin about user ${userId} online:`, error.message);
+             if (error.response && error.response.statusCode !== 429) {
+                console.error(`Error sending new admin notification for user ${userId}:`, error.message);
+             }
         }
     }
 }
+
 
 // 7) Initialize modular components
 (async () => {
