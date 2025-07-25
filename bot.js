@@ -220,6 +220,20 @@ const backupPool = new Pool({
 // 5) Initialize bot & in-memory state
 // <<< IMPORTANT: Set polling to false here. It will be started manually later.
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+
+let botId; // <-- ADD THIS LINE
+
+// Get the bot's own ID at startup
+bot.getMe().then(me => {
+    if (me && me.id) {
+        botId = me.id.toString();
+        console.log(`Bot initialized. ID: ${botId}, Username: ${me.username}`);
+    }
+}).catch(err => {
+    console.error("CRITICAL: Could not get bot's own ID. Exiting.", err);
+    process.exit(1);
+});
+
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 
