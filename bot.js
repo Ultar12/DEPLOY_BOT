@@ -1750,6 +1750,20 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   });
 }
 
+  // Add this block inside bot.on('message', ...)
+
+  if (text === 'More Features') {
+      await dbServices.updateUserActivity(cid);
+      const moreFeaturesText = "You can explore my other bot!";
+      const moreFeaturesKeyboard = {
+          inline_keyboard: [
+              [{ text: "Test out our Partner's Bot", url: 'https://t.me/tagtgbot' }]
+          ]
+      };
+      await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
+      return;
+  }
+
 
   if (text === 'FAQ') {
       // Clear previous state for consistency, but retain message_id if existing for edit
