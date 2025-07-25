@@ -1855,25 +1855,25 @@ bot.on('message', async msg => {
         await new Promise(r => setTimeout(r, remainingDelay));
     }
     
-    if (usesLeft === null) {
-      const contactOwnerMessage = `Invalid. Please contact the owner for a KEY.`;
-      const contactOwnerKeyboard = {
-          inline_keyboard: [
-              [
-                  { text: 'Contact Owner (WhatsApp)', url: 'https://wa.me/message/JIIC2JFMHUPEM1' }, // Ensure valid URL
-                  { text: 'Contact Owner (Telegram)', url: SUPPORT_USERNAME } // Using SUPPORT_USERNAME
-              ]
-          ]
-      };
-      await bot.editMessageText(contactOwnerMessage, {
-        chat_id: cid,
-        message_id: verificationMsg.message_id,
-        reply_markup: contactOwnerKeyboard,
-        parse_mode: 'Markdown'
-      });
-      return;
-    }
-
+    // WITH THIS CORRECTED BLOCK:
+// ===================================================================
+if (usesLeft === null) {
+    const contactOwnerMessage = Invalid Key. Please contact the owner for a valid KEY.;
+    const contactOwnerKeyboard = {
+        inline_keyboard: [
+            [
+                { text: 'Contact Owner (WhatsApp)', url: 'https://wa.me/2349163916314' }, // Make sure this number is correct
+                { text: 'Contact Owner (Telegram)', url: 'https://t.me/${SUPPORT_USERNAME.substring(1)}' }
+            ]
+        ]
+    };
+    await bot.editMessageText(contactOwnerMessage, {
+      chat_id: cid,
+      message_id: verificationMsg.message_id,
+      reply_markup: contactOwnerKeyboard
+    });
+    return;
+}
     await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
