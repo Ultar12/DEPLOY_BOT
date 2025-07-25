@@ -1606,7 +1606,7 @@ bot.on('message', async msg => {
   }
 
 
-  if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === bot.options.id.toString()) {
+if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
       const repliedToBotMessageId = msg.reply_to_message.message_id;
       const context = forwardingContext[repliedToBotMessageId];
 
