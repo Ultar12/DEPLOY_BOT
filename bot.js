@@ -4185,4 +4185,3 @@ bot.on('channel_post', async msg => {
         }
         return;
     }
-});
