@@ -17,13 +17,10 @@ const { Pool } = require('pg');
 const path = require('path');
 const express = require('express'); // <-- ADD THIS LINE
 
-
-// --- Import modularized components ---
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
 const { init: servicesInit, ...dbServices } = require('./bot_services');
 const { init: faqInit, sendFaqPage } = require('./bot_faq');
-const { startWebServer } = require('./web_server');
 
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
@@ -59,8 +56,6 @@ try {
 } catch (e) {
   console.warn('[Config] Could not load fallback env vars from app.json1 for Raganork:', e.message); // EMOJI ADDED
 }
-
-// ... (rest of bot.js) ...
 
 
 // 3) Environment config
