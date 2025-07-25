@@ -546,7 +546,7 @@ async function notifyAdminUserOnline(msg) {
     await loadMaintenanceStatus(); // Load initial maintenance status
     await loadMaintenanceStatus(); // This line should already be there
 
-    /// Find the webhook setup block and replace it with this one
+    // Find the webhook setup block and replace it with this one
 
 // Check the environment to decide whether to use webhooks or polling
 if (process.env.NODE_ENV === 'production') {
@@ -590,6 +590,7 @@ if (process.env.NODE_ENV === 'production') {
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
 }
+
 
 // 8) Polling error handler
 bot.on('polling_error', console.error);
