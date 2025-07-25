@@ -73,7 +73,6 @@ const {
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7730944193:AAG1RKwymeGG1HlYZRvHcOZZy_St9c77Rg'; // Use ENV if set, else hardcoded
 const TELEGRAM_USER_ID = '7302005705';
 const TELEGRAM_CHANNEL_ID = '-1002892034574';
-// ... near the top of bot.js
 
 // These are correctly declared once here:
 const userLastSeenNotification = new Map(); // userId -> last timestamp notified
