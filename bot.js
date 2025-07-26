@@ -963,6 +963,28 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     }
 });
 
+// --- ADD THIS COMMAND ---
+
+// Command: /restoreall (Admin only)
+bot.onText(/\/restoreall/, (msg) => {
+    const chatId = msg.chat.id;
+    // Only the admin can use this command
+    if (String(chatId) !== ADMIN_ID) return;
+
+    const opts = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
+                    { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
+                ]
+            ]
+        }
+    };
+    bot.sendMessage(chatId, 'Which bot type would you like to restore all backed-up deployments for?', opts);
+});
+
+
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
     await dbServices.updateUserActivity(callerId);
