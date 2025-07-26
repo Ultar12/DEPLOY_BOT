@@ -2432,6 +2432,15 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
+  // --- ADD this block inside your bot.on('callback_query', ...) handler ---
+
+else if (action === 'bapp_select_type') {
+    const botTypeToManage = payload;
+    // Call the sendBappList function with the selected filter
+    await sendBappList(cid, q.message.message_id, botTypeToManage);
+}
+
+
   if (action === 'faq_page') {
       const page = parseInt(payload);
       const messageId = q.message.message_id; // Use message ID from the callback query
