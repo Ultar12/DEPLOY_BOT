@@ -116,11 +116,12 @@ async function getUserIdByBotName(botName) {
         return null;
     }
 }
-async function getAllUserBots() { // Modified to fetch user_id and bot_name as object for scheduled tasks
+async function getAllUserBots() {
     try {
-        const r = await pool.query('SELECT user_id, bot_name FROM user_bots');
-        console.log(`[DB] getAllUserBots: Fetched all bots:`, r.rows.map(x => `"${x.user_id}" - "${x.bot_name}"`));
-        return r.rows; // Returns [{user_id, bot_name}, ...]
+        // Also fetches bot_type for categorization
+        const r = await pool.query('SELECT user_id, bot_name, bot_type FROM user_bots ORDER BY created_at');
+        console.log(`[DB] getAllUserBots: Fetched ${r.rows.length} bots with their types.`);
+        return r.rows; // Returns [{user_id, bot_name, bot_type}, ...]
     }
     catch (error) {
         console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
@@ -393,6 +394,26 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
         console.log(`[DB-Backup] Marked deployment for user ${userId}, app ${appName} as deleted from Heroku.`);
     } catch (error) {
         console.error(`[DB-Backup] Failed to mark deployment as deleted from Heroku for ${appName}:`, error.message);
+    }
+}
+
+/**
+ * Fetches all deployments of a specific type from the backup DB for mass restoration.
+ * @param {string} botType - The type of bot to fetch ('levanter' or 'raganork').
+ * @returns {Promise<Array>} - A promise that resolves to an array of deployment objects.
+ */
+async function getAllDeploymentsFromBackup(botType) {
+    try {
+        const result = await backupPool.query(
+            `SELECT user_id, app_name, session_id, config_vars
+             FROM user_deployments WHERE bot_type = $1 ORDER BY deploy_date;`,
+            [botType]
+        );
+        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for mass restore (type: ${botType}).`);
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to get all deployments for mass restore (type: ${botType}):`, error.message);
+        return [];
     }
 }
 
@@ -844,6 +865,7 @@ module.exports = {
     getUserDeploymentsForRestore,
     deleteUserDeploymentFromBackup,
     markDeploymentDeletedFromHeroku,
+    getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
     buildWithProgress
