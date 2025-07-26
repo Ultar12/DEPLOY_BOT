@@ -1542,13 +1542,6 @@ bot.on('message', async msg => {
       return;
   }
 
-  // --- ADD THIS to your main bot.on('callback_query', ...) handler ---
-
-if (data.startsWith('restore_all_bots:')) {
-    handleRestoreAll(query);
-    return;
-}
-
 
   if (st && st.step === 'AWAITING_OTHER_VAR_VALUE') {
       const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState, botType } = st.data; // Get botType from state
@@ -2348,6 +2341,13 @@ bot.on('callback_query', async q => {
   const payload = dataParts[1];
   const extra = dataParts[2];
   const flag = dataParts[3];
+
+
+if (data.startsWith('restore_all_bots:')) {
+    handleRestoreAll(query);
+    return;
+}
+
 
   // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
