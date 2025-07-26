@@ -2342,17 +2342,19 @@ bot.on('callback_query', async q => {
       return;
   }
 
- // AROUND LINE 1995
-// ===================================================================
-// ADD THIS NEW BLOCK INSIDE bot.on('callback_query', ...):
 // ===================================================================
 if (action === 'users_page') {
     const newPage = parseInt(payload, 10);
     await sendUserListPage(q.message.chat.id, newPage, q.message.message_id);
     return;
 }
-// ===================================================================
- 
+
+  // ... inside bot.on('callback_query', ...)
+if (action === 'users_page') {
+    handleUsersPage(q);
+    return;
+}
+
 
   if (action === 'select_deploy_type') { // NEW: Handle bot type selection for deployment
       const botType = payload; // 'levanter' or 'raganork'
