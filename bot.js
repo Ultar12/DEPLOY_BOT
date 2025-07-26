@@ -1032,7 +1032,7 @@ bot.onText(/\/restoreall/, (msg) => {
             ]
         }
     };
-    bot.sendMessage(chatId, '❓ Which bot type would you like to restore all backed-up deployments for?', opts);
+    bot.sendMessage(chatId, 'Which bot type would you like to restore all backed-up deployments for?', opts);
 });
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
@@ -1269,7 +1269,7 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         const offset = (page - 1) * USERS_PER_PAGE;
         const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
 
-        let responseMessage = `*👥 Registered Users - Page ${page}/${totalPages}*\n\n`;
+        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
         for (const userId of userIdsOnPage) {
             try {
                 const user = await bot.getChat(userId);
