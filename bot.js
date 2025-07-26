@@ -631,6 +631,9 @@ async function notifyAdminUserOnline(msg) {
     await loadMaintenanceStatus(); // Load initial maintenance status
 
 // Check the environment to decide whether to use webhooks or polling
+// At the top of your file, make sure you have crypto required
+const crypto = require('crypto');
+
 if (process.env.NODE_ENV === 'production') {
     // --- Webhook Mode (for Heroku) ---
     const app = express();
@@ -643,13 +646,10 @@ if (process.env.NODE_ENV === 'production') {
     }
     const PORT = process.env.PORT || 3000;
     
-    // --- FIX APPLIED HERE ---
-    // Clean the URL to ensure there's no trailing slash, preventing the double-slash issue.
     const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
-    // -------------------------
 
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
-    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`; // Use the cleaned URL
+    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
@@ -663,7 +663,7 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
-    // --- NEW: Secure API Endpoint to provide a deploy key ---
+    // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
     app.get('/api/get-key', async (req, res) => {
         const providedApiKey = req.headers['x-api-key'];
         const secretApiKey = process.env.INTER_BOT_API_KEY;
@@ -683,15 +683,25 @@ if (process.env.NODE_ENV === 'production') {
             if (result.rows.length > 0) {
                 // 3. Key found, send it back
                 const key = result.rows[0].key;
-                console.log(`[API] Provided key ${key} to authorized request.`);
+                console.log(`[API] Provided existing key ${key} to authorized request.`);
                 return res.json({ success: true, key: key });
             } else {
-                // 4. No keys available
-                console.log('[API] No active keys available for authorized request.');
-                return res.status(404).json({ success: false, message: 'No active keys available.' });
+                // --- CHANGE IS HERE ---
+                // 4. No key found, so create a new one automatically
+                console.log('[API] No active key found. Creating a new one...');
+                const newKey = crypto.randomBytes(16).toString('hex');
+                
+                const newKeyResult = await pool.query(
+                    'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
+                    [newKey]
+                );
+                
+                const createdKey = newKeyResult.rows[0].key;
+                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
+                return res.json({ success: true, key: createdKey });
             }
         } catch (error) {
-            console.error('[API] Database error while fetching key:', error);
+            console.error('[API] Database error while fetching/creating key:', error);
             return res.status(500).json({ success: false, message: 'Internal server error.' });
         }
     });
@@ -706,6 +716,7 @@ if (process.env.NODE_ENV === 'production') {
     bot.startPolling();
 }
 }) ();
+
 
 
 // 8) Polling error handler
