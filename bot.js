@@ -502,6 +502,42 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
+// A new reusable function to display the key deletion menu
+async function sendKeyDeletionList(chatId, messageId = null) {
+    if (chatId.toString() !== ADMIN_ID) return;
+
+    try {
+        const activeKeys = await dbServices.getAllDeployKeys();
+
+        if (activeKeys.length === 0) {
+            const text = "There are no active keys to delete.";
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, text);
+        }
+
+        const keyButtons = activeKeys.map(k => ([{
+            text: `${k.key} (${k.uses_left} uses left)`,
+            callback_data: `dkey_select:${k.key}`
+        }]));
+        
+        const options = {
+            chat_id: chatId,
+            text: "Select a deployment key to delete:",
+            reply_markup: { inline_keyboard: keyButtons }
+        };
+
+        if (messageId) {
+            await bot.editMessageReplyMarkup(options.reply_markup, { chat_id: chatId, message_id: messageId });
+            await bot.editMessageText(options.text, { chat_id: chatId, message_id: messageId });
+        } else {
+            await bot.sendMessage(chatId, options.text, { reply_markup: options.reply_markup });
+        }
+    } catch (error) {
+        console.error("Error sending key deletion list:", error);
+        await bot.sendMessage(chatId, "An error occurred while fetching the key list.");
+    }
+}
+
 
 // NEW: User online notification logic (uses global maps declared above)
 async function notifyAdminUserOnline(msg) {
@@ -774,6 +810,15 @@ We are here to assist you every step of the way!
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
     });
   }
+});
+
+// Add this with your other admin commands
+bot.onText(/^\/dkey$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return;
+    }
+    await sendKeyDeletionList(cid);
 });
 
 bot.onText(/^\/menu$/i, async msg => {
@@ -2369,7 +2414,48 @@ if (action === 'users_page') {
     });
     return;
   }
-  
+// Add these new `if` blocks inside your bot.on('callback_query', ...) handler
+
+if (action === 'dkey_select') {
+    const keyToDelete = payload;
+    await bot.editMessageText(
+        `Are you sure you want to permanently delete the key \`${keyToDelete}\`?`,
+        {
+            chat_id: q.message.chat.id,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, Delete Now", callback_data: `dkey_confirm:${keyToDelete}` },
+                        { text: "No, Cancel", callback_data: `dkey_cancel` }
+                    ]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+if (action === 'dkey_confirm') {
+    const keyToDelete = payload;
+    const success = await dbServices.deleteDeployKey(keyToDelete);
+    if (success) {
+        await bot.answerCallbackQuery(q.id, { text: `Key ${keyToDelete} deleted.` });
+    } else {
+        await bot.answerCallbackQuery(q.id, { text: `Failed to delete key ${keyToDelete}.`, show_alert: true });
+    }
+    // Refresh the list
+    await sendKeyDeletionList(q.message.chat.id, q.message.message_id);
+    return;
+}
+
+if (action === 'dkey_cancel') {
+    // Just go back to the list
+    await sendKeyDeletionList(q.message.chat.id, q.message.message_id);
+    return;
+}
+
 
   if (action === 'select_bapp') {
     const appName = payload;
