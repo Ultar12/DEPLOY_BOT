@@ -794,8 +794,6 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
-    // At the top of your file, ensure 'crypto' is required
-const crypto = require('crypto');
 
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
 app.get('/api/get-key', async (req, res) => {
