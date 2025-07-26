@@ -166,6 +166,19 @@ const backupPool = new Pool({
     `);
     console.log("[DB-Main] 'banned_users' table checked/created.");
 
+    // --- ADD this inside the startup block in bot.js ---
+
+    // ... after the user_deployments table is created ...
+    
+    await backupPool.query(`
+      CREATE TABLE IF NOT EXISTS all_users_backup (
+        user_id TEXT PRIMARY KEY,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log("[DB-Backup] 'all_users_backup' table checked/created.");
+
+
     // NEW: Backup Database (backupPool - DATABASE_URL2) tables
     await backupPool.query(`
       CREATE TABLE IF NOT EXISTS user_deployments (
