@@ -1211,8 +1211,8 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         responseMessage += `_Use /info <ID> for full details._`;
 
         const navRow = [];
-        if (page > 1) navRow.push({ text: '⬅️ Previous', callback_data: `users_page:${page - 1}` });
-        if (page < totalPages) navRow.push({ text: 'Next ➡️', callback_data: `users_page:${page + 1}` });
+        if (page > 1) navRow.push({ text: 'Previous', callback_data: `users_page:${page - 1}` });
+        if (page < totalPages) navRow.push({ text: 'Next', callback_data: `users_page:${page + 1}` });
 
         const options = {
             chat_id: chatId,
