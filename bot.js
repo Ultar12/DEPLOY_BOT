@@ -1411,6 +1411,8 @@ bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
     }
 });
 
+// --- REPLACE this entire function in bot.js ---
+
 // NEW ADMIN COMMAND: /sendall <message>
 bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -1420,54 +1422,44 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
 
-    await bot.sendMessage(adminId, "Sending message to all users. This may take a while...");
+    await bot.sendMessage(adminId, "Broadcasting message to all users from the backup list. This may take a while...");
 
     let successCount = 0;
     let failCount = 0;
     let blockedCount = 0;
 
     try {
-        // Fetch all unique user IDs that have ever interacted (from user_activity)
-        const allUserIdsResult = await pool.query('SELECT DISTINCT user_id FROM user_activity');
+        // --- CHANGE: Query the backup database (backupPool) now ---
+        const allUserIdsResult = await backupPool.query('SELECT user_id FROM all_users_backup');
         const userIds = allUserIdsResult.rows.map(row => row.user_id);
 
         if (userIds.length === 0) {
-            return bot.sendMessage(adminId, "No users found in activity logs to send messages to.");
+            return bot.sendMessage(adminId, "No users found in the backup database to send messages to.");
         }
 
         for (const userId of userIds) {
-            // Skip sending to admin themselves
-            if (userId === adminId) {
-                continue;
-            }
+            if (userId === adminId) continue; // Skip admin
 
             try {
-                // Check if user is banned
-                const banned = await dbServices.isUserBanned(userId); // Use dbServices
-                if (banned) {
+                const isBanned = await dbServices.isUserBanned(userId);
+                if (isBanned) {
                     console.log(`[SendAll] Skipping banned user: ${userId}`);
-                    continue; // Skip banned users
+                    continue;
                 }
 
                 await bot.sendMessage(userId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
                 successCount++;
-                await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to avoid API limits
+                await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
             } catch (error) {
-                console.error(`[SendAll] Failed to send message to user ${userId}:`, error.message);
-                if (error.response && error.response.body && error.response.body.description) {
-                    const errorReason = error.response.body.description;
-                    if (errorReason.includes("bot was blocked by the user")) {
-                        blockedCount++;
-                    } else {
-                        failCount++;
-                    }
+                if (error.response?.body?.description.includes("bot was blocked")) {
+                    blockedCount++;
                 } else {
                     failCount++;
                 }
             }
         }
         await bot.sendMessage(adminId,
-            `Broadcast complete!\n` +
+            `Broadcast complete!\n\n` +
             `*Successfully sent:* ${successCount}\n` +
             `*Blocked by user:* ${blockedCount}\n` +
             `*Other failures:* ${failCount}`,
@@ -1479,6 +1471,7 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
         await bot.sendMessage(adminId, `An error occurred during broadcast: ${error.message}`);
     }
 });
+
 
 // NEW ADMIN COMMAND: /ban <user_id>
 bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
