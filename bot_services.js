@@ -251,19 +251,32 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
+// --- MODIFIED FUNCTION ---
+// This now writes to both the main and backup databases.
 async function updateUserActivity(userId) {
+  const query = `
+    INSERT INTO user_activity(user_id, last_seen)
+    VALUES($1, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
+  `;
+  const backupQuery = `
+    INSERT INTO all_users_backup(user_id, last_seen)
+    VALUES($1, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
+  `;
+
   try {
-    await pool.query(
-      `INSERT INTO user_activity(user_id, last_seen)
-       VALUES($1, NOW())
-       ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();`,
-      [userId]
-    );
-    console.log(`[DB] User activity updated for ${userId}`);
+    // Run both database updates at the same time for efficiency
+    await Promise.all([
+        pool.query(query, [userId]),
+        backupPool.query(backupQuery, [userId])
+    ]);
+    console.log(`[DB] User activity updated for ${userId} in both databases.`);
   } catch (error) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
+// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
