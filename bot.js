@@ -1197,7 +1197,7 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         const offset = (page - 1) * USERS_PER_PAGE;
         const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
 
-        let responseMessage = `*👥 Registered Users - Page ${page}/${totalPages}*\n\n`;
+        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
         for (const userId of userIdsOnPage) {
             try {
                 const user = await bot.getChat(userId);
