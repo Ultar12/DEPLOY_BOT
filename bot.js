@@ -3837,12 +3837,22 @@ if (action === 'back_to_bapp_list') {
     });
 }
 
-  // In your bot.on('callback_query', ...) function
 
-if (action === 'restore_all_bots') {
-    handleRestoreAll(q); // The 'q' variable comes from bot.on('callback_query', async q => ...)
-    return;
-}
+  if (action === 'restore_all_bots') {
+      handleRestoreAllSelection(q); // This shows the list
+      return;
+  }
+  if (action === 'restore_all_confirm') {
+      handleRestoreAllConfirm(q); // This starts the deployment
+      return;
+  }
+  if (action === 'restore_all_cancel') {
+      await bot.editMessageText('Restore cancelled.', {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+      });
+      return;
+  }
 
 
 if (action === 'varselect') {
