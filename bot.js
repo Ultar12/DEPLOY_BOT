@@ -2790,79 +2790,43 @@ ${configVarsDisplay}
     return; // Ensure this function exits
   }
 
-  if (action === 'confirm_delete_bapp') {
+  // --- FIX: This block replaces the invalid bot.onCallbackQuery call ---
+if (action === 'confirm_delete_bapp') {
     const appName = payload;
-    const appUserId = extra; // Owner of the app
+    const appUserId = extra;
     const messageId = q.message.message_id;
 
     await bot.editMessageText(`Permanently deleting backup for "*${escapeMarkdown(appName)}*"...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    }).catch(err => console.warn(`Failed to edit message with delete confirmation text: ${err.message}`));
+        chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+    }).catch(()=>{});
 
     try {
         const deleted = await dbServices.deleteUserDeploymentFromBackup(appUserId, appName);
         if (deleted) {
-            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" (User ID: \`${escapeMarkdown(appUserId)}\`) has been permanently deleted from the backup database.`, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown'
+            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" has been permanently deleted. Refreshing list...`, {
+                chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
             });
         } else {
-            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. It might have already been removed.`, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown'
+            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. Refreshing list...`, {
+                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
             });
         }
-        // Redirect back to the /bapp list after deletion
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Small delay for user to read
-        // It's better to refactor /bapp into a reusable function instead of calling onText.
-        // For simplicity, let's just send the back_to_bapp_list action.
-        await bot.editMessageText('Refreshing backup app list...', {chat_id: cid, message_id: messageId, parse_mode: 'Markdown'})
-             .catch(() => bot.sendMessage(cid, "Refreshing backup app list...")); // Fallback if edit fails
-        q.data = 'back_to_bapp_list'; // Set q.data to trigger the back_to_bapp_list action
-        return bot.onCallbackQuery(q); // Re-process the query as if back_to_bapp_list was clicked
+        // CORRECT WAY: Call the function directly to refresh the list
+        await sendBappList(cid, messageId);
     } catch (e) {
-        console.error(`Error deleting backup for ${appName} (${appUserId}):`, e.message);
         await bot.editMessageText(`Failed to permanently delete backup for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown'
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
         });
     }
-    return; // Ensure this function exits
-  }
+    return;
+}
 
-  if (action === 'back_to_bapp_list') {
-      const messageId = q.message.message_id;
-
-      await bot.editMessageText("⬅️ Returning to backup app list...", { // Added preliminary message
-          chat_id: cid,
-          message_id: messageId,
-          parse_mode: 'Markdown'
-      }).catch(err => console.warn(`Failed to edit message with preliminary back text: ${err.message}`));
-
-      // Trigger the /bapp command again to refresh the list
-      // A common pattern is to refactor the /bapp logic into a reusable function.
-      // For now, let's simulate the /bapp command.
-      await bot.sendChatAction(cid, 'typing');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      // Construct a dummy message object similar to what /bapp would receive
-      const dummyMsg = {
-          chat: { id: cid },
-          from: q.from, // Preserve user info
-          text: '/bapp',
-          message_id: messageId // Pass messageId for potential editing
-      };
-      // Call the onText handler's function. This assumes `bot.onText` returns its handler.
-      // For more reliability, define a separate async function for /bapp display.
-      return bot.onText(/^\/bapp$/, async (msg) => { /* dummy handler for trigger */ })(dummyMsg);
-  }
-
-// ... (rest of bot.on('callback_query') handler) ...
-
+// --- FIX: This block replaces the invalid bot.onText call ---
+if (action === 'back_to_bapp_list') {
+    // CORRECT WAY: Call the function directly to show the list again
+    await sendBappList(cid, q.message.message_id);
+    return;
+}
 
   if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
     const botType = payload; // 'levanter' or 'raganork'
