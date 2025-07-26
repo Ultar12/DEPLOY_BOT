@@ -491,7 +491,7 @@ function buildKeyboard(isAdmin) {
           ['Deploy', 'Apps'],
           ['Generate Key', 'Get Session'],
           ['Support', 'FAQ'], // Existing FAQ button
-          ['/stats', '/users', '/bapp'] // <-- ADD /bapp here
+          ['/stats', '/users', '/bapp', `/restoreall`] // <-- ADD /bapp here
       ];
   }
   return baseMenu;
