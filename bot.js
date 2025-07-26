@@ -1371,14 +1371,22 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
 
 
 
-// --- FIX: The /bapp command now calls the refactored function. ---
-bot.onText(/^\/bapp$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
-    await dbServices.updateUserActivity(cid);
-    
-    // Call the refactored display function
-    await sendBappList(cid);
+// --- REPLACE your old /bapp command with this one ---
+bot.onText(/^\/bapp$/, (msg) => {
+    const chatId = msg.chat.id;
+    if (String(chatId) !== ADMIN_ID) return;
+
+    const opts = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
+                    { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
+                ]
+            ]
+        }
+    };
+    bot.sendMessage(chatId, 'Which bot type do you want to manage from the backup list?', opts);
 });
 
 
