@@ -872,7 +872,7 @@ app.get('/api/get-key', async (req, res) => {
             console.log('[API] No active key found. Creating a new one...');
             
             // --- CHANGE IS HERE: Generate an 8-character alphanumeric key ---
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
             let newKey = '';
             const randomBytes = crypto.randomBytes(8);
             for (let i = 0; i < randomBytes.length; i++) {
