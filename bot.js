@@ -390,22 +390,27 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
-// --- REFACTOR: Add this new reusable function for the /bapp list ---
-async function sendBappList(chatId, messageId = null) {
+// --- REPLACE your old sendBappList function with this one ---
+async function sendBappList(chatId, messageId = null, botTypeFilter) {
     try {
-        const allBackupDeploymentsResult = await backupPool.query(`
-            SELECT user_id, app_name, bot_type, deleted_from_heroku_at
-            FROM user_deployments ORDER BY deploy_date DESC;
-        `);
-        const allBackupDeployments = allBackupDeploymentsResult.rows;
+        const queryText = `
+            SELECT user_id, app_name, deleted_from_heroku_at 
+            FROM user_deployments 
+            WHERE bot_type = $1 
+            ORDER BY deploy_date DESC;
+        `;
+        const queryParams = [botTypeFilter];
 
-        if (allBackupDeployments.length === 0) {
-            const text = "No apps found in the backup database.";
-            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
-            return bot.sendMessage(chatId, text);
+        const backupResult = await backupPool.query(queryText, queryParams);
+        const deployments = backupResult.rows;
+
+        if (deployments.length === 0) {
+            const text = `No backed-up bots found for the type: *${botTypeFilter.toUpperCase()}*`;
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+            return bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
         }
 
-        const appButtons = allBackupDeployments.map(entry => {
+        const appButtons = deployments.map(entry => {
             const statusIndicator = entry.deleted_from_heroku_at === null ? '🟢' : '🔴';
             return {
                 text: `${statusIndicator} ${entry.app_name}`,
@@ -414,23 +419,23 @@ async function sendBappList(chatId, messageId = null) {
         });
 
         const rows = chunkArray(appButtons, 3);
-        const text = `Select a backed-up app to view details:`;
+        const text = `💾 Select a backed-up *${botTypeFilter.toUpperCase()}* app to view details:`;
         const options = {
-            chat_id: chatId,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         };
 
         if (messageId) {
-            await bot.editMessageText(text, { ...options, message_id: messageId });
+            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
         } else {
             await bot.sendMessage(chatId, text, options);
         }
     } catch (error) {
         console.error(`Error fetching backup app list for /bapp:`, error.message);
-        await bot.sendMessage(chatId, `An error occurred while fetching backup app list.`);
+        await bot.sendMessage(chatId, `An error occurred while fetching the backup app list.`);
     }
 }
+
 
 
 async function sendAnimatedMessage(chatId, baseText) {
@@ -2265,7 +2270,7 @@ if (usesLeft === null) {
 
       } else {
         console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
-        return bot.sendMessage(cid, `Could not verify app name. The Heroku API might be down. Please try again later.`);
+        return bot.sendMessage(cid, `Kindly Use A Long Name!`);
       }
     }
   }
