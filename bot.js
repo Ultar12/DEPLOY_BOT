@@ -545,58 +545,6 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-// --- ADD THIS new helper function to your bot.js file ---
-
-async function handleRestoreAll(query) {
-    const chatId = query.message.chat.id;
-    const botTypeToRestore = query.data.split(':')[1];
-    
-    await bot.editMessageText(`Fetching all ${botTypeToRestore} bots from backup. Please wait...`, {
-        chat_id: chatId,
-        message_id: query.message.message_id
-    });
-
-    const deployments = await dbServices.getAllDeploymentsFromBackup(botTypeToRestore);
-    if (!deployments.length) {
-        await bot.sendMessage(chatId, `No bots of type "${botTypeToRestore}" found in the backup to restore.`);
-        return;
-    }
-
-    await bot.sendMessage(chatId, `Found ${deployments.length} ${botTypeToRestore} bot(s). Starting sequential deployment now. This may take a long time. You will be notified of each success or failure.`);
-
-    let successCount = 0;
-    let failureCount = 0;
-
-    // Use a for...of loop to process them one by one, not all at once
-    for (const deployment of deployments) {
-        try {
-            await bot.sendMessage(chatId, `Restoring app: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
-            
-            // Prepare all variables for the build process
-            const vars = { ...deployment.config_vars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id };
-            
-            // Call the build process from bot_services
-            const success = await dbServices.buildWithProgress(deployment.user_id, vars, false, true, botTypeToRestore);
-
-            if (success) {
-                successCount++;
-                await bot.sendMessage(chatId, `Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
-                await bot.sendMessage(deployment.user_id, `Your bot \`${deployment.app_name}\` has been successfully restored by the admin.`, { parse_mode: 'Markdown' });
-            } else {
-                failureCount++;
-                await bot.sendMessage(chatId, `Failed to restore: \`${deployment.app_name}\`. Check logs.`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            failureCount++;
-            console.error(error);
-            await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
-        }
-        // Add a 5-second delay between deployments to be safe with API rate limits
-        await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-    await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
-}
-
 // A new reusable function to display the key deletion menu
 async function sendKeyDeletionList(chatId, messageId = null) {
     if (chatId.toString() !== ADMIN_ID) return;
@@ -794,6 +742,8 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
+    // At the top of your file, ensure 'crypto' is required
+const crypto = require('crypto');
 
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
 app.get('/api/get-key', async (req, res) => {
@@ -1011,26 +961,6 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
         console.error("Error sending initial /add message or setting state:", error);
         bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
     }
-});
-
-
-// Command: /restoreall (Admin only)
-bot.onText(/\/restoreall/, (msg) => {
-    const chatId = msg.chat.id;
-    // Only the admin can use this command
-    if (String(chatId) !== ADMIN_ID) return;
-
-    const opts = {
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
-                    { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
-                ]
-            ]
-        }
-    };
-    bot.sendMessage(chatId, 'Which bot type would you like to restore all backed-up deployments for?', opts);
 });
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
@@ -1267,7 +1197,7 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         const offset = (page - 1) * USERS_PER_PAGE;
         const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
 
-        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
+        let responseMessage = `*👥 Registered Users - Page ${page}/${totalPages}*\n\n`;
         for (const userId of userIdsOnPage) {
             try {
                 const user = await bot.getChat(userId);
@@ -1541,7 +1471,6 @@ bot.on('message', async msg => {
       }
       return;
   }
-
 
   if (st && st.step === 'AWAITING_OTHER_VAR_VALUE') {
       const { APP_NAME, VAR_NAME, targetUserId: targetUserIdFromState, botType } = st.data; // Get botType from state
@@ -2341,13 +2270,6 @@ bot.on('callback_query', async q => {
   const payload = dataParts[1];
   const extra = dataParts[2];
   const flag = dataParts[3];
-
-
-if (data.startsWith('restore_all_bots:')) {
-    handleRestoreAll(query);
-    return;
-}
-
 
   // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
