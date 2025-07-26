@@ -663,48 +663,59 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
-    // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
-    app.get('/api/get-key', async (req, res) => {
-        const providedApiKey = req.headers['x-api-key'];
-        const secretApiKey = process.env.INTER_BOT_API_KEY;
+    // At the top of your file, ensure 'crypto' is required
+const crypto = require('crypto');
 
-        // 1. Check for the secret API key
-        if (!secretApiKey || providedApiKey !== secretApiKey) {
-            console.warn('[API] Unauthorized attempt to get a key.');
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
-        }
+// --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
+app.get('/api/get-key', async (req, res) => {
+    const providedApiKey = req.headers['x-api-key'];
+    const secretApiKey = process.env.INTER_BOT_API_KEY;
 
-        try {
-            // 2. Query the database for one active key
-            const result = await pool.query(
-                'SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1'
-            );
+    // 1. Check for the secret API key
+    if (!secretApiKey || providedApiKey !== secretApiKey) {
+        console.warn('[API] Unauthorized attempt to get a key.');
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
 
-            if (result.rows.length > 0) {
-                // 3. Key found, send it back
-                const key = result.rows[0].key;
-                console.log(`[API] Provided existing key ${key} to authorized request.`);
-                return res.json({ success: true, key: key });
-            } else {
-                // --- CHANGE IS HERE ---
-                // 4. No key found, so create a new one automatically
-                console.log('[API] No active key found. Creating a new one...');
-                const newKey = crypto.randomBytes(16).toString('hex');
-                
-                const newKeyResult = await pool.query(
-                    'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
-                    [newKey]
-                );
-                
-                const createdKey = newKeyResult.rows[0].key;
-                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
-                return res.json({ success: true, key: createdKey });
+    try {
+        // 2. Query the database for one active key
+        const result = await pool.query(
+            'SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1'
+        );
+
+        if (result.rows.length > 0) {
+            // 3. Key found, send it back
+            const key = result.rows[0].key;
+            console.log(`[API] Provided existing key ${key} to authorized request.`);
+            return res.json({ success: true, key: key });
+        } else {
+            // 4. No key found, so create a new one automatically
+            console.log('[API] No active key found. Creating a new one...');
+            
+            // --- CHANGE IS HERE: Generate an 8-character alphanumeric key ---
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let newKey = '';
+            const randomBytes = crypto.randomBytes(8);
+            for (let i = 0; i < randomBytes.length; i++) {
+                newKey += chars[randomBytes[i] % chars.length];
             }
-        } catch (error) {
-            console.error('[API] Database error while fetching/creating key:', error);
-            return res.status(500).json({ success: false, message: 'Internal server error.' });
+            // --- END OF CHANGE ---
+            
+            const newKeyResult = await pool.query(
+                'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
+                [newKey]
+            );
+            
+            const createdKey = newKeyResult.rows[0].key;
+            console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
+            return res.json({ success: true, key: createdKey });
         }
-    });
+    } catch (error) {
+        console.error('[API] Database error while fetching/creating key:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+});
+
 
     app.listen(PORT, () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
