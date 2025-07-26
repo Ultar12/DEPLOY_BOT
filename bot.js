@@ -419,7 +419,7 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
         });
 
         const rows = chunkArray(appButtons, 3);
-        const text = `💾 Select a backed-up *${botTypeFilter.toUpperCase()}* app to view details:`;
+        const text = `Select a backed-up *${botTypeFilter.toUpperCase()}* app to view details:`;
         const options = {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
