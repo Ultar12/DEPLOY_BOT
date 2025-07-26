@@ -2434,7 +2434,7 @@ bot.on('callback_query', async q => {
 
   // --- ADD this block inside your bot.on('callback_query', ...) handler ---
 
-else if (action === 'bapp_select_type') {
+if (action === 'bapp_select_type') {
     const botTypeToManage = payload;
     // Call the sendBappList function with the selected filter
     await sendBappList(cid, q.message.message_id, botTypeToManage);
