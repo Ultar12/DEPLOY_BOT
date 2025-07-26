@@ -545,55 +545,92 @@ async function startRestartCountdown(chatId, appName, messageId) {
     });
 }
 
-// --- ADD THIS HELPER FUNCTION ---
+// --- REPLACE your old handleRestoreAll function with these TWO new functions ---
 
-async function handleRestoreAll(query) {
+// This function runs when you first click "Levanter" or "Raganork"
+async function handleRestoreAllSelection(query) {
     const chatId = query.message.chat.id;
-    const botTypeToRestore = query.data.split(':')[1];
+    const botType = query.data.split(':')[1];
     
-    await bot.editMessageText(`Fetching all ${botTypeToRestore} bots from backup. Please wait...`, {
+    await bot.editMessageText(`Fetching list of restorable ${botType} bots...`, {
         chat_id: chatId,
         message_id: query.message.message_id
     });
 
-    const deployments = await dbServices.getAllDeploymentsFromBackup(botTypeToRestore);
+    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
     if (!deployments.length) {
-        await bot.sendMessage(chatId, `No bots of type "${botTypeToRestore}" found in the backup to restore.`);
+        await bot.editMessageText(`No bots of type "${botType}" found in the backup to restore.`, {
+            chat_id: chatId,
+            message_id: query.message.message_id
+        });
         return;
     }
 
-    await bot.sendMessage(chatId, `Found ${deployments.length} ${botTypeToRestore} bot(s). Starting sequential deployment now. This may take a long time. You will be notified of each success or failure.`);
+    let listMessage = `Found *${deployments.length}* ${botType} bot(s) ready for restoration:\n\n`;
+    deployments.forEach(dep => {
+        listMessage += `• \`${dep.app_name}\` (Owner: \`${dep.user_id}\`)\n`;
+    });
+    listMessage += `\nThis process will deploy them one-by-one with a 3-minute delay between each success.\n\n*Do you want to proceed?*`;
 
+    await bot.editMessageText(listMessage, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "Proceed", callback_data: `restore_all_confirm:${botType}` },
+                    { text: "Cancel", callback_data: 'restore_all_cancel' }
+                ]
+            ]
+        }
+    });
+}
+
+// This function runs AFTER you click the "Proceed" button
+async function handleRestoreAllConfirm(query) {
+    const chatId = query.message.chat.id;
+    const botType = query.data.split(':')[1];
+    
+    await bot.editMessageText(`Confirmation received. Starting sequential restoration for all *${botType}* bots. This will take a long time...`, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
     let successCount = 0;
     let failureCount = 0;
 
-    // Use a for...of loop to process them one by one
-    for (const deployment of deployments) {
+    for (const [index, deployment] of deployments.entries()) {
         try {
-            await bot.sendMessage(chatId, `Restoring app: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId, `▶Restoring bot ${index + 1}/${deployments.length}: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
             
             const vars = { ...deployment.config_vars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id };
-            
-            const success = await dbServices.buildWithProgress(deployment.user_id, vars, false, true, botTypeToRestore);
+            const success = await dbServices.buildWithProgress(deployment.user_id, vars, false, true, botType);
 
             if (success) {
                 successCount++;
                 await bot.sendMessage(chatId, `Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
                 await bot.sendMessage(deployment.user_id, `Your bot \`${deployment.app_name}\` has been successfully restored by the admin.`, { parse_mode: 'Markdown' });
+
+                // Check if it's NOT the last deployment before waiting
+                if (index < deployments.length - 1) {
+                    await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
+                    await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000)); // 3 minutes wait
+                }
             } else {
                 failureCount++;
-                await bot.sendMessage(chatId, `Failed to restore: \`${deployment.app_name}\`. Check logs.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(chatId, `Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing to the next app.`, { parse_mode: 'Markdown' });
             }
         } catch (error) {
             failureCount++;
             console.error(error);
             await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
         }
-        await new Promise(resolve => setTimeout(resolve, 5000)); // 5-second delay between deployments
     }
-    await bot.sendMessage(chatId, `🏁 Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
 }
-
 
 // A new reusable function to display the key deletion menu
 async function sendKeyDeletionList(chatId, messageId = null) {
