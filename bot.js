@@ -663,6 +663,39 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
+    // --- NEW: Secure API Endpoint to provide a deploy key ---
+    app.get('/api/get-key', async (req, res) => {
+        const providedApiKey = req.headers['x-api-key'];
+        const secretApiKey = process.env.INTER_BOT_API_KEY;
+
+        // 1. Check for the secret API key
+        if (!secretApiKey || providedApiKey !== secretApiKey) {
+            console.warn('[API] Unauthorized attempt to get a key.');
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
+        try {
+            // 2. Query the database for one active key
+            const result = await pool.query(
+                'SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1'
+            );
+
+            if (result.rows.length > 0) {
+                // 3. Key found, send it back
+                const key = result.rows[0].key;
+                console.log(`[API] Provided key ${key} to authorized request.`);
+                return res.json({ success: true, key: key });
+            } else {
+                // 4. No keys available
+                console.log('[API] No active keys available for authorized request.');
+                return res.status(404).json({ success: false, message: 'No active keys available.' });
+            }
+        } catch (error) {
+            console.error('[API] Database error while fetching key:', error);
+            return res.status(500).json({ success: false, message: 'Internal server error.' });
+        }
+    });
+
     app.listen(PORT, () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
     });
@@ -673,6 +706,7 @@ if (process.env.NODE_ENV === 'production') {
     bot.startPolling();
 }
 }) ();
+
 
 // 8) Polling error handler
 bot.on('polling_error', console.error);
