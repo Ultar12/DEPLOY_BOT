@@ -3750,6 +3750,14 @@ if (action === 'back_to_bapp_list') {
     });
 }
 
+  // In your bot.on('callback_query', ...) function
+
+if (action === 'restore_all_bots') {
+    handleRestoreAll(q); // The 'q' variable comes from bot.on('callback_query', async q => ...)
+    return;
+}
+
+
 if (action === 'varselect') {
   const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
   const st = userStates[cid];
