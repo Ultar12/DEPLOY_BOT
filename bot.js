@@ -377,6 +377,49 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
+// --- REFACTOR: Add this new reusable function for the /bapp list ---
+async function sendBappList(chatId, messageId = null) {
+    try {
+        const allBackupDeploymentsResult = await backupPool.query(`
+            SELECT user_id, app_name, bot_type, deleted_from_heroku_at
+            FROM user_deployments ORDER BY deploy_date DESC;
+        `);
+        const allBackupDeployments = allBackupDeploymentsResult.rows;
+
+        if (allBackupDeployments.length === 0) {
+            const text = "No apps found in the backup database.";
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, text);
+        }
+
+        const appButtons = allBackupDeployments.map(entry => {
+            const statusIndicator = entry.deleted_from_heroku_at === null ? '🟢' : '🔴';
+            return {
+                text: `${statusIndicator} ${entry.app_name}`,
+                callback_data: `select_bapp:${entry.app_name}:${entry.user_id}`
+            };
+        });
+
+        const rows = chunkArray(appButtons, 3);
+        const text = `Select a backed-up app to view details:`;
+        const options = {
+            chat_id: chatId,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: rows }
+        };
+
+        if (messageId) {
+            await bot.editMessageText(text, { ...options, message_id: messageId });
+        } else {
+            await bot.sendMessage(chatId, text, options);
+        }
+    } catch (error) {
+        console.error(`Error fetching backup app list for /bapp:`, error.message);
+        await bot.sendMessage(chatId, `An error occurred while fetching backup app list.`);
+    }
+}
+
+
 async function sendAnimatedMessage(chatId, baseText) {
     const msg = await bot.sendMessage(chatId, `${getAnimatedEmoji()} ${baseText}...`);
     await new Promise(r => setTimeout(r, 1200));
@@ -1190,88 +1233,16 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
 
 
 
-// NEW ADMIN COMMAND: /bapp (Backup Apps List with interactive buttons)
+// --- FIX: The /bapp command now calls the refactored function. ---
 bot.onText(/^\/bapp$/, async (msg) => {
     const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
     await dbServices.updateUserActivity(cid);
-
-    if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "You are not authorized to use this command.");
-    }
-
-    try {
-        const allBackupDeploymentsResult = await backupPool.query(`
-            SELECT user_id, app_name, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
-            FROM user_deployments ORDER BY deploy_date DESC;
-        `);
-        const allBackupDeployments = allBackupDeploymentsResult.rows;
-
-        if (allBackupDeployments.length === 0) {
-            return bot.sendMessage(cid, "No apps found in the backup database.");
-        }
-
-        const appButtons = [];
-        for (const entry of allBackupDeployments) {
-            const { app_name, user_id, bot_type, deleted_from_heroku_at } = entry;
-            let statusIndicator = '';
-            if (deleted_from_heroku_at === null) {
-                statusIndicator = '🟢'; // Active on Heroku
-            } else {
-                statusIndicator = '🔴'; // Deleted from Heroku (only in backup)
-            }
-            appButtons.push({
-                text: `${statusIndicator} ${app_name}`, // Keep text short for buttons
-                callback_data: `select_bapp:${app_name}:${user_id}` // Pass both app_name and user_id
-            });
-        }
-
-        // --- CRITICAL CHANGE: Use chunkArray to make buttons 3 per row ---
-        // Reuse the existing chunkArray function you already have.
-        // It's defined near buildKeyboard or in a utilities section.
-        const rows = chunkArray(appButtons, 3); // Organize buttons into rows of 3
-        // --- END CRITICAL CHANGE ---
-
-        let firstMessageId = null; // We'll try to edit a message if possible, or send new ones.
-
-        // If the list is short, just edit the existing message (if it's a callback response)
-        // If it's a new command, send a fresh message.
-        if (msg.message_id) { // If it's a message from /bapp command, we'll try to edit it
-            await bot.editMessageText(`💾 Select a backed-up app to view details:`, {
-                chat_id: cid,
-                message_id: msg.message_id,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: rows
-                }
-            }).catch(async (err) => {
-                console.warn(`Failed to edit message ${msg.message_id} for /bapp list, sending new one: ${err.message}`);
-                // Fallback: If edit fails (e.g., message too old), send new message
-                const sentMsg = await bot.sendMessage(cid, `💾 Select a backed-up app to view details:`, {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: rows
-                    }
-                });
-                firstMessageId = sentMsg.message_id;
-            });
-            firstMessageId = msg.message_id; // Keep track of the message we tried to edit
-        } else { // If msg.message_id is not available (e.g., direct call from another handler without specific message to edit)
-            const sentMsg = await bot.sendMessage(cid, `💾 Select a backed-up app to view details:`, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: rows
-                }
-            });
-            firstMessageId = sentMsg.message_id;
-        }
-
-    } catch (error) {
-        console.error(`Error fetching backup app list for /bapp:`, error.message);
-        await bot.sendMessage(cid, `An error occurred while fetching backup app list: ${escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
-    }
+    
+    // Call the refactored display function
+    await sendBappList(cid);
 });
 
-// ... (rest of bot.js) ...
 
 
 // NEW ADMIN COMMAND: /send <user_id> <message>
