@@ -1223,28 +1223,40 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
+// --- REPLACE this entire function in bot.js ---
+
 // NEW ADMIN COMMAND: /stats
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
     await dbServices.updateUserActivity(cid);
-    if (cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "You are not authorized to use this command.");
-    }
 
     try {
+        // --- START of new code ---
+        // Get counts for each bot type
+        const botCountsResult = await pool.query('SELECT bot_type, COUNT(bot_name) as count FROM user_bots GROUP BY bot_type');
+        
+        let levanterCount = 0;
+        let raganorkCount = 0;
+        botCountsResult.rows.forEach(row => {
+            if (row.bot_type === 'levanter') {
+                levanterCount = parseInt(row.count, 10);
+            } else if (row.bot_type === 'raganork') {
+                raganorkCount = parseInt(row.count, 10);
+            }
+        });
+        // --- END of new code ---
+
         const totalUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_users FROM user_bots');
         const totalUsers = totalUsersResult.rows[0].total_users;
 
         const totalBotsResult = await pool.query('SELECT COUNT(bot_name) AS total_bots FROM user_bots');
         const totalBots = totalBotsResult.rows[0].total_bots;
 
-        const activeKeys = await dbServices.getAllDeployKeys(); // Use dbServices
-        let keyDetails = '';
-        if (activeKeys.length > 0) {
-            keyDetails = activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n');
-        } else {
-            keyDetails = 'No active deploy keys.';
-        }
+        const activeKeys = await dbServices.getAllDeployKeys();
+        const keyDetails = activeKeys.length > 0
+            ? activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n')
+            : 'No active deploy keys.';
 
         const totalFreeTrialUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_trial_users FROM temp_deploys');
         const totalFreeTrialUsers = totalFreeTrialUsersResult.rows[0].total_trial_users;
@@ -1252,12 +1264,15 @@ bot.onText(/^\/stats$/, async (msg) => {
         const totalBannedUsersResult = await pool.query('SELECT COUNT(user_id) AS total_banned_users FROM banned_users');
         const totalBannedUsers = totalBannedUsersResult.rows[0].total_banned_users;
 
-
+        // --- UPDATE the message string ---
         const statsMessage = `
 *Bot Statistics:*
 
-*Total Unique Users (deployed bots):* ${totalUsers}
+*Total Unique Users:* ${totalUsers}
 *Total Deployed Bots:* ${totalBots}
+  - *Levanter Bots:* ${levanterCount}
+  - *Raganork Bots:* ${raganorkCount}
+
 *Users Who Used Free Trial:* ${totalFreeTrialUsers}
 *Total Banned Users:* ${totalBannedUsers}
 
@@ -1272,6 +1287,7 @@ ${keyDetails}
         await bot.sendMessage(cid, `An error occurred while fetching stats: ${error.message}`);
     }
 });
+
 
 // Command: /users (Admin only)
 bot.onText(/^\/users$/, async (msg) => {
