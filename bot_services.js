@@ -204,6 +204,30 @@ async function getAllDeployKeys() {
     }
 }
 
+/**
+ * Deletes a deploy key from the database.
+ * @param {string} key - The deploy key to delete.
+ * @returns {boolean} - True if deletion was successful, false otherwise.
+ */
+async function deleteDeployKey(key) {
+  try {
+    const result = await pool.query(
+      'DELETE FROM deploy_keys WHERE key = $1 RETURNING key',
+      [key]
+    );
+    if (result.rowCount > 0) {
+      console.log(`[DB] deleteDeployKey: Successfully deleted key "${key}".`);
+      return true; // Indicate success
+    } else {
+      console.warn(`[DB] deleteDeployKey: Key "${key}" not found for deletion.`);
+      return false; // Indicate key was not found
+    }
+  } catch (error) {
+    console.error(`[DB] deleteDeployKey: Failed to delete key "${key}":`, error.message);
+    return false; // Indicate failure due to error
+  }
+}
+
 async function canDeployFreeTrial(userId) {
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
     const res = await pool.query(
@@ -808,6 +832,7 @@ module.exports = {
     addDeployKey,
     useDeployKey,
     getAllDeployKeys,
+    deleteDeployKey,
     canDeployFreeTrial,
     recordFreeTrialDeploy,
     updateUserActivity,
