@@ -2896,7 +2896,7 @@ ${configVarsDisplay}
           );
           selectedDeployment = result.rows[0];
       } catch (e) {
-          console.error(`❌ DB Error fetching backup deployment for restore ${appName} (${appUserId}):`, e.message);
+          console.error(`DB Error fetching backup deployment for restore ${appName} (${appUserId}):`, e.message);
           return bot.editMessageText(`Error preparing restore for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}.`, {
               chat_id: cid,
               message_id: messageId,
@@ -2905,7 +2905,7 @@ ${configVarsDisplay}
       }
 
       if (!selectedDeployment) {
-          console.warn(`⚠️ Backup for ${appName} for user ${appUserId} not found during restore attempt.`);
+          console.warn(`Backup for ${appName} for user ${appUserId} not found during restore attempt.`);
           return bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" not found for restore. It might have been deleted or expired.`, {
               chat_id: cid,
               message_id: messageId,
@@ -2919,7 +2919,7 @@ ${configVarsDisplay}
       if (originalExpirationDate <= now) {
           // If expired, try to delete from backup table and notify
           await dbServices.deleteUserDeploymentFromBackup(appUserId, appName).catch(err => console.error(`Error deleting expired backup ${appName}: ${err.message}`));
-          return bot.editMessageText(`🚫 Cannot restore "*${escapeMarkdown(appName)}*". Its original 45-day deployment period has expired. It has been removed from backup list.`, {
+          return bot.editMessageText(`Cannot restore "*${escapeMarkdown(appName)}*". Its original 45-day deployment period has expired. It has been removed from backup list.`, {
               chat_id: cid,
               message_id: messageId,
               parse_mode: 'Markdown'
@@ -3003,12 +3003,25 @@ if (action === 'confirm_delete_bapp') {
     return;
 }
 
-// --- FIX: This block replaces the invalid bot.onText call ---
+// --- REPLACE your old 'back_to_bapp_list' logic with this ---
+
 if (action === 'back_to_bapp_list') {
-    // CORRECT WAY: Call the function directly to show the list again
-    await sendBappList(cid, q.message.message_id);
-    return;
+    const opts = {
+        chat_id: q.message.chat.id,
+        message_id: q.message.message_id,
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
+                    { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
+                ]
+            ]
+        }
+    };
+    await bot.editMessageText('Which bot type do you want to manage from the backup list?', opts);
+    return; 
 }
+
 
   if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
     const botType = payload; // 'levanter' or 'raganork'
