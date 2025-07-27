@@ -1,5 +1,3 @@
-// bot_services.js
-
 const axios = require('axios');
 const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
 const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
@@ -643,70 +641,116 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
     );
 
-    const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
-    let buildStatus = 'pending';
-    let currentPct = 0; // Start percentage at 0
+    // --- MODIFICATION START ---
+    let buildStatus; // Declared here to be accessible by both if/else paths
 
-    const buildProgressInterval = setInterval(async () => {
-        try {
-            const poll = await axios.get(statusUrl, {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3'
+    if (botType === 'raganork') {
+        // Raganork: Simulated 1.5-minute build with a percentage counter.
+        console.log(`[Build] Starting 90-second simulated build for Raganork app: ${name}`);
+        buildStatus = 'pending'; // Set initial status
+
+        // Use a promise to wait for the simulation to complete
+        await new Promise(resolve => {
+            const buildDuration = 90000; // 1.5 minutes in ms
+            const updateInterval = 1500; // Update UI every 1.5 seconds
+            let elapsedTime = 0;
+
+            const simulationInterval = setInterval(async () => {
+                elapsedTime += updateInterval;
+                // Calculate percentage, ensuring it doesn't exceed 100
+                const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100));
+
+                try {
+                    // Edit the message with the current percentage
+                    await bot.editMessageText(`Building... ${percentage}%`, {
+                        chat_id: chatId,
+                        message_id: createMsg.message_id
+                    });
+                } catch (e) {
+                    // Ignore benign "message is not modified" errors
+                    if (!e.message.includes('message is not modified')) {
+                        console.error("Error editing message during build simulation:", e.message);
+                    }
                 }
-            });
-            buildStatus = poll.data.status;
 
-            if (buildStatus === 'pending') {
-                currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
-            } else if (buildStatus === 'succeeded') {
-                currentPct = 100;
-            } else if (buildStatus === 'failed') {
-                currentPct = 'Error';
-            }
-
-            await bot.editMessageText(`Building... ${currentPct}%`, {
-                chat_id: chatId,
-                message_id: createMsg.message_id
-            }).catch(() => {});
-
-            if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
-                clearInterval(buildProgressInterval);
-            }
-        } catch (error) {
-            console.error(`Error polling build status for ${name}:`, error.message);
-            clearInterval(buildProgressInterval);
-            await bot.editMessageText(`Building... Error`, {
-                chat_id: chatId,
-                message_id: createMsg.message_id
-            }).catch(() => {});
-            buildStatus = 'error';
-        }
-    }, 5000);
-
-    try {
-        const BUILD_COMPLETION_TIMEOUT = 300 * 1000;
-        let completionTimeoutId = setTimeout(() => {
-            clearInterval(buildProgressInterval);
-            buildStatus = 'timed out';
-            throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
-        }, BUILD_COMPLETION_TIMEOUT);
-
-        while (buildStatus === 'pending') {
-            await new Promise(r => setTimeout(r, 5000));
-        }
-        clearTimeout(completionTimeoutId);
-        clearInterval(buildProgressInterval);
-
-    } catch (err) {
-        clearInterval(buildProgressInterval);
-        await bot.editMessageText(`Build process for "${name}" timed out or encountered an error. Check Heroku logs.`, {
-            chat_id: chatId,
-            message_id: createMsg.message_id
+                // When the simulation time is up
+                if (elapsedTime >= buildDuration) {
+                    clearInterval(simulationInterval);
+                    buildStatus = 'succeeded'; // Set the final status for the next step
+                    resolve(); // Resolve the promise to continue execution
+                }
+            }, updateInterval);
         });
-        buildResult = false;
-        return buildResult;
+
+    } else {
+        // Original build logic for Levanter and other bot types
+        const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
+        buildStatus = 'pending';
+        let currentPct = 0; // Start percentage at 0
+
+        const buildProgressInterval = setInterval(async () => {
+            try {
+                const poll = await axios.get(statusUrl, {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3'
+                    }
+                });
+                buildStatus = poll.data.status;
+
+                if (buildStatus === 'pending') {
+                    currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
+                } else if (buildStatus === 'succeeded') {
+                    currentPct = 100;
+                } else if (buildStatus === 'failed') {
+                    currentPct = 'Error';
+                }
+
+                await bot.editMessageText(`Building... ${currentPct}%`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+
+                if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
+                    clearInterval(buildProgressInterval);
+                }
+            } catch (error) {
+                console.error(`Error polling build status for ${name}:`, error.message);
+                clearInterval(buildProgressInterval);
+                await bot.editMessageText(`Building... Error`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+                buildStatus = 'error';
+            }
+        }, 5000);
+
+        try {
+            const BUILD_COMPLETION_TIMEOUT = 300 * 1000;
+            let completionTimeoutId = setTimeout(() => {
+                clearInterval(buildProgressInterval);
+                buildStatus = 'timed out';
+                throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
+            }, BUILD_COMPLETION_TIMEOUT);
+
+            while (buildStatus === 'pending') {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            clearTimeout(completionTimeoutId);
+            clearInterval(buildProgressInterval);
+
+        } catch (err) {
+            clearInterval(buildProgressInterval);
+            await bot.editMessageText(`Build process for "${name}" timed out or encountered an error. Check Heroku logs.`, {
+                chat_id: chatId,
+                message_id: createMsg.message_id
+            });
+            buildResult = false;
+            return buildResult;
+        }
     }
+    // --- MODIFICATION END ---
+
 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
