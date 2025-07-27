@@ -908,7 +908,6 @@ if (process.env.NODE_ENV === 'production') {
     // The 'else' block should ONLY contain this.
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
-}
 
 
 // 9) Command handlers
