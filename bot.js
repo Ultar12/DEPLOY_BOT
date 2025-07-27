@@ -845,7 +845,6 @@ if (process.env.NODE_ENV === 'production') {
     });
 
     // --- START: Auto-Ping Logic (Render ONLY) ---
-    const APP_URL = process.env.APP_URL; 
 
     // This check now ensures it only runs if the APP_URL is set AND it's on Render
     if (process.env.APP_URL && process.env.RENDER === 'true') {
