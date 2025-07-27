@@ -3660,7 +3660,7 @@ if (action === 'info') {
         }
       });
     }
-
+}
   if (action === 'restart') {
     const st = userStates[cid];
     // Check if state is valid and appName matches
