@@ -949,7 +949,7 @@ bot.on('polling_error', console.error);
 // 9) Command handlers
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
-  await dbServices.updateUserActivity(cid);
+  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   const { first_name, last_name, username } = msg.from;
@@ -1590,7 +1590,7 @@ bot.on('message', async msg => {
 
   if (!text) return; // Only process text messages
 
-  await dbServices.updateUserActivity(cid); // Update user activity on any message
+  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
   await notifyAdminUserOnline(msg); // Call notifyAdminUserOnline here for all messages
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
@@ -2383,7 +2383,7 @@ bot.on('callback_query', async q => {
   }
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
-  await dbServices.updateUserActivity(cid); // Update user activity on any callback query
+  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
