@@ -867,8 +867,6 @@ if (process.env.NODE_ENV === 'production') {
     }
     // --- END: Auto-Ping Logic ---
 
-} else {
-
     app.post(webhookPath, (req, res) => {
         bot.processUpdate(req.body);
         res.sendStatus(200);
