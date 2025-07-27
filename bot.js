@@ -949,7 +949,7 @@ bot.on('polling_error', console.error);
 // 9) Command handlers
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
-  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
+  await dbServices.updateUserActivity(cid);
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
   const { first_name, last_name, username } = msg.from;
@@ -1590,7 +1590,7 @@ bot.on('message', async msg => {
 
   if (!text) return; // Only process text messages
 
-  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
+  await dbServices.updateUserActivity(cid); // Update user activity on any message
   await notifyAdminUserOnline(msg); // Call notifyAdminUserOnline here for all messages
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
@@ -1767,66 +1767,138 @@ bot.on('message', async msg => {
       return bot.sendMessage(cid, 'Please use the "Yes" or "No" buttons to confirm.');
   }
 
-  
-// --- REPLACE these two blocks inside bot.on('message', ...) in bot.js ---
-
   if (st && st.step === 'AWAITING_SUDO_ADD_NUMBER') {
       const { APP_NAME } = st.data;
       const phoneNumber = text.trim();
-      delete userStates[cid]; // Clear state immediately
 
       if (!/^\d+$/.test(phoneNumber)) {
-          return bot.sendMessage(cid, 'Invalid input. Please enter numbers only.');
+          return bot.sendMessage(cid, 'Invalid input. Please enter numbers only, without plus signs or spaces. Example: `2349163916314`');
       }
 
       try {
-          const updateMsg = await bot.sendMessage(cid, `Adding number to SUDO for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
-          const configRes = await axios.get(`https://api.heroku.com/apps/${APP_NAME}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+          await bot.sendChatAction(cid, 'typing');
+          const updateMsg = await bot.sendMessage(cid, `Adding number to SUDO variable for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+
+          const configRes = await axios.get(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              {
+                  headers: {
+                      Authorization: `Bearer ${HEROKU_API_KEY}`,
+                      Accept: 'application/vnd.heroku+json; version=3',
+                      'Content-Type': 'application/json'
+                  }
+              }
+          );
           const currentSudo = configRes.data.SUDO || '';
+
           const newSudoValue = currentSudo ? `${currentSudo},${phoneNumber}` : phoneNumber;
-          await axios.patch(`https://api.heroku.com/apps/${APP_NAME}/config-vars`, { SUDO: newSudoValue }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
-          await bot.editMessageText(`Number added to SUDO for "*${APP_NAME}*"! New value: \`${newSudoValue}\``, { chat_id: cid, message_id: updateMsg.message_id, parse_mode: 'Markdown' });
+
+          console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { SUDO: '***' }`);
+          const patchResponse = await axios.patch(
+              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+              { SUDO: newSudoValue },
+              {
+                  headers: {
+                      Authorization: `Bearer ${HEROKU_API_KEY}`,
+                      Accept: 'application/vnd.heroku+json; version=3',
+                      'Content-Type': 'application/json'
+                  }
+              }
+          );
+          console.log(`[API_CALL_SUCCESS] Heroku config vars patched successfully for ${APP_NAME}. Status: ${patchResponse.status}`);
+
+          await bot.editMessageText(`Number added to SUDO variable for "*${APP_NAME}*" successfully! New value: \`${newSudoValue}\``, {
+              chat_id: cid,
+              message_id: updateMsg.message_id,
+              parse_mode: 'Markdown'
+          });
       } catch (e) {
           const errorMsg = e.response?.data?.message || e.message;
-          await bot.sendMessage(cid, `Error updating SUDO: ${errorMsg}`);
+          console.error(`[API_CALL_ERROR] Error updating SUDO variable for ${APP_NAME}:`, errorMsg, e.response?.data);
+          await bot.sendMessage(cid, `Error updating SUDO variable: ${errorMsg}`);
+      } finally {
+          delete userStates[cid];
       }
       return;
   }
 
   if (st && st.step === 'AWAITING_SUDO_REMOVE_NUMBER') {
-      const { APP_NAME } = st.data;
-      const numberToRemove = text.trim();
-      delete userStates[cid]; // Clear state immediately
+    const { APP_NAME } = st.data;
+    const numberToRemove = text.trim();
 
-      if (!/^\d+$/.test(numberToRemove)) {
-          return bot.sendMessage(cid, 'Invalid input. Please enter numbers only.');
-      }
-      if (ADMIN_SUDO_NUMBERS.includes(numberToRemove)) {
-          return bot.sendMessage(cid, `You cannot remove an admin number.`);
-      }
+    st.data.attempts = (st.data.attempts || 0) + 1;
 
-      try {
-          const updateMsg = await bot.sendMessage(cid, `Removing number from SUDO for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
-          const configRes = await axios.get(`https://api.heroku.com/apps/${APP_NAME}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
-          const currentSudo = configRes.data.SUDO || '';
-          let sudoNumbers = currentSudo.split(',').map(s => s.trim()).filter(Boolean);
-          const initialLength = sudoNumbers.length;
-          sudoNumbers = sudoNumbers.filter(num => num !== numberToRemove);
+    if (!/^\d+$/.test(numberToRemove)) {
+        if (st.data.attempts >= 3) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, 'Too many invalid attempts. Please try again later.');
+        }
+        return bot.sendMessage(cid, `Invalid input. Please enter numbers only, without plus signs or spaces. Example: \`2349163916314\` (Attempt ${st.data.attempts} of 3)`);
+    }
 
-          if (sudoNumbers.length === initialLength) {
-              await bot.editMessageText(`Number \`${numberToRemove}\` not found in SUDO variable.`, { chat_id: cid, message_id: updateMsg.message_id, parse_mode: 'Markdown' });
-          } else {
-              const newSudoValue = sudoNumbers.join(',');
-              await axios.patch(`https://api.heroku.com/apps/${APP_NAME}/config-vars`, { SUDO: newSudoValue }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
-              await bot.editMessageText(`Number \`${numberToRemove}\` removed from SUDO for "*${APP_NAME}*"! New value: \`${newSudoValue || 'Not Set'}\``, { chat_id: cid, message_id: updateMsg.message_id, parse_mode: 'Markdown' });
-          }
-      } catch (e) {
-          const errorMsg = e.response?.data?.message || e.message;
-          await bot.sendMessage(cid, `Error updating SUDO: ${errorMsg}`);
-      }
-      return;
+    if (ADMIN_SUDO_NUMBERS.includes(numberToRemove)) {
+        if (st.data.attempts >= 3) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, "Too many attempts to remove an admin number. Please try again later.");
+        }
+        return bot.sendMessage(cid, `You cannot remove the admin number. (Attempt ${st.data.attempts} of 3)`);
+    }
+
+    try {
+        await bot.sendChatAction(cid, 'typing');
+        const updateMsg = await bot.sendMessage(cid, `Attempting to remove number from SUDO for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
+
+        const configRes = await axios.get(
+            `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const currentSudo = configRes.data.SUDO || '';
+        let sudoNumbers = currentSudo.split(',').map(s => s.trim()).filter(Boolean);
+
+        const initialLength = sudoNumbers.length;
+        sudoNumbers = sudoNumbers.filter(num => num !== numberToRemove);
+
+        if (sudoNumbers.length === initialLength) {
+            if (st.data.attempts >= 3) {
+                delete userStates[cid];
+                return bot.editMessageText(`Number \`${numberToRemove}\` not found in SUDO variable. Too many attempts. Please try again later.`, {
+                    chat_id: cid,
+                    message_id: updateMsg.message_id,
+                    parse_mode: 'Markdown'
+                });
+            }
+            await bot.editMessageText(`Number \`${numberToRemove}\` not found in SUDO variable for "*${APP_NAME}*". No changes made. You have ${3 - st.data.attempts} attempts left.`, {
+                chat_id: cid,
+                message_id: updateMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+        } else {
+            const newSudoValue = sudoNumbers.join(',');
+            await axios.patch(
+                `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
+                { SUDO: newSudoValue },
+                {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3',
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            await bot.editMessageText(`Number \`${numberToRemove}\` removed from SUDO variable for "*${APP_NAME}*" successfully! New value: \`${newSudoValue}\``, {
+                chat_id: cid,
+                message_id: updateMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+            delete userStates[cid];
+        }
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[API_CALL_ERROR] Error removing SUDO number for ${APP_NAME}:`, errorMsg, e.response?.data);
+        await bot.sendMessage(cid, `Error removing number from SUDO variable: ${errorMsg}`);
+    }
+    return;
   }
-  
 
 
 if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
@@ -2383,7 +2455,7 @@ bot.on('callback_query', async q => {
   }
 
   await bot.answerCallbackQuery(q.id).catch(() => {});
-  await dbServices.updateUserAndBotData({ userId: cid }); // Or the matching variable
+  await dbServices.updateUserActivity(cid); // Update user activity on any callback query
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
