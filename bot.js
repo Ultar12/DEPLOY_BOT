@@ -3597,13 +3597,17 @@ if (action === 'info') {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      // --- FIX: More accurate dyno status logic ---
-      let dynoStatus = 'Off / Scaled to 0';
-      if (dynoData.length > 0) {
-          const mainDyno = dynoData[0]; // Just use the first dyno found
-          const state = mainDyno.state.charAt(0).toUpperCase() + mainDyno.state.slice(1);
-          dynoStatus = `${state} (type: ${mainDyno.type})`;
-      }
+      // REPLACE WITH THIS BLOCK
+// --- FIX: Simplified dyno status with color indicators ---
+let dynoStatus = 'Inactive 🔴'; // Default to Inactive
+if (dynoData.length > 0) {
+    const mainDynoState = dynoData[0].state;
+    // Consider 'up', 'starting', or 'restarting' as Active
+    if (mainDynoState === 'up' || mainDynoState === 'starting' || mainDynoState === 'restarting') {
+        dynoStatus = 'Active 🟢';
+    }
+}
+
       
       let expirationInfo = "N/A";
       const deploymentBackup = (await backupPool.query('SELECT deploy_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [cid, appName])).rows[0];
