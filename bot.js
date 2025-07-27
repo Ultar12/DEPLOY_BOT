@@ -3566,18 +3566,21 @@ if (action === 'back_to_bapp_list') {
     return;
   }
 
-  if (action === 'info') {
+  // --- REPLACE your old 'info' block with this new one ---
+
+if (action === 'info') {
+    const appName = payload;
+    const messageId = q.message.message_id;
     const st = userStates[cid];
-    // Check if state is valid and appName matches
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
+
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+        await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
+        delete userStates[cid];
         return;
     }
-    const messageId = q.message.message_id;
 
-    await bot.sendChatAction(cid, 'typing');
-    await bot.editMessageText('Fetching app info...', { chat_id: cid, message_id: messageId });
+    await bot.editMessageText(`Fetching app info for "*${escapeMarkdown(appName)}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+    
     try {
       const apiHeaders = {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -3585,58 +3588,40 @@ if (action === 'back_to_bapp_list') {
       };
 
       const [appRes, configRes, dynoRes] = await Promise.all([
-        axios.get(`https://api.heroku.com/apps/${payload}`, { headers: apiHeaders }),
-        axios.get(`https://api.heroku.com/apps/${payload}/config-vars`, { headers: apiHeaders }),
-        axios.get(`https://api.heroku.com/apps/${payload}/dynos`, { headers: apiHeaders })
+        axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: apiHeaders }),
+        axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders })
       ]);
 
       const appData = appRes.data;
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      let dynoStatus = 'Scaled to 0 / Off';
+      // --- FIX: More accurate dyno status logic ---
+      let dynoStatus = 'Off / Scaled to 0';
       if (dynoData.length > 0) {
-          const workerDyno = dynoData.find(d => d.type === 'worker');
-          if (workerDyno) {
-              const state = workerDyno.state;
-              if (state === 'up') {
-                  dynoStatus = `Up`;
-              } else if (state === 'crashed') {
-                  dynoStatus = `Crashed`;
-              } else if (state === 'idle') {
-                  dynoStatus = `Idle`;
-              } else if (state === 'starting' || state === 'restarting') {
-                  dynoStatus = `${state.charAt(0).toUpperCase() + state.slice(1)}`;
-              } else {
-                  dynoStatus = `Unknown State: ${state}`;
-              }
-          } else {
-              dynoStatus = 'Worker dyno not active/scaled to 0';
-          }
+          const mainDyno = dynoData[0]; // Just use the first dyno found
+          const state = mainDyno.state.charAt(0).toUpperCase() + mainDyno.state.slice(1);
+          dynoStatus = `${state} (type: ${mainDyno.type})`;
       }
       
       let expirationInfo = "N/A";
-      // Get expiration info from user_deployments (backup DB)
-      const deploymentBackup = (await backupPool.query('SELECT deploy_date, expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [cid, payload])).rows[0];
+      const deploymentBackup = (await backupPool.query('SELECT deploy_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [cid, appName])).rows[0];
       if (deploymentBackup && deploymentBackup.deploy_date) {
         const originalDeployDate = new Date(deploymentBackup.deploy_date);
-        const fixedExpirationDate = new Date(originalDeployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from original deploy
+        const fixedExpirationDate = new Date(originalDeployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
         const now = new Date();
         const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
         const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
-
-        expirationInfo = `${fixedExpirationDate.toLocaleDateString()} (${daysLeft} days left from original deploy)`;
-        if (daysLeft <= 0) {
-            expirationInfo = `Expired on ${fixedExpirationDate.toLocaleDateString()}`;
-        }
+        expirationInfo = daysLeft > 0 ? `Expires in ${daysLeft} days` : 'Expired';
       }
 
+      // --- FIX: Removed the "Stack" line ---
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
-                   `*Created:* ${new Date(appData.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' })} (${Math.ceil(Math.abs(new Date() - new Date(appData.created_at)) / (1000 * 60 * 60 * 24))} days ago)\n` +
-                   `*Last Release:* ${new Date(appData.released_at).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}\n` +
-                   `*Stack:* ${appData.stack.name}\n` +
-                   `*Expiration:* ${expirationInfo}\n\n` + // NEW: Add expiration info
+                   `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
+                   `*Last Release:* ${new Date(appData.released_at).toLocaleString('en-US', { timeZone: 'Africa/Lagos' })}\n` +
+                   `*Expiration:* ${expirationInfo}\n\n` +
                    `*Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
                    `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
@@ -3647,31 +3632,31 @@ if (action === 'back_to_bapp_list') {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
         reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
         }
       });
     } catch (e) {
       if (e.response && e.response.status === 404) {
-          await dbServices.handleAppNotFoundAndCleanDb(cid, payload, messageId, true); // Use dbServices
+          await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
           return;
       }
       const errorMsg = e.response?.data?.message || e.message;
-      console.error(`Error fetching info for ${payload}:`, errorMsg, e.stack);
       return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
         chat_id: cid,
         message_id: messageId,
         reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${payload}` }]]
+            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
         }
       });
     }
-  }
+}
+
 
   if (action === 'restart') {
     const st = userStates[cid];
     // Check if state is valid and appName matches
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots'.");
         delete userStates[cid]; // Clear invalid state
         return;
     }
