@@ -510,17 +510,17 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
-      ['Get Session', 'Deploy'],
-      ['Free Trial', 'My Bots'],
-      ['Support', 'FAQ'],
+      ['Get Session ID', 'Deploy'],
+      ['My Bots', 'FAQ'],
+      ['Support'],
       ['More Features'] 
   ];
   if (isAdmin) {
       return [
           ['Deploy', 'Apps'],
           ['Generate Key', 'Get Session'],
-          ['Support', 'FAQ'], // Existing FAQ button
-          ['/stats', '/users', '/bapp', `/restoreall`] // <-- ADD /bapp here
+          ['/stats', 'FAQ'], // Existing FAQ button
+          ['/users', '/bapp', `/restoreall`] // <-- ADD /bapp here
       ];
   }
   return baseMenu;
