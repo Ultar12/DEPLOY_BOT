@@ -2005,7 +2005,7 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
     });
   }
 
-  if (text === 'Get Session') {
+  if (text === 'Get Session ID') {
       delete userStates[cid]; // Clear user state
       userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
 
