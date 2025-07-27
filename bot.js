@@ -818,8 +818,10 @@ async function notifyAdminUserOnline(msg) {
 // At the top of your file, make sure you have crypto required
 const crypto = require('crypto');
 
+// --- REPLACE your entire production/development block with this ---
+
 if (process.env.NODE_ENV === 'production') {
-    // --- Webhook Mode (for Heroku) ---
+    // --- Webhook Mode (for Render/Heroku) ---
     const app = express();
     app.use(express.json());
 
@@ -829,46 +831,14 @@ if (process.env.NODE_ENV === 'production') {
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
-    
-    const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
-
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
-    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
+    const fullWebhookUrl = `${APP_URL.replace(/\/$/, '')}${webhookPath}`;
 
+    // 1. Set the webhook with Telegram
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
 
-  // --- REPLACE the previous pinging block with this one ---
-
-    app.listen(PORT, () => {
-        console.log(`[Web Server] Server running on port ${PORT}`);
-    });
-
-    // --- START: Auto-Ping Logic (Render ONLY) ---
-
-    // This check now ensures it only runs if the APP_URL is set AND it's on Render
-    if (process.env.APP_URL && process.env.RENDER === 'true') {
-      const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-      
-      setInterval(async () => {
-        try {
-          // Send a GET request to the app's own URL
-          await axios.get(APP_URL);
-          console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
-        } catch (error) {
-          // Log any errors without crashing the bot
-          console.error(`[Pinger] Render self-ping failed: ${error.message}`);
-        }
-      }, PING_INTERVAL_MS);
-      
-      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
-    } else {
-      console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
-    }
-    // --- END: Auto-Ping Logic ---
-
-} else {
-
+    // --- FIX: All server routes are now correctly placed inside the production block ---
     app.post(webhookPath, (req, res) => {
         bot.processUpdate(req.body);
         res.sendStatus(200);
@@ -878,75 +848,68 @@ if (process.env.NODE_ENV === 'production') {
         res.send('Bot is running (webhook mode)!');
     });
 
-    // At the top of your file, ensure 'crypto' is required
-const crypto = require('crypto');
+    app.get('/api/get-key', async (req, res) => {
+        const providedApiKey = req.headers['x-api-key'];
+        const secretApiKey = process.env.INTER_BOT_API_KEY;
 
-// --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
-app.get('/api/get-key', async (req, res) => {
-    const providedApiKey = req.headers['x-api-key'];
-    const secretApiKey = process.env.INTER_BOT_API_KEY;
-
-    // 1. Check for the secret API key
-    if (!secretApiKey || providedApiKey !== secretApiKey) {
-        console.warn('[API] Unauthorized attempt to get a key.');
-        return res.status(401).json({ success: false, message: 'Unauthorized' });
-    }
-
-    try {
-        // 2. Query the database for one active key
-        const result = await pool.query(
-            'SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1'
-        );
-
-        if (result.rows.length > 0) {
-            // 3. Key found, send it back
-            const key = result.rows[0].key;
-            console.log(`[API] Provided existing key ${key} to authorized request.`);
-            return res.json({ success: true, key: key });
-        } else {
-            // 4. No key found, so create a new one automatically
-            console.log('[API] No active key found. Creating a new one...');
-            
-            // --- CHANGE IS HERE: Generate an 8-character alphanumeric key ---
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-            let newKey = '';
-            const randomBytes = crypto.randomBytes(8);
-            for (let i = 0; i < randomBytes.length; i++) {
-                newKey += chars[randomBytes[i] % chars.length];
-            }
-            // --- END OF CHANGE ---
-            
-            const newKeyResult = await pool.query(
-                'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
-                [newKey]
-            );
-            
-            const createdKey = newKeyResult.rows[0].key;
-            console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
-            return res.json({ success: true, key: createdKey });
+        if (!secretApiKey || providedApiKey !== secretApiKey) {
+            console.warn('[API] Unauthorized attempt to get a key.');
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
-    } catch (error) {
-        console.error('[API] Database error while fetching/creating key:', error);
-        return res.status(500).json({ success: false, message: 'Internal server error.' });
-    }
-});
+        try {
+            const result = await pool.query('SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1');
+            if (result.rows.length > 0) {
+                const key = result.rows[0].key;
+                console.log(`[API] Provided existing key ${key} to authorized request.`);
+                return res.json({ success: true, key: key });
+            } else {
+                console.log('[API] No active key found. Creating a new one...');
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                let newKey = '';
+                const randomBytes = crypto.randomBytes(8);
+                for (let i = 0; i < randomBytes.length; i++) {
+                    newKey += chars[randomBytes[i] % chars.length];
+                }
+                const newKeyResult = await pool.query('INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key', [newKey]);
+                const createdKey = newKeyResult.rows[0].key;
+                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
+                return res.json({ success: true, key: createdKey });
+            }
+        } catch (error) {
+            console.error('[API] Database error while fetching/creating key:', error);
+            return res.status(500).json({ success: false, message: 'Internal server error.' });
+        }
+    });
+    // --- END OF FIX ---
 
-
+    // 2. Start the web server
     app.listen(PORT, () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
     });
 
+    // 3. Start the auto-pinger for Render
+    if (APP_URL && process.env.RENDER === 'true') {
+        const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+        setInterval(async () => {
+            try {
+                await axios.get(APP_URL);
+                console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
+            } catch (error) {
+                console.error(`[Pinger] Render self-ping failed: ${error.message}`);
+            }
+        }, PING_INTERVAL_MS);
+        console.log(`[Pinger] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
+    } else {
+        console.log('[Pinger] Self-pinging service is disabled (not on Render).');
+    }
+
 } else {
     // --- Polling Mode (for local development) ---
+    // The 'else' block should ONLY contain this.
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
 }
-}) ();
 
-
-
-// 8) Polling error handler
-bot.on('polling_error', console.error);
 
 // 9) Command handlers
 bot.onText(/^\/start$/, async msg => {
