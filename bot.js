@@ -4417,6 +4417,9 @@ if (action === 'setvarbool') {
   }
 });
 
+// ===================================================================
+// REPLACE THE ENTIRE bot.on('channel_post', ...) FUNCTION WITH THIS:
+// ===================================================================
 bot.on('channel_post', async msg => {
     const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
 
@@ -4437,17 +4440,42 @@ bot.on('channel_post', async msg => {
     let botName = null;
     let isConnected = false;
     let isLogout = false;
+    let failureReason = 'Bot session became invalid.'; // Default failure reason
 
     // --- Robust Matching Logic ---
     const connectedMatch = text.match(/^\[([^\]]+)\] connected/);
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
+    // NEW: Add a match for the "invalid" session format
+    const invalidMatch = text.match(/^\[([^\]]+)\] invalid/);
+
     if (connectedMatch) {
         botName = connectedMatch[1];
         isConnected = true;
-    } else {
-        const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
-        if (logoutMatch) {
-            botName = logoutMatch[1];
-            isLogout = true;
+    } else if (logoutMatch) {
+        botName = logoutMatch[1];
+        isLogout = true;
+        failureReason = 'Bot session has logged out.';
+    } else if (invalidMatch) {
+        // This is the tricky part. The message doesn't contain the bot name.
+        // We must find the bot name by looking up the session ID part in the database.
+        const sessionPart = invalidMatch[1];
+        try {
+            // Find the bot_name where the session_id contains this unique part
+            const res = await pool.query(
+                `SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%'`, 
+                [sessionPart]
+            );
+            
+            if (res.rows.length > 0) {
+                botName = res.rows[0].bot_name;
+                isLogout = true; // Treat it as a logout/failure
+                failureReason = `The session ID was detected as invalid.`;
+                console.log(`[Channel Post] Matched 'invalid' session part '${sessionPart}' to bot '${botName}' from DB.`);
+            } else {
+                 console.warn(`[Channel Post] Received 'invalid' for session part '${sessionPart}', but no matching bot was found in the database.`);
+            }
+        } catch (dbError) {
+            console.error(`[Channel Post] DB Error looking up invalid session part '${sessionPart}':`, dbError);
         }
     }
     // --- End of Logic ---
@@ -4470,16 +4498,17 @@ bot.on('channel_post', async msg => {
     const pendingPromise = appDeploymentPromises.get(botName);
 
     if (isLogout) {
-        console.log(`[Channel Post] LOGOUT detected for bot: ${botName}`);
+        console.log(`[Channel Post] LOGOUT/INVALID detected for bot: ${botName}`);
         if (pendingPromise) {
-            pendingPromise.reject(new Error(`Bot session became invalid.`));
+            // Use the specific failure reason
+            pendingPromise.reject(new Error(failureReason));
             appDeploymentPromises.delete(botName);
             return;
         }
         
         const userId = await dbServices.getUserIdByBotName(botName);
         if (userId) {
-            const warningMessage = `Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out due to an invalid session.\nPlease update your session ID to get it back online.`;
+            const warningMessage = `⚠️ Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
