@@ -816,10 +816,24 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           }
           clearInterval(animateIntervalId); // Clear this specific animation
 
-          await bot.editMessageText(
-            `Your bot is now live!`,
-            { chat_id: chatId, message_id: createMsg.message_id }
-          );
+          // --- REPLACE the old success message with this new one ---
+
+await bot.editMessageText(
+    `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
+    {
+        chat_id: chatId,
+        message_id: createMsg.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: `Backup "${name}"`, callback_data: `backup_app:${name}` }
+                ]
+            ]
+        }
+    }
+);
+
           buildResult = true;
 
           // Free trial expiry logic
