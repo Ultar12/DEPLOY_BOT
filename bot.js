@@ -4417,112 +4417,64 @@ if (action === 'setvarbool') {
   }
 });
 
-// ===================================================================
+// // ===================================================================
 // REPLACE THE ENTIRE bot.on('channel_post', ...) FUNCTION WITH THIS:
 // ===================================================================
 bot.on('channel_post', async msg => {
-    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
+    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // Your channel ID
 
-    if (!msg || !msg.chat || !msg.chat.id) {
-        console.error('[Channel Post Error] Invalid message structure:', JSON.stringify(msg, null, 2));
-        return;
+    if (!msg || !msg.chat || String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID) {
+        return; // Ignore messages not from the correct channel
     }
 
-    const channelId = msg.chat.id.toString();
     const text = msg.text?.trim();
-
-    if (channelId !== TELEGRAM_LISTEN_CHANNEL_ID || !text) {
-        return;
+    if (!text) {
+        return; // Ignore messages without text
     }
 
-    console.log(`[Channel Post - Raw] Received: ${text}`);
+    console.log(`[Channel Post] Received: "${text}"`);
 
-    let botName = null;
-    let isConnected = false;
-    let isLogout = false;
-    let failureReason = 'Bot session became invalid.'; // Default failure reason
+    // --- 1. Check for pending deployments ---
+    // Iterate over a copy of the keys to safely modify the map during the loop
+    for (const appName of [...appDeploymentPromises.keys()]) {
+        // If the message contains the name of a bot we are waiting for
+        if (text.includes(appName)) {
+            const promise = appDeploymentPromises.get(appName);
+            if (!promise) continue;
 
-    // --- Robust Matching Logic ---
-    const connectedMatch = text.match(/^\[([^\]]+)\] connected/);
-    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
-    // NEW: Add a match for the "invalid" session format
-    const invalidMatch = text.match(/^\[([^\]]+)\] invalid/);
-
-    if (connectedMatch) {
-        botName = connectedMatch[1];
-        isConnected = true;
-    } else if (logoutMatch) {
-        botName = logoutMatch[1];
-        isLogout = true;
-        failureReason = 'Bot session has logged out.';
-    } else if (invalidMatch) {
-        // This is the tricky part. The message doesn't contain the bot name.
-        // We must find the bot name by looking up the session ID part in the database.
-        const sessionPart = invalidMatch[1];
-        try {
-            // Find the bot_name where the session_id contains this unique part
-            const res = await pool.query(
-                `SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%'`, 
-                [sessionPart]
-            );
-            
-            if (res.rows.length > 0) {
-                botName = res.rows[0].bot_name;
-                isLogout = true; // Treat it as a logout/failure
-                failureReason = `The session ID was detected as invalid.`;
-                console.log(`[Channel Post] Matched 'invalid' session part '${sessionPart}' to bot '${botName}' from DB.`);
-            } else {
-                 console.warn(`[Channel Post] Received 'invalid' for session part '${sessionPart}', but no matching bot was found in the database.`);
+            // Determine status based on keywords in the message
+            if (text.includes('connected')) {
+                console.log(`[Status] Resolved pending deployment for '${appName}' as CONNECTED.`);
+                promise.resolve('connected');
+            } else if (text.includes('invalid') || text.includes('logged out')) {
+                const reason = text.includes('invalid') ? 'Invalid Session' : 'Logged Out';
+                console.log(`[Status] Rejected pending deployment for '${appName}' as ${reason}.`);
+                promise.reject(new Error(reason));
             }
-        } catch (dbError) {
-            console.error(`[Channel Post] DB Error looking up invalid session part '${sessionPart}':`, dbError);
-        }
-    }
-    // --- End of Logic ---
 
-    if (!botName) {
-        console.log(`[Channel Post] No relevant status detected in message.`);
-        return;
-    }
-
-    let detectedBotType = 'levanter';
-    try {
-        const dbEntry = await pool.query('SELECT bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [botName]);
-        if (dbEntry.rows.length > 0 && dbEntry.rows[0].bot_type) {
-            detectedBotType = dbEntry.rows[0].bot_type;
-        }
-    } catch (dbError) {
-         console.error(`[Channel Post] DB Error fetching bot_type for '${botName}': ${dbError.message}`);
-    }
-
-    const pendingPromise = appDeploymentPromises.get(botName);
-
-    if (isLogout) {
-        console.log(`[Channel Post] LOGOUT/INVALID detected for bot: ${botName}`);
-        if (pendingPromise) {
-            // Use the specific failure reason
-            pendingPromise.reject(new Error(failureReason));
-            appDeploymentPromises.delete(botName);
-            return;
-        }
-        
-        const userId = await dbServices.getUserIdByBotName(botName);
-        if (userId) {
-            const warningMessage = `⚠️ Your *${detectedBotType.toUpperCase()}* bot "*${escapeMarkdown(botName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
-            await bot.sendMessage(userId, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${botName}:${userId}` }]]
-                }
-            });
+            // Clean up the promise from the map once it's handled
+            appDeploymentPromises.delete(appName);
+            return; // Exit after handling a pending deployment
         }
     }
 
-    if (isConnected) {
-        console.log(`[Channel Post] CONNECTED detected for bot: ${botName}`);
-        if (pendingPromise) {
-            pendingPromise.resolve('connected');
-            appDeploymentPromises.delete(botName);
+    // --- 2. Handle general logout notifications for already-running bots ---
+    const logoutMatch = text.match(/User \[([^\]]+)\] has logged out/);
+    if (logoutMatch) {
+        const appName = logoutMatch[1];
+        // If it's a logout for a bot we are NOT waiting for, send a general alert
+        if (!appDeploymentPromises.has(appName)) {
+            const userId = await dbServices.getUserIdByBotName(appName);
+            if (userId) {
+                const warningMessage = `⚠️ Your bot "*${escapeMarkdown(appName)}*" has been logged out.\nPlease update your session ID to get it back online.`;
+                await bot.sendMessage(userId, warningMessage, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
+                    }
+                }).catch(e => console.error(`Failed to send logout alert to user ${userId} for bot ${appName}: ${e.message}`));
+            }
         }
     }
 });
+
