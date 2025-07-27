@@ -2984,6 +2984,8 @@ ${configVarsDisplay}
   }
 
   // --- FIX: This block replaces the invalid bot.onCallbackQuery call ---
+// --- REPLACE this entire block in bot.js ---
+
 if (action === 'confirm_delete_bapp') {
     const appName = payload;
     const appUserId = extra;
@@ -2996,16 +2998,30 @@ if (action === 'confirm_delete_bapp') {
     try {
         const deleted = await dbServices.deleteUserDeploymentFromBackup(appUserId, appName);
         if (deleted) {
-            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" has been permanently deleted. Refreshing list...`, {
+            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" has been permanently deleted. Returning to menu...`, {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
             });
         } else {
-            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. Refreshing list...`, {
+            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. Returning to menu...`, {
                  chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
             });
         }
-        // CORRECT WAY: Call the function directly to refresh the list
-        await sendBappList(cid, messageId);
+        
+        // FIX: Instead of trying to refresh a list, go back to the main selection menu.
+        const opts = {
+            chat_id: q.message.chat.id,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
+                        { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
+                    ]
+                ]
+            }
+        };
+        await bot.editMessageText('Which bot type do you want to manage from the backup list?', opts);
+
     } catch (e) {
         await bot.editMessageText(`Failed to permanently delete backup for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
             chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
@@ -3013,6 +3029,7 @@ if (action === 'confirm_delete_bapp') {
     }
     return;
 }
+
 
 // --- REPLACE your old 'back_to_bapp_list' logic with this ---
 
