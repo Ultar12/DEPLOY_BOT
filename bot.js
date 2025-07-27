@@ -3567,6 +3567,7 @@ if (action === 'back_to_bapp_list') {
   }
 
   // --- REPLACE your old 'info' block with this new one ---
+// --- REPLACE your old 'info' block with this new one ---
 
 if (action === 'info') {
     const appName = payload;
@@ -3597,34 +3598,40 @@ if (action === 'info') {
       const configData = configRes.data;
       const dynoData = dynoRes.data;
 
-      // REPLACE WITH THIS BLOCK
-// --- FIX: Simplified dyno status with color indicators ---
-let dynoStatus = 'Inactive 🔴'; // Default to Inactive
-if (dynoData.length > 0) {
-    const mainDynoState = dynoData[0].state;
-    // Consider 'up', 'starting', or 'restarting' as Active
-    if (mainDynoState === 'up' || mainDynoState === 'starting' || mainDynoState === 'restarting') {
-        dynoStatus = 'Active 🟢';
-    }
-}
-
-      
-      let expirationInfo = "N/A";
-      const deploymentBackup = (await backupPool.query('SELECT deploy_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [cid, appName])).rows[0];
-      if (deploymentBackup && deploymentBackup.deploy_date) {
-        const originalDeployDate = new Date(deploymentBackup.deploy_date);
-        const fixedExpirationDate = new Date(originalDeployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
-        const now = new Date();
-        const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
-        const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
-        expirationInfo = daysLeft > 0 ? `Expires in ${daysLeft} days` : 'Expired';
+      let dynoStatus = 'Inactive 🔴';
+      if (dynoData.length > 0) {
+          const mainDynoState = dynoData[0].state;
+          if (['up', 'starting', 'restarting'].includes(mainDynoState)) {
+              dynoStatus = 'Active 🟢';
+          }
       }
+      
+      // --- FIX: Get the bot's actual owner ID first ---
+      const ownerId = await dbServices.getUserIdByBotName(appName);
+      let expirationInfo = "N/A (Not backed up)";
 
-      // --- FIX: Removed the "Stack" line ---
+      if (ownerId) {
+          const deploymentBackup = (await backupPool.query('SELECT deploy_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
+          if (deploymentBackup && deploymentBackup.deploy_date) {
+            const originalDeployDate = new Date(deploymentBackup.deploy_date);
+            const fixedExpirationDate = new Date(originalDeployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
+            const now = new Date();
+            const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
+            const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+            
+            if (daysLeft > 0) {
+                expirationInfo = `${daysLeft} days remaining`;
+            } else {
+                expirationInfo = 'Expired';
+            }
+          }
+      }
+      // --- END OF FIX ---
+
+      // --- FIX: Removed "Last Release" and "Stack" lines ---
       const info = `*App Info: ${appData.name}*\n\n` +
                    `*Dyno Status:* ${dynoStatus}\n` +
                    `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
-                   `*Last Release:* ${new Date(appData.released_at).toLocaleString('en-US', { timeZone: 'Africa/Lagos' })}\n` +
                    `*Expiration:* ${expirationInfo}\n\n` +
                    `*Key Config Vars:*\n` +
                    `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
@@ -3653,6 +3660,8 @@ if (dynoData.length > 0) {
         }
       });
     }
+}
+
 }
 
 
