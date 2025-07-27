@@ -4417,10 +4417,6 @@ if (action === 'setvarbool') {
   }
 });
 
-// AROUND LINE 4053
-// ===================================================================
-// REPLACE THE ENTIRE bot.on('channel_post', ...) FUNCTION WITH THIS:
-// ===================================================================
 bot.on('channel_post', async msg => {
     const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
 
@@ -4501,4 +4497,3 @@ bot.on('channel_post', async msg => {
         }
     }
 });
-// ===================================================================
