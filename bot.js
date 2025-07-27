@@ -3940,49 +3940,76 @@ if (action === 'back_to_bapp_list') {
       return;
   }
 
-
 if (action === 'varselect') {
-  const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
-  const st = userStates[cid];
-  // Check if state is valid and appName matches
-  if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
-      await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-      delete userStates[cid]; // Clear invalid state
-      return;
-  }
-  const messageId = q.message.message_id;
+    const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
+    const st = userStates[cid];
+    
+    // State validation
+    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
+        delete userStates[cid];
+        return;
+    }
+    const messageId = q.message.message_id;
 
-  if (varKey === 'SESSION_ID') { /* ...existing SESSION_ID logic... */ }
-  else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX', 'AUTO_READ_STATUS', 'HANDLERS'].includes(varKey)) { // <<< CHANGED: Added Raganork var names
-      userStates[cid].step = 'SETVAR_ENTER_VALUE';
-      // Determine the actual VAR_NAME to use when setting (ensures we store AUTO_READ_STATUS/HANDLERS for Raganork)
-      const actualVarName = (botTypeFromVarSelect === 'raganork' && varKey === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' : // <<< CHANGED
-                           (botTypeFromVarSelect === 'raganork' && varKey === 'PREFIX') ? 'HANDLERS' : varKey; // <<< CHANGED
-      userStates[cid].data.VAR_NAME = actualVarName; // <<< CHANGED to actualVarName
-      userStates[cid].data.APP_NAME = appName;
-      userStates[cid].data.isFreeTrial = false;
-      userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
+    // Fix for unresponsive Session ID button
+    if (varKey === 'SESSION_ID') {
+        userStates[cid].step = 'SETVAR_ENTER_VALUE';
+        userStates[cid].data.VAR_NAME = 'SESSION_ID';
+        userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.isFreeTrial = false;
+        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
+        return bot.sendMessage(cid, `Please enter the new value for *SESSION_ID*:`, { parse_mode: 'Markdown' });
+    } 
+    
+    // Logic for other boolean-like variables
+    else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX', 'AUTO_READ_STATUS', 'HANDLERS'].includes(varKey)) {
+        userStates[cid].step = 'SETVAR_ENTER_VALUE';
+        const actualVarName = (botTypeFromVarSelect === 'raganork' && varKey === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' :
+                             (botTypeFromVarSelect === 'raganork' && varKey === 'PREFIX') ? 'HANDLERS' : varKey;
+        userStates[cid].data.VAR_NAME = actualVarName;
+        userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.isFreeTrial = false;
+        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
 
-      let promptMessage = `Please enter the new value for *${actualVarName}*:`; // <<< CHANGED to actualVarName
-      if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(actualVarName)) { // <<< CHANGED
-        return bot.editMessageText(`Set *${actualVarName}* to:`, { // <<< CHANGED to actualVarName
-          chat_id: cid,
-          message_id: messageId,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: 'true', callback_data: `setvarbool:${actualVarName}:${appName}:true` }, // <<< CHANGED to actualVarName
-              { text: 'false', callback_data: `setvarbool:${actualVarName}:${appName}:false` } // <<< CHANGED to actualVarName
-            ],
-            [{ text: 'Back', callback_data: `setvar:${appName}` }]]
-          }
+        if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(actualVarName)) {
+            return bot.editMessageText(`Set *${actualVarName}* to:`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'true', callback_data: `setvarbool:${actualVarName}:${appName}:true` }],
+                        [{ text: 'false', callback_data: `setvarbool:${actualVarName}:${appName}:false` }],
+                        [{ text: 'Back', callback_data: `setvar:${appName}` }] // This correctly handles the back state
+                    ]
+                }
+            });
+        }
+        return bot.sendMessage(cid, `Please enter the new value for *${actualVarName}*:`, { parse_mode: 'Markdown' });
+    } 
+    
+    // Logic for other variable types
+    else if (varKey === 'OTHER_VAR') {
+        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
+        return bot.sendMessage(cid, 'Please enter the name of the variable you want to set (e.g., `WORK_TYPE`):', { parse_mode: 'Markdown' });
+    } 
+    else if (varKey === 'SUDO_VAR') {
+        return bot.editMessageText(`How do you want to manage *SUDO* for "*${appName}*"?`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
+                    [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
+                    [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${appName}` }] // This correctly handles the back state
+                ]
+            }
         });
-      }
-      return bot.sendMessage(cid, promptMessage, { parse_mode: 'Markdown' });
-
-  } else if (varKey === 'OTHER_VAR') { /* ...existing OTHER_VAR logic... */ }
-  else if (varKey === 'SUDO_VAR') { /* ...existing SUDO_VAR logic... */ }
+    }
 }
+  
 
   if (action === 'sudo_action') {
       const sudoAction = payload;
@@ -4158,32 +4185,48 @@ if (action === 'setvarbool') {
 }
 
   if (action === 'change_session') {
-      const appName = payload;
-      const targetUserId = extra;
+    const appName = payload;
+    const targetUserId = extra;
 
-      if (cid !== targetUserId) {
-          await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
-          return;
-      }
-      // Clear current state and set up for session ID input
-      delete userStates[cid];
-      // Get bot type from main DB for this app
-      const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+    if (cid !== targetUserId) {
+        await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
+        return;
+    }
+    // Clear current state and set up for session ID input
+    delete userStates[cid];
+    const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
 
-      userStates[cid] = {
-          step: 'SETVAR_ENTER_VALUE',
-          data: {
-              APP_NAME: appName,
-              VAR_NAME: 'SESSION_ID',
-              targetUserId: targetUserId,
-              isFreeTrial: false, // Ensure it's treated as permanent for backup on update
-              botType: botTypeForChangeSession // Store bot type for session validation
-          }
-      };
-      await bot.sendMessage(cid, `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`${botTypeForChangeSession === 'raganork' ? RAGANORK_SESSION_PREFIX : LEVANTER_SESSION_PREFIX}\`.`, { parse_mode: 'Markdown' });
-      return;
+    userStates[cid] = {
+        step: 'SETVAR_ENTER_VALUE',
+        data: {
+            APP_NAME: appName,
+            VAR_NAME: 'SESSION_ID',
+            targetUserId: targetUserId,
+            isFreeTrial: false, 
+            botType: botTypeForChangeSession
+        }
+    };
+    
+    const sessionPrompt = `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`${botTypeForChangeSession === 'raganork' ? RAGANORK_SESSION_PREFIX : LEVANTER_SESSION_PREFIX}\`.`;
+    
+    const sessionSiteUrl = botTypeForChangeSession === 'raganork' 
+        ? RAGANORK_SESSION_SITE_URL 
+        : 'https://levanter-delta.vercel.app/';
+
+    await bot.sendMessage(cid, sessionPrompt, { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "Don't have the new session?", url: sessionSiteUrl }
+                ]
+            ]
+        }
+    });
+
+    return;
   }
-
+  
   if (action === 'admin_delete_trial_app') {
       const appToDelete = payload;
       const messageId = q.message.message_id;
