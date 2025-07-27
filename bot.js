@@ -1706,7 +1706,7 @@ bot.on('message', async msg => {
           const currentMessageId = st.message_id || msg.message_id;
 
           if (currentMessageId) {
-            await bot.editMessageText(`The *SUDO* variable must be managed using "Add Number" or "Remove Number" options. How do you want to manage it for "*${APP_NAME}*"?`, {
+            await bot.sendMessage(cid,`The *SUDO* variable must be managed using "Add Number" or "Remove Number" options. How do you want to manage it for "*${APP_NAME}*"?`, {
                 chat_id: cid,
                 message_id: currentMessageId,
                 parse_mode: 'Markdown',
