@@ -848,7 +848,7 @@ if (process.env.NODE_ENV === 'production') {
     const APP_URL = process.env.APP_URL; 
 
     // This check now ensures it only runs if the APP_URL is set AND it's on Render
-    if (APP_URL && process.env.RENDER === 'true') {
+    if (process.env.APP_URL && process.env.RENDER === 'true') {
       const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
       
       setInterval(async () => {
