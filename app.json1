@@ -8,20 +8,22 @@
     },
     "AUTO_READ_STATUS": {
       "description": "Enable or disable",
-      "required": false
+      "required": false,
+      "value": "false"
     },
     "ALWAYS_ONLINE": {
       "description": "Keep the app always online",
-      "required": false
+      "required": false,
+      "value": "true"
     },
     "HANDLERS": {
       "description": "Handler path or module",
       "value": "."
     },
-    "DISABLE_START_MESSAGE": {  // <-- NEW ENTRY
+    "DISABLE_START_MESSAGE": {
       "description": "Set to 'true' to disable the bot's auto-reply on start",
       "required": false,
-      "value": "false"         // <-- Set the default value to 'false'
+      "value": "false"
     }
   },
   "addons": [
