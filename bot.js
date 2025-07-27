@@ -3775,7 +3775,7 @@ if (action === 'back_to_bapp_list') {
 
 
       await bot.sendChatAction(cid, 'typing');
-      await bot.editMessageText(`🗑️ Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
+      await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
       try {
           await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
               headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -3785,7 +3785,7 @@ if (action === 'back_to_bapp_list') {
               await dbServices.deleteUserBot(ownerId, appToDelete); // Delete from main DB
               await dbServices.markDeploymentDeletedFromHeroku(ownerId, appToDelete); // NEW: Mark from backup DB as deleted
           }
-          await bot.editMessageText(`🗑️ App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
+          await bot.editMessageText(`App "*${escapeMarkdown(appToDelete)}*" has been permanently deleted.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }); // EMOJI ADDED
 
           // --- CRITICAL FIX START: User deletion redirection ---
           if (originalAction === 'userdelete') {
