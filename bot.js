@@ -838,6 +838,38 @@ if (process.env.NODE_ENV === 'production') {
     await bot.setWebHook(fullWebhookUrl);
     console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
 
+  // --- REPLACE the previous pinging block with this one ---
+
+    app.listen(PORT, () => {
+        console.log(`[Web Server] Server running on port ${PORT}`);
+    });
+
+    // --- START: Auto-Ping Logic (Render ONLY) ---
+    const APP_URL = process.env.APP_URL; 
+
+    // This check now ensures it only runs if the APP_URL is set AND it's on Render
+    if (APP_URL && process.env.RENDER === 'true') {
+      const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+      
+      setInterval(async () => {
+        try {
+          // Send a GET request to the app's own URL
+          await axios.get(APP_URL);
+          console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
+        } catch (error) {
+          // Log any errors without crashing the bot
+          console.error(`[Pinger] Render self-ping failed: ${error.message}`);
+        }
+      }, PING_INTERVAL_MS);
+      
+      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
+    } else {
+      console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
+    }
+    // --- END: Auto-Ping Logic ---
+
+} else {
+
     app.post(webhookPath, (req, res) => {
         bot.processUpdate(req.body);
         res.sendStatus(200);
