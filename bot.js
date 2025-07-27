@@ -3337,7 +3337,7 @@ if (action === 'back_to_bapp_list') {
 
         // If a record exists AND deleted_from_heroku_at is NULL, it means it's currently backed up and active.
         if (existingBackup.rows.length > 0 && existingBackup.rows[0].deleted_from_heroku_at === null) {
-            return bot.editMessageText(`ℹ️ App "*${escapeMarkdown(appName)}*" is already backed up and currently active on Heroku. No action needed.`, {
+            return bot.editMessageText(`App "*${escapeMarkdown(appName)}*" is already backed up and currently active.`, {
                 chat_id: cid,
                 message_id: messageId,
                 parse_mode: 'Markdown',
