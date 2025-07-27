@@ -320,11 +320,11 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         // Create the navigation buttons
         const navRow = [];
         if (page > 1) {
-            navRow.push({ text: '⬅️ Previous', callback_data: `users_page:${page - 1}` });
+            navRow.push({ text: 'Previous', callback_data: `users_page:${page - 1}` });
         }
         navRow.push({ text: `Page ${page}`, callback_data: 'no_action' });
         if (page < totalPages) {
-            navRow.push({ text: 'Next ➡️', callback_data: `users_page:${page + 1}` });
+            navRow.push({ text: 'Next', callback_data: `users_page:${page + 1}` });
         }
 
         // Send or edit the message
@@ -4526,7 +4526,7 @@ bot.on('channel_post', async msg => {
         // If it wasn't a pending deployment, it's an alert for an existing bot
         const userId = await dbServices.getUserIdByBotName(appName);
         if (userId) {
-            const warningMessage = `⚠️ Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
+            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
