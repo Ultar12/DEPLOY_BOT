@@ -3542,7 +3542,7 @@ if (action === 'levanter_wa_fallback') {
         // saveUserDeployment will also set deleted_from_heroku_at to NULL, marking it as active/backed-up.
         await dbServices.saveUserDeployment(cid, appName, currentSessionId, appVars, botTypeResult); // Use dbServices
 
-        await bot.editMessageText(`✅ App "*${escapeMarkdown(appName)}*" successfully backed up! You can restore it later if needed.`, {
+        await bot.editMessageText(`App "*${escapeMarkdown(appName)}*" successfully backed up! You can restore it later if needed.`, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown',
