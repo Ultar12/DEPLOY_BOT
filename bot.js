@@ -2586,6 +2586,56 @@ if (action === 'users_page') {
   }
 
 // ... (rest of bot.js) ...
+  // --- ADD THIS SNIPPET INSIDE bot.on('callback_query', ...) ---
+
+if (action === 'verify_join') {
+    const userId = q.from.id;
+    const messageId = q.message.message_id;
+
+    try {
+        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
+        const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+        if (isMember) {
+            // User has joined, proceed to bot type selection
+            await bot.answerCallbackQuery(q.id, { text: "Verification successful!" });
+            
+            // Set state for the next step
+            delete userStates[cid];
+            userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
+
+            // Edit the message to show the bot selection menu
+            await bot.editMessageText('Great! Which bot type would you like to deploy for your free trial?', {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                        [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                    ]
+                }
+            });
+
+        } else {
+            // User has not joined
+            await bot.answerCallbackQuery(q.id, {
+                text: "You haven't joined the channel yet. Please join and try again.",
+                show_alert: true
+            });
+        }
+    } catch (error) {
+        console.error("Error verifying channel membership:", error.message);
+        // This error often happens if the bot is not an admin in the channel
+        await bot.answerCallbackQuery(q.id, {
+            text: "Could not verify membership. Please contact an admin.",
+            show_alert: true
+        });
+        // Also notify the main admin
+        await bot.sendMessage(ADMIN_ID, `Error checking channel membership for channel ID ${MUST_JOIN_CHANNEL_ID}. Ensure the bot is an admin in this channel. Error: ${error.message}`);
+    }
+    return;
+}
+
 
 
   if (action === 'deploy_first_bot') { // Handled by select_deploy_type now
