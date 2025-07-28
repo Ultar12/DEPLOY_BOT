@@ -11,6 +11,7 @@ let HEROKU_API_KEY;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
+let TELEGRAM_CHANNEL_ID; // Added for monitoring
 let defaultEnvVars; // This will now hold an object like { levanter: {}, raganork: {} }
 let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
@@ -30,6 +31,7 @@ let escapeMarkdown;
  * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
  * @param {string} params.GITHUB_RAGANORK_REPO_URL - GitHub URL for Raganork.
  * @param {string} params.ADMIN_ID - Admin Telegram ID.
+ * @param {string} params.TELEGRAM_CHANNEL_ID - Channel ID for monitoring.
  * @param {object} params.defaultEnvVars - Object containing fallback env vars for each bot type (e.g., { levanter: {}, raganork: {} }).
  * @param {Map} params.appDeploymentPromises - Map for deployment promises.
  * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
@@ -48,6 +50,7 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
+    TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID; // Added
     defaultEnvVars = params.defaultEnvVars; // This is now an object for each bot type
     appDeploymentPromises = params.appDeploymentPromises;
     RESTART_DELAY_MINUTES = params.RESTART_DELAY_MINUTES;
@@ -227,7 +230,6 @@ async function deleteDeployKey(key) {
   }
 }
 
-// === MODIFIED FUNCTION ===
 async function canDeployFreeTrial(userId) {
     const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
     const res = await pool.query(
@@ -241,7 +243,6 @@ async function canDeployFreeTrial(userId) {
     const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
     return { can: false, cooldown: nextAvailable };
 }
-// === END OF MODIFICATION ===
 
 async function recordFreeTrialDeploy(userId) {
     await pool.query(
@@ -328,20 +329,17 @@ async function unbanUser(userId) {
     }
 }
 
-// === NEW FUNCTIONS: For user deployments backup/restore/expiration (using 'backupPool') ===
-// IMPORTANT: Updated logic as per clarification
-async function saveUserDeployment(userId, appName, sessionId, configVars, botType) { // Added botType
+// === Functions for user deployments backup/restore/expiration (using 'backupPool') ===
+async function saveUserDeployment(userId, appName, sessionId, configVars, botType) {
     try {
-        // Ensure configVars is a plain object, remove non-string values if any, for JSONB
         const cleanConfigVars = {};
         for (const key in configVars) {
             if (Object.prototype.hasOwnProperty.call(configVars, key)) {
                 cleanConfigVars[key] = String(configVars[key]);
             }
         }
-
-        const deployDate = new Date(); // Only used for initial insert if record doesn't exist
-        const expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from initial deploy
+        const deployDate = new Date();
+        const expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
 
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at)
@@ -350,9 +348,8 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                session_id = EXCLUDED.session_id,
                config_vars = EXCLUDED.config_vars,
                bot_type = EXCLUDED.bot_type,
-               deleted_from_heroku_at = NULL; -- Clear deletion flag on update/restore (deploy_date and expiration_date are NOT updated)
+               deleted_from_heroku_at = NULL;
         `;
-        // deploy_date and expiration_date are only set by DEFAULT CURRENT_TIMESTAMP on initial INSERT
         await backupPool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
         console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
     } catch (error) {
@@ -393,13 +390,12 @@ async function deleteUserDeploymentFromBackup(userId, appName) {
     }
 }
 
-// New function to mark a deployment as deleted from Heroku (but keep in backup)
 async function markDeploymentDeletedFromHeroku(userId, appName) {
     try {
         await backupPool.query(
             `UPDATE user_deployments
              SET deleted_from_heroku_at = NOW()
-             WHERE user_id = $1 AND app_name = $2;`, // expiration_date is NOT set to NULL here, as it's fixed
+             WHERE user_id = $1 AND app_name = $2;`,
             [userId, appName]
         );
         console.log(`[DB-Backup] Marked deployment for user ${userId}, app ${appName} as deleted from Heroku.`);
@@ -408,11 +404,6 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
     }
 }
 
-/**
- * Fetches all deployments of a specific type from the backup DB for mass restoration.
- * @param {string} botType - The type of bot to fetch ('levanter' or 'raganork').
- * @returns {Promise<Array>} - A promise that resolves to an array of deployment objects.
- */
 async function getAllDeploymentsFromBackup(botType) {
     try {
         const result = await backupPool.query(
@@ -428,8 +419,50 @@ async function getAllDeploymentsFromBackup(botType) {
     }
 }
 
+// --- NEW FUNCTIONS FOR FREE TRIAL MONITORING ---
 
-// NEW HELPER FUNCTION: Handles 404 Not Found from Heroku API
+async function recordFreeTrialForMonitoring(userId, appName, channelId) {
+    try {
+        await backupPool.query(
+            `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
+             ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
+            [userId, appName, channelId]
+        );
+        console.log(`[DB-Backup] Added user ${userId} with app ${appName} to free trial monitoring.`);
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to record free trial for monitoring:`, error.message);
+    }
+}
+
+async function getMonitoredFreeTrials() {
+    try {
+        const result = await backupPool.query('SELECT * FROM free_trial_monitoring;');
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
+        return [];
+    }
+}
+
+async function updateFreeTrialWarning(userId) {
+    try {
+        await backupPool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
+    }
+}
+
+async function removeMonitoredFreeTrial(userId) {
+    try {
+        await backupPool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
+        console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
+    } catch (error) {
+        console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
+    }
+}
+
+
+// --- HELPER FUNCTION: Handles 404 Not Found from Heroku API ---
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
 
@@ -442,11 +475,11 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
         console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
     }
 
-    await deleteUserBot(ownerUserId, appName); // Delete from main DB (defined here)
-    await markDeploymentDeletedFromHeroku(ownerUserId, appName); // NEW: Mark from backup DB as well (not delete)
+    await deleteUserBot(ownerUserId, appName);
+    await markDeploymentDeletedFromHeroku(ownerUserId, appName);
     console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots (main) and marked as deleted in user_deployments (backup) DBs for user "${ownerUserId}".`);
 
-    const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been automatically removed from your "My Bots" list.`; // <<< CHANGED: Escaped appName
+    const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
 
     const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId;
     const messageToEditId = originalMessageId;
@@ -470,7 +503,6 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
 
 // === API functions ===
 
-// 8) Send Heroku apps list
 async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
     try {
         const res = await axios.get('https://api.heroku.com/apps', {
@@ -485,7 +517,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
             return bot.sendMessage(chatId, 'No apps found.');
         }
 
-        const chunkArray = (arr, size) => { // Defined locally or passed via init
+        const chunkArray = (arr, size) => {
             const out = [];
             for (let i = 0; i < arr.length; i += size) {
                 out.push(arr.slice(i, i + size));
@@ -495,7 +527,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
         const rows = chunkArray(apps, 3).map(r =>
             r.map(name => ({
-                text: name, // This 'name' is just text, not markdown.
+                text: name,
                 callback_data: isRemoval
                     ? `${callbackPrefix}:${name}:${targetUserId}`
                     : targetUserId
@@ -513,7 +545,6 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     } catch (e) {
         const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
         if (e.response && e.response.status === 401) {
-            // Specific handling for 401: API key likely bad
             console.error(`Heroku API key is invalid/expired. Cannot fetch apps. User: ${chatId}`);
             if (messageId) {
                 bot.editMessageText("Heroku API key invalid. Please contact the bot admin.", { chat_id: chatId, message_id: messageId });
@@ -530,13 +561,10 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     }
 }
 
-// 9) Build & deploy helper with animated countdown
-// IMPORTANT: This now takes botType to select the GitHub URL AND the correct defaultEnvVars
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
   const name = vars.APP_NAME;
   const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
 
-  // Select the correct default environment variables based on botType
   const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
 
   let buildResult = false;
@@ -591,7 +619,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
 
-    // Filter out undefined/null/empty strings from vars
     const filteredVars = {};
     for (const key in vars) {
         if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
@@ -599,24 +626,21 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         }
     }
 
-    // Apply defaults intelligently based on isRestore
     let finalConfigVars = {};
     if (isRestore) {
-        // For restore, 'vars' already comes with defaults + saved_config_vars applied in correct order.
-        finalConfigVars = filteredVars; // Use the 'vars' object directly after filtering
+        finalConfigVars = filteredVars;
     } else {
-        // For new deploy, apply defaults, then overlay user-provided 'vars'
         finalConfigVars = {
-            ...botTypeSpecificDefaults, // Apply type-specific defaults first
-            ...filteredVars             // Overlay with user input (like SESSION_ID, APP_NAME, AUTO_STATUS_VIEW, etc.)
+            ...botTypeSpecificDefaults,
+            ...filteredVars
         };
     }
 
     await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
-        ...finalConfigVars, // Use the carefully constructed finalConfigVars
-        APP_NAME: name // <--- CRITICAL: Ensure the deployed app knows its own name
+        ...finalConfigVars,
+        APP_NAME: name
       },
       {
         headers: {
@@ -641,51 +665,42 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
     );
 
-    let buildStatus; // Declared here to be accessible by both if/else paths
+    let buildStatus;
 
     if (botType === 'raganork') {
-        // Raganork: Simulated 1.5-minute build with a percentage counter.
         console.log(`[Build] Starting 90-second simulated build for Raganork app: ${name}`);
-        buildStatus = 'pending'; // Set initial status
+        buildStatus = 'pending';
 
-        // Use a promise to wait for the simulation to complete
         await new Promise(resolve => {
-            const buildDuration = 90000; // 1.5 minutes in ms
-            const updateInterval = 1500; // Update UI every 1.5 seconds
+            const buildDuration = 90000;
+            const updateInterval = 1500;
             let elapsedTime = 0;
 
             const simulationInterval = setInterval(async () => {
                 elapsedTime += updateInterval;
-                // Calculate percentage, ensuring it doesn't exceed 100
                 const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100));
-
                 try {
-                    // Edit the message with the current percentage
                     await bot.editMessageText(`Building... ${percentage}%`, {
                         chat_id: chatId,
                         message_id: createMsg.message_id
                     });
                 } catch (e) {
-                    // Ignore benign "message is not modified" errors
                     if (!e.message.includes('message is not modified')) {
                         console.error("Error editing message during build simulation:", e.message);
                     }
                 }
-
-                // When the simulation time is up
                 if (elapsedTime >= buildDuration) {
                     clearInterval(simulationInterval);
-                    buildStatus = 'succeeded'; // Set the final status for the next step
-                    resolve(); // Resolve the promise to continue execution
+                    buildStatus = 'succeeded';
+                    resolve();
                 }
             }, updateInterval);
         });
 
     } else {
-        // Original build logic for Levanter and other bot types
         const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
         buildStatus = 'pending';
-        let currentPct = 0; // Start percentage at 0
+        let currentPct = 0;
 
         const buildProgressInterval = setInterval(async () => {
             try {
@@ -696,7 +711,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                     }
                 });
                 buildStatus = poll.data.status;
-
                 if (buildStatus === 'pending') {
                     currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
                 } else if (buildStatus === 'succeeded') {
@@ -704,12 +718,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 } else if (buildStatus === 'failed') {
                     currentPct = 'Error';
                 }
-
                 await bot.editMessageText(`Building... ${currentPct}%`, {
                     chat_id: chatId,
                     message_id: createMsg.message_id
                 }).catch(() => {});
-
                 if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
                     clearInterval(buildProgressInterval);
                 }
@@ -731,13 +743,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 buildStatus = 'timed out';
                 throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
             }, BUILD_COMPLETION_TIMEOUT);
-
             while (buildStatus === 'pending') {
                 await new Promise(r => setTimeout(r, 5000));
             }
             clearTimeout(completionTimeoutId);
             clearInterval(buildProgressInterval);
-
         } catch (err) {
             clearInterval(buildProgressInterval);
             await bot.editMessageText(`Build process for "${name}" timed out or encountered an error. Check Heroku logs.`, {
@@ -749,47 +759,21 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         }
     }
 
-
     if (buildStatus === 'succeeded') {
-      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED. Attempting to add bot to user_bots DB.`);
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
-
-
-      const herokuConfigVars = (await axios.get(
-          `https://api.heroku.com/apps/${name}/config-vars`,
-          { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
-      )).data;
-
+      const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
       await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType);
-
-
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
-        console.log(`[FreeTrial] Recorded free trial deploy for user ${chatId}.`);
       }
-
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
-      const userDetails = [
-        `*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`,
-        `*Username:* @${escapeMarkdown(username || 'N/A')}`,
-        `*Chat ID:* \`${escapeMarkdown(chatId)}\``
-      ].join('\n');
+      const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
       const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-
-      await bot.sendMessage(ADMIN_ID,
-          `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`,
-          { parse_mode: 'Markdown', disable_web_page_preview: true }
-      );
-
+      await bot.sendMessage(ADMIN_ID, `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
       const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
-        chat_id: chatId,
-        message_id: createMsg.message_id,
-        parse_mode: 'Markdown'
-      });
-
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
-
       const appStatusPromise = new Promise((resolve, reject) => {
           const STATUS_CHECK_TIMEOUT = 120 * 1000;
           const timeoutId = setTimeout(() => {
@@ -817,42 +801,28 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                   message_id: createMsg.message_id,
                   parse_mode: 'Markdown',
                   reply_markup: {
-                      inline_keyboard: [
-                          [
-                              { text: `Backup "${name}"`, callback_data: `backup_app:${name}` }
-                          ]
-                      ]
+                      inline_keyboard: [[{ text: `Backup "${name}"`, callback_data: `backup_app:${name}` }]]
                   }
               }
           );
-
           buildResult = true;
 
-          // === MODIFIED SECTION ===
-          // Free trial expiry logic (3-day runtime)
           if (isFreeTrial) {
+            await recordFreeTrialForMonitoring(chatId, name, TELEGRAM_CHANNEL_ID);
             const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
             const ONE_HOUR_IN_MS = 1 * 60 * 60 * 1000;
             
-            // Send warning 1 hour before expiry
             setTimeout(async () => {
                 const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 1 hour left until deletion!`;
-                const keyboard = {
-                    inline_keyboard: [
-                        [{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
-                    ]
-                };
+                const keyboard = { inline_keyboard: [[{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]] };
                 await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
                 console.log(`[FreeTrial] Sent 1-hour warning to admin for ${name}.`);
             }, THREE_DAYS_IN_MS - ONE_HOUR_IN_MS);
 
-            // Schedule deletion after 3 days
             setTimeout(async () => {
                 try {
                     await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted now as its 3-day runtime has ended.`);
-                    await axios.delete(`https://api.heroku.com/apps/${name}`, {
-                        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                    });
+                    await axios.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
                     await deleteUserBot(chatId, name);
                     await markDeploymentDeletedFromHeroku(chatId, name);
                     await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
@@ -864,8 +834,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 }
             }, THREE_DAYS_IN_MS);
           }
-          // === END OF MODIFICATION ===
-
       } catch (err) {
           const promiseData = appDeploymentPromises.get(name);
           if (promiseData) {
@@ -881,9 +849,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 message_id: createMsg.message_id,
                 parse_mode: 'Markdown',
                 reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]
-                    ]
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]]
                 }
             }
           );
@@ -891,15 +857,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       } finally {
           appDeploymentPromises.delete(name);
       }
-
-    } else { // Heroku build failed
-      await bot.editMessageText(
-        `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
-        { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
-      );
+    } else {
+      await bot.editMessageText(`Build status: ${buildStatus}. Check your Heroku dashboard for logs.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
     }
-
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred during deployment: ${escapeMarkdown(errorMsg)}\n\nPlease check the Heroku dashboard or try again.`, {parse_mode: 'Markdown'});
@@ -936,5 +897,9 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
-    buildWithProgress
+    buildWithProgress,
+    recordFreeTrialForMonitoring,
+    getMonitoredFreeTrials,
+    updateFreeTrialWarning,
+    removeMonitoredFreeTrial
 };
