@@ -27,7 +27,7 @@ const { init: faqInit, sendFaqPage } = require('./bot_faq');
 const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
 // The bot MUST be an administrator in this channel for verification to work.
-const MUST_JOIN_CHANNEL_ID = '-1002138290342'; 
+const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
 
 
 // 2) Load fallback env vars from app.json / custom config files
