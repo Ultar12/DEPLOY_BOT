@@ -22,6 +22,14 @@ const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = requi
 const { init: servicesInit, ...dbServices } = require('./bot_services');
 const { init: faqInit, sendFaqPage } = require('./bot_faq');
 
+// --- ADD THIS SNIPPET ---
+
+const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
+// ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
+// The bot MUST be an administrator in this channel for verification to work.
+const MUST_JOIN_CHANNEL_ID = '-1002138290342'; 
+
+
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
 let raganorkDefaultEnvVars = {};
