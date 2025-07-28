@@ -1981,7 +1981,7 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
   // --- REPLACE THE EXISTING 'Deploy' / 'Free Trial' BLOCK WITH THIS ---
 
-// --- FIX 3: REPLACE this entire block ---
+// --- REPLACE this entire block to fix the 'catch' error ---
 
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
@@ -1989,11 +1989,14 @@ if (text === 'Deploy' || text === 'Free Trial') {
     if (isFreeTrial) {
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            const formattedDate = check.cooldown.toLocaleString('en-US', { /* ... */ });
+            const formattedDate = check.cooldown.toLocaleString('en-US', {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
             return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}`);
         }
 
-        try {
+        try { // This 'try' was likely missing
             // Check if user is already a member
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
@@ -2021,7 +2024,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     }
                 });
             }
-        } catch (error) {
+        } catch (error) { // This 'catch' needs the 'try' above it
             console.error("Error in free trial initial check:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
@@ -2041,7 +2044,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
-
 
 
   if (text === 'Apps' && isAdmin) {
