@@ -2641,8 +2641,6 @@ if (action === 'verify_join') {
     return;
 }
 
-}
-
 
 
 
