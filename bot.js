@@ -991,23 +991,26 @@ To get started, please follow these simple steps:
 We are here to assist you every step of the way!
 `;
 
-    // --- FIX START ---
-    // The 'inline_keyboard' is now correctly placed inside the 'reply_markup' object.
+    // ✅ Send photo with inline button only
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
       parse_mode: 'Markdown',
       reply_markup: {
-        keyboard: buildKeyboard(isAdmin),
-        resize_keyboard: true,
         inline_keyboard: [
-            [{ text: "Join for Bot update", url: "https://t.me/latestinfoult" }]
+          [{ text: "Join for Bot update", url: "https://t.me/latestinfoult" }]
         ]
       }
     });
-    // --- FIX END ---
+
+    // ✅ Send regular keyboard separately
+    await bot.sendMessage(cid, 'Choose an option below:', {
+      reply_markup: {
+        keyboard: buildKeyboard(isAdmin),
+        resize_keyboard: true
+      }
+    });
   }
 });
-
 
 // Add this with your other admin commands
 bot.onText(/^\/dkey$/, async (msg) => {
