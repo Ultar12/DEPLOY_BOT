@@ -1693,86 +1693,72 @@ bot.on('message', async msg => {
       return;
   }
 
-  if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
-      const { APP_NAME, targetUserId: targetUserIdFromState } = st.data;
-      const varName = text.trim().toUpperCase();
+  // --- REPLACE this entire block in bot.js ---
 
-      if (!/^[A-Z0-9_]+$/.test(varName)) {
-          return bot.sendMessage(cid, 'Invalid variable name. Please use only uppercase letters, numbers, and underscores.');
-      }
+if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
+    // --- FIX: Changed 'APP_NAME' to 'appName' to match the state data ---
+    const { appName, targetUserId: targetUserIdFromState } = st.data;
+    const varName = text.trim().toUpperCase();
 
-      if (varName === 'SUDO') {
-          delete userStates[cid];
-          const currentMessageId = st.message_id || msg.message_id;
+    if (!/^[A-Z0-9_]+$/.test(varName)) {
+        return bot.sendMessage(cid, 'Invalid variable name. Please use only uppercase letters, numbers, and underscores.');
+    }
 
-          if (currentMessageId) {
-            await bot.sendMessage(cid,`The *SUDO* variable must be managed using "Add Number" or "Remove Number" options. How do you want to manage it for "*${APP_NAME}*"?`, {
-                chat_id: cid,
-                message_id: currentMessageId,
+    if (varName === 'SUDO') {
+        delete userStates[cid];
+        await bot.sendMessage(cid, `The *SUDO* variable must be managed using "Add Number" or "Remove Number" options. How do you want to manage it for "*${appName}*"?`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
+                    [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
+                    [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${appName}` }]
+                ]
+            }
+        });
+        return;
+    }
+
+    try {
+        const configRes = await axios.get(
+            `https://api.heroku.com/apps/${appName}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        );
+        const existingConfigVars = configRes.data;
+
+        if (existingConfigVars.hasOwnProperty(varName)) {
+            userStates[cid].step = 'AWAITING_OVERWRITE_CONFIRMATION';
+            userStates[cid].data.VAR_NAME = varName;
+            userStates[cid].data.APP_NAME = appName; // Note: This should be appName
+            userStates[cid].data.targetUserId = targetUserIdFromState;
+            const message = `Variable *${varName}* already exists for "*${appName}*" with value: \`${escapeMarkdown(String(existingConfigVars[varName]))}\`\n\nDo you want to overwrite it?`;
+            await bot.sendMessage(cid, message, {
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Add Number', callback_data: `sudo_action:add:${APP_NAME}` }],
-                        [{ text: 'Remove Number', callback_data: `sudo_action:remove:${APP_NAME}` }],
-                        [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${APP_NAME}` }]
-                    ]
-                }
-            }).catch(err => console.error(`Failed to edit message in AWAITING_OTHER_VAR_NAME for SUDO: ${err.message}`));
-          } else {
-             await bot.sendMessage(cid, `The *SUDO* variable must be managed using "Add Number" or "Remove Number" options. How do you want to manage it for "*${APP_NAME}*"?`, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Add Number', callback_data: `sudo_action:add:${APP_NAME}` }],
-                        [{ text: 'Remove Number', callback_data: `sudo_action:remove:${APP_NAME}` }],
-                        [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${APP_NAME}` }]
+                        [{ text: 'Yes, Overwrite', callback_data: `overwrite_var:yes:${varName}:${appName}` }],
+                        [{ text: 'No, Cancel', callback_data: `overwrite_var:no:${varName}:${appName}` }]
                     ]
                 }
             });
-          }
-          return;
-      }
+        } else {
+            userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
+            userStates[cid].data.VAR_NAME = varName;
+            userStates[cid].data.APP_NAME = appName; // Note: This should be appName
+            userStates[cid].data.targetUserId = targetUserIdFromState;
+            const botTypeForOtherVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+            userStates[cid].data.botType = botTypeForOtherVar;
+            return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
+        }
+    } catch (e) {
+        const errorMsg = e.response?.data?.message || e.message;
+        console.error(`[API Call Error] Error checking variable existence for ${appName}:`, errorMsg);
+        await bot.sendMessage(cid, `Error checking variable existence: ${escapeMarkdown(errorMsg)}`);
+        delete userStates[cid];
+    }
+    return;
+}
 
-      try {
-          const configRes = await axios.get(
-              `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
-              { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
-          );
-          const existingConfigVars = configRes.data;
-
-          if (existingConfigVars.hasOwnProperty(varName)) {
-              userStates[cid].step = 'AWAITING_OVERWRITE_CONFIRMATION';
-              userStates[cid].data.VAR_NAME = varName;
-              userStates[cid].data.APP_NAME = APP_NAME;
-              userStates[cid].data.targetUserId = targetUserIdFromState;
-              const message = `Variable *${varName}* already exists for "*${APP_NAME}*" with value: \`${escapeMarkdown(String(existingConfigVars[varName]))}\`\n\nDo you want to overwrite it?`;
-              await bot.sendMessage(cid, message, {
-                  parse_mode: 'Markdown',
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: 'Yes, Overwrite', callback_data: `overwrite_var:yes:${varName}:${APP_NAME}` }],
-                          [{ text: 'No, Cancel', callback_data: `overwrite_var:no:${varName}:${APP_NAME}` }]
-                      ]
-                  }
-              });
-          } else {
-              userStates[cid].step = 'AWAITING_OTHER_VAR_VALUE';
-              userStates[cid].data.VAR_NAME = varName;
-              userStates[cid].data.APP_NAME = APP_NAME;
-              userStates[cid].data.targetUserId = targetUserIdFromState;
-              // Get bot type from main DB for this app, pass to state for validation
-              const botTypeForOtherVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, APP_NAME])).rows[0]?.bot_type || 'levanter';
-              userStates[cid].data.botType = botTypeForOtherVar;
-              return bot.sendMessage(cid, `Please enter the value for *${varName}*:`, { parse_mode: 'Markdown' });
-          }
-      } catch (e) {
-          const errorMsg = e.response?.data?.message || e.message;
-          console.error(`[API_CALL_ERROR] Error checking existence of variable ${varName} for ${APP_NAME}:`, errorMsg, e.response?.data);
-          await bot.sendMessage(cid, `Error checking variable existence: ${errorMsg}`);
-          delete userStates[cid];
-      }
-      return;
-  }
 
   if (st && st.step === 'AWAITING_OVERWRITE_CONFIRMATION') {
       return bot.sendMessage(cid, 'Please use the "Yes" or "No" buttons to confirm.');
