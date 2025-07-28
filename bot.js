@@ -2546,45 +2546,49 @@ if (action === 'users_page') {
 }
 
 
-  if (action === 'select_deploy_type') { // NEW: Handle bot type selection for deployment
-      const botType = payload; // 'levanter' or 'raganork'
-      const st = userStates[cid];
+  // --- FIX 2: REPLACE this entire block to fix the free trial logic ---
 
-      if (!st || (st.step !== 'AWAITING_BOT_TYPE_SELECTION' && st.step !== 'AWAITING_KEY')) { // Allow key holders to select bot type as well
-          await bot.editMessageText('This deployment session has expired or is invalid. Please start over by tapping "Deploy".', {
-              chat_id: cid,
-              message_id: q.message.message_id
-          });
-          delete userStates[cid]; // Clear the invalid state
-          return;
-      }
+if (action === 'select_deploy_type') {
+    const botType = payload;
+    const st = userStates[cid];
+
+    if (!st || (st.step !== 'AWAITING_BOT_TYPE_SELECTION' && st.step !== 'AWAITING_KEY')) {
+        await bot.editMessageText('This deployment session has expired or is invalid. Please start over.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        delete userStates[cid];
+        return;
+    }
       
-      st.data.botType = botType; // Store chosen bot type in state
+    st.data.botType = botType;
 
-      // If user came via /deploy and is not admin, they still need to enter key
-      if (st.step === 'AWAITING_BOT_TYPE_SELECTION' && cid !== ADMIN_ID) {
-          st.step = 'AWAITING_KEY'; // Next step: enter key
-          await bot.editMessageText(`You chose *${botType.toUpperCase()}*. Please enter your Deploy key:`, {
-              chat_id: cid,
-              message_id: q.message.message_id,
-              parse_mode: 'Markdown'
-          });
-      } else { // Admin or user with key already passed, directly ask for Session ID
-          st.step = 'SESSION_ID'; // Next step: enter session ID
-          let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
-          if (botType === 'raganork') {
-              sessionPrompt += ` (Raganork session IDs must start with \`${RAGANORK_SESSION_PREFIX}\`).\n\nGet it from the website: ${RAGANORK_SESSION_SITE_URL}`; // <-- CRITICAL CHANGE HERE
-          } else { // Levanter
-              sessionPrompt += ` (Levanter session IDs must start with \`${LEVANTER_SESSION_PREFIX}\`).\n\nGet it from the website: https://levanter-delta.vercel.app/`;
-          }
-          await bot.editMessageText(sessionPrompt, { // Use the constructed sessionPrompt
-              chat_id: cid,
-              message_id: q.message.message_id,
-              parse_mode: 'Markdown'
-          });
-      }
-      return;
-  }
+    // This is the main logic fix:
+    // Ask for a key ONLY if the user is NOT an admin AND NOT on a free trial.
+    if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
+        st.step = 'AWAITING_KEY';
+        await bot.editMessageText(`You chose *${botType.toUpperCase()}*. Please enter your Deploy key:`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    } else { // This block now runs for Admins OR Free Trial users
+        st.step = 'SESSION_ID';
+        let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
+        if (botType === 'raganork') {
+            sessionPrompt += ` (Must start with \`${RAGANORK_SESSION_PREFIX}\`).\n\nGet it from: ${RAGANORK_SESSION_SITE_URL}`;
+        } else { // Levanter
+            sessionPrompt += ` (Must start with \`${LEVANTER_SESSION_PREFIX}\`).\n\nGet it from: https://levanter-delta.vercel.app/`;
+        }
+        await bot.editMessageText(sessionPrompt, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+    return;
+}
+
 
 if (action === 'verify_join') {
     const userId = q.from.id;
