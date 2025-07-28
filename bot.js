@@ -3183,6 +3183,8 @@ if (action === 'back_to_bapp_list') {
 }
 
 
+// --- REPLACE this entire block ---
+
 if (action === 'select_get_session_type') {
     const botType = payload;
     const st = userStates[cid];
@@ -3212,21 +3214,56 @@ if (action === 'select_get_session_type') {
         });
         delete userStates[cid];
         return;
-    } else {
-        st.step = 'AWAITING_PHONE_NUMBER';
-        let promptMessage = `You chose *Levanter*. Please send your WhatsApp number in the full international format including the \`+\` (e.g., \`+23491630000000\`).\n\nAlternatively, you can generate your session ID directly.`;
-
-        await bot.editMessageText(promptMessage, {
+    } else { // This is the new Levanter flow
+        const levanterUrl = 'https://levanter-delta.vercel.app/';
+        await bot.editMessageText('You chose Levanter, please use the button below to get your session id.', {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
             reply_markup: {
-                inline_keyboard: [[{ text: 'Get Session ID', url: 'https://levanter-delta.vercel.app/' }]]
+                inline_keyboard: [
+                    [
+                        { text: 'Get Session ID', url: levanterUrl },
+                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback' }
+                    ],
+                    [
+                        { text: 'Deploy Now', callback_data: 'deploy_first_bot' }
+                    ]
+                ]
             }
         });
         return;
     }
 }
+
+  // --- ADD this new block ---
+
+if (action === 'levanter_wa_fallback') {
+    // Set the state to wait for the user's phone number
+    userStates[cid] = {
+        step: 'AWAITING_PHONE_NUMBER',
+        data: {
+            botType: 'levanter' // Set the context for the next step
+        }
+    };
+
+    // Acknowledge the button press
+    await bot.answerCallbackQuery(q.id);
+    
+    // Ask for the phone number in a new message
+    await bot.sendMessage(cid, 'Please send your WhatsApp number in the full international format including the `+` (e.g., `+23491630000000`).', {
+        parse_mode: 'Markdown'
+    });
+
+    // Remove the buttons from the previous message to avoid confusion
+    await bot.editMessageText('Please check the new message below and provide your number.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    
+    return;
+}
+  
 
 
 
