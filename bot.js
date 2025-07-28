@@ -519,8 +519,8 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session ID', 'Deploy'],
-      ['My Bots', 'FAQ'],
-      ['Support'],
+      ['My Bots', 'Free Trial'],
+      ['FAQ', 'Support'],
       ['More Features'] 
   ];
   if (isAdmin) {
