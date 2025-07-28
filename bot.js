@@ -1979,30 +1979,32 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
 
-  // --- REPLACE THE EXISTING 'Deploy' / 'Free Trial' BLOCK WITH THIS ---
-
-// --- REPLACE this entire block to fix the 'catch' error ---
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
+            // This part is now updated
             const formattedDate = check.cooldown.toLocaleString('en-US', {
+                timeZone: 'Africa/Lagos', // Set for Nigeria
                 year: 'numeric', month: 'short', day: 'numeric',
                 hour: '2-digit', minute: '2-digit', hour12: true
             });
-            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}`);
+            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    ]
+                }
+            });
         }
 
-        try { // This 'try' was likely missing
-            // Check if user is already a member
+        try { 
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
             if (isMember) {
-                // Already a member, skip the join step
                 userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
                 await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
                     reply_markup: {
@@ -2013,18 +2015,17 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     }
                 });
             } else {
-                // Not a member, show the join/verify message
                 await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
                     parse_mode: 'Markdown',
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                            [{ text: '✅ I have joined, Verify me!', callback_data: 'verify_join' }]
                         ]
                     }
                 });
             }
-        } catch (error) { // This 'catch' needs the 'try' above it
+        } catch (error) { 
             console.error("Error in free trial initial check:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
@@ -2044,6 +2045,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
   if (text === 'Apps' && isAdmin) {
