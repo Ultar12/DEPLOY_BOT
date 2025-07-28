@@ -1966,26 +1966,53 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
 
-  if (text === 'Deploy' || text === 'Free Trial') { // Combined deploy and free trial entry
+  // --- REPLACE THE EXISTING 'Deploy' / 'Free Trial' BLOCK WITH THIS ---
+
+if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
-    const check = await dbServices.canDeployFreeTrial(cid); // Use dbServices
-    if (isFreeTrial && !check.can) {
-        return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' })}`);
-    }
 
-    delete userStates[cid]; // Clear previous state
-    userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: isFreeTrial } };
-
-    await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
-            ]
+    if (isFreeTrial) {
+        // New "must join" flow for the free trial
+        const check = await dbServices.canDeployFreeTrial(cid);
+        if (!check.can) {
+            const formattedDate = check.cooldown.toLocaleString('en-US', {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
+            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}`);
         }
-    });
-    return;
-  }
+
+        // Send the message asking the user to join the channel and verify
+        await bot.sendMessage(cid,
+            "To access the Free Trial, you must join our channel. This helps us keep you updated!",
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                    ]
+                }
+            }
+        );
+        return; // End the flow here until user clicks "Verify"
+
+    } else { // This is the "Deploy" (paid) flow
+        delete userStates[cid];
+        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
+
+        await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                ]
+            }
+        });
+        return;
+    }
+}
+
 
   if (text === 'Apps' && isAdmin) {
     return dbServices.sendAppList(cid); // Use dbServices
