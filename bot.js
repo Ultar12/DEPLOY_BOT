@@ -958,11 +958,13 @@ app.get('/api/get-key', async (req, res) => {
 bot.on('polling_error', console.error);
 
 // 9) Command handlers
+// --- REPLACE your entire /start command with this corrected version ---
+
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
-  await dbServices.updateUserActivity(cid);
+  await dbServices.updateUserAndBotData({ userId: cid });
   const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid]; // Clear user state
+  delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
   console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
 
@@ -972,13 +974,9 @@ bot.onText(/^\/start$/, async msg => {
     });
   } else {
     const { first_name: userFirstName } = msg.from;
-    let personalizedGreeting = `Welcome`;
-    if (userFirstName) {
-        personalizedGreeting += ` back, ${escapeMarkdown(userFirstName)}`;
-    }
-    personalizedGreeting += ` to our Bot Deployment Service!`;
+    let personalizedGreeting = `Welcome back, ${escapeMarkdown(userFirstName || 'User')} to our Bot Deployment Service!`;
 
-    const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg'; // Ensure this URL is valid
+    const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg';
     const welcomeCaption = `
 ${personalizedGreeting}
 
@@ -992,17 +990,24 @@ To get started, please follow these simple steps:
 
 We are here to assist you every step of the way!
 `;
+
+    // --- FIX START ---
+    // The 'inline_keyboard' is now correctly placed inside the 'reply_markup' object.
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
       parse_mode: 'Markdown',
-      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
-      inline_keyboard: [
-
-[{ text: "Bot update", url: "https://t.me/+-v9UjX5N9e04MTJk" }]
-      ]
+      reply_markup: {
+        keyboard: buildKeyboard(isAdmin),
+        resize_keyboard: true,
+        inline_keyboard: [
+            [{ text: "Join for Bot update", url: "https://t.me/latestinfoult" }]
+        ]
+      }
     });
+    // --- FIX END ---
   }
 });
+
 
 // Add this with your other admin commands
 bot.onText(/^\/dkey$/, async (msg) => {
