@@ -998,7 +998,7 @@ We are here to assist you every step of the way!
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
       inline_keyboard: [
 
-[{ text: "Bot update", url: "https://t.me/latestinfoult" }]
+[{ text: "Bot update", url: "https://t.me/+-v9UjX5N9e04MTJk" }]
       ]
     });
   }
