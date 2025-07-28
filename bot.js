@@ -2645,10 +2645,6 @@ if (action === 'verify_join') {
     return;
 }
 
-}
-
-
-
 
   if (action === 'deploy_first_bot') { // Handled by select_deploy_type now
       const isAdmin = cid === ADMIN_ID;
