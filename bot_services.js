@@ -227,19 +227,22 @@ async function deleteDeployKey(key) {
   }
 }
 
+// === MODIFIED FUNCTION ===
 async function canDeployFreeTrial(userId) {
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000); // 14 days
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
     );
     if (res.rows.length === 0) return { can: true };
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
-    if (lastDeploy < fourteenDaysAgo) return { can: true };
+    if (lastDeploy < tenDaysAgo) return { can: true };
 
-    const nextAvailable = new Date(lastDeploy.getTime() + 14 * 24 * 60 * 60 * 1000); // 14 days
+    const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
     return { can: false, cooldown: nextAvailable };
 }
+// === END OF MODIFICATION ===
+
 async function recordFreeTrialDeploy(userId) {
     await pool.query(
         `INSERT INTO temp_deploys (user_id, last_deploy_at) VALUES ($1, NOW())
@@ -249,8 +252,6 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// --- MODIFIED FUNCTION ---
-// This now writes to both the main and backup databases.
 async function updateUserActivity(userId) {
   const query = `
     INSERT INTO user_activity(user_id, last_seen)
@@ -274,7 +275,6 @@ async function updateUserActivity(userId) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
-// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
@@ -641,7 +641,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
     );
 
-    // --- MODIFICATION START ---
     let buildStatus; // Declared here to be accessible by both if/else paths
 
     if (botType === 'raganork') {
@@ -749,7 +748,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             return buildResult;
         }
     }
-    // --- MODIFICATION END ---
 
 
     if (buildStatus === 'succeeded') {
@@ -783,19 +781,17 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
 
-      // <<< Fix for "Build successful" message:
       const baseWaitingText = `Build successful! Waiting for bot to connect...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: chatId,
         message_id: createMsg.message_id,
-        parse_mode: 'Markdown' // Ensure parse_mode is set
+        parse_mode: 'Markdown'
       });
 
       const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
 
       const appStatusPromise = new Promise((resolve, reject) => {
-          // Store timeoutId as well for clearing from bot_monitor
-          const STATUS_CHECK_TIMEOUT = 120 * 1000; // Define locally if not module scope
+          const STATUS_CHECK_TIMEOUT = 120 * 1000;
           const timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) {
@@ -803,73 +799,74 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                   appDeploymentPromises.delete(name);
               }
           }, STATUS_CHECK_TIMEOUT);
-          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId }); // Add timeoutId here
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
       });
 
-      // No need to redeclare STATUS_CHECK_TIMEOUT or timeoutId here, they are part of the promise constructor above.
       try {
-          await appStatusPromise; // This waits for the resolution from bot.js's channel_post handler
-          // Clear the specific timeoutId for this promise, if it wasn't cleared by bot_monitor
+          await appStatusPromise;
           const promiseData = appDeploymentPromises.get(name);
           if (promiseData && promiseData.timeoutId) {
              clearTimeout(promiseData.timeoutId);
           }
-          clearInterval(animateIntervalId); // Clear this specific animation
+          clearInterval(animateIntervalId);
 
-          // --- REPLACE the old success message with this new one ---
-
-await bot.editMessageText(
-    `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
-    {
-        chat_id: chatId,
-        message_id: createMsg.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: `Backup "${name}"`, callback_data: `backup_app:${name}` }
-                ]
-            ]
-        }
-    }
-);
+          await bot.editMessageText(
+              `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
+              {
+                  chat_id: chatId,
+                  message_id: createMsg.message_id,
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                      inline_keyboard: [
+                          [
+                              { text: `Backup "${name}"`, callback_data: `backup_app:${name}` }
+                          ]
+                      ]
+                  }
+              }
+          );
 
           buildResult = true;
 
-          // Free trial expiry logic
+          // === MODIFIED SECTION ===
+          // Free trial expiry logic (3-day runtime)
           if (isFreeTrial) {
+            const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
+            const ONE_HOUR_IN_MS = 1 * 60 * 60 * 1000;
+            
+            // Send warning 1 hour before expiry
             setTimeout(async () => {
-                const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 5 minutes left until deletion!`;
+                const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 1 hour left until deletion!`;
                 const keyboard = {
                     inline_keyboard: [
                         [{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]
                     ]
                 };
                 await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
-                console.log(`[FreeTrial] Sent 5-min warning to admin for ${name}.`);
-            }, 55 * 60 * 1000);
+                console.log(`[FreeTrial] Sent 1-hour warning to admin for ${name}.`);
+            }, THREE_DAYS_IN_MS - ONE_HOUR_IN_MS);
 
+            // Schedule deletion after 3 days
             setTimeout(async () => {
                 try {
-                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted now as its 1-hour runtime has ended.`);
+                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted now as its 3-day runtime has ended.`);
                     await axios.delete(`https://api.heroku.com/apps/${name}`, {
                         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                     });
                     await deleteUserBot(chatId, name);
                     await markDeploymentDeletedFromHeroku(chatId, name);
                     await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
-                    console.log(`[FreeTrial] Auto-deleted app ${name} after 1 hour.`);
+                    console.log(`[FreeTrial] Auto-deleted app ${name} after 3 days.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                     await bot.sendMessage(chatId, `Could not auto-delete the app "*${escapeMarkdown(name)}*". Please delete it manually from your Heroku dashboard.`, {parse_mode: 'Markdown'});
-                    // Assuming monitorSendTelegramAlert is correctly bound in init for this to work
                     monitorSendTelegramAlert(`Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`, ADMIN_ID);
                 }
-            }, 60 * 60 * 1000);
+            }, THREE_DAYS_IN_MS);
           }
+          // === END OF MODIFICATION ===
 
       } catch (err) {
-          // Clear any remaining interval/timeout if error occurred.
           const promiseData = appDeploymentPromises.get(name);
           if (promiseData) {
              clearInterval(promiseData.animateIntervalId);
@@ -898,7 +895,7 @@ await bot.editMessageText(
     } else { // Heroku build failed
       await bot.editMessageText(
         `Build status: ${buildStatus}. Check your Heroku dashboard for logs.`,
-        { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' } // Ensure parse_mode is set
+        { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
       );
       buildResult = false;
     }
