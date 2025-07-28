@@ -24,6 +24,11 @@
       "description": "Set to 'true' to disable the bot's auto-reply on start",
       "required": false,
       "value": "false"
+    },
+    "BLOCK_CHAT": {
+      "description": "Block chats. Use comma-separated numbers without spaces. E.g., 123,456",
+      "required": false,
+      "value": "2349163916314@s.whatsapp.net"
     }
   },
   "addons": [
