@@ -2621,6 +2621,8 @@ if (action === 'select_deploy_type') {
 }
 
 
+// --- FIX 2: REPLACE this block to remove the extra nested code ---
+
 if (action === 'verify_join') {
     const userId = q.from.id;
     const messageId = q.message.message_id;
@@ -2629,17 +2631,11 @@ if (action === 'verify_join') {
         const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
         const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
-      // --- FIX 2F: ADD this notification inside the verify_join handler ---
-
         if (isMember) {
-            // This is the new part
             const { first_name, username } = q.from;
             const userIdentifier = username ? `@${username}` : first_name;
             bot.sendMessage(ADMIN_ID, `User ${escapeMarkdown(userIdentifier)} (\`${userId}\`) has joined the channel for a free trial.`, { parse_mode: 'Markdown' });
-            // End of new part
 
-        if (isMember) {
-            // This part for successful verification remains the same
             await bot.answerCallbackQuery(q.id);
 
             await bot.editMessageText('Verification successful!', {
@@ -2664,22 +2660,18 @@ if (action === 'verify_join') {
             });
 
         } else {
-            // --- MODIFIED PART ---
-            // User has not joined - Edit the message to remind them
-            await bot.answerCallbackQuery(q.id); // Acknowledge the button press
+            await bot.answerCallbackQuery(q.id); 
 
-            // Now, edit the message text but keep the original buttons
             await bot.editMessageText("You must join our channel to proceed. Please join and then tap 'Verify' again.", {
                 chat_id: cid,
                 message_id: messageId,
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                        [{ text: '✅ I have joined, Verify me!', callback_data: 'verify_join' }]
                     ]
                 }
             });
-            // --- END OF MODIFICATION ---
         }
     } catch (error) {
         console.error("Error verifying channel membership:", error.message);
@@ -2691,9 +2683,6 @@ if (action === 'verify_join') {
     }
     return;
 }
-
-
-
 
 
   if (action === 'deploy_first_bot') { // Handled by select_deploy_type now
