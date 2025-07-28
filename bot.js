@@ -962,7 +962,7 @@ bot.on('polling_error', console.error);
 
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
-  await dbServices.updateUserAndBotData({ userId: cid });
+  await dbServices.updateUserActivity(cid);
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid];
   const { first_name, last_name, username } = msg.from;
