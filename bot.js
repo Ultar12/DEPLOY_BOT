@@ -2587,8 +2587,6 @@ if (action === 'users_page') {
   }
 
 // ... (rest of bot.js) ...
-  // --- ADD THIS SNIPPET INSIDE bot.on('callback_query', ...) ---
-
 if (action === 'verify_join') {
     const userId = q.from.id;
     const messageId = q.message.message_id;
@@ -2599,7 +2597,7 @@ if (action === 'verify_join') {
 
         if (isMember) {
             // User has joined, proceed to bot type selection
-            await bot.answerCallbackQuery(q.id, { text: "Verification successful!" });
+            await bot.answerCallbackQuery(q.id, { text: "Verification successful! ✅" });
             
             // Set state for the next step
             delete userStates[cid];
@@ -2618,24 +2616,27 @@ if (action === 'verify_join') {
             });
 
         } else {
-            // User has not joined
+            // --- MODIFIED PART ---
+            // User has not joined - show the small top notification
             await bot.answerCallbackQuery(q.id, {
-                text: "You haven't joined the channel yet. Please join and try again.",
-                show_alert: true
+                text: "You haven't joined the channel yet. Please join and try again."
+                // The "show_alert: true" line has been removed
             });
+            // --- END OF MODIFICATION ---
         }
     } catch (error) {
         console.error("Error verifying channel membership:", error.message);
         // This error often happens if the bot is not an admin in the channel
         await bot.answerCallbackQuery(q.id, {
             text: "Could not verify membership. Please contact an admin.",
-            show_alert: true
+            show_alert: true // Keep this as a big alert since it's an error
         });
         // Also notify the main admin
         await bot.sendMessage(ADMIN_ID, `Error checking channel membership for channel ID ${MUST_JOIN_CHANNEL_ID}. Ensure the bot is an admin in this channel. Error: ${error.message}`);
     }
     return;
 }
+
 
 
 
