@@ -2577,8 +2577,6 @@ if (action === 'users_page') {
 }
 
 
-  // --- FIX 2: REPLACE this entire block to fix the free trial logic ---
-
 if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
@@ -2594,8 +2592,6 @@ if (action === 'select_deploy_type') {
       
     st.data.botType = botType;
 
-    // This is the main logic fix:
-    // Ask for a key ONLY if the user is NOT an admin AND NOT on a free trial.
     if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
         st.step = 'AWAITING_KEY';
         await bot.editMessageText(`You chose *${botType.toUpperCase()}*. Please enter your Deploy key:`, {
@@ -2603,22 +2599,32 @@ if (action === 'select_deploy_type') {
             message_id: q.message.message_id,
             parse_mode: 'Markdown'
         });
-    } else { // This block now runs for Admins OR Free Trial users
+    } else { 
         st.step = 'SESSION_ID';
         let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
+        let replyMarkup = {}; // Prepare an empty object for the buttons
+
         if (botType === 'raganork') {
-            sessionPrompt += ` (Must start with \`${RAGANORK_SESSION_PREFIX}\`).\n\nGet it from: ${RAGANORK_SESSION_SITE_URL}`;
+            sessionPrompt += ` (Must start with \`${RAGANORK_SESSION_PREFIX}\`).`;
+            // Create the inline button for the Raganork URL
+            replyMarkup = {
+                inline_keyboard: [[{ text: 'Get Session ID', url: RAGANORK_SESSION_SITE_URL }]]
+            };
         } else { // Levanter
             sessionPrompt += ` (Must start with \`${LEVANTER_SESSION_PREFIX}\`).\n\nGet it from: https://levanter-delta.vercel.app/`;
         }
+        
+        // Send the message with the prompt and the (potentially empty) reply_markup
         await bot.editMessageText(sessionPrompt, {
             chat_id: cid,
             message_id: q.message.message_id,
-            parse_mode: 'Markdown'
+            parse_mode: 'Markdown',
+            reply_markup: replyMarkup
         });
     }
     return;
 }
+
 
 
 // --- FIX 2: REPLACE this block to remove the extra nested code ---
