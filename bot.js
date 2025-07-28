@@ -997,7 +997,7 @@ We are here to assist you every step of the way!
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Join for Bot update", url: "https://t.me/latestinfoult" }]
+          [{ text: "Join for Bot update", url: "https://t.me/+-v9UjX5N9e04MTJk" }]
         ]
       }
     });
