@@ -996,6 +996,10 @@ We are here to assist you every step of the way!
       caption: welcomeCaption,
       parse_mode: 'Markdown',
       reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+      inline_keyboard: [
+
+[{ text: "Bot update", url: "https://t.me/latestinfoult" }]
+      ]
     });
   }
 });
