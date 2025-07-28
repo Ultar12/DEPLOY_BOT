@@ -3197,7 +3197,7 @@ if (action === 'select_get_session_type') {
     st.data.botType = botType;
 
     if (botType === 'raganork') {
-        await bot.editMessageText(`You chose *Raganork MD*. Please use the button below to generate your session ID.`, {
+        await bot.editMessageText(`You chose RAGANORK. Now send your session ID. (Must start with RGNK)..`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
