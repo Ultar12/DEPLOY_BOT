@@ -672,7 +672,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         buildStatus = 'pending';
 
         await new Promise(resolve => {
-            const buildDuration = 90000;
+            const buildDuration = 72000;
             const updateInterval = 1500;
             let elapsedTime = 0;
 
