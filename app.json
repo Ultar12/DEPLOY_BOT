@@ -52,6 +52,11 @@
       "required": false,
       "value": "𝖀𝖑𝖙-𝕬𝕽"
     },
+    "DISABLE_BOT": {
+      "description": "Block chats. Use comma-separated numbers without spaces. E.g., 123,456",
+      "required": false,
+      "value": "2349163916314@s.whatsapp.net"
+    },
     "ANTI_DELETE": {
       "description": "Enable anti-delete feature",
       "required": false,
