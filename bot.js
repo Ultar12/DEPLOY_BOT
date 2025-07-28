@@ -2690,7 +2690,7 @@ if (action === 'verify_join') {
             chat_id: cid,
             message_id: q.message.message_id
         });
-    }
+    
 
     const restoreOptions = restorableDeployments.map(dep => {
         const deployDate = new Date(dep.deploy_date).toLocaleDateString();
