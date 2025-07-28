@@ -1001,14 +1001,6 @@ We are here to assist you every step of the way!
         ]
       }
     });
-
-    // ✅ Send regular keyboard separately
-    await bot.sendMessage(cid, 'Choose an option below:', {
-      reply_markup: {
-        keyboard: buildKeyboard(isAdmin),
-        resize_keyboard: true
-      }
-    });
   }
 });
 
