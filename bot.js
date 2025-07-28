@@ -1969,39 +1969,55 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
   // --- REPLACE THE EXISTING 'Deploy' / 'Free Trial' BLOCK WITH THIS ---
 
+// --- FIX 3: REPLACE this entire block ---
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
-        // New "must join" flow for the free trial
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            const formattedDate = check.cooldown.toLocaleString('en-US', {
-                year: 'numeric', month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: true
-            });
+            const formattedDate = check.cooldown.toLocaleString('en-US', { /* ... */ });
             return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}`);
         }
 
-        // Send the message asking the user to join the channel and verify
-        await bot.sendMessage(cid,
-            "To access the Free Trial, you must join our channel. This helps us keep you updated!",
-            {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                    ]
-                }
+        try {
+            // Check if user is already a member
+            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
+            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+            if (isMember) {
+                // Already a member, skip the join step
+                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
+                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                        ]
+                    }
+                });
+            } else {
+                // Not a member, show the join/verify message
+                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                        ]
+                    }
+                });
             }
-        );
-        return; // End the flow here until user clicks "Verify"
+        } catch (error) {
+            console.error("Error in free trial initial check:", error.message);
+            await bot.sendMessage(cid, "An error occurred. Please try again later.");
+        }
+        return;
 
     } else { // This is the "Deploy" (paid) flow
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
-
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
@@ -2013,6 +2029,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
   if (text === 'Apps' && isAdmin) {
@@ -2598,11 +2615,20 @@ if (action === 'verify_join') {
         const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
         const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
+      // --- FIX 2F: ADD this notification inside the verify_join handler ---
+
+        if (isMember) {
+            // This is the new part
+            const { first_name, username } = q.from;
+            const userIdentifier = username ? `@${username}` : first_name;
+            bot.sendMessage(ADMIN_ID, `User ${escapeMarkdown(userIdentifier)} (\`${userId}\`) has joined the channel for a free trial.`, { parse_mode: 'Markdown' });
+            // End of new part
+
         if (isMember) {
             // This part for successful verification remains the same
             await bot.answerCallbackQuery(q.id);
 
-            await bot.editMessageText('✅ Verification successful!', {
+            await bot.editMessageText('Verification successful!', {
                 chat_id: cid,
                 message_id: messageId
             });
@@ -4558,6 +4584,56 @@ bot.on('channel_post', async msg => {
     const connectedMatch = text.match(/\[([^\]]+)\]\s*connected/i);
     const logoutMatch = text.match(/User\s+\[([^\]]+)\]\s+has logged out/i);
     const invalidMatch = text.match(/\[([^\]]+)\]\s*invalid/i);
+
+  // --- FIX 2E: ADD this entire block to bot.js ---
+
+// === Free Trial Channel Membership Monitoring ===
+const ONE_HOUR_IN_MS = 60 * 60 * 1000;
+
+async function checkMonitoredUsers() {
+    console.log('[Monitor] Running free trial channel membership check...');
+    const usersToMonitor = await dbServices.getMonitoredFreeTrials();
+
+    for (const user of usersToMonitor) {
+        try {
+            const member = await bot.getChatMember(user.channel_id, user.user_id);
+            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+            if (!isMember) {
+                // User has left the channel
+                if (user.warning_sent_at) {
+                    // Warning was already sent, check if 1 hour has passed
+                    const warningTime = new Date(user.warning_sent_at).getTime();
+                    if (Date.now() - warningTime > ONE_HOUR_IN_MS) {
+                        // Time's up. Delete the bot.
+                        console.log(`[Monitor] User ${user.user_id} did not rejoin. Deleting app ${user.app_name}.`);
+                        await bot.sendMessage(user.user_id, `You did not rejoin the channel in time. Your free trial bot *${escapeMarkdown(user.app_name)}* is being deleted.`, { parse_mode: 'Markdown' });
+                        
+                        // Perform deletion
+                        await axios.delete(`https://api.heroku.com/apps/${user.app_name}`, {
+                            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                        }).catch(e => console.error(`[Monitor] Failed to delete Heroku app ${user.app_name}: ${e.message}`));
+                        
+                        await dbServices.deleteUserBot(user.user_id, user.app_name);
+                        await dbServices.removeMonitoredFreeTrial(user.user_id);
+                        await bot.sendMessage(ADMIN_ID, `Free trial bot *${escapeMarkdown(user.app_name)}* for user \`${user.user_id}\` was auto-deleted because they left the channel and did not rejoin.`, { parse_mode: 'Markdown' });
+                    }
+                } else {
+                    // No warning sent yet, send one now
+                    console.log(`[Monitor] User ${user.user_id} left the channel. Sending warning.`);
+                    await bot.sendMessage(user.user_id, `We noticed you left our support channel. To continue using your free trial bot *${escapeMarkdown(user.app_name)}*, you must rejoin within 1 hour, or it will be automatically deleted.`, { parse_mode: 'Markdown' });
+                    await dbServices.updateFreeTrialWarning(user.user_id);
+                }
+            }
+        } catch (error) {
+            console.error(`[Monitor] Error checking user ${user.user_id}:`, error.message);
+        }
+    }
+}
+
+// Run the check every 30 minutes
+setInterval(checkMonitoredUsers, 30 * 60 * 1000);
+
 
     if (connectedMatch) {
         appName = connectedMatch[1];
