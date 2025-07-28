@@ -2602,19 +2602,21 @@ if (action === 'select_deploy_type') {
     } else { 
         st.step = 'SESSION_ID';
         let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
-        let replyMarkup = {}; // Prepare an empty object for the buttons
+        let replyMarkup = {};
+        const levanterUrl = 'https://levanter-delta.vercel.app/';
 
         if (botType === 'raganork') {
             sessionPrompt += ` (Must start with \`${RAGANORK_SESSION_PREFIX}\`).`;
-            // Create the inline button for the Raganork URL
             replyMarkup = {
                 inline_keyboard: [[{ text: 'Get Session ID', url: RAGANORK_SESSION_SITE_URL }]]
             };
         } else { // Levanter
-            sessionPrompt += ` (Must start with \`${LEVANTER_SESSION_PREFIX}\`).\n\nGet it from: https://levanter-delta.vercel.app/`;
+            sessionPrompt += ` (Must start with \`${LEVANTER_SESSION_PREFIX}\`).`;
+            replyMarkup = {
+                inline_keyboard: [[{ text: 'Get Session ID', url: levanterUrl }]]
+            };
         }
         
-        // Send the message with the prompt and the (potentially empty) reply_markup
         await bot.editMessageText(sessionPrompt, {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -2674,7 +2676,7 @@ if (action === 'verify_join') {
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                        [{ text: '✅ I have joined, Verify me!', callback_data: 'verify_join' }]
+                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
                     ]
                 }
             });
@@ -3179,42 +3181,46 @@ if (action === 'back_to_bapp_list') {
 }
 
 
-  if (action === 'select_get_session_type') { // NEW: Handle bot type selection for Get Session
-    const botType = payload; // 'levanter' or 'raganork'
+if (action === 'select_get_session_type') {
+    const botType = payload;
     const st = userStates[cid];
 
     if (!st || st.step !== 'AWAITING_GET_SESSION_BOT_TYPE') {
-        await bot.editMessageText('This session request has expired or is invalid. Please start over by tapping "Get Session".', {
+        await bot.editMessageText('This session request has expired. Please start over by tapping "Get Session ID".', {
             chat_id: cid,
             message_id: q.message.message_id
         });
-        delete userStates[cid]; // Clear the invalid state
+        delete userStates[cid];
         return;
     }
 
-    st.data.botType = botType; // Store chosen bot type in state
+    st.data.botType = botType;
 
-    if (botType === 'raganork') { // <<< FIX: New logic for Raganork direct URL
-        // Directly provide Raganork session URL and end the flow here
-        await bot.editMessageText(`You chose *Raganork MD*. Please visit the following link to generate your session ID:\n\n${RAGANORK_SESSION_SITE_URL}\n\nOnce you have your session ID, tap 'Deploy' to continue.`, {
+    if (botType === 'raganork') {
+        await bot.editMessageText(`You chose *Raganork MD*. Please use the button below to generate your session ID.`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
-            disable_web_page_preview: false, // Allow link preview
             reply_markup: {
-                inline_keyboard: [[{ text: 'Deploy Now', callback_data: `deploy_first_bot` }]]
+                inline_keyboard: [
+                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                ]
             }
         });
-        delete userStates[cid]; // Clear state as this flow is complete for Raganork
+        delete userStates[cid];
         return;
-    } else { // Levanter or any other type will proceed to phone number request
-        st.step = 'AWAITING_PHONE_NUMBER'; // <<< CHANGED: Only Levanter goes here
-        let promptMessage = `You chose *Levanter*. Please send your WhatsApp number in the full international format including the \`+\` (e.g., \`+23491630000000\`).\n\nAlternatively, you can generate your Levanter session ID directly from: https://levanter-delta.vercel.app/`;
+    } else {
+        st.step = 'AWAITING_PHONE_NUMBER';
+        let promptMessage = `You chose *Levanter*. Please send your WhatsApp number in the full international format including the \`+\` (e.g., \`+23491630000000\`).\n\nAlternatively, you can generate your session ID directly.`;
 
         await bot.editMessageText(promptMessage, {
             chat_id: cid,
             message_id: q.message.message_id,
-            parse_mode: 'Markdown'
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session ID', url: 'https://levanter-delta.vercel.app/' }]]
+            }
         });
         return;
     }
