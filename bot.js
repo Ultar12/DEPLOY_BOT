@@ -3239,30 +3239,31 @@ if (action === 'select_get_session_type') {
   // --- ADD this new block ---
 
 if (action === 'levanter_wa_fallback') {
-    // Set the state to wait for the user's phone number
+    // 1. Set the state to wait for the user's phone number.
+    // This will trigger your existing logic when the user sends their number.
     userStates[cid] = {
         step: 'AWAITING_PHONE_NUMBER',
         data: {
-            botType: 'levanter' // Set the context for the next step
+            botType: 'levanter'
         }
     };
 
-    // Acknowledge the button press
+    // 2. Acknowledge the button press
     await bot.answerCallbackQuery(q.id);
     
-    // Ask for the phone number in a new message
-    await bot.sendMessage(cid, 'Please send your WhatsApp number in the full international format including the `+` (e.g., `+23491630000000`).', {
-        parse_mode: 'Markdown'
-    });
-
-    // Remove the buttons from the previous message to avoid confusion
-    await bot.editMessageText('Please check the new message below and provide your number.', {
-        chat_id: cid,
-        message_id: q.message.message_id
-    });
+    // 3. Edit the message to ask for the number and remove the old buttons.
+    await bot.editMessageText(
+        'Okay, please send your WhatsApp number now in the full international format (e.g., `+23491630000000`).', 
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        }
+    );
     
     return;
 }
+
   
 
 
