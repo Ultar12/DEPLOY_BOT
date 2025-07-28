@@ -2295,38 +2295,40 @@ if (usesLeft === null) {
   }
 
 
-  if (st && st.step === 'SESSION_ID') { // This state is reached after AWAITING_KEY or select_deploy_type for admin
-  const sessionID = text.trim(); // Get the session ID from user input
-  const botType = st.data.botType; // Get bot type from state (set by select_deploy_type)
+ if (st && st.step === 'SESSION_ID') {
+    const sessionID = text.trim();
+    const botType = st.data.botType;
 
-  // Validate session ID based on bot type
-  let isValidSession = false;
-  let requiredPrefix = '';
-  let errorMessageBase = 'Incorrect session ID.'; // Base error message
+    let isValidSession = false;
+  
+    if (botType === 'levanter') {
+        if (sessionID.startsWith(LEVANTER_SESSION_PREFIX) && sessionID.length >= 10) {
+            isValidSession = true;
+        }
+    } else if (botType === 'raganork') {
+        if (sessionID.startsWith(RAGANORK_SESSION_PREFIX) && sessionID.length >= 10) {
+            isValidSession = true;
+        }
+    }
 
-  if (botType === 'levanter') {
-      requiredPrefix = LEVANTER_SESSION_PREFIX;
-      if (sessionID.startsWith(requiredPrefix) && sessionID.length >= 10) {
-          isValidSession = true;
-      }
-      errorMessageBase += ` Your session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: https://levanter-delta.vercel.app/`; // <<< CHANGED URL
-  } else if (botType === 'raganork') {
-      requiredPrefix = RAGANORK_SESSION_PREFIX;
-      if (sessionID.startsWith(requiredPrefix) && sessionID.length >= 10) {
-          isValidSession = true;
-      }
-      errorMessageBase += ` Your Raganork session ID must start with \`${requiredPrefix}\` and be at least 10 characters long.\n\nGet it from the website: ${RAGANORK_SESSION_SITE_URL}`; // <<< CHANGED URL
-  } else {
-      errorMessageBase = 'Unknown bot type in state. Please start the deployment process again.';
-  }
+    if (!isValidSession) {
+        // This is the updated logic to send an error with a button
+        let botName = botType.charAt(0).toUpperCase() + botType.slice(1);
+        let errorMessage = `Incorrect session ID. Your *${botName}* session ID is not valid. Please get a new one using the button below.`;
+        let sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+        
+        return bot.sendMessage(cid, errorMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session ID', url: sessionUrl }]]
+            }
+        });
+    }
 
-  if (!isValidSession) {
-      return bot.sendMessage(cid, errorMessageBase, { parse_mode: 'Markdown' }); // Use errorMessageBase
-  }
-
-  st.data.SESSION_ID = sessionID;
-  st.step = 'APP_NAME';
-  return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
+    // This part runs if the session was valid
+    st.data.SESSION_ID = sessionID;
+    st.step = 'APP_NAME';
+    return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
 }
 
 
@@ -3197,7 +3199,7 @@ if (action === 'select_get_session_type') {
     st.data.botType = botType;
 
     if (botType === 'raganork') {
-        await bot.editMessageText(`You chose RAGANORK. Now send your session ID. (Must start with RGNK)..`, {
+        await bot.editMessageText(`You chose *Raganork MD*. Please use the button below to generate your session ID.`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
