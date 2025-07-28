@@ -2146,15 +2146,26 @@ if (text === 'Deploy' || text === 'Free Trial') {
     const phoneRegex = /^\+\d{13}$/; // Validates + followed by exactly 13 digits
 
     if (!phoneRegex.test(phoneNumber)) {
-        let errorMsg = 'Invalid format. Please send your WhatsApp number in the full international format including the `+` (e.g., `+23491630000000`).';
-        if (st.data.botType === 'raganork') {
-            errorMsg += ` Or get your session ID from the website: ${RAGANORK_SESSION_SITE_URL}`;
-        } else { // Levanter or default
-            errorMsg += ` Or get your session ID from the website: https://levanter-delta.vercel.app/`;
-        }
-        return bot.sendMessage(cid, errorMsg, { parse_mode: 'Markdown' });
+        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `+23491630000000`), or use an option below.';
+        
+        const sessionUrl = (st.data.botType === 'raganork') 
+            ? RAGANORK_SESSION_SITE_URL 
+            : 'https://levanter-delta.vercel.app/';
+
+        return bot.sendMessage(cid, errorMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: 'Get Session ID', url: sessionUrl },
+                        { text: 'Deploy Now', callback_data: 'deploy_first_bot' }
+                    ]
+                ]
+            }
+        });
     }
 
+    // This part runs if the phone number format is correct
     const { first_name, last_name, username } = msg.from;
     const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`;
 
@@ -2168,8 +2179,8 @@ if (text === 'Deploy' || text === 'Free Trial') {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Accept Request', callback_data: `pairing_action:accept:${cid}:${st.data.botType}` }], // Pass botType to admin action
-                    [{ text: 'Decline Request', callback_data: `pairing_action:decline:${cid}:${st.data.botType}` }] // Pass botType to admin action
+                    [{ text: 'Accept Request', callback_data: `pairing_action:accept:${cid}:${st.data.botType}` }],
+                    [{ text: 'Decline Request', callback_data: `pairing_action:decline:${cid}:${st.data.botType}` }]
                 ]
             }
         }
@@ -2178,27 +2189,21 @@ if (text === 'Deploy' || text === 'Free Trial') {
     const waitingMsg = await bot.sendMessage(cid, `Your request has been sent to the admin. Please wait for the Pairing-code...`);
     const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
     userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
-    userStates[cid].data = {
-        messageId: waitingMsg.message_id,
-        animateIntervalId: animateIntervalId,
-        isFreeTrial: st?.data?.isFreeTrial || false,
-        isAdminDeploy: st?.data?.isAdminDeploy || false,
-        botType: st.data.botType // Store bot type in state for later use
-    };
+    userStates[cid].data.messageId = waitingMsg.message_id;
+    userStates[cid].data.animateIntervalId = animateIntervalId;
 
     const timeoutDuration = 60 * 1000; // 60 seconds
     const timeoutIdForPairing = setTimeout(async () => {
         if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
-            console.log(`[Pairing Timeout] Request from user ${cid} timed out.`);
             if (userStates[cid].data.animateIntervalId) {
                 clearInterval(userStates[cid].data.animateIntervalId);
             }
             if (userStates[cid].data.messageId) {
                 let timeoutMessage = 'Pairing request timed out. The admin did not respond in time.';
                 if (st.data.botType === 'raganork') {
-                    timeoutMessage += ` Or generate your Raganork session ID directly from: ${RAGANORK_SESSION_SITE_URL}`;
-                } else { // Levanter or default
-                    timeoutMessage += ` Or get your session ID from the website: https://levanter-delta.vercel.app/`;
+                    timeoutMessage += ` You can also generate your session ID directly from: ${RAGANORK_SESSION_SITE_URL}`;
+                } else {
+                    timeoutMessage += ` You can also get your session ID from the website: https://levanter-delta.vercel.app/`;
                 }
                 await bot.editMessageText(timeoutMessage, {
                     chat_id: cid,
@@ -2206,15 +2211,8 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     parse_mode: 'Markdown'
                 }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
             }
-            await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${cid}\` (Phone: \`${phoneNumber}\`, Type: \`${st.data.botType}\`) timed out after ${timeoutDuration / 1000} seconds.`);
+            await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${cid}\` timed out.`);
             delete userStates[cid];
-            for (const key in forwardingContext) {
-                if (forwardingContext[key].original_user_chat_id === cid && forwardingContext[key].request_type === 'pairing_request') {
-                    delete forwardingContext[key];
-                    console.log(`[Pairing Timeout] Cleaned up stale forwardingContext for admin message ${key}.`);
-                    break;
-                }
-            }
         }
     }, timeoutDuration);
 
@@ -2226,12 +2224,12 @@ if (text === 'Deploy' || text === 'Free Trial') {
         user_waiting_message_id: waitingMsg.message_id,
         user_animate_interval_id: animateIntervalId,
         timeout_id_for_pairing_request: timeoutIdForPairing,
-        bot_type: st.data.botType // Store bot type in forwarding context
+        bot_type: st.data.botType
     };
-    console.log(`[Pairing] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
-
+    
     return;
-  }
+}
+
 
 
     if (st && st.step === 'AWAITING_KEY') { // This state is reached after selecting deploy type
