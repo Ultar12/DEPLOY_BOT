@@ -2586,8 +2586,7 @@ if (action === 'users_page') {
       return;
   }
 
-// ... (rest of bot.js) ...
-if (action === 'verify_join') {
+/if (action === 'verify_join') {
     const userId = q.from.id;
     const messageId = q.message.message_id;
 
@@ -2596,14 +2595,23 @@ if (action === 'verify_join') {
         const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
         if (isMember) {
-            // User has joined, proceed to bot type selection
-            await bot.answerCallbackQuery(q.id, { text: "Verification successful! ✅" });
-            
-            // Set state for the next step
+            // --- MODIFIED PART ---
+            // Acknowledge the button press to stop the loading icon
+            await bot.answerCallbackQuery(q.id);
+
+            // 1. First, edit the message to show a clear success status
+            await bot.editMessageText('Verification successful!', {
+                chat_id: cid,
+                message_id: messageId
+            });
+
+            // 2. Wait a moment so you can read the message
+            await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5-second delay
+
+            // 3. Now, proceed to the bot selection menu
             delete userStates[cid];
             userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
 
-            // Edit the message to show the bot selection menu
             await bot.editMessageText('Great! Which bot type would you like to deploy for your free trial?', {
                 chat_id: cid,
                 message_id: messageId,
@@ -2614,27 +2622,25 @@ if (action === 'verify_join') {
                     ]
                 }
             });
+            // --- END OF MODIFICATION ---
 
         } else {
-            // --- MODIFIED PART ---
             // User has not joined - show the small top notification
             await bot.answerCallbackQuery(q.id, {
                 text: "You haven't joined the channel yet. Please join and try again."
-                // The "show_alert: true" line has been removed
             });
-            // --- END OF MODIFICATION ---
         }
     } catch (error) {
         console.error("Error verifying channel membership:", error.message);
-        // This error often happens if the bot is not an admin in the channel
         await bot.answerCallbackQuery(q.id, {
             text: "Could not verify membership. Please contact an admin.",
-            show_alert: true // Keep this as a big alert since it's an error
+            show_alert: true
         });
-        // Also notify the main admin
         await bot.sendMessage(ADMIN_ID, `Error checking channel membership for channel ID ${MUST_JOIN_CHANNEL_ID}. Ensure the bot is an admin in this channel. Error: ${error.message}`);
     }
     return;
+}
+
 }
 
 
