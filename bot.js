@@ -966,8 +966,6 @@ app.get('/api/get-key', async (req, res) => {
 bot.on('polling_error', console.error);
 
 // 9) Command handlers
-// --- REPLACE your entire /start command with this corrected version ---
-
 bot.onText(/^\/start$/, async msg => {
   const cid = msg.chat.id.toString();
   await dbServices.updateUserActivity(cid);
@@ -978,7 +976,10 @@ bot.onText(/^\/start$/, async msg => {
 
   if (isAdmin) {
     await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
-      reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
+      reply_markup: { 
+        keyboard: buildKeyboard(isAdmin), 
+        resize_keyboard: true 
+      }
     });
   } else {
     const { first_name: userFirstName } = msg.from;
@@ -999,18 +1000,18 @@ To get started, please follow these simple steps:
 We are here to assist you every step of the way!
 `;
 
-    // ✅ Send photo with inline button only
+    // ✅ FIX: Send the photo WITH the main reply keyboard attached
     await bot.sendPhoto(cid, welcomeImageUrl, {
       caption: welcomeCaption,
       parse_mode: 'Markdown',
       reply_markup: {
-        inline_keyboard: [
-          [{ text: "Join for Bot update", url: "https://t.me/+KgOPzr1wB7E5OGU0" }]
-        ]
+        keyboard: buildKeyboard(false), // Use 'false' for non-admins
+        resize_keyboard: true
       }
     });
   }
 });
+
 
 // Add this with your other admin commands
 bot.onText(/^\/dkey$/, async (msg) => {
