@@ -978,14 +978,14 @@ bot.onText(/^\/start$/, async msg => {
     }
     personalizedGreeting += ` to our Bot Deployment Service!`;
 
-    const welcomeImageUrl = 'https://files.catbox.moe/syx8uk.jpeg'; // Ensure this URL is valid
+    const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg'; // Ensure this URL is valid
     const welcomeCaption = `
 ${personalizedGreeting}
 
 To get started, please follow these simple steps:
 
 1.  *Get Your Session:*
-    Tap 'Get Session' and provide your WhatsApp number for a pairing code.
+    Tap 'Get Session ID' to get your Bot Session ID.
 
 2.  *Deploy Your Bot:*
     Once you have your session code, use the 'Deploy' button to launch your personalized bot.
