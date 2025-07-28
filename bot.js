@@ -2599,20 +2599,16 @@ if (action === 'verify_join') {
         const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
         if (isMember) {
-            // --- MODIFIED PART ---
-            // Acknowledge the button press to stop the loading icon
+            // This part for successful verification remains the same
             await bot.answerCallbackQuery(q.id);
 
-            // 1. First, edit the message to show a clear success status
-            await bot.editMessageText('Verification successful!', {
+            await bot.editMessageText('✅ Verification successful!', {
                 chat_id: cid,
                 message_id: messageId
             });
 
-            // 2. Wait a moment so you can read the message
-            await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5-second delay
-
-            // 3. Now, proceed to the bot selection menu
+            await new Promise(resolve => setTimeout(resolve, 1500)); 
+            
             delete userStates[cid];
             userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
 
@@ -2626,13 +2622,24 @@ if (action === 'verify_join') {
                     ]
                 }
             });
-            // --- END OF MODIFICATION ---
 
         } else {
-            // User has not joined - show the small top notification
-            await bot.answerCallbackQuery(q.id, {
-                text: "You haven't joined the channel yet. Please join and try again."
+            // --- MODIFIED PART ---
+            // User has not joined - Edit the message to remind them
+            await bot.answerCallbackQuery(q.id); // Acknowledge the button press
+
+            // Now, edit the message text but keep the original buttons
+            await bot.editMessageText("You must join our channel to proceed. Please join and then tap 'Verify' again.", {
+                chat_id: cid,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                    ]
+                }
             });
+            // --- END OF MODIFICATION ---
         }
     } catch (error) {
         console.error("Error verifying channel membership:", error.message);
@@ -2644,6 +2651,7 @@ if (action === 'verify_join') {
     }
     return;
 }
+
 
 
 
