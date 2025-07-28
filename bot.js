@@ -197,6 +197,18 @@ const backupPool = new Pool({
     `);
     console.log("[DB-Backup] 'all_users_backup' table checked/created.");
 
+    // --- FIX 2A: ADD this table creation query ---
+
+    await backupPool.query(`
+      CREATE TABLE IF NOT EXISTS free_trial_monitoring (
+        user_id TEXT PRIMARY KEY,
+        app_name TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        trial_start_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        warning_sent_at TIMESTAMP
+      );
+    `);
+    console.log("[DB-Backup] 'free_trial_monitoring' table checked/created.");
 
     // NEW: Backup Database (backupPool - DATABASE_URL2) tables
     await backupPool.query(`
