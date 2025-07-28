@@ -2020,7 +2020,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: '✅ I have joined, Verify me!', callback_data: 'verify_join' }]
+                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
                         ]
                     }
                 });
@@ -2358,7 +2358,7 @@ if (usesLeft === null) {
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: 'Yes (Recommended)', callback_data: `setup:autostatus:true` },
+                        { text: 'Yes (Your choice)', callback_data: `setup:autostatus:true` },
                         { text: 'No', callback_data: `setup:autostatus:false` }
                     ]
                 ]
