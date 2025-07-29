@@ -166,6 +166,10 @@ async function createAllTablesInPool(dbPool, dbName) {
         PRIMARY KEY (user_id, app_name)
       );
     `);
+
+  // --- ADD THIS LINE ---
+    await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS warning_sent_at TIMESTAMP;`);
+    // --- END OF ADDITION ---
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -4766,3 +4770,53 @@ async function checkMonitoredUsers() {
 
 // Run the check every 30 minutes
 setInterval(checkMonitoredUsers, 30 * 60 * 1000);
+
+// --- ADD this entire block to bot.js ---
+
+// === Paid Bot Backup Expiration Management ===
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+async function checkAndManageExpirations() {
+    console.log('[Expiration] Running daily check for expiring and expired bots...');
+
+    // 1. Handle Warnings for Soon-to-Expire Bots
+    const expiringBots = await dbServices.getExpiringBackups();
+    for (const botInfo of expiringBots) {
+        try {
+            const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
+            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* and its backup will expire in *${daysLeft} day(s)*. After it expires, the app will be permanently deleted from our servers. To continue service, please deploy a new bot using a new key.`;
+            await bot.sendMessage(botInfo.user_id, warningMessage, { parse_mode: 'Markdown' });
+            await dbServices.setBackupWarningSent(botInfo.user_id, botInfo.app_name);
+            console.log(`[Expiration] Sent expiration warning for ${botInfo.app_name} to user ${botInfo.user_id}.`);
+        } catch (error) {
+            console.error(`[Expiration] Failed to send warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+        }
+    }
+
+    // 2. Handle Deletion of Expired Bots
+    const expiredBots = await dbServices.getExpiredBackups();
+    for (const botInfo of expiredBots) {
+        try {
+            console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
+            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To deploy a new bot, please get a new key from the admin.`, { parse_mode: 'Markdown' });
+            
+            // Delete from Heroku/Render
+            await axios.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
+            
+            // Delete from all database tables
+            await dbServices.deleteUserBot(botInfo.user_id, botInfo.app_name);
+            await dbServices.deleteUserDeploymentFromBackup(botInfo.user_id, botInfo.app_name);
+
+            await bot.sendMessage(ADMIN_ID, `Bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\` expired and was auto-deleted.`, { parse_mode: 'Markdown' });
+        } catch (error) {
+            console.error(`[Expiration] Failed to delete expired bot ${botInfo.app_name} for user ${botInfo.user_id}:`, error.message);
+            await monitorSendTelegramAlert(`Failed to auto-delete expired bot *${escapeMarkdown(botInfo.app_name)}* for user \`${botInfo.user_id}\`. Please check logs.`, ADMIN_ID);
+        }
+    }
+}
+
+// Run the check once every day
+setInterval(checkAndManageExpirations, ONE_DAY_IN_MS);
+console.log('[Expiration] Scheduled daily check for expired bots.');
