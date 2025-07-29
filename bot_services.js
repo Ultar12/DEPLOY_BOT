@@ -50,22 +50,22 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
-    TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID; // Added
-    defaultEnvVars = params.defaultEnvVars; // This is now an object for each bot type
+    TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
+    defaultEnvVars = params.defaultEnvVars;
     appDeploymentPromises = params.appDeploymentPromises;
     RESTART_DELAY_MINUTES = params.RESTART_DELAY_MINUTES;
     getAnimatedEmoji = params.getAnimatedEmoji;
     animateMessage = params.animateMessage;
     sendAnimatedMessage = params.sendAnimatedMessage;
     monitorSendTelegramAlert = params.monitorSendTelegramAlert;
-    escapeMarkdown = params.escapeMarkdown; // Assign the utility function
+    escapeMarkdown = params.escapeMarkdown;
 
     console.log('--- bot_services.js initialized! ---');
 }
 
 // === DB helper functions (using 'pool' for main DB) ===
 
-async function addUserBot(u, b, s, botType) { // Added botType
+async function addUserBot(u, b, s, botType) {
   try {
     const result = await pool.query(
       `INSERT INTO user_bots(user_id, bot_name, session_id, bot_type)
@@ -77,7 +77,7 @@ async function addUserBot(u, b, s, botType) { // Added botType
     if (result.rows.length > 0) {
       console.log(`[DB] addUserBot: Successfully added/updated bot "${b}" for user "${u}". Bot Type: "${botType}".`);
     } else {
-      console.warn(`[DB] addUserBot: Insert/update operation for bot "${b}" for user "${u}" did not return a row. This might indicate an horrific issue.`);
+      console.warn(`[DB] addUserBot: Insert/update operation for bot "${b}" for user "${u}" did not return a row.`);
     }
   } catch (error) {
     console.error(`[DB] addUserBot: CRITICAL ERROR Failed to add/update bot "${b}" for user "${u}":`, error.message, error.stack);
@@ -88,6 +88,7 @@ async function addUserBot(u, b, s, botType) { // Added botType
     }
   }
 }
+
 async function getUserBots(u) {
   try {
     const r = await pool.query(
@@ -102,6 +103,7 @@ async function getUserBots(u) {
     return [];
   }
 }
+
 async function getUserIdByBotName(botName) {
     try {
         const r = await pool.query(
@@ -117,19 +119,19 @@ async function getUserIdByBotName(botName) {
         return null;
     }
 }
+
 async function getAllUserBots() {
     try {
-        // Also fetches bot_type for categorization
         const r = await pool.query('SELECT user_id, bot_name, bot_type FROM user_bots ORDER BY created_at');
         console.log(`[DB] getAllUserBots: Fetched ${r.rows.length} bots with their types.`);
-        return r.rows; // Returns [{user_id, bot_name, bot_type}, ...]
+        return r.rows;
     }
     catch (error) {
         console.error('[DB] getAllUserBots: Failed to get all user bots:', error.message);
         return [];
     }
 }
-// NEW: Function to get bot_name by session_id
+
 async function getBotNameBySessionId(sessionId) {
     try {
         const r = await pool.query(
@@ -156,6 +158,7 @@ async function deleteUserBot(u, b) {
     console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
   }
 }
+
 async function updateUserSession(u, b, s) {
   try {
     await pool.query(
@@ -167,6 +170,7 @@ async function updateUserSession(u, b, s) {
     console.error(`[DB] updateUserSession: Failed to update session for bot "${b}" (user "${u}"):`, error.message);
   }
 }
+
 async function addDeployKey(key, uses, createdBy) {
   await pool.query(
     'INSERT INTO deploy_keys(key,uses_left,created_by) VALUES($1,$2,$3)',
@@ -174,6 +178,7 @@ async function addDeployKey(key, uses, createdBy) {
   );
   console.log(`[DB] addDeployKey: Added key "${key}" with ${uses} uses by "${createdBy}".`);
 }
+
 async function useDeployKey(key) {
   const res = await pool.query(
     `UPDATE deploy_keys
@@ -206,11 +211,6 @@ async function getAllDeployKeys() {
     }
 }
 
-/**
- * Deletes a deploy key from the database.
- * @param {string} key - The deploy key to delete.
- * @returns {boolean} - True if deletion was successful, false otherwise.
- */
 async function deleteDeployKey(key) {
   try {
     const result = await pool.query(
@@ -219,14 +219,14 @@ async function deleteDeployKey(key) {
     );
     if (result.rowCount > 0) {
       console.log(`[DB] deleteDeployKey: Successfully deleted key "${key}".`);
-      return true; // Indicate success
+      return true;
     } else {
       console.warn(`[DB] deleteDeployKey: Key "${key}" not found for deletion.`);
-      return false; // Indicate key was not found
+      return false;
     }
   } catch (error) {
     console.error(`[DB] deleteDeployKey: Failed to delete key "${key}":`, error.message);
-    return false; // Indicate failure due to error
+    return false;
   }
 }
 
@@ -239,8 +239,7 @@ async function canDeployFreeTrial(userId) {
     if (res.rows.length === 0) return { can: true };
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
     if (lastDeploy < tenDaysAgo) return { can: true };
-
-    const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
+    const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000);
     return { can: false, cooldown: nextAvailable };
 }
 
@@ -253,29 +252,22 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
+// --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
     INSERT INTO user_activity(user_id, last_seen)
     VALUES($1, NOW())
     ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
   `;
-  const backupQuery = `
-    INSERT INTO all_users_backup(user_id, last_seen)
-    VALUES($1, NOW())
-    ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
-  `;
-
   try {
-    // Run both database updates at the same time for efficiency
-    await Promise.all([
-        pool.query(query, [userId]),
-        backupPool.query(backupQuery, [userId])
-    ]);
-    console.log(`[DB] User activity updated for ${userId} in both databases.`);
+    // Now only writes to the main pool (DATABASE_URL)
+    await pool.query(query, [userId]);
+    console.log(`[DB] User activity updated for ${userId}.`);
   } catch (error) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
+// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
@@ -419,8 +411,6 @@ async function getAllDeploymentsFromBackup(botType) {
     }
 }
 
-// --- NEW FUNCTIONS FOR FREE TRIAL MONITORING ---
-
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
     try {
         await backupPool.query(
@@ -461,25 +451,75 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
+// --- NEW FUNCTION for /copydb ---
+async function syncDatabases(sourcePool, targetPool) {
+    const clientSource = await sourcePool.connect();
+    const clientTarget = await targetPool.connect();
+    
+    try {
+        const tablesResult = await clientSource.query(`
+            SELECT tablename FROM pg_catalog.pg_tables 
+            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
+        `);
+        const tableNames = tablesResult.rows.map(row => row.tablename);
 
-// --- HELPER FUNCTION: Handles 404 Not Found from Heroku API ---
+        await clientTarget.query('BEGIN');
+
+        for (const tableName of tableNames.slice().reverse()) {
+            console.log(`[Sync] Clearing table ${tableName} in target DB...`);
+            await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
+        }
+
+        for (const tableName of tableNames) {
+            console.log(`[Sync] Copying data for table ${tableName}...`);
+            const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
+
+            if (rows.length > 0) {
+                const columns = Object.keys(rows[0]);
+                const colNames = columns.map(c => `"${c}"`).join(', ');
+                const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+
+                for (const row of rows) {
+                    const values = columns.map(col => row[col]);
+                    const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
+                    await clientTarget.query(insertQuery, values);
+                }
+            }
+            console.log(`[Sync] Copied ${rows.length} rows to ${tableName}.`);
+        }
+
+        await clientTarget.query('COMMIT');
+        return { success: true, message: `Successfully synced ${tableNames.length} tables.` };
+
+    } catch (error) {
+        await clientTarget.query('ROLLBACK');
+        console.error('[Sync] Database sync failed:', error);
+        return { success: false, message: error.message };
+    } finally {
+        clientSource.release();
+        clientTarget.release();
+    }
+}
+// --- END NEW FUNCTION ---
+
+
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
 
     let ownerUserId = await getUserIdByBotName(appName);
 
     if (!ownerUserId) {
-        ownerUserId = callingChatId; // Fallback for notification
-        console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to callingChatId: ${callingChatId} for notification.`);
+        ownerUserId = callingChatId;
+        console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to ${callingChatId}.`);
     } else {
         console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
     }
 
     await deleteUserBot(ownerUserId, appName);
     await markDeploymentDeletedFromHeroku(ownerUserId, appName);
-    console.log(`[AppNotFoundHandler] Removed "${appName}" from user_bots (main) and marked as deleted in user_deployments (backup) DBs for user "${ownerUserId}".`);
+    console.log(`[AppNotFoundHandler] Removed "${appName}" from DBs for user "${ownerUserId}".`);
 
-    const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been automatically removed from your "My Bots" list.`;
+    const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been removed from your "My Bots" list.`;
 
     const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId;
     const messageToEditId = originalMessageId;
@@ -492,12 +532,12 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
         }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
     } else {
         await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
-            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb (new msg): ${err.message}`));
+            .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
 
     if (isUserFacing && ownerUserId !== callingChatId) {
-         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found on Heroku and has been removed from your "My Bots" list by the admin.`, { parse_mode: 'Markdown' })
-             .catch(err => console.error(`Failed to send notification to original owner in handleAppNotFoundAndCleanDb: ${err.message}`));
+         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found on Heroku and has been removed from your list by the admin.`, { parse_mode: 'Markdown' })
+             .catch(err => console.error(`Failed to send notification to owner in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
 }
 
@@ -668,7 +708,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     let buildStatus;
 
     if (botType === 'raganork') {
-        console.log(`[Build] Starting 90-second simulated build for Raganork app: ${name}`);
+        console.log(`[Build] Starting simulated build for Raganork app: ${name}`);
         buildStatus = 'pending';
 
         await new Promise(resolve => {
@@ -750,7 +790,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             clearInterval(buildProgressInterval);
         } catch (err) {
             clearInterval(buildProgressInterval);
-            await bot.editMessageText(`Build process for "${name}" timed out or encountered an error. Check Heroku logs.`, {
+            await bot.editMessageText(`Build process for "${name}" timed out. Check Heroku logs.`, {
                 chat_id: chatId,
                 message_id: createMsg.message_id
             });
@@ -770,7 +810,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
       const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
       const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-      await bot.sendMessage(ADMIN_ID, `*New App Deployed (Heroku Build Succeeded)*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
+      await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
       const baseWaitingText = `Build successful! Waiting for bot to connect...`;
       await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
@@ -779,7 +819,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           const timeoutId = setTimeout(() => {
               const appPromise = appDeploymentPromises.get(name);
               if (appPromise) {
-                  appPromise.reject(new Error(`Bot did not report connected or logged out status within ${STATUS_CHECK_TIMEOUT / 1000} seconds after deployment.`));
+                  appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
                   appDeploymentPromises.delete(name);
               }
           }, STATUS_CHECK_TIMEOUT);
@@ -821,7 +861,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
             setTimeout(async () => {
                 try {
-                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted now as its 3-day runtime has ended.`);
+                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted as its 3-day runtime has ended.`);
                     await axios.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
                     await deleteUserBot(chatId, name);
                     await markDeploymentDeletedFromHeroku(chatId, name);
@@ -829,7 +869,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                     console.log(`[FreeTrial] Auto-deleted app ${name} after 3 days.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                    await bot.sendMessage(chatId, `Could not auto-delete the app "*${escapeMarkdown(name)}*". Please delete it manually from your Heroku dashboard.`, {parse_mode: 'Markdown'});
+                    await bot.sendMessage(chatId, `Could not auto-delete "*${escapeMarkdown(name)}*". Please delete it from your Heroku dashboard.`, {parse_mode: 'Markdown'});
                     monitorSendTelegramAlert(`Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`, ADMIN_ID);
                 }
             }, THREE_DAYS_IN_MS);
@@ -842,8 +882,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           }
           console.error(`App status check failed for ${name}:`, err.message);
           await bot.editMessageText(
-            `Bot "*${escapeMarkdown(name)}*" failed to start or session is invalid: ${escapeMarkdown(err.message)}\n\n` +
-            `It has been added to your "My Bots" list, but you may need to learn how to update the session ID.`,
+            `Bot "*${escapeMarkdown(name)}*" failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
             {
                 chat_id: chatId,
                 message_id: createMsg.message_id,
@@ -863,7 +902,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     }
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
-    bot.sendMessage(chatId, `An error occurred during deployment: ${escapeMarkdown(errorMsg)}\n\nPlease check the Heroku dashboard or try again.`, {parse_mode: 'Markdown'});
+    bot.sendMessage(chatId, `An error occurred: ${escapeMarkdown(errorMsg)}\n\nPlease check the Heroku dashboard or try again.`, {parse_mode: 'Markdown'});
     buildResult = false;
   }
   return buildResult;
@@ -901,5 +940,6 @@ module.exports = {
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
-    removeMonitoredFreeTrial
+    removeMonitoredFreeTrial,
+    syncDatabases
 };
