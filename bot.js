@@ -1448,6 +1448,29 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 // --- REPLACE this entire function in bot.js ---
 
+// --- ADD this new command to bot.js ---
+
+bot.onText(/^\/backupall$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all paid bots... This might take some time.');
+
+    try {
+        const result = await dbServices.backupAllPaidBots();
+        await bot.editMessageText(result.message, {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+    } catch (error) {
+        await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+    }
+});
+
+
 // NEW ADMIN COMMAND: /sendall <message>
 bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
