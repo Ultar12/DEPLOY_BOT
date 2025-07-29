@@ -477,7 +477,7 @@ function buildKeyboard(isAdmin) {
   if (isAdmin) {
       return [
           ['Deploy', 'Apps'],
-          ['Generate Key', 'Get Session'],
+          ['Generate Key', 'Get Session ID'],
           ['/stats', '/copydb'], // Existing FAQ button
           ['/users', '/bapp', `/restoreall`] // <-- ADD /bapp here
       ];
