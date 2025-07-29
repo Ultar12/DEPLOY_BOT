@@ -1,18 +1,18 @@
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { Pool } = require('pg');
+const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
+const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
+const { Pool } = require('pg'); // Not declared here, but passed in. Good practice to show dependency.
 
-// --- Module-level variables ---
+// --- Module-level variables for dependencies passed during init ---
 let pool;
 let backupPool;
-let bot;
+let bot; // The TelegramBot instance
 let HEROKU_API_KEY;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
-let TELEGRAM_CHANNEL_ID;
-let defaultEnvVars;
+let TELEGRAM_CHANNEL_ID; // Added for monitoring
+let defaultEnvVars; // This will now hold an object like { levanter: {}, raganork: {} }
 let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
@@ -21,7 +21,28 @@ let sendAnimatedMessage;
 let monitorSendTelegramAlert;
 let escapeMarkdown;
 
+/**
+ * Initializes database and API helper functions.
+ * @param {object} params - Object containing dependencies from bot.js.
+ * @param {object} params.mainPool - The main PostgreSQL pool.
+ * @param {object} params.backupPool - The backup PostgreSQL pool.
+ * @param {object} params.bot - The TelegramBot instance.
+ * @param {string} params.HEROKU_API_KEY - Heroku API key.
+ * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
+ * @param {string} params.GITHUB_RAGANORK_REPO_URL - GitHub URL for Raganork.
+ * @param {string} params.ADMIN_ID - Admin Telegram ID.
+ * @param {string} params.TELEGRAM_CHANNEL_ID - Channel ID for monitoring.
+ * @param {object} params.defaultEnvVars - Object containing fallback env vars for each bot type (e.g., { levanter: {}, raganork: {} }).
+ * @param {Map} params.appDeploymentPromises - Map for deployment promises.
+ * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
+ * @param {function} params.getAnimatedEmoji - Function to get animated emoji/text.
+ * @param {function} params.animateMessage - Function to animate message.
+ * @param {function} params.sendAnimatedMessage - Function to send an animated message.
+ * @param {function} params.monitorSendTelegramAlert - Function to send Telegram alerts (from bot_monitor).
+ * @param {function} params.escapeMarkdown - Utility function to escape markdown characters.
+ */
 function init(params) {
+    // Assign parameters to module-level variables
     pool = params.mainPool;
     backupPool = params.backupPool;
     bot = params.bot;
@@ -38,10 +59,11 @@ function init(params) {
     sendAnimatedMessage = params.sendAnimatedMessage;
     monitorSendTelegramAlert = params.monitorSendTelegramAlert;
     escapeMarkdown = params.escapeMarkdown;
+
     console.log('--- bot_services.js initialized! ---');
 }
 
-// === DB helper functions (All now use 'pool' for the main DB) ===
+// === DB helper functions (using 'pool' for main DB) ===
 
 async function addUserBot(u, b, s, botType) {
   try {
@@ -73,6 +95,7 @@ async function getUserBots(u) {
       'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at'
       ,[u]
     );
+    console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name));
     return r.rows.map(x => x.bot_name);
   }
   catch (error) {
@@ -84,10 +107,12 @@ async function getUserBots(u) {
 async function getUserIdByBotName(botName) {
     try {
         const r = await pool.query(
-            'SELECT user_id, bot_type FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1'
+            'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1'
             ,[botName]
         );
-        return r.rows.length > 0 ? r.rows[0] : null;
+        const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
+        console.log(`[DB] getUserIdByBotName: For bot "${botName}", found user_id: "${userId}".`);
+        return userId;
     }
     catch (error) {
         console.error(`[DB] getUserIdByBotName: Failed to get user ID by bot name "${botName}":`, error.message);
@@ -98,6 +123,7 @@ async function getUserIdByBotName(botName) {
 async function getAllUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name, bot_type FROM user_bots ORDER BY created_at');
+        console.log(`[DB] getAllUserBots: Fetched ${r.rows.length} bots with their types.`);
         return r.rows;
     }
     catch (error) {
@@ -112,7 +138,9 @@ async function getBotNameBySessionId(sessionId) {
             'SELECT bot_name FROM user_bots WHERE session_id=$1 ORDER BY created_at DESC LIMIT 1'
             ,[sessionId]
         );
-        return r.rows.length > 0 ? r.rows[0].bot_name : null;
+        const botName = r.rows.length > 0 ? r.rows[0].bot_name : null;
+        console.log(`[DB] getBotNameBySessionId: For session "${sessionId}", found bot_name: "${botName}".`);
+        return botName;
     } catch (error) {
         console.error(`[DB] getBotNameBySessionId: Failed to get bot name by session ID "${sessionId}":`, error.message);
         return null;
@@ -160,11 +188,15 @@ async function useDeployKey(key) {
     [key]
   );
   if (res.rowCount === 0) {
+    console.log(`[DB] useDeployKey: Key "${key}" not found or no uses left.`);
     return null;
   }
   const left = res.rows[0].uses_left;
   if (left === 0) {
     await pool.query('DELETE FROM deploy_keys WHERE key=$1', [key]);
+    console.log(`[DB] useDeployKey: Key "${key}" fully used and deleted.`);
+  } else {
+    console.log(`[DB] useDeployKey: Key "${key}" used. ${left} uses left.`);
   }
   return left;
 }
@@ -185,7 +217,13 @@ async function deleteDeployKey(key) {
       'DELETE FROM deploy_keys WHERE key = $1 RETURNING key',
       [key]
     );
-    return result.rowCount > 0;
+    if (result.rowCount > 0) {
+      console.log(`[DB] deleteDeployKey: Successfully deleted key "${key}".`);
+      return true;
+    } else {
+      console.warn(`[DB] deleteDeployKey: Key "${key}" not found for deletion.`);
+      return false;
+    }
   } catch (error) {
     console.error(`[DB] deleteDeployKey: Failed to delete key "${key}":`, error.message);
     return false;
@@ -193,7 +231,7 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
@@ -214,6 +252,7 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
+// --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
     INSERT INTO user_activity(user_id, last_seen)
@@ -221,17 +260,22 @@ async function updateUserActivity(userId) {
     ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
   `;
   try {
+    // Now only writes to the main pool (DATABASE_URL)
     await pool.query(query, [userId]);
     console.log(`[DB] User activity updated for ${userId}.`);
   } catch (error) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
+// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
     const result = await pool.query('SELECT last_seen FROM user_activity WHERE user_id = $1', [userId]);
-    return result.rows.length > 0 ? result.rows[0].last_seen : null;
+    if (result.rows.length > 0) {
+      return result.rows[0].last_seen;
+    }
+    return null;
   }
   catch (error) {
     console.error(`[DB] Failed to get user last seen for ${userId}:`, error.message);
@@ -244,7 +288,7 @@ async function isUserBanned(userId) {
         const result = await pool.query('SELECT 1 FROM banned_users WHERE user_id = $1', [userId]);
         return result.rows.length > 0;
     } catch (error) {
-        console.error(`[DB] Error checking ban status for user ${userId}:`, error.message);
+        console.error(`[DB-Main] Error checking ban status for user ${userId}:`, error.message);
         return false;
     }
 }
@@ -255,6 +299,7 @@ async function banUser(userId, bannedByAdminId) {
             'INSERT INTO banned_users(user_id, banned_by) VALUES($1, $2) ON CONFLICT (user_id) DO NOTHING;',
             [userId, bannedByAdminId]
         );
+        console.log(`[Admin] User ${userId} banned by ${bannedByAdminId}.`);
         return true;
     } catch (error) {
         console.error(`[Admin] Error banning user ${userId}:`, error.message);
@@ -265,52 +310,18 @@ async function banUser(userId, bannedByAdminId) {
 async function unbanUser(userId) {
     try {
         const result = await pool.query('DELETE FROM banned_users WHERE user_id = $1 RETURNING user_id;', [userId]);
-        return result.rowCount > 0;
+        if (result.rowCount > 0) {
+            console.log(`[Admin] User ${userId} unbanned.`);
+            return true;
+        }
+        return false;
     } catch (error) {
         console.error(`[Admin] Error unbanning user ${userId}:`, error.message);
         return false;
     }
 }
 
-async function getExpiringBackups() {
-    try {
-        const result = await pool.query(
-            `SELECT user_id, app_name, expiration_date FROM user_deployments 
-             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
-        );
-        return result.rows;
-    } catch (error) {
-        console.error(`[DB] Failed to get expiring backups:`, error.message);
-        return [];
-    }
-}
-
-async function setBackupWarningSent(userId, appName) {
-    try {
-        await pool.query(
-            'UPDATE user_deployments SET warning_sent_at = NOW() WHERE user_id = $1 AND app_name = $2;',
-            [userId, appName]
-        );
-    } catch (error) {
-        console.error(`[DB] Failed to set backup warning sent for ${appName}:`, error.message);
-    }
-}
-
-async function getExpiredBackups() {
-    try {
-        const result = await pool.query(
-            `SELECT user_id, app_name FROM user_deployments WHERE expiration_date <= NOW();`
-        );
-        return result.rows;
-    } catch (error) {
-        console.error(`[DB] Failed to get expired backups:`, error.message);
-        return [];
-    }
-}
-
-
-// === Backup, Restore, and Sync Functions (All now use 'pool' as the primary source) ===
-
+// === Functions for user deployments backup/restore/expiration (using 'backupPool') ===
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType) {
     try {
         const cleanConfigVars = {};
@@ -321,118 +332,126 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         }
         const deployDate = new Date();
         const expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
+
         const query = `
-            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, warning_sent_at)
-            VALUES($1, $2, $3, $4, $5, $6, $7, NULL, NULL)
+            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at)
+            VALUES($1, $2, $3, $4, $5, $6, $7, NULL)
             ON CONFLICT (user_id, app_name) DO UPDATE SET
                session_id = EXCLUDED.session_id,
                config_vars = EXCLUDED.config_vars,
                bot_type = EXCLUDED.bot_type,
-               deleted_from_heroku_at = NULL,
-               warning_sent_at = NULL; 
+               deleted_from_heroku_at = NULL;
         `;
-        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
-        console.log(`[DB] Saved/Updated deployment for user ${userId}, app ${appName}.`);
+        await backupPool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
+        console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
     } catch (error) {
-        console.error(`[DB] Failed to save user deployment for ${appName}:`, error.message, error.stack);
+        console.error(`[DB-Backup] Failed to save user deployment for ${appName}:`, error.message, error.stack);
     }
 }
 
 async function getUserDeploymentsForRestore(userId) {
     try {
-        const result = await pool.query(
+        const result = await backupPool.query(
             `SELECT app_name, session_id, config_vars, deploy_date, expiration_date, bot_type, deleted_from_heroku_at
              FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC;`,
             [userId]
         );
+        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for user ${userId} for restore.`);
         return result.rows;
     } catch (error) {
-        console.error(`[DB] Failed to get user deployments for restore ${userId}:`, error.message);
+        console.error(`[DB-Backup] Failed to get user deployments for restore ${userId}:`, error.message);
         return [];
     }
 }
 
 async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
-        const result = await pool.query(
+        const result = await backupPool.query(
             'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;',
             [userId, appName]
         );
-        return result.rowCount > 0;
+        if (result.rowCount > 0) {
+            console.log(`[DB-Backup] Permanently deleted deployment for user ${userId}, app ${appName} from backup DB.`);
+            return true;
+        }
+        console.log(`[DB-Backup] No deployment found to permanently delete for user ${userId}, app ${appName}.`);
+        return false;
     } catch (error) {
-        console.error(`[DB] Failed to permanently delete user deployment for ${appName}:`, error.message);
+        console.error(`[DB-Backup] Failed to permanently delete user deployment from backup for ${appName}:`, error.message);
         return false;
     }
 }
 
 async function markDeploymentDeletedFromHeroku(userId, appName) {
     try {
-        await pool.query(
+        await backupPool.query(
             `UPDATE user_deployments
              SET deleted_from_heroku_at = NOW()
              WHERE user_id = $1 AND app_name = $2;`,
             [userId, appName]
         );
-        console.log(`[DB] Marked deployment for user ${userId}, app ${appName} as deleted from Heroku.`);
+        console.log(`[DB-Backup] Marked deployment for user ${userId}, app ${appName} as deleted from Heroku.`);
     } catch (error) {
-        console.error(`[DB] Failed to mark deployment as deleted from Heroku for ${appName}:`, error.message);
+        console.error(`[DB-Backup] Failed to mark deployment as deleted from Heroku for ${appName}:`, error.message);
     }
 }
 
 async function getAllDeploymentsFromBackup(botType) {
     try {
-        const result = await pool.query(
+        const result = await backupPool.query(
             `SELECT user_id, app_name, session_id, config_vars
              FROM user_deployments WHERE bot_type = $1 ORDER BY deploy_date;`,
             [botType]
         );
+        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for mass restore (type: ${botType}).`);
         return result.rows;
     } catch (error) {
-        console.error(`[DB] Failed to get all deployments for mass restore (type: ${botType}):`, error.message);
+        console.error(`[DB-Backup] Failed to get all deployments for mass restore (type: ${botType}):`, error.message);
         return [];
     }
 }
 
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
     try {
-        await pool.query(
+        await backupPool.query(
             `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
              ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
             [userId, appName, channelId]
         );
-        console.log(`[DB] Added user ${userId} with app ${appName} to free trial monitoring.`);
+        console.log(`[DB-Backup] Added user ${userId} with app ${appName} to free trial monitoring.`);
     } catch (error) {
-        console.error(`[DB] Failed to record free trial for monitoring:`, error.message);
+        console.error(`[DB-Backup] Failed to record free trial for monitoring:`, error.message);
     }
 }
 
 async function getMonitoredFreeTrials() {
     try {
-        const result = await pool.query('SELECT * FROM free_trial_monitoring;');
+        const result = await backupPool.query('SELECT * FROM free_trial_monitoring;');
         return result.rows;
     } catch (error) {
-        console.error(`[DB] Failed to get monitored free trials:`, error.message);
+        console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
         return [];
     }
 }
 
 async function updateFreeTrialWarning(userId) {
     try {
-        await pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
+        await backupPool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
     } catch (error) {
-        console.error(`[DB] Failed to update free trial warning timestamp:`, error.message);
+        console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
     }
 }
 
 async function removeMonitoredFreeTrial(userId) {
     try {
-        await pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
-        console.log(`[DB] Removed user ${userId} from free trial monitoring.`);
+        await backupPool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
+        console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
     } catch (error) {
-        console.error(`[DB] Failed to remove monitored free trial:`, error.message);
+        console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
     }
 }
 
+// --- NEW FUNCTION for /copydb ---
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
@@ -443,25 +462,35 @@ async function syncDatabases(sourcePool, targetPool) {
             WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
         const tableNames = tablesResult.rows.map(row => row.tablename);
+
         await clientTarget.query('BEGIN');
+
         for (const tableName of tableNames.slice().reverse()) {
+            console.log(`[Sync] Clearing table ${tableName} in target DB...`);
             await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
         }
+
         for (const tableName of tableNames) {
+            console.log(`[Sync] Copying data for table ${tableName}...`);
             const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
+
             if (rows.length > 0) {
                 const columns = Object.keys(rows[0]);
                 const colNames = columns.map(c => `"${c}"`).join(', ');
                 const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+
                 for (const row of rows) {
                     const values = columns.map(col => row[col]);
                     const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
                     await clientTarget.query(insertQuery, values);
                 }
             }
+            console.log(`[Sync] Copied ${rows.length} rows to ${tableName}.`);
         }
+
         await clientTarget.query('COMMIT');
         return { success: true, message: `Successfully synced ${tableNames.length} tables.` };
+
     } catch (error) {
         await clientTarget.query('ROLLBACK');
         console.error('[Sync] Database sync failed:', error);
@@ -471,85 +500,56 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
+// --- END NEW FUNCTION ---
 
-async function backupAllPaidBots() {
-    let successCount = 0;
-    let failureCount = 0;
-    let skippedCount = 0;
-    const failures = [];
-
-    try {
-        const res = await axios.get('https://api.heroku.com/apps', {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        const herokuApps = res.data.map(a => a.name);
-
-        if (herokuApps.length === 0) {
-            return { message: "No active apps found on the deployment account." };
-        }
-
-        for (const appName of herokuApps) {
-            try {
-                const botInfo = await getUserIdByBotName(appName);
-                if (botInfo) {
-                    const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
-                        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                    });
-                    const configVars = configRes.data;
-                    await saveUserDeployment(botInfo.user_id, appName, configVars.SESSION_ID, configVars, botInfo.bot_type);
-                    successCount++;
-                } else {
-                    skippedCount++;
-                }
-            } catch (error) {
-                failureCount++;
-                failures.push(appName);
-                console.error(`[BackupAll] Failed to process ${appName}:`, error.message);
-            }
-        }
-        let message = `Backup process complete.\n\nSuccess: ${successCount}\nFailed: ${failureCount}\nSkipped (Unmanaged): ${skippedCount}`;
-        if (failures.length > 0) {
-            message += `\n\nFailed apps:\n- ${failures.join('\n- ')}`;
-        }
-        return { message };
-    } catch (apiError) {
-        console.error('[BackupAll] Failed to fetch app list:', apiError);
-        return { message: `Could not fetch app list: ${apiError.message}` };
-    }
-}
-
-
-// === Other Helper & API Functions ===
 
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
-    const ownerInfo = await getUserIdByBotName(appName);
-    let ownerUserId = ownerInfo ? ownerInfo.user_id : null;
+
+    let ownerUserId = await getUserIdByBotName(appName);
+
     if (!ownerUserId) {
         ownerUserId = callingChatId;
+        console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to ${callingChatId}.`);
+    } else {
+        console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
     }
+
     await deleteUserBot(ownerUserId, appName);
     await markDeploymentDeletedFromHeroku(ownerUserId, appName);
-    const message = `App "${escapeMarkdown(appName)}" was not found. It has been removed from your "My Bots" list.`;
+    console.log(`[AppNotFoundHandler] Removed "${appName}" from DBs for user "${ownerUserId}".`);
+
+    const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been removed from your "My Bots" list.`;
+
     const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId;
     const messageToEditId = originalMessageId;
+
     if (messageToEditId) {
-        await bot.editMessageText(message, { chat_id: messageTargetChatId, message_id: messageToEditId, parse_mode: 'Markdown' })
-            .catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
+        await bot.editMessageText(message, {
+            chat_id: messageTargetChatId,
+            message_id: messageToEditId,
+            parse_mode: 'Markdown'
+        }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
     } else {
         await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
             .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
+
     if (isUserFacing && ownerUserId !== callingChatId) {
-         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found and has been removed from your list by the admin.`, { parse_mode: 'Markdown' })
+         await bot.sendMessage(ownerUserId, `Your bot "*${escapeMarkdown(appName)}*" was not found on Heroku and has been removed from your list by the admin.`, { parse_mode: 'Markdown' })
              .catch(err => console.error(`Failed to send notification to owner in handleAppNotFoundAndCleanDb: ${err.message}`));
     }
 }
 
+// === API functions ===
+
 async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
     try {
         const res = await axios.get('https://api.heroku.com/apps', {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            }
         });
         const apps = res.data.map(a => a.name);
         if (!apps.length) {
@@ -559,14 +559,20 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
         const chunkArray = (arr, size) => {
             const out = [];
-            for (let i = 0; i < arr.length; i += size) { out.push(arr.slice(i, i + size)); }
+            for (let i = 0; i < arr.length; i += size) {
+                out.push(arr.slice(i, i + size));
+            }
             return out;
         };
 
         const rows = chunkArray(apps, 3).map(r =>
             r.map(name => ({
                 text: name,
-                callback_data: isRemoval ? `${callbackPrefix}:${name}:${targetUserId}` : targetUserId ? `${callbackPrefix}:${name}:${targetUserId}` : `${callbackPrefix}:${name}`
+                callback_data: isRemoval
+                    ? `${callbackPrefix}:${name}:${targetUserId}`
+                    : targetUserId
+                        ? `${callbackPrefix}:${name}:${targetUserId}`
+                        : `${callbackPrefix}:${name}`
             }))
         );
 
@@ -579,123 +585,327 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     } catch (e) {
         const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
         if (e.response && e.response.status === 401) {
-            const adminMsg = "API key invalid. Please contact the bot admin.";
-            if (messageId) bot.editMessageText(adminMsg, { chat_id: chatId, message_id: messageId });
-            else bot.sendMessage(chatId, adminMsg);
+            console.error(`Heroku API key is invalid/expired. Cannot fetch apps. User: ${chatId}`);
+            if (messageId) {
+                bot.editMessageText("Heroku API key invalid. Please contact the bot admin.", { chat_id: chatId, message_id: messageId });
+            } else {
+                bot.sendMessage(chatId, "Heroku API key invalid. Please contact the bot admin.");
+            }
         } else {
-            if (messageId) bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
-            else bot.sendMessage(chatId, errorMsg);
+            if (messageId) {
+                bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+            } else {
+                bot.sendMessage(chatId, errorMsg);
+            }
         }
     }
 }
 
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
-    const name = vars.APP_NAME;
-    const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
-    const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
-    let buildResult = false;
-    const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
+  const name = vars.APP_NAME;
+  const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
 
-    try {
-        await bot.editMessageText(`Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
-        // ... [build logic shortened for brevity, no changes needed here] ...
-        const bres = await axios.post(`https://api.heroku.com/apps/${name}/builds`, { source_blob: { url: `${githubRepoUrl}/tarball/main` } }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
+  const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
 
-        let buildStatus;
-        // ... [build polling logic shortened for brevity, no changes needed here] ...
-        if (botType === 'raganork') { buildStatus = 'pending'; await new Promise(resolve => { const buildDuration = 72000; const updateInterval = 1500; let elapsedTime = 0; const simulationInterval = setInterval(async () => { elapsedTime += updateInterval; const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100)); try { await bot.editMessageText(`Building... ${percentage}%`, { chat_id: chatId, message_id: createMsg.message_id }); } catch (e) { if (!e.message.includes('message is not modified')) console.error("Error editing message during build simulation:", e.message); } if (elapsedTime >= buildDuration) { clearInterval(simulationInterval); buildStatus = 'succeeded'; resolve(); } }, updateInterval); }); } else { const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`; buildStatus = 'pending'; await new Promise((resolve, reject) => { const buildProgressInterval = setInterval(async () => { try { const poll = await axios.get(statusUrl, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }); buildStatus = poll.data.status; if (buildStatus !== 'pending') { clearInterval(buildProgressInterval); resolve(); } } catch (error) { clearInterval(buildProgressInterval); reject(error); } }, 5000); }).catch(err => { console.error(`Error polling build status for ${name}:`, err.message); buildStatus = 'error'; }); }
+  let buildResult = false;
+  const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
 
-        if (buildStatus === 'succeeded') {
-            await addUserBot(chatId, name, vars.SESSION_ID, botType);
-            
-            if (!isFreeTrial) {
-                const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-                await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType);
-            }
-            
-            if (isFreeTrial) {
-                await recordFreeTrialDeploy(chatId);
-            }
+  try {
+    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-            const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
-            const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
-            const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
-            await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
-            
-            const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-            await bot.editMessageText(baseWaitingText, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
-            
-            const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
-            const appStatusPromise = new Promise((resolve, reject) => {
-                const STATUS_CHECK_TIMEOUT = 120 * 1000;
-                const timeoutId = setTimeout(() => {
-                    const appPromise = appDeploymentPromises.get(name);
-                    if (appPromise) {
-                        appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
-                        appDeploymentPromises.delete(name);
-                    }
-                }, STATUS_CHECK_TIMEOUT);
-                appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
-            });
+    await axios.post('https://api.heroku.com/apps', { name }, {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
+    clearInterval(createMsgAnimate);
 
-            try {
-                await appStatusPromise;
-                const promiseData = appDeploymentPromises.get(name);
-                if (promiseData && promiseData.timeoutId) clearTimeout(promiseData.timeoutId);
-                clearInterval(animateIntervalId);
+    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
-                let successMessage = `Your bot *${escapeMarkdown(name)}* is now live!`;
-                if (!isFreeTrial) {
-                    successMessage += `\n\nIts configuration backup will be available for the next *45 days*.`;
-                }
-                successMessage += `\n\nUse the button in "My Bots" to back up your app's latest settings.`;
-                
-                await bot.editMessageText(successMessage, {
-                    chat_id: chatId,
-                    message_id: createMsg.message_id,
-                    parse_mode: 'Markdown'
-                });
-                
-                buildResult = true;
-
-                if (isFreeTrial) {
-                    await recordFreeTrialForMonitoring(chatId, name, TELEGRAM_CHANNEL_ID);
-                    const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
-                    const ONE_HOUR_IN_MS = 1 * 60 * 60 * 1000;
-                    setTimeout(async () => {
-                        const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 1 hour left until deletion!`;
-                        const keyboard = { inline_keyboard: [[{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]] };
-                        await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
-                    }, THREE_DAYS_IN_MS - ONE_HOUR_IN_MS);
-                    setTimeout(async () => {
-                        try {
-                            await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted as its 3-day runtime has ended.`);
-                            await axios.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
-                            await deleteUserBot(chatId, name);
-                            await markDeploymentDeletedFromHeroku(chatId, name);
-                            await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
-                        } catch (e) {
-                            console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
-                            await bot.sendMessage(chatId, `Could not auto-delete "*${escapeMarkdown(name)}*". Please delete it from your dashboard.`, {parse_mode: 'Markdown'});
-                            monitorSendTelegramAlert(`Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${e.message}`, ADMIN_ID);
-                        }
-                    }, THREE_DAYS_IN_MS);
-                }
-            } catch (err) {
-                // ... [error handling for app status promise remains the same] ...
-            } finally {
-                appDeploymentPromises.delete(name);
-            }
-        } else {
-            await bot.editMessageText(`Build status: ${buildStatus}. Check your dashboard for logs.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
-            buildResult = false;
+    await axios.post(
+      `https://api.heroku.com/apps/${name}/addons`,
+      { plan: 'heroku-postgresql' },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
         }
-    } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        bot.sendMessage(chatId, `An error occurred: ${escapeMarkdown(errorMsg)}\n\nPlease check your dashboard or try again.`, {parse_mode: 'Markdown'});
-        buildResult = false;
+      }
+    );
+
+    await axios.put(
+      `https://api.heroku.com/apps/${name}/buildpack-installations`,
+      {
+        updates: [
+          { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+          { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+          { buildpack: 'heroku/nodejs' }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    clearInterval(configMsgAnimate);
+
+    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
+
+    const filteredVars = {};
+    for (const key in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
+            filteredVars[key] = vars[key];
+        }
     }
-    return buildResult;
+
+    let finalConfigVars = {};
+    if (isRestore) {
+        finalConfigVars = filteredVars;
+    } else {
+        finalConfigVars = {
+            ...botTypeSpecificDefaults,
+            ...filteredVars
+        };
+    }
+
+    await axios.patch(
+      `https://api.heroku.com/apps/${name}/config-vars`,
+      {
+        ...finalConfigVars,
+        APP_NAME: name
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    clearInterval(varsMsgAnimate);
+
+    await bot.editMessageText(`Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const bres = await axios.post(
+      `https://api.heroku.com/apps/${name}/builds`,
+      { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    let buildStatus;
+
+    if (botType === 'raganork') {
+        console.log(`[Build] Starting simulated build for Raganork app: ${name}`);
+        buildStatus = 'pending';
+
+        await new Promise(resolve => {
+            const buildDuration = 72000;
+            const updateInterval = 1500;
+            let elapsedTime = 0;
+
+            const simulationInterval = setInterval(async () => {
+                elapsedTime += updateInterval;
+                const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100));
+                try {
+                    await bot.editMessageText(`Building... ${percentage}%`, {
+                        chat_id: chatId,
+                        message_id: createMsg.message_id
+                    });
+                } catch (e) {
+                    if (!e.message.includes('message is not modified')) {
+                        console.error("Error editing message during build simulation:", e.message);
+                    }
+                }
+                if (elapsedTime >= buildDuration) {
+                    clearInterval(simulationInterval);
+                    buildStatus = 'succeeded';
+                    resolve();
+                }
+            }, updateInterval);
+        });
+
+    } else {
+        const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
+        buildStatus = 'pending';
+        let currentPct = 0;
+
+        const buildProgressInterval = setInterval(async () => {
+            try {
+                const poll = await axios.get(statusUrl, {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3'
+                    }
+                });
+                buildStatus = poll.data.status;
+                if (buildStatus === 'pending') {
+                    currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
+                } else if (buildStatus === 'succeeded') {
+                    currentPct = 100;
+                } else if (buildStatus === 'failed') {
+                    currentPct = 'Error';
+                }
+                await bot.editMessageText(`Building... ${currentPct}%`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+                if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
+                    clearInterval(buildProgressInterval);
+                }
+            } catch (error) {
+                console.error(`Error polling build status for ${name}:`, error.message);
+                clearInterval(buildProgressInterval);
+                await bot.editMessageText(`Building... Error`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+                buildStatus = 'error';
+            }
+        }, 5000);
+
+        try {
+            const BUILD_COMPLETION_TIMEOUT = 300 * 1000;
+            let completionTimeoutId = setTimeout(() => {
+                clearInterval(buildProgressInterval);
+                buildStatus = 'timed out';
+                throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
+            }, BUILD_COMPLETION_TIMEOUT);
+            while (buildStatus === 'pending') {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            clearTimeout(completionTimeoutId);
+            clearInterval(buildProgressInterval);
+        } catch (err) {
+            clearInterval(buildProgressInterval);
+            await bot.editMessageText(`Build process for "${name}" timed out. Check Heroku logs.`, {
+                chat_id: chatId,
+                message_id: createMsg.message_id
+            });
+            buildResult = false;
+            return buildResult;
+        }
+    }
+
+    if (buildStatus === 'succeeded') {
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
+      await addUserBot(chatId, name, vars.SESSION_ID, botType);
+      const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType);
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+      }
+      const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
+      const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
+      const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
+      const baseWaitingText = `Build successful! Waiting for bot to connect...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
+      const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
+      const appStatusPromise = new Promise((resolve, reject) => {
+          const STATUS_CHECK_TIMEOUT = 120 * 1000;
+          const timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(name);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
+                  appDeploymentPromises.delete(name);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
+      });
+
+      try {
+          await appStatusPromise;
+          const promiseData = appDeploymentPromises.get(name);
+          if (promiseData && promiseData.timeoutId) {
+             clearTimeout(promiseData.timeoutId);
+          }
+          clearInterval(animateIntervalId);
+
+          await bot.editMessageText(
+              `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
+              {
+                  chat_id: chatId,
+                  message_id: createMsg.message_id,
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                      inline_keyboard: [[{ text: `Backup "${name}"`, callback_data: `backup_app:${name}` }]]
+                  }
+              }
+          );
+          buildResult = true;
+
+          if (isFreeTrial) {
+            await recordFreeTrialForMonitoring(chatId, name, TELEGRAM_CHANNEL_ID);
+            const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
+            const ONE_HOUR_IN_MS = 1 * 60 * 60 * 1000;
+            
+            setTimeout(async () => {
+                const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 1 hour left until deletion!`;
+                const keyboard = { inline_keyboard: [[{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]] };
+                await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
+                console.log(`[FreeTrial] Sent 1-hour warning to admin for ${name}.`);
+            }, THREE_DAYS_IN_MS - ONE_HOUR_IN_MS);
+
+            setTimeout(async () => {
+                try {
+                    await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted as its 3-day runtime has ended.`);
+                    await axios.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+                    await deleteUserBot(chatId, name);
+                    await markDeploymentDeletedFromHeroku(chatId, name);
+                    await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
+                    console.log(`[FreeTrial] Auto-deleted app ${name} after 3 days.`);
+                } catch (e) {
+                    console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
+                    await bot.sendMessage(chatId, `Could not auto-delete "*${escapeMarkdown(name)}*". Please delete it from your Heroku dashboard.`, {parse_mode: 'Markdown'});
+                    monitorSendTelegramAlert(`Failed to auto-delete free trial app "*${escapeMarkdown(name)}*" for user ${escapeMarkdown(chatId)}: ${escapeMarkdown(e.message)}`, ADMIN_ID);
+                }
+            }, THREE_DAYS_IN_MS);
+          }
+      } catch (err) {
+          const promiseData = appDeploymentPromises.get(name);
+          if (promiseData) {
+             clearInterval(promiseData.animateIntervalId);
+             if (promiseData.timeoutId) clearTimeout(promiseData.timeoutId);
+          }
+          console.error(`App status check failed for ${name}:`, err.message);
+          await bot.editMessageText(
+            `Bot "*${escapeMarkdown(name)}*" failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
+            {
+                chat_id: chatId,
+                message_id: createMsg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]]
+                }
+            }
+          );
+          buildResult = false;
+      } finally {
+          appDeploymentPromises.delete(name);
+      }
+    } else {
+      await bot.editMessageText(`Build status: ${buildStatus}. Check your Heroku dashboard for logs.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
+      buildResult = false;
+    }
+  } catch (error) {
+    const errorMsg = error.response?.data?.message || error.message;
+    bot.sendMessage(chatId, `An error occurred: ${escapeMarkdown(errorMsg)}\n\nPlease check the Heroku dashboard or try again.`, {parse_mode: 'Markdown'});
+    buildResult = false;
+  }
+  return buildResult;
 }
 
 
@@ -731,9 +941,5 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
-    syncDatabases,
-    backupAllPaidBots,
-    getExpiringBackups,
-    setBackupWarningSent,
-    getExpiredBackups
+    syncDatabases
 };
