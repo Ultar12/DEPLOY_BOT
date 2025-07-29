@@ -107,50 +107,125 @@ const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 
 
 // 4) Postgres setup & ensure tables exist
+// bot.js
+
+// --- CRITICAL DEBUG TEST: If you see this, the code is running! ---
+console.log('--- SCRIPT STARTING: Verifying code execution (This should be the very first log!) ---');
+// -----------------------------------------------------------------
+
+// 1) Global error handlers
+process.on('unhandledRejection', err => console.error('Unhandled Rejection:', err));
+process.on('uncaughtException', err => console.error('Uncaught Exception:', err));
+
+
+require('dotenv').config();
+const fs = require('fs');
+const axios = require('axios');
+const TelegramBot = require('node-telegram-bot-api');
+const { Pool } = require('pg');
+const path = require('path');
+const express = require('express');
+
+// Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
+const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
+const { init: servicesInit, ...dbServices } = require('./bot_services');
+const { init: faqInit, sendFaqPage } = require('./bot_faq');
+
+const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
+// ⚠️ IMPORTANT: Replace the placeholder ID below with the correct numeric ID of your channel.
+// The bot MUST be an administrator in this channel for verification to work.
+const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
+
+
+// 2) Load fallback env vars from app.json / custom config files
+let levanterDefaultEnvVars = {};
+let raganorkDefaultEnvVars = {};
+
+try {
+  const appJsonPath = path.join(__dirname, 'app.json');
+  if (fs.existsSync(appJsonPath)) {
+    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+    levanterDefaultEnvVars = Object.fromEntries(
+      Object.entries(appJson.env || {})
+        .filter(([key, val]) => val && val.value !== undefined)
+        .map(([key, val]) => [key, val.value])
+    );
+    console.log('[Config] Loaded default env vars from app.json for Levanter.');
+  } else {
+    console.warn('[Config] No app.json found for Levanter. Default env vars will be empty.');
+  }
+} catch (e) {
+  console.warn('[Config] Could not load fallback env vars from app.json for Levanter:', e.message);
+}
+
+try {
+  const appJson1Path = path.join(__dirname, 'app.json1');
+  if (fs.existsSync(appJson1Path)) {
+    const appJson1 = JSON.parse(fs.readFileSync(appJson1Path, 'utf8'));
+    raganorkDefaultEnvVars = Object.fromEntries(
+      Object.entries(appJson1.env || {})
+        .filter(([key, val]) => val && val.value !== undefined)
+        .map(([key, val]) => [key, val.value])
+    );
+    console.log('[Config] Loaded default env vars from app.json1 for Raganork.');
+  } else {
+    console.warn('[Config] No app.json1 found for Raganork. Default env vars will be empty.');
+  }
+} catch (e) {
+  console.warn('[Config] Could not load fallback env vars from app.json1 for Raganork:', e.message);
+}
+
+// 3) Environment config
+const {
+  TELEGRAM_BOT_TOKEN: TOKEN_ENV,
+  HEROKU_API_KEY,
+  ADMIN_ID,
+  DATABASE_URL,
+  DATABASE_URL2,
+} = process.env;
+
+const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7730944193:AAG1RKwymeGG1HlYZRvHcOZZy_St9c77Rg';
+const TELEGRAM_USER_ID = '7302005705';
+const TELEGRAM_CHANNEL_ID = '-1002892034574';
+
+const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
+const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
+
+const SUPPORT_USERNAME = '@star_ies1';
+const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
+const LEVANTER_SESSION_PREFIX = 'levanter_';
+const RAGANORK_SESSION_PREFIX = 'RGNK';
+const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
+
+// 4) Postgres setup & ensure tables exist
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// NEW: Second pool for DATABASE_URL2
 const backupPool = new Pool({
   connectionString: DATABASE_URL2,
   ssl: { rejectUnauthorized: false }
 });
 
+// --- REPLACED DATABASE STARTUP BLOCK ---
 
-(async () => {
-  try {
-    // --- IMPORTANT FOR DEVELOPMENT/DEBUGGING ---
-    // Uncomment the line below ONCE if you need to completely reset your user_bots table
-    // (e.g., if you suspect corrupt data or a malformed schema).
-    // After running once, comment it out again to prevent data loss on future deploys.
-    // await pool.query('DROP TABLE IF EXISTS user_bots;');
-    // console.warn("[DB] DEVELOPMENT: user_bots table dropped (if existed).");
-    // ---------------------------------------------
-
-    // Main Database (pool - DATABASE_URL) tables
-    await pool.query(`
+// Helper function to create all tables in a given database pool
+async function createAllTablesInPool(dbPool, dbName) {
+    console.log(`[DB-${dbName}] Checking/creating all tables...`);
+    
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_bots (
         user_id    TEXT NOT NULL,
         bot_name   TEXT NOT NULL,
         session_id TEXT,
-        bot_type   TEXT DEFAULT 'levanter', -- NEW: Store bot type
+        bot_type   TEXT DEFAULT 'levanter',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, bot_name)
       );
     `);
-    console.log("[DB-Main] 'user_bots' table checked/created with PRIMARY KEY.");
-    // Add bot_type column if it doesn't exist (for existing databases)
-    try {
-        await pool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS bot_type TEXT DEFAULT 'levanter';`);
-        console.log("[DB-Main] 'user_bots' table 'bot_type' column checked/added.");
-    } catch (e) {
-        console.warn("[DB-Main] Could not add bot_type column to user_bots (might already exist or other error):", e.message);
-    }
 
-
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
         key        TEXT PRIMARY KEY,
         uses_left  INTEGER NOT NULL,
@@ -158,48 +233,51 @@ const backupPool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("[DB-Main] 'deploy_keys' table checked/created.");
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
         user_id       TEXT PRIMARY KEY,
         last_deploy_at TIMESTAMP NOT NULL
       );
     `);
-    console.log("[DB-Main] 'temp_deploys' table checked/created.");
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_activity (
         user_id TEXT PRIMARY KEY,
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("[DB-Main] 'user_activity' table checked/created.");
 
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS banned_users (
         user_id TEXT PRIMARY KEY,
         banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         banned_by TEXT
       );
     `);
-    console.log("[DB-Main] 'banned_users' table checked/created.");
-
-    // --- ADD this inside the startup block in bot.js ---
-
-    // ... after the user_deployments table is created ...
     
-    await backupPool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS all_users_backup (
         user_id TEXT PRIMARY KEY,
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log("[DB-Backup] 'all_users_backup' table checked/created.");
 
-    // --- FIX 2A: ADD this table creation query ---
-
-    await backupPool.query(`
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS user_deployments (
+        user_id TEXT NOT NULL,
+        app_name TEXT NOT NULL,
+        session_id TEXT,
+        config_vars JSONB,
+        bot_type TEXT,
+        deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expiration_date TIMESTAMP,
+        deleted_from_heroku_at TIMESTAMP,
+        PRIMARY KEY (user_id, app_name)
+      );
+    `);
+    
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
         user_id TEXT PRIMARY KEY,
         app_name TEXT NOT NULL,
@@ -208,57 +286,24 @@ const backupPool = new Pool({
         warning_sent_at TIMESTAMP
       );
     `);
-    console.log("[DB-Backup] 'free_trial_monitoring' table checked/created.");
 
-    // NEW: Backup Database (backupPool - DATABASE_URL2) tables
-    await backupPool.query(`
-      CREATE TABLE IF NOT EXISTS user_deployments (
-        user_id TEXT NOT NULL,
-        app_name TEXT NOT NULL,
-        session_id TEXT,
-        config_vars JSONB,      -- Store all variables as JSON
-        bot_type TEXT,          -- NEW: Store bot type for restore context
-        deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Original deploy date (never changes for a record)
-        expiration_date TIMESTAMP, -- Fixed 45 days from deploy_date (never changes for a record)
-        deleted_from_heroku_at TIMESTAMP, -- NEW: Timestamp when it was deleted from Heroku
-        PRIMARY KEY (user_id, app_name)
-      );
-    `);
-    console.log("[DB-Backup] 'user_deployments' table checked/created.");
-    // Add bot_type and deleted_from_heroku_at columns if they don't exist
-    try {
-        await backupPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
-        await backupPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS deleted_from_heroku_at TIMESTAMP;`);
-        console.log("[DB-Backup] 'user_deployments' table 'bot_type' and 'deleted_from_heroku_at' columns checked/added.");
-    } catch (e) {
-        console.warn("[DB-Backup] Could not add bot_type/deleted_from_heroku_at columns to user_deployments (might already exist or other error):", e.message);
-    }
+    console.log(`[DB-${dbName}] All tables checked/created successfully.`);
+}
 
-    console.log("[DB] All necessary tables checked/created successfully in both pools.");
-
+// Main startup logic
+(async () => {
+  try {
+    // Run the table creation for both databases to ensure schemas are identical
+    await createAllTablesInPool(pool, "Main");
+    await createAllTablesInPool(backupPool, "Backup");
   } catch (dbError) {
-    if (dbError.code === '42P07' || (dbError.message && dbError.message.includes('already exists'))) {
-        console.warn(`[DB] Table already exists or issue creating it initially. Attempting to ensure PRIMARY KEY constraint.`);
-        try {
-            await pool.query(`
-                ALTER TABLE user_bots
-                ADD CONSTRAINT user_bots_pkey PRIMARY KEY (user_id, bot_name);
-            `);
-            console.log("[DB] PRIMARY KEY constraint successfully added to 'user_bots'.");
-        } catch (alterError) {
-            if ((alterError.message && alterError.message.includes('already exists in relation "user_bots"')) || (alterError.message && alterError.message.includes('already exists'))) {
-                 console.warn("[DB] PRIMARY KEY constraint 'user_bots_pkey' already exists on 'user_bots'. Skipping ALTER TABLE.");
-            } else {
-                 console.error("[DB] CRITICAL ERROR adding PRIMARY KEY constraint to 'user_bots':", alterError.message, alterError.stack);
-                 process.exit(1);
-            }
-        }
-    } else {
-        console.error("[DB] CRITICAL ERROR during initial database table creation/check:", dbError.message, dbError.stack);
-        process.exit(1);
-    }
+    console.error("[DB] CRITICAL ERROR during initial database table creation:", dbError.message);
+    process.exit(1);
   }
 })();
+
+// --- END OF REPLACEMENT ---
+
 
 
 // 5) Initialize bot & in-memory state
