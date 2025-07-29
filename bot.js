@@ -119,7 +119,6 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 
 
 require('dotenv').config();
-const fs = require('fs');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
