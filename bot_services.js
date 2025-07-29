@@ -616,7 +616,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           if (promiseData && promiseData.timeoutId) clearTimeout(promiseData.timeoutId);
           clearInterval(animateIntervalId);
           await bot.editMessageText(
-              `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
+              `Your bot *${escapeMarkdown(name)}* is now live! 45 days countdown initiated\n\nBackup your app for future reference.`,
               {
                   chat_id: chatId,
                   message_id: createMsg.message_id,
