@@ -1489,6 +1489,28 @@ bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
     }
 });
 
+// --- REPLACE your /copydb command handler with this ---
+
+bot.onText(/^\/copydb$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return; // Admin only
+    }
+
+    // Ask for a simple confirmation before proceeding
+    await bot.sendMessage(cid, "Are you sure you want to overwrite the backup database (`DATABASE_URL2`) with the current main database (`DATABASE_URL`)? This cannot be undone.", {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "Yes, proceed with copy", callback_data: 'copydb_confirm_simple' },
+                    { text: "Cancel", callback_data: 'copydb_cancel' }
+                ]
+            ]
+        }
+    });
+});
+
+
 // --- REPLACE this entire function in bot.js ---
 
 // NEW ADMIN COMMAND: /sendall <message>
@@ -2564,6 +2586,43 @@ if (action === 'bapp_select_type') {
       });
       return;
   }
+
+// --- ADD these handlers and REMOVE the old copydb ones ---
+
+if (action === 'copydb_confirm_simple') {
+    await bot.editMessageText('Copying main database to backup... This may take a moment.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+
+    try {
+        // Directly call syncDatabases with main pool as source and backup pool as target
+        const result = await dbServices.syncDatabases(pool, backupPool); 
+        if (result.success) {
+            await bot.editMessageText(`Copy Complete! ${result.message}`, {
+                chat_id: cid,
+                message_id: q.message.message_id
+            });
+        } else {
+            throw new Error(result.message);
+        }
+    } catch (error) {
+        await bot.editMessageText(`❌ Copy Failed! Reason: ${error.message}`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
+    return;
+}
+        
+if (action === 'copydb_cancel') {
+    await bot.editMessageText('Database copy cancelled.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
 
 // ===================================================================
 if (action === 'users_page') {
