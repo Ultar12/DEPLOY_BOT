@@ -1,18 +1,18 @@
 const axios = require('axios');
-const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
-const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
-const { Pool } = require('pg'); // Not declared here, but passed in. Good practice to show dependency.
+const fs = require('fs');
+const path = require('path');
+const { Pool } = require('pg');
 
-// --- Module-level variables for dependencies passed during init ---
+// --- Module-level variables ---
 let pool;
 let backupPool;
-let bot; // The TelegramBot instance
+let bot;
 let HEROKU_API_KEY;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
-let TELEGRAM_CHANNEL_ID; // Added for monitoring
-let defaultEnvVars; // This will now hold an object like { levanter: {}, raganork: {} }
+let TELEGRAM_CHANNEL_ID;
+let defaultEnvVars;
 let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
@@ -21,28 +21,7 @@ let sendAnimatedMessage;
 let monitorSendTelegramAlert;
 let escapeMarkdown;
 
-/**
- * Initializes database and API helper functions.
- * @param {object} params - Object containing dependencies from bot.js.
- * @param {object} params.mainPool - The main PostgreSQL pool.
- * @param {object} params.backupPool - The backup PostgreSQL pool.
- * @param {object} params.bot - The TelegramBot instance.
- * @param {string} params.HEROKU_API_KEY - Heroku API key.
- * @param {string} params.GITHUB_LEVANTER_REPO_URL - GitHub URL for Levanter.
- * @param {string} params.GITHUB_RAGANORK_REPO_URL - GitHub URL for Raganork.
- * @param {string} params.ADMIN_ID - Admin Telegram ID.
- * @param {string} params.TELEGRAM_CHANNEL_ID - Channel ID for monitoring.
- * @param {object} params.defaultEnvVars - Object containing fallback env vars for each bot type (e.g., { levanter: {}, raganork: {} }).
- * @param {Map} params.appDeploymentPromises - Map for deployment promises.
- * @param {number} params.RESTART_DELAY_MINUTES - Restart delay.
- * @param {function} params.getAnimatedEmoji - Function to get animated emoji/text.
- * @param {function} params.animateMessage - Function to animate message.
- * @param {function} params.sendAnimatedMessage - Function to send an animated message.
- * @param {function} params.monitorSendTelegramAlert - Function to send Telegram alerts (from bot_monitor).
- * @param {function} params.escapeMarkdown - Utility function to escape markdown characters.
- */
 function init(params) {
-    // Assign parameters to module-level variables
     pool = params.mainPool;
     backupPool = params.backupPool;
     bot = params.bot;
@@ -59,11 +38,10 @@ function init(params) {
     sendAnimatedMessage = params.sendAnimatedMessage;
     monitorSendTelegramAlert = params.monitorSendTelegramAlert;
     escapeMarkdown = params.escapeMarkdown;
-
     console.log('--- bot_services.js initialized! ---');
 }
 
-// === DB helper functions (using 'pool' for main DB) ===
+// === DB helper functions ===
 
 async function addUserBot(u, b, s, botType) {
   try {
@@ -95,7 +73,6 @@ async function getUserBots(u) {
       'SELECT bot_name FROM user_bots WHERE user_id=$1 ORDER BY created_at'
       ,[u]
     );
-    console.log(`[DB] getUserBots: Fetching for user_id "${u}" - Found:`, r.rows.map(x => x.bot_name));
     return r.rows.map(x => x.bot_name);
   }
   catch (error) {
@@ -110,9 +87,7 @@ async function getUserIdByBotName(botName) {
             'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1'
             ,[botName]
         );
-        const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
-        console.log(`[DB] getUserIdByBotName: For bot "${botName}", found user_id: "${userId}".`);
-        return userId;
+        return r.rows.length > 0 ? r.rows[0].user_id : null;
     }
     catch (error) {
         console.error(`[DB] getUserIdByBotName: Failed to get user ID by bot name "${botName}":`, error.message);
@@ -123,7 +98,6 @@ async function getUserIdByBotName(botName) {
 async function getAllUserBots() {
     try {
         const r = await pool.query('SELECT user_id, bot_name, bot_type FROM user_bots ORDER BY created_at');
-        console.log(`[DB] getAllUserBots: Fetched ${r.rows.length} bots with their types.`);
         return r.rows;
     }
     catch (error) {
@@ -138,9 +112,7 @@ async function getBotNameBySessionId(sessionId) {
             'SELECT bot_name FROM user_bots WHERE session_id=$1 ORDER BY created_at DESC LIMIT 1'
             ,[sessionId]
         );
-        const botName = r.rows.length > 0 ? r.rows[0].bot_name : null;
-        console.log(`[DB] getBotNameBySessionId: For session "${sessionId}", found bot_name: "${botName}".`);
-        return botName;
+        return r.rows.length > 0 ? r.rows[0].bot_name : null;
     } catch (error) {
         console.error(`[DB] getBotNameBySessionId: Failed to get bot name by session ID "${sessionId}":`, error.message);
         return null;
@@ -231,7 +203,7 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
@@ -252,7 +224,6 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
     INSERT INTO user_activity(user_id, last_seen)
@@ -260,22 +231,17 @@ async function updateUserActivity(userId) {
     ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
   `;
   try {
-    // Now only writes to the main pool (DATABASE_URL)
     await pool.query(query, [userId]);
     console.log(`[DB] User activity updated for ${userId}.`);
   } catch (error) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
-// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
     const result = await pool.query('SELECT last_seen FROM user_activity WHERE user_id = $1', [userId]);
-    if (result.rows.length > 0) {
-      return result.rows[0].last_seen;
-    }
-    return null;
+    return result.rows.length > 0 ? result.rows[0].last_seen : null;
   }
   catch (error) {
     console.error(`[DB] Failed to get user last seen for ${userId}:`, error.message);
@@ -321,7 +287,8 @@ async function unbanUser(userId) {
     }
 }
 
-// === Functions for user deployments backup/restore/expiration (using 'backupPool') ===
+// === Backup, Restore, and Sync Functions ===
+
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType) {
     try {
         const cleanConfigVars = {};
@@ -356,7 +323,6 @@ async function getUserDeploymentsForRestore(userId) {
              FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC;`,
             [userId]
         );
-        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for user ${userId} for restore.`);
         return result.rows;
     } catch (error) {
         console.error(`[DB-Backup] Failed to get user deployments for restore ${userId}:`, error.message);
@@ -374,7 +340,6 @@ async function deleteUserDeploymentFromBackup(userId, appName) {
             console.log(`[DB-Backup] Permanently deleted deployment for user ${userId}, app ${appName} from backup DB.`);
             return true;
         }
-        console.log(`[DB-Backup] No deployment found to permanently delete for user ${userId}, app ${appName}.`);
         return false;
     } catch (error) {
         console.error(`[DB-Backup] Failed to permanently delete user deployment from backup for ${appName}:`, error.message);
@@ -403,7 +368,6 @@ async function getAllDeploymentsFromBackup(botType) {
              FROM user_deployments WHERE bot_type = $1 ORDER BY deploy_date;`,
             [botType]
         );
-        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for mass restore (type: ${botType}).`);
         return result.rows;
     } catch (error) {
         console.error(`[DB-Backup] Failed to get all deployments for mass restore (type: ${botType}):`, error.message);
@@ -451,7 +415,6 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// --- NEW FUNCTION for /copydb ---
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
@@ -500,36 +463,72 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
-// --- END NEW FUNCTION ---
 
+async function backupAllPaidBots() {
+    let successCount = 0;
+    let failureCount = 0;
+    let skippedCount = 0;
+    const failures = [];
+
+    try {
+        const result = await backupPool.query('SELECT user_id, app_name, bot_type FROM user_deployments');
+        const deployments = result.rows;
+        
+        if (deployments.length === 0) {
+            return { message: "No paid bots found in the backup database to update." };
+        }
+
+        for (const dep of deployments) {
+            try {
+                const configRes = await axios.get(`https://api.heroku.com/apps/${dep.app_name}/config-vars`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                const configVars = configRes.data;
+                
+                await saveUserDeployment(dep.user_id, dep.app_name, configVars.SESSION_ID, configVars, dep.bot_type);
+                successCount++;
+            } catch (error) {
+                if (error.response && error.response.status === 404) {
+                    await markDeploymentDeletedFromHeroku(dep.user_id, dep.app_name);
+                    skippedCount++;
+                } else {
+                    failureCount++;
+                    failures.push(dep.app_name);
+                    console.error(`[BackupAll] Failed to back up ${dep.app_name}:`, error.message);
+                }
+            }
+        }
+        let message = `Backup process complete.\n\nSuccess: ${successCount}\nFailed: ${failureCount}\nSkipped (Not found on Heroku): ${skippedCount}`;
+        if (failures.length > 0) {
+            message += `\n\nFailed apps:\n- ${failures.join('\n- ')}`;
+        }
+        return { message };
+    } catch (dbError) {
+        console.error('[BackupAll] Database query failed:', dbError);
+        return { message: `A database error occurred: ${dbError.message}` };
+    }
+}
+
+// === Other Helper & API Functions ===
 
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
-
     let ownerUserId = await getUserIdByBotName(appName);
 
     if (!ownerUserId) {
         ownerUserId = callingChatId;
-        console.warn(`[AppNotFoundHandler] Owner not found in DB for "${appName}". Falling back to ${callingChatId}.`);
-    } else {
-        console.log(`[AppNotFoundHandler] Found owner ${ownerUserId} in DB for app "${appName}".`);
+        console.warn(`[AppNotFoundHandler] Owner not found for "${appName}". Falling back to ${callingChatId}.`);
     }
 
     await deleteUserBot(ownerUserId, appName);
     await markDeploymentDeletedFromHeroku(ownerUserId, appName);
-    console.log(`[AppNotFoundHandler] Removed "${appName}" from DBs for user "${ownerUserId}".`);
-
     const message = `App "${escapeMarkdown(appName)}" was not found on Heroku. It has been removed from your "My Bots" list.`;
-
     const messageTargetChatId = originalMessageId ? callingChatId : ownerUserId;
     const messageToEditId = originalMessageId;
 
     if (messageToEditId) {
-        await bot.editMessageText(message, {
-            chat_id: messageTargetChatId,
-            message_id: messageToEditId,
-            parse_mode: 'Markdown'
-        }).catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
+        await bot.editMessageText(message, { chat_id: messageTargetChatId, message_id: messageToEditId, parse_mode: 'Markdown' })
+            .catch(err => console.error(`Failed to edit message in handleAppNotFoundAndCleanDb: ${err.message}`));
     } else {
         await bot.sendMessage(messageTargetChatId, message, { parse_mode: 'Markdown' })
             .catch(err => console.error(`Failed to send message in handleAppNotFoundAndCleanDb: ${err.message}`));
@@ -541,15 +540,10 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     }
 }
 
-// === API functions ===
-
 async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
     try {
         const res = await axios.get('https://api.heroku.com/apps', {
-            headers: {
-                Authorization: `Bearer ${HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3'
-            }
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         const apps = res.data.map(a => a.name);
         if (!apps.length) {
@@ -568,11 +562,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
         const rows = chunkArray(apps, 3).map(r =>
             r.map(name => ({
                 text: name,
-                callback_data: isRemoval
-                    ? `${callbackPrefix}:${name}:${targetUserId}`
-                    : targetUserId
-                        ? `${callbackPrefix}:${name}:${targetUserId}`
-                        : `${callbackPrefix}:${name}`
+                callback_data: isRemoval ? `${callbackPrefix}:${name}:${targetUserId}` : targetUserId ? `${callbackPrefix}:${name}:${targetUserId}` : `${callbackPrefix}:${name}`
             }))
         );
 
@@ -585,18 +575,13 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     } catch (e) {
         const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
         if (e.response && e.response.status === 401) {
-            console.error(`Heroku API key is invalid/expired. Cannot fetch apps. User: ${chatId}`);
-            if (messageId) {
-                bot.editMessageText("Heroku API key invalid. Please contact the bot admin.", { chat_id: chatId, message_id: messageId });
-            } else {
-                bot.sendMessage(chatId, "Heroku API key invalid. Please contact the bot admin.");
-            }
+            console.error(`Heroku API key is invalid/expired. User: ${chatId}`);
+            const adminMsg = "Heroku API key invalid. Please contact the bot admin.";
+            if (messageId) bot.editMessageText(adminMsg, { chat_id: chatId, message_id: messageId });
+            else bot.sendMessage(chatId, adminMsg);
         } else {
-            if (messageId) {
-                bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
-            } else {
-                bot.sendMessage(chatId, errorMsg);
-            }
+            if (messageId) bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+            else bot.sendMessage(chatId, errorMsg);
         }
     }
 }
@@ -604,130 +589,68 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
   const name = vars.APP_NAME;
   const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
-
   const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
-
   let buildResult = false;
   const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
 
   try {
-    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
-
     await axios.post('https://api.heroku.com/apps', { name }, {
-      headers: {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-      }
+      headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
     });
     clearInterval(createMsgAnimate);
 
-    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
-
-    await axios.post(
-      `https://api.heroku.com/apps/${name}/addons`,
-      { plan: 'heroku-postgresql' },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    await axios.put(
-      `https://api.heroku.com/apps/${name}/buildpack-installations`,
-      {
+    await axios.post(`https://api.heroku.com/apps/${name}/addons`, { plan: 'heroku-postgresql' }, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' }
+    });
+    await axios.put(`https://api.heroku.com/apps/${name}/buildpack-installations`, {
         updates: [
           { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
           { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
           { buildpack: 'heroku/nodejs' }
         ]
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    }, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' }
+    });
     clearInterval(configMsgAnimate);
 
-    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    await bot.editMessageText(`Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
     const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
-
     const filteredVars = {};
     for (const key in vars) {
         if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
             filteredVars[key] = vars[key];
         }
     }
-
-    let finalConfigVars = {};
-    if (isRestore) {
-        finalConfigVars = filteredVars;
-    } else {
-        finalConfigVars = {
-            ...botTypeSpecificDefaults,
-            ...filteredVars
-        };
-    }
-
-    await axios.patch(
-      `https://api.heroku.com/apps/${name}/config-vars`,
-      {
-        ...finalConfigVars,
-        APP_NAME: name
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
+    await axios.patch(`https://api.heroku.com/apps/${name}/config-vars`, { ...finalConfigVars, APP_NAME: name }, {
+        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' }
+    });
     clearInterval(varsMsgAnimate);
 
     await bot.editMessageText(`Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const bres = await axios.post(
-      `https://api.heroku.com/apps/${name}/builds`,
+    const bres = await axios.post(`https://api.heroku.com/apps/${name}/builds`,
       { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
-      {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3',
-          'Content-Type': 'application/json'
-        }
-      }
+      { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
     );
 
     let buildStatus;
-
     if (botType === 'raganork') {
-        console.log(`[Build] Starting simulated build for Raganork app: ${name}`);
         buildStatus = 'pending';
-
         await new Promise(resolve => {
             const buildDuration = 72000;
             const updateInterval = 1500;
             let elapsedTime = 0;
-
             const simulationInterval = setInterval(async () => {
                 elapsedTime += updateInterval;
                 const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100));
                 try {
-                    await bot.editMessageText(`Building... ${percentage}%`, {
-                        chat_id: chatId,
-                        message_id: createMsg.message_id
-                    });
+                    await bot.editMessageText(`Building... ${percentage}%`, { chat_id: chatId, message_id: createMsg.message_id });
                 } catch (e) {
-                    if (!e.message.includes('message is not modified')) {
-                        console.error("Error editing message during build simulation:", e.message);
-                    }
+                    if (!e.message.includes('message is not modified')) console.error("Error editing message during build simulation:", e.message);
                 }
                 if (elapsedTime >= buildDuration) {
                     clearInterval(simulationInterval);
@@ -736,74 +659,35 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 }
             }, updateInterval);
         });
-
     } else {
         const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
         buildStatus = 'pending';
-        let currentPct = 0;
-
-        const buildProgressInterval = setInterval(async () => {
-            try {
-                const poll = await axios.get(statusUrl, {
-                    headers: {
-                        Authorization: `Bearer ${HEROKU_API_KEY}`,
-                        Accept: 'application/vnd.heroku+json; version=3'
+        await new Promise((resolve, reject) => {
+            const buildProgressInterval = setInterval(async () => {
+                try {
+                    const poll = await axios.get(statusUrl, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+                    buildStatus = poll.data.status;
+                    if (buildStatus !== 'pending') {
+                        clearInterval(buildProgressInterval);
+                        resolve();
                     }
-                });
-                buildStatus = poll.data.status;
-                if (buildStatus === 'pending') {
-                    currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
-                } else if (buildStatus === 'succeeded') {
-                    currentPct = 100;
-                } else if (buildStatus === 'failed') {
-                    currentPct = 'Error';
-                }
-                await bot.editMessageText(`Building... ${currentPct}%`, {
-                    chat_id: chatId,
-                    message_id: createMsg.message_id
-                }).catch(() => {});
-                if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
+                } catch (error) {
                     clearInterval(buildProgressInterval);
+                    reject(error);
                 }
-            } catch (error) {
-                console.error(`Error polling build status for ${name}:`, error.message);
-                clearInterval(buildProgressInterval);
-                await bot.editMessageText(`Building... Error`, {
-                    chat_id: chatId,
-                    message_id: createMsg.message_id
-                }).catch(() => {});
-                buildStatus = 'error';
-            }
-        }, 5000);
-
-        try {
-            const BUILD_COMPLETION_TIMEOUT = 300 * 1000;
-            let completionTimeoutId = setTimeout(() => {
-                clearInterval(buildProgressInterval);
-                buildStatus = 'timed out';
-                throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
-            }, BUILD_COMPLETION_TIMEOUT);
-            while (buildStatus === 'pending') {
-                await new Promise(r => setTimeout(r, 5000));
-            }
-            clearTimeout(completionTimeoutId);
-            clearInterval(buildProgressInterval);
-        } catch (err) {
-            clearInterval(buildProgressInterval);
-            await bot.editMessageText(`Build process for "${name}" timed out. Check Heroku logs.`, {
-                chat_id: chatId,
-                message_id: createMsg.message_id
-            });
-            buildResult = false;
-            return buildResult;
-        }
+            }, 5000);
+        }).catch(err => {
+            console.error(`Error polling build status for ${name}:`, err.message);
+            buildStatus = 'error';
+        });
     }
 
     if (buildStatus === 'succeeded') {
-      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
-      const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType);
+      if (!isFreeTrial) {
+          const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+          await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType);
+      }
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
       }
@@ -812,7 +696,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
       await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
       const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
+      await bot.editMessageText(baseWaitingText, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
       const appStatusPromise = new Promise((resolve, reject) => {
           const STATUS_CHECK_TIMEOUT = 120 * 1000;
@@ -825,40 +709,30 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           }, STATUS_CHECK_TIMEOUT);
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
       });
-
       try {
           await appStatusPromise;
           const promiseData = appDeploymentPromises.get(name);
-          if (promiseData && promiseData.timeoutId) {
-             clearTimeout(promiseData.timeoutId);
-          }
+          if (promiseData && promiseData.timeoutId) clearTimeout(promiseData.timeoutId);
           clearInterval(animateIntervalId);
-
           await bot.editMessageText(
               `Your bot *${escapeMarkdown(name)}* is now live!\n\nBackup your app for future reference.`,
               {
                   chat_id: chatId,
                   message_id: createMsg.message_id,
                   parse_mode: 'Markdown',
-                  reply_markup: {
-                      inline_keyboard: [[{ text: `Backup "${name}"`, callback_data: `backup_app:${name}` }]]
-                  }
+                  reply_markup: { inline_keyboard: [[{ text: `Backup "${name}"`, callback_data: `backup_app:${name}` }]] }
               }
           );
           buildResult = true;
-
           if (isFreeTrial) {
             await recordFreeTrialForMonitoring(chatId, name, TELEGRAM_CHANNEL_ID);
             const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
             const ONE_HOUR_IN_MS = 1 * 60 * 60 * 1000;
-            
             setTimeout(async () => {
                 const adminWarningMessage = `Free Trial App "*${escapeMarkdown(name)}*" has 1 hour left until deletion!`;
                 const keyboard = { inline_keyboard: [[{ text: `Delete "*${escapeMarkdown(name)}" Now`, callback_data: `admin_delete_trial_app:${name}` }]] };
                 await bot.sendMessage(ADMIN_ID, adminWarningMessage, { reply_markup: keyboard, parse_mode: 'Markdown' });
-                console.log(`[FreeTrial] Sent 1-hour warning to admin for ${name}.`);
             }, THREE_DAYS_IN_MS - ONE_HOUR_IN_MS);
-
             setTimeout(async () => {
                 try {
                     await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted as its 3-day runtime has ended.`);
@@ -866,7 +740,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                     await deleteUserBot(chatId, name);
                     await markDeploymentDeletedFromHeroku(chatId, name);
                     await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
-                    console.log(`[FreeTrial] Auto-deleted app ${name} after 3 days.`);
                 } catch (e) {
                     console.error(`Failed to auto-delete free trial app ${name}:`, e.message);
                     await bot.sendMessage(chatId, `Could not auto-delete "*${escapeMarkdown(name)}*". Please delete it from your Heroku dashboard.`, {parse_mode: 'Markdown'});
@@ -887,9 +760,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 chat_id: chatId,
                 message_id: createMsg.message_id,
                 parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]]
-                }
+                reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${name}:${chatId}` }]] }
             }
           );
           buildResult = false;
@@ -907,7 +778,6 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
   }
   return buildResult;
 }
-
 
 module.exports = {
     init,
@@ -941,5 +811,6 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
-    syncDatabases
+    syncDatabases,
+    backupAllPaidBots
 };
