@@ -451,6 +451,54 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
+// --- NEW FUNCTION for backing up all bots ---
+async function backupAllPaidBots() {
+    console.log('[DB-Backup] Starting backup process for all paid bots...');
+    try {
+        const allBots = await getAllUserBots();
+        if (!allBots || allBots.length === 0) {
+            console.log('[DB-Backup] No bots found in the main database to back up.');
+            return { success: true, message: 'No bots to back up.' };
+        }
+
+        let backedUpCount = 0;
+        let failedCount = 0;
+
+        for (const bot of allBots) {
+            const { user_id, bot_name, bot_type } = bot;
+            try {
+                const response = await axios.get(`https://api.heroku.com/apps/${bot_name}/config-vars`, {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3'
+                    }
+                });
+                const configVars = response.data;
+                const sessionId = configVars.SESSION_ID || 'N/A';
+
+                await saveUserDeployment(user_id, bot_name, sessionId, configVars, bot_type);
+                console.log(`[DB-Backup] Successfully backed up: ${bot_name}`);
+                backedUpCount++;
+            } catch (error) {
+                failedCount++;
+                if (error.response && error.response.status === 404) {
+                    console.warn(`[DB-Backup] App not found on Heroku during backup: ${bot_name}. Marking as deleted.`);
+                    await markDeploymentDeletedFromHeroku(user_id, bot_name);
+                } else {
+                    console.error(`[DB-Backup] Failed to back up bot ${bot_name} for user ${user_id}. Error: ${error.message}`);
+                }
+            }
+        }
+        const summary = `Backup complete. Success: ${backedUpCount}, Failed: ${failedCount}.`;
+        console.log(`[DB-Backup] ${summary}`);
+        return { success: true, message: summary };
+
+    } catch (error) {
+        console.error('[DB-Backup] CRITICAL ERROR during the backupAllPaidBots process:', error);
+        return { success: false, message: `An unexpected error occurred: ${error.message}` };
+    }
+}
+
 // --- NEW FUNCTION for /copydb ---
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
@@ -941,5 +989,6 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
-    syncDatabases
+    syncDatabases,
+    backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
