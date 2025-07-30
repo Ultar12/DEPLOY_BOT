@@ -14,6 +14,7 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
