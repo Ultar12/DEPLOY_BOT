@@ -336,14 +336,18 @@ function escapeMarkdown(text) {
         .replace(/!/g, '\\!');
 }
 
+// AROUND LINE 490
+
 let emojiIndex = 0;
-const animatedEmojis = ['Loading', 'Loading.', 'Loading..', 'Loading...']; // Using text instead of emojis
+const animatedEmojis = ['◴', '◷', '◶', '◵']; // Spinning circle Unicode characters
+// --- END REPLACE ---
 
 function getAnimatedEmoji() { // This function still exists but will return text
     const emoji = animatedEmojis[emojiIndex];
     emojiIndex = (emojiIndex + 1) % animatedEmojis.length;
     return emoji;
 }
+
 
 // REDUCED ANIMATION FREQUENCY
 async function animateMessage(chatId, messageId, baseText) {
@@ -4481,17 +4485,32 @@ if (action === 'setvarbool') {
       return;
   }
 
+  // AROUND LINE 1400 (inside bot.on('callback_query', async q => { ... }))
+
   if (action === 'redeploy_app') {
     const appName = payload;
     const messageId = q.message.message_id;
 
-    const isOwner = (await dbServices.getUserIdByBotName(appName)) === cid; // Use dbServices
-    if (cid !== ADMIN_ID && !isOwner) {
+    // --- CRITICAL FIX START ---
+    // 1. Get the actual owner's user_id from the database based on the appName
+    const actualOwnerId = await dbServices.getUserIdByBotName(appName);
+    if (!actualOwnerId) {
+        await bot.editMessageText(`Cannot redeploy "*${appName}*": Bot owner not found in database.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+        return;
+    }
+
+    // 2. Check authorization: current user (cid) must be ADMIN OR the actual owner
+    const isAdmin = cid === ADMIN_ID; // Your ADMIN_ID is already defined
+    const isOwner = actualOwnerId === cid;
+
+    if (!isAdmin && !isOwner) { // Only admin or owner can redeploy
         await bot.editMessageText("You are not authorized to redeploy this app.", { chat_id: cid, message_id: messageId });
         return;
     }
 
-    const botTypeForRedeploy = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+    // 3. Now, get the bot type using the actual owner's ID and appName
+    const botTypeForRedeploy = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [actualOwnerId, appName])).rows[0]?.bot_type || 'levanter';
+    // --- CRITICAL FIX END ---
 
     await bot.sendChatAction(cid, 'typing');
     await bot.editMessageText(`Redeploying "*${appName}*" from GitHub...`, {
@@ -4504,7 +4523,8 @@ if (action === 'setvarbool') {
     try {
         const bres = await axios.post(
             `https://api.heroku.com/apps/${appName}/builds`,
-            { source_blob: { url: `${botTypeForRedeploy === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL}/tarball/main` } }, // Dynamic URL
+            // This line already correctly uses botTypeForRedeploy, so no change needed here.
+            { source_blob: { url: `${botTypeForRedeploy === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL}/tarball/main` } },
             {
                 headers: {
                     Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -4558,8 +4578,10 @@ if (action === 'setvarbool') {
             `https://api.heroku.com/apps/${appName}/config-vars`,
             { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
         )).data;
-        await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, botTypeForRedeploy); // Use dbServices
 
+        // --- IMPORTANT FIX: Pass the actualOwnerId to saveUserDeployment ---
+        await dbServices.saveUserDeployment(actualOwnerId, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, botTypeForRedeploy);
+        // --- END IMPORTANT FIX ---
 
         await bot.editMessageText(`App "*${appName}*" redeployed successfully!`, {
             chat_id: cid,
@@ -4573,7 +4595,8 @@ if (action === 'setvarbool') {
 
     } catch (e) {
         if (e.response && e.response.status === 404) {
-            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true); // Use dbServices
+            // Pass true for isUserFacing if the current user (cid) is the owner, false if admin is doing it.
+            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, isOwner);
             return;
         }
         const errorMsg = e.response?.data?.message || e.message;
@@ -4592,6 +4615,7 @@ if (action === 'setvarbool') {
     }
     return;
   }
+
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
