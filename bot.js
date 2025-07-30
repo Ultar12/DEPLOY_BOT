@@ -336,13 +336,13 @@ function escapeMarkdown(text) {
         .replace(/!/g, '\\!');
 }
 
-// AROUND LINE 490
+// AROUND LINE 490 (inside bot.js)
 
 let emojiIndex = 0;
-const animatedEmojis = ['◴', '◷', '◶', '◵']; // Spinning circle Unicode characters
+const animatedEmojis = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣']; // Full-color circle emojis for animation
 // --- END REPLACE ---
 
-function getAnimatedEmoji() { // This function still exists but will return text
+function getAnimatedEmoji() {
     const emoji = animatedEmojis[emojiIndex];
     emojiIndex = (emojiIndex + 1) % animatedEmojis.length;
     return emoji;
@@ -353,7 +353,11 @@ function getAnimatedEmoji() { // This function still exists but will return text
 async function animateMessage(chatId, messageId, baseText) {
     const intervalId = setInterval(async () => {
         try {
-            await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
+            // --- REPLACE THIS LINE ---
+            // await bot.editMessageText(`${getAnimatedEmoji()} ${baseText}`, {
+            // --- WITH THIS ---
+            await bot.editMessageText(`${baseText} ${getAnimatedEmoji()}`, {
+            // --- END REPLACE ---
                 chat_id: chatId,
                 message_id: messageId
             }).catch(() => {});
@@ -361,9 +365,10 @@ async function animateMessage(chatId, messageId, baseText) {
             console.error(`Error animating message ${messageId}:`, e.message);
             clearInterval(intervalId);
         }
-    }, 2000); // Changed from 1500ms to 2000ms
+    }, 2000);
     return intervalId;
 }
+
 
 // --- REPLACE your old sendBappList function with this one ---
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
@@ -413,8 +418,14 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
 
 
 
+// AROUND LINE 520 (inside bot.js)
+
 async function sendAnimatedMessage(chatId, baseText) {
-    const msg = await bot.sendMessage(chatId, `${getAnimatedEmoji()} ${baseText}...`);
+    // --- REPLACE THIS LINE ---
+    // const msg = await bot.sendMessage(chatId, `${getAnimatedEmoji()} ${baseText}...`);
+    // --- WITH THIS ---
+    const msg = await bot.sendMessage(chatId, `${baseText}... ${getAnimatedEmoji()}`);
+    // --- END REPLACE ---
     await new Promise(r => setTimeout(r, 1200));
     return msg;
 }
