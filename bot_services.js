@@ -104,6 +104,47 @@ async function getUserBots(u) {
   }
 }
 
+// === Backup Expiration and Warning Functions ===
+
+async function getExpiringBackups() {
+    try {
+        const result = await pool.query(
+            `SELECT user_id, app_name, expiration_date FROM user_deployments 
+             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
+        );
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get expiring backups:`, error.message);
+        return [];
+    }
+}
+
+async function setBackupWarningSent(userId, appName) {
+    try {
+        await pool.query(
+            'UPDATE user_deployments SET warning_sent_at = NOW() WHERE user_id = $1 AND app_name = $2;',
+            [userId, appName]
+        );
+    } catch (error) {
+        console.error(`[DB] Failed to set backup warning sent for ${appName}:`, error.message);
+    }
+}
+
+async function getExpiredBackups() {
+    try {
+        const result = await pool.query(
+            `SELECT user_id, app_name FROM user_deployments WHERE expiration_date <= NOW();`
+        );
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get expired backups:`, error.message);
+        return [];
+    }
+}
+
+
+// === Backup, Restore, and Sync Functions ===
+
 async function getUserIdByBotName(botName) {
     try {
         const r = await pool.query(
@@ -990,5 +1031,8 @@ module.exports = {
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
     syncDatabases,
+    getExpiringBackups,
+    setBackupWarningSent,
+    getExpiredBackups,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
