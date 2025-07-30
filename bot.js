@@ -339,7 +339,7 @@ function escapeMarkdown(text) {
 // AROUND LINE 490 (inside bot.js)
 
 let emojiIndex = 0;
-const animatedEmojis = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣']; // Full-color circle emojis for animation
+const animatedEmojis = ['🕛', '🕒', '🕡', '🕘', '🕛', '🕒']; // Full-color circle emojis for animation
 // --- END REPLACE ---
 
 function getAnimatedEmoji() {
