@@ -913,6 +913,54 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
+      app.post('/paystack/webhook', express.json(), async (req, res) => {
+        // Verify the webhook signature for security
+        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                           .update(JSON.stringify(req.body))
+                           .digest('hex');
+        if (hash !== req.headers['x-paystack-signature']) {
+            console.warn('Invalid Paystack signature received.');
+            return res.sendStatus(401); // Unauthorized
+        }
+
+        const event = req.body;
+        console.log(`Received Paystack event: ${event.event}`);
+
+        if (event.event === 'charge.success') {
+            const reference = event.data.reference;
+            try {
+                const result = await pool.query('SELECT user_id FROM pending_payments WHERE reference = $1', [reference]);
+                if (result.rows.length === 0) {
+                    console.warn(`Webhook for reference ${reference} received, but no pending payment found.`);
+                    return res.sendStatus(200);
+                }
+                const { user_id } = result.rows[0];
+
+                // Generate a new 1-use key and add it to the database
+                const newKey = generateKey();
+                await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
+
+                // Send the key to the user
+                await bot.sendMessage(user_id,
+                    `Payment confirmed!\n\nThank you. Here is your one-time deploy key:\n\n` +
+                    `\`${newKey}\`\n\n` +
+                    `You can now use this key to deploy your bot.`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                // Clean up the pending payment record
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
+                console.log(`Successfully processed payment and delivered key for reference: ${reference}`);
+
+            } catch (dbError) {
+                console.error(`Webhook DB Error for reference ${reference}:`, dbError);
+                return res.sendStatus(500); 
+            }
+        }
+        
+        res.sendStatus(200);
+    });
+
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
 app.get('/api/get-key', async (req, res) => {
     const providedApiKey = req.headers['x-api-key'];
@@ -1755,6 +1803,68 @@ bot.on('message', async msg => {
           delete userStates[cid];
       }
       return;
+
+      if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
+    const email = text.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
+    }
+
+    delete userStates[cid];
+    const sentMsg = await bot.sendMessage(cid, 'Generating payment link...');
+
+    try {
+        const reference = crypto.randomBytes(16).toString('hex');
+        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1000) * 100;
+
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email) VALUES ($1, $2, $3)',
+            [reference, cid, email]
+        );
+
+        const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
+            {
+                email: email,
+                amount: priceInKobo,
+                reference: reference,
+                metadata: {
+                    user_id: cid,
+                    product: "Telegram Bot Deploy Key"
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+                }
+            }
+        );
+
+        const paymentUrl = paystackResponse.data.data.authorization_url;
+
+        await bot.editMessageText(
+            'Click the button below to complete your payment. You will receive your key automatically after payment is confirmed.',
+            {
+                chat_id: cid,
+                message_id: sentMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Pay Now', url: paymentUrl }]
+                    ]
+                }
+            }
+        );
+
+    } catch (error) {
+        console.error("Paystack error:", error.response?.data || error.message);
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later or contact support.', {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+    }
+    return;
+  }
+
   }
 
   // --- REPLACE this entire block in bot.js ---
@@ -2725,6 +2835,15 @@ if (action === 'select_deploy_type') {
     }
     return;
 }
+
+      if (action === 'buy_key') {
+        userStates[cid] = { step: 'AWAITING_EMAIL_FOR_PAYMENT', data: {} };
+        await bot.editMessageText('To proceed with the payment, please enter your email address:', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        return;
+    }
 
 
 
