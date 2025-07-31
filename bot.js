@@ -4067,7 +4067,7 @@ if (action === 'info') {
       });
   }
 
-        if (action === 'setvar') {
+ if (action === 'setvar') {
         const appName = payload;
         const messageId = q.message.message_id;
 
@@ -4108,20 +4108,31 @@ if (action === 'info') {
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
                      `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n`;
 
+        // --- START OF THE FIX ---
+        // Base keyboard layout
         const keyboard = [
             [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
             [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` }, { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
-            [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }],
-            [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]
+            [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }]
         ];
         
+        // Conditionally add the next row based on bot type
         if (botTypeForSetVar === 'levanter') {
             varInfo += `\`STATUS_VIEW_EMOJI\`: ${formatVarValue(configVars.STATUS_VIEW_EMOJI)}\n`;
-            keyboard.push([{ text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }]);
+            // Add the combined row with SUDO and STATUS_VIEW_EMOJI
+            keyboard.push([
+                { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` },
+                { text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }
+            ]);
+        } else {
+            // For Raganork, add the SUDO-only row
+            keyboard.push([{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]);
         }
 
+        // Add the final common rows
         keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
         keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
+        // --- END OF THE FIX ---
 
         varInfo += `\nSelect a variable to set:`;
 
@@ -4130,6 +4141,7 @@ if (action === 'info') {
           reply_markup: { inline_keyboard: keyboard }
         });
     }
+
 
   if (action === 'restore_all_bots') {
       handleRestoreAllSelection(q); // This shows the list
