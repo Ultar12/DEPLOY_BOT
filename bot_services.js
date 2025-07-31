@@ -383,7 +383,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                bot_type = EXCLUDED.bot_type,
                deleted_from_heroku_at = NULL;
         `;
-        await backupPool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
+        await Pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
         console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
     } catch (error) {
         console.error(`[DB-Backup] Failed to save user deployment for ${appName}:`, error.message, error.stack);
@@ -392,7 +392,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
 
 async function getUserDeploymentsForRestore(userId) {
     try {
-        const result = await backupPool.query(
+        const result = await Pool.query(
             `SELECT app_name, session_id, config_vars, deploy_date, expiration_date, bot_type, deleted_from_heroku_at
              FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC;`,
             [userId]
@@ -407,7 +407,7 @@ async function getUserDeploymentsForRestore(userId) {
 
 async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
-        const result = await backupPool.query(
+        const result = await Pool.query(
             'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;',
             [userId, appName]
         );
@@ -425,7 +425,7 @@ async function deleteUserDeploymentFromBackup(userId, appName) {
 
 async function markDeploymentDeletedFromHeroku(userId, appName) {
     try {
-        await backupPool.query(
+        await Pool.query(
             `UPDATE user_deployments
              SET deleted_from_heroku_at = NOW()
              WHERE user_id = $1 AND app_name = $2;`,
@@ -439,7 +439,7 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
 
 async function getAllDeploymentsFromBackup(botType) {
     try {
-        const result = await backupPool.query(
+        const result = await Pool.query(
             `SELECT user_id, app_name, session_id, config_vars
              FROM user_deployments WHERE bot_type = $1 ORDER BY deploy_date;`,
             [botType]
@@ -454,7 +454,7 @@ async function getAllDeploymentsFromBackup(botType) {
 
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
     try {
-        await backupPool.query(
+        await Pool.query(
             `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
              ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
             [userId, appName, channelId]
@@ -467,7 +467,7 @@ async function recordFreeTrialForMonitoring(userId, appName, channelId) {
 
 async function getMonitoredFreeTrials() {
     try {
-        const result = await backupPool.query('SELECT * FROM free_trial_monitoring;');
+        const result = await Pool.query('SELECT * FROM free_trial_monitoring;');
         return result.rows;
     } catch (error) {
         console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
@@ -477,7 +477,7 @@ async function getMonitoredFreeTrials() {
 
 async function updateFreeTrialWarning(userId) {
     try {
-        await backupPool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
+        await Pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
     } catch (error) {
         console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
     }
@@ -485,7 +485,7 @@ async function updateFreeTrialWarning(userId) {
 
 async function removeMonitoredFreeTrial(userId) {
     try {
-        await backupPool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
+        await Pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
         console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
     } catch (error) {
         console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
