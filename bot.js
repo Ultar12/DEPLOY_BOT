@@ -2420,23 +2420,31 @@ if (text === 'Deploy' || text === 'Free Trial') {
     
     // WITH THIS CORRECTED BLOCK:
 // ===================================================================
+// THIS IS THE NEW CODE
 if (usesLeft === null) {
-    const contactOwnerMessage = `Invalid Key. Please contact the owner for a valid KEY.`;
-    const contactOwnerKeyboard = {
+    const price = process.env.KEY_PRICE_NGN || '1000'; // Get price from env
+    const invalidKeyMessage = `Invalid Key. Please try another key, or purchase a new one.`;
+    
+    // Create a new keyboard with the "Buy Key" button
+    const invalidKeyKeyboard = {
         inline_keyboard: [
             [
-                { text: 'Contact Owner (WhatsApp)', url: 'https://wa.me/2349163916314' }, // Make sure this number is correct
-                { text: 'Contact Owner (Telegram)', url: 'https://t.me/${SUPPORT_USERNAME.substring(1)}' }
+                { text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }
+            ],
+            [
+                { text: 'Contact Owner (Telegram)', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }
             ]
         ]
     };
-    await bot.editMessageText(contactOwnerMessage, {
+
+    await bot.editMessageText(invalidKeyMessage, {
       chat_id: cid,
       message_id: verificationMsg.message_id,
-      reply_markup: contactOwnerKeyboard
+      reply_markup: invalidKeyKeyboard
     });
     return;
 }
+
     await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
         chat_id: cid,
         message_id: verificationMsg.message_id
