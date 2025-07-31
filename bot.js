@@ -16,6 +16,8 @@ const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const crypto = require('crypto');
+
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
