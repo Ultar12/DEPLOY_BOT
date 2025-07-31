@@ -926,7 +926,7 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-          app.post('/paystack/webhook', express.json(), async (req, res) => {
+              app.post('/paystack/webhook', express.json(), async (req, res) => {
         // Verify the webhook signature for security
         const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
                            .update(JSON.stringify(req.body))
@@ -941,10 +941,6 @@ const crypto = require('crypto');
 
         if (event.event === 'charge.success') {
             const reference = event.data.reference;
-            const amount = event.data.amount / 100; // Convert from kobo to Naira
-            const currency = event.data.currency;
-            const customerEmail = event.data.customer.email;
-
             try {
                 const result = await pool.query('SELECT user_id FROM pending_payments WHERE reference = $1', [reference]);
                 if (result.rows.length === 0) {
@@ -956,30 +952,33 @@ const crypto = require('crypto');
                 const newKey = generateKey();
                 await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
 
+                // --- START OF CHANGE: Added reply_markup with a button ---
                 await bot.sendMessage(user_id,
                     `Payment confirmed!\n\nThank you for your purchase. Here is your one-time deploy key:\n\n` +
                     `\`${newKey}\`\n\n` +
                     `You can now use this key to deploy your bot.`,
-                    { parse_mode: 'Markdown' }
+                    { 
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                            ]
+                        }
+                    }
                 );
+                // --- END OF CHANGE ---
+                  // Add this block to show a friendly message if someone visits the webhook URL in a browser
+    app.get('/paystack/webhook', (req, res) => {
+        res.status(200).send('<h1>Webhook URL</h1><p>This URL is for notifications from Paystack. Please return to your Telegram bot to continue.</p>');
+    });
+
                 
-                // --- START: Admin Notification Logic ---
+                // Admin notification logic remains here...
                 const userChat = await bot.getChat(user_id);
-                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''} ${userChat.last_name || ''}`.trim();
-
-                const adminMessage = `
-*New Successful Payment!*
-
-*Amount:* ${amount} ${currency}
-*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)
-*Email:* ${escapeMarkdown(customerEmail)}
-*Reference:* \`${reference}\`
-
-*Key Generated:* \`${newKey}\`
-                `;
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+                const adminMessage = `*New Payment!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key Generated:* \`${newKey}\``;
                 await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
-                // --- END: Admin Notification Logic ---
-                
+
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
                 console.log(`Successfully processed payment and delivered key for reference: ${reference}`);
 
@@ -991,6 +990,7 @@ const crypto = require('crypto');
         
         res.sendStatus(200);
     });
+
 
 
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
