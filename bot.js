@@ -2680,13 +2680,24 @@ if (action === 'select_deploy_type') {
       
     st.data.botType = botType;
 
+    // NEW CODE
     if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
         st.step = 'AWAITING_KEY';
-        await bot.editMessageText(`You chose *${botType.toUpperCase()}*. Please enter your Deploy key:`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
+        const price = process.env.KEY_PRICE_NGN || '1000'; // Default price if not set
+        await bot.editMessageText(
+            `You chose *${botType.toUpperCase()}*.\n\nPlease enter your Deploy Key, or purchase one for *₦${price}*.`, 
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
+                    ]
+                }
+            }
+        );
+
     } else { 
         st.step = 'SESSION_ID';
         let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
