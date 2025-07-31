@@ -4067,91 +4067,69 @@ if (action === 'info') {
       });
   }
 
-    if (action === 'setvar') {
-    const appName = payload; // The app name is the payload for 'setvar'
-    const messageId = q.message.message_id; // The message ID to edit
+        if (action === 'setvar') {
+        const appName = payload;
+        const messageId = q.message.message_id;
 
-    // Ensure the current state is correct for 'setvar'
-    const st = userStates[cid];
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid]; // Clear invalid state
-        return;
-    }
-
-    // --- CRITICAL ADDITION: FETCH CONFIG VARS ---
-    let configVars = {}; // Declare and initialize configVars
-    try {
-        const apiHeaders = {
-            Authorization: `Bearer ${HEROKU_API_KEY}`,
-            Accept: 'application/vnd.heroku+json; version=3'
-        };
-        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: apiHeaders });
-        configVars = configRes.data; // Assign the fetched data
-    } catch (e) {
-        if (e.response && e.response.status === 404) {
-            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
+        const st = userStates[cid];
+        if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+            await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
+            delete userStates[cid];
             return;
         }
-        const errorMsg = e.response?.data?.message || e.message;
-        console.error(`Error fetching config vars for ${appName}:`, errorMsg, e.stack);
-        await bot.editMessageText(`Error fetching config variables: ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]] }
-        });
-        return; // Exit if fetching config vars fails
-    }
-    // --- END CRITICAL ADDITION ---
 
-    // Define a helper function to format boolean-like variables (ensure this is defined in your bot.js scope)
-    function formatVarValue(val) {
-        if (val === 'true') return 'true';
-        if (val === 'false') return 'false';
-        if (val === 'p') return 'enabled (anti-delete)'; // For ANTI_DELETE
-        if (val === 'no-dl') return 'enabled (no download)'; // For AUTO_STATUS_VIEW specific
-        return val || 'Not Set'; // Default for any other undefined/null value
-    }
+        let configVars = {};
+        try {
+            const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+            configVars = configRes.data;
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
+                return;
+            }
+            return bot.editMessageText(`Error fetching config variables: ${e.response?.data?.message || e.message}`, { chat_id: cid, message_id: messageId });
+        }
+        
+        function formatVarValue(val) {
+            if (val === 'p') return 'enabled (anti-delete)';
+            if (val === 'no-dl') return 'enabled (no download)';
+            return val || 'Not Set';
+        }
 
-    const sessionIDValue = configVars.SESSION_ID ? `\`${escapeMarkdown(String(configVars.SESSION_ID))}\`` : '`Not Set`';
-    // Ensure 'pool' is accessible here. It should be from your global setup.
-    const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+        const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+        const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
+        const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
 
-    const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
-    const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
-
-    const varInfo = `*Current Config Variables for ${appName}:*\n` +
-                     `*Bot Type:* \`${botTypeForSetVar.toUpperCase()}\`\n` +
-                     `\`SESSION_ID\`: ${sessionIDValue}\n` +
+        let varInfo = `*Current Vars for ${appName} (${botTypeForSetVar.toUpperCase()}):*\n` +
+                     `\`SESSION_ID\`: ${configVars.SESSION_ID ? '`Set`' : '`Not Set`'}\n` +
                      `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` +
                      `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
                      `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` +
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
-                     `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n\n` +
-                     `Select a variable to set:`;
+                     `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n`;
 
-    return bot.editMessageText(varInfo, {
-      chat_id: cid,
-      message_id: messageId,
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          // IMPORTANT: Ensure you pass appName as 'extra' and botTypeForSetVar as 'flag' in callback_data
-          // This allows subsequent varselect/setvarbool actions to use them.
-          [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
-          [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` },
-           { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
-          [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` },
-           { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }],
-          [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }],
-          [{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }],
-          [{ text: 'Back', callback_data: `selectapp:${appName}` }]
-        ]
-      }
-    });
-}
+        const keyboard = [
+            [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
+            [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` }, { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
+            [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }],
+            [{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]
+        ];
+        
+        if (botTypeForSetVar === 'levanter') {
+            varInfo += `\`STATUS_VIEW_EMOJI\`: ${formatVarValue(configVars.STATUS_VIEW_EMOJI)}\n`;
+            keyboard.push([{ text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }]);
+        }
 
+        keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
+        keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
+
+        varInfo += `\nSelect a variable to set:`;
+
+        return bot.editMessageText(varInfo, {
+          chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+    }
 
   if (action === 'restore_all_bots') {
       handleRestoreAllSelection(q); // This shows the list
@@ -4170,75 +4148,63 @@ if (action === 'info') {
   }
 
 if (action === 'varselect') {
-    const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
-    const st = userStates[cid];
-    
-    // State validation
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
-        await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-        delete userStates[cid];
-        return;
-    }
-    const messageId = q.message.message_id;
+    if (action === 'varselect') {
+        const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
+        const st = userStates[cid];
+        
+        if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
+            await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
+            delete userStates[cid];
+            return;
+        }
+        const messageId = q.message.message_id;
 
-    // Fix for unresponsive Session ID button
-    if (varKey === 'SESSION_ID') {
-        userStates[cid].step = 'SETVAR_ENTER_VALUE';
-        userStates[cid].data.VAR_NAME = 'SESSION_ID';
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.isFreeTrial = false;
-        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
-        return bot.sendMessage(cid, `Please enter the new value for *SESSION_ID*:`, { parse_mode: 'Markdown' });
-    } 
-    
-    // Logic for other boolean-like variables
-    else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'PREFIX', 'AUTO_READ_STATUS', 'HANDLERS'].includes(varKey)) {
-        userStates[cid].step = 'SETVAR_ENTER_VALUE';
-        const actualVarName = (botTypeFromVarSelect === 'raganork' && varKey === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' :
-                             (botTypeFromVarSelect === 'raganork' && varKey === 'PREFIX') ? 'HANDLERS' : varKey;
-        userStates[cid].data.VAR_NAME = actualVarName;
-        userStates[cid].data.APP_NAME = appName;
-        userStates[cid].data.isFreeTrial = false;
-        userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
-
-        if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(actualVarName)) {
-            return bot.editMessageText(`Set *${actualVarName}* to:`, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown',
+        if (varKey === 'STATUS_VIEW_EMOJI') {
+             return bot.editMessageText(`Set *STATUS_VIEW_EMOJI* to:`, {
+                chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'true', callback_data: `setvarbool:${actualVarName}:${appName}:true` }],
-                        [{ text: 'false', callback_data: `setvarbool:${actualVarName}:${appName}:false` }],
-                        [{ text: 'Back', callback_data: `setvar:${appName}` }] // This correctly handles the back state
+                        [{ text: 'On (❤️,💕,💜)', callback_data: `set_emoji_status:${appName}:on` }],
+                        [{ text: 'Off', callback_data: `set_emoji_status:${appName}:off` }],
+                        [{ text: 'Back', callback_data: `setvar:${appName}` }]
+                    ]
+                }
+            });
+        } else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(varKey)) {
+            return bot.editMessageText(`Set *${varKey}* to:`, {
+                chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Enable', callback_data: `setvarbool:${varKey}:${appName}:true` }],
+                        [{ text: 'Disable', callback_data: `setvarbool:${varKey}:${appName}:false` }],
+                        [{ text: 'Back', callback_data: `setvar:${appName}` }]
+                    ]
+                }
+            });
+        } else if (varKey === 'SESSION_ID') {
+            userStates[cid].step = 'SETVAR_ENTER_VALUE';
+            userStates[cid].data.VAR_NAME = 'SESSION_ID';
+            userStates[cid].data.APP_NAME = appName;
+            userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
+            return bot.sendMessage(cid, `Please enter the new value for *SESSION_ID*:`, { parse_mode: 'Markdown' });
+        } else if (varKey === 'OTHER_VAR') {
+            userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
+            userStates[cid].data.appName = appName;
+            return bot.sendMessage(cid, 'Enter the variable name (e.g., `WORK_TYPE`):`, { parse_mode: 'Markdown' });
+        } else if (varKey === 'SUDO_VAR') {
+            return bot.editMessageText(`Manage *SUDO* for "*${appName}*":`, {
+                chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
+                        [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
+                        [{ text: 'Back', callback_data: `setvar:${appName}` }]
                     ]
                 }
             });
         }
-        return bot.sendMessage(cid, `Please enter the new value for *${actualVarName}*:`, { parse_mode: 'Markdown' });
-    } 
-    
-    // Logic for other variable types
-    else if (varKey === 'OTHER_VAR') {
-        userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
-        return bot.sendMessage(cid, 'Please enter the name of the variable you want to set (e.g., `WORK_TYPE`):', { parse_mode: 'Markdown' });
-    } 
-    else if (varKey === 'SUDO_VAR') {
-        return bot.editMessageText(`How do you want to manage *SUDO* for "*${appName}*"?`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Add Number', callback_data: `sudo_action:add:${appName}` }],
-                    [{ text: 'Remove Number', callback_data: `sudo_action:remove:${appName}` }],
-                    [{ text: 'Back to Set Variable Menu', callback_data: `setvar:${appName}` }] // This correctly handles the back state
-                ]
-            }
-        });
     }
-}
-  
+
 
   if (action === 'sudo_action') {
       const sudoAction = payload;
@@ -4306,6 +4272,31 @@ if (action === 'varselect') {
           return;
       }
   }
+
+      if (action === 'set_emoji_status') {
+        const [appName, value] = [payload, extra];
+        const varKey = 'STATUS_VIEW_EMOJI';
+        const herokuValue = value === 'on' ? '❤️,💕,💜' : '';
+
+        try {
+            const updateMsg = await bot.editMessageText(`Updating *${varKey}* for "*${appName}*"...`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown' });
+            
+            await axios.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varKey]: herokuValue }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+            
+            const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`,{ headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }})).data;
+            const botType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+            await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, botType);
+            
+            await bot.editMessageText(`Variable *${varKey}* for "*${appName}*" updated successfully! The bot will restart to apply changes.`, {
+                chat_id: cid, message_id: updateMsg.message_id, parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]] }
+            });
+        } catch (e) {
+            await bot.editMessageText(`Error updating variable: ${e.response?.data?.message || e.message}`, { chat_id: cid, message_id: q.message.message_id });
+        }
+        return;
+    }
+
 
 if (action === 'setvarbool') {
   const [varKeyFromCallback, appName, valStr] = [payload, extra, flag]; // <<< CHANGED: Renamed varKey to varKeyFromCallback
