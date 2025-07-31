@@ -124,6 +124,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+  await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'online';`);
+          
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
@@ -1314,38 +1316,40 @@ bot.onText(/^\/stats$/, async (msg) => {
     await dbServices.updateUserActivity(cid);
 
     try {
-        // --- Active Bot Stats (from main DB) ---
+        // Active Bot Stats
         const botCountsResult = await pool.query('SELECT bot_type, COUNT(bot_name) as count FROM user_bots GROUP BY bot_type');
-        let levanterCount = 0;
-        let raganorkCount = 0;
+        let levanterCount = 0, raganorkCount = 0;
         botCountsResult.rows.forEach(row => {
             if (row.bot_type === 'levanter') levanterCount = parseInt(row.count, 10);
             else if (row.bot_type === 'raganork') raganorkCount = parseInt(row.count, 10);
         });
-        
         const totalUsers = (await pool.query('SELECT COUNT(DISTINCT user_id) AS count FROM user_bots')).rows[0].count;
-        const totalBots = (await pool.query('SELECT COUNT(bot_name) AS count FROM user_bots')).rows[0].count;
+        const totalBots = levanterCount + raganorkCount;
 
-        // --- START OF NEW CODE: Backup Bot Stats (from backup DB) ---
+        // Backup Bot Stats
         const backupCountsResult = await backupPool.query('SELECT bot_type, COUNT(app_name) as count FROM user_deployments GROUP BY bot_type');
-        let backupLevanterCount = 0;
-        let backupRaganorkCount = 0;
+        let backupLevanterCount = 0, backupRaganorkCount = 0;
         backupCountsResult.rows.forEach(row => {
             if (row.bot_type === 'levanter') backupLevanterCount = parseInt(row.count, 10);
             else if (row.bot_type === 'raganork') backupRaganorkCount = parseInt(row.count, 10);
         });
         const totalBackupBots = backupLevanterCount + backupRaganorkCount;
-        // --- END OF NEW CODE ---
+
+        // --- START OF NEW LOGIC: Logged Out Bot Stats ---
+        const loggedOutResult = await pool.query(`SELECT bot_name, bot_type FROM user_bots WHERE status = 'logged_out'`);
+        const loggedOutBots = loggedOutResult.rows;
+        const totalLoggedOut = loggedOutBots.length;
+
+        const loggedOutLevanter = loggedOutBots.filter(b => b.bot_type === 'levanter').map(b => `  - \`${b.bot_name}\``).join('\n');
+        const loggedOutRaganork = loggedOutBots.filter(b => b.bot_type === 'raganork').map(b => `  - \`${b.bot_name}\``).join('\n');
+        // --- END OF NEW LOGIC ---
 
         const activeKeys = await dbServices.getAllDeployKeys();
-        const keyDetails = activeKeys.length > 0
-            ? activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n')
-            : 'No active deploy keys.';
-
-        const totalFreeTrialUsers = (await pool.query('SELECT COUNT(DISTINCT user_id) AS count FROM temp_deploys')).rows[0].count;
+        const keyDetails = activeKeys.length > 0 ? activeKeys.map(k => `\`${k.key}\` (Uses: ${k.uses_left})`).join('\n') : 'No active deploy keys.';
+        const totalFreeTrialUsers = (await pool.query('SELECT COUNT(user_id) AS count FROM temp_deploys')).rows[0].count;
         const totalBannedUsers = (await pool.query('SELECT COUNT(user_id) AS count FROM banned_users')).rows[0].count;
 
-        const statsMessage = `
+        let statsMessage = `
 *Bot Statistics:*
 
 *Total Unique Users:* ${totalUsers}
@@ -1364,6 +1368,17 @@ bot.onText(/^\/stats$/, async (msg) => {
 ${keyDetails}
         `;
 
+        // --- Add the new section to the message ---
+        if (totalLoggedOut > 0) {
+            statsMessage += `\n*Logged Out Bots (${totalLoggedOut}):*\n`;
+            if (loggedOutLevanter) {
+                statsMessage += `*Levanter:*\n${loggedOutLevanter}\n`;
+            }
+            if (loggedOutRaganork) {
+                statsMessage += `*Raganork:*\n${loggedOutRaganork}\n`;
+            }
+        }
+        
         await bot.sendMessage(cid, statsMessage, { parse_mode: 'Markdown' });
 
     } catch (error) {
@@ -1371,6 +1386,7 @@ ${keyDetails}
         await bot.sendMessage(cid, `An error occurred while fetching stats: ${error.message}`);
     }
 });
+
 
 
 
@@ -4730,85 +4746,52 @@ if (action === 'setvarbool') {
 
 bot.on('channel_post', async msg => {
     const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // Your channel ID
+    if (String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID || !msg.text) return;
 
-    if (!msg || !msg.chat || String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID) {
-        return;
-    }
-    const text = msg.text?.trim();
-    if (!text) {
-        return;
-    }
-
-    console.log(`[Channel Post] Received: "${text}"`);
-
-    let appName = null;
-    let isSuccess = false;
-    let isFailure = false;
-    let failureReason = 'Bot session became invalid.';
-    let sessionPart = null;
+    const text = msg.text.trim();
+    let appName = null, isSuccess = false, isFailure = false, failureReason = 'Bot session became invalid.';
 
     const connectedMatch = text.match(/\[([^\]]+)\]\s*connected/i);
     const logoutMatch = text.match(/User\s+\[([^\]]+)\]\s+has logged out/i);
+    const invalidMatch = text.match(/\[([^\]]+)\]\s*invalid/i) || text.match(/invalid session.*(RGNK[^\s,.]+)/i);
     
-    // Check for both Levanter and Raganork invalid session formats
-    const levanterInvalidMatch = text.match(/\[([^\]]+)\]\s*invalid/i);
-    const raganorkInvalidMatch = text.match(/invalid session.*(RGNK[^\s,.]+)/i);
-
-    if (levanterInvalidMatch) {
-        sessionPart = levanterInvalidMatch[1];
-    } else if (raganorkInvalidMatch) {
-        sessionPart = raganorkInvalidMatch[1];
-    }
-
-    // Determine action based on matches
     if (connectedMatch) {
         appName = connectedMatch[1];
         isSuccess = true;
-        console.log(`[Channel Post] Matched CONNECTED for app: ${appName}`);
     } else if (logoutMatch) {
         appName = logoutMatch[1];
         isFailure = true;
         failureReason = 'Bot session has logged out.';
-        console.log(`[Channel Post] Matched LOGOUT for app: ${appName}`);
-    } else if (sessionPart) {
+    } else if (invalidMatch) {
         isFailure = true;
-        failureReason = 'The session ID was detected as invalid.';
-        console.log(`[Channel Post] Matched INVALID session part: ${sessionPart}. Looking up in DB...`);
-        try {
-            const res = await pool.query(
-                `SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%' ORDER BY created_at DESC LIMIT 1`,
-                [sessionPart]
-            );
-            
-            if (res.rows.length > 0) {
-                appName = res.rows[0].bot_name;
-                console.log(`[Channel Post] DB lookup successful. Matched session part to app: ${appName}`);
-            } else {
-                 console.warn(`[Channel Post] DB lookup failed. No bot found with a session ID containing '${sessionPart}'.`);
-            }
-        } catch (dbError) {
-            console.error(`[Channel Post] DB Error looking up invalid session part '${sessionPart}':`, dbError);
-        }
+        const sessionPart = invalidMatch[1];
+        const res = await pool.query(`SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%' LIMIT 1`, [sessionPart]);
+        if (res.rows[0]) appName = res.rows[0].bot_name;
     }
+    
+    if (!appName) return;
 
-    if (!appName) {
-        console.log(`[Channel Post] Could not determine app name from message. Ignoring.`);
-        return;
+    // --- START OF NEW/UPDATED LOGIC ---
+    if (isSuccess) {
+        // Set status to 'online' in the database
+        await pool.query(`UPDATE user_bots SET status = 'online' WHERE bot_name = $1`, [appName]);
+        console.log(`[Status Update] Set "${appName}" to 'online'.`);
+    } else if (isFailure) {
+        // Set status to 'logged_out' in the database
+        await pool.query(`UPDATE user_bots SET status = 'logged_out' WHERE bot_name = $1`, [appName]);
+        console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
     }
+    // --- END OF NEW/UPDATED LOGIC ---
 
     const pendingPromise = appDeploymentPromises.get(appName);
-
     if (pendingPromise) {
-        if (isSuccess) {
-            pendingPromise.resolve('connected');
-        } else if (isFailure) {
-            pendingPromise.reject(new Error(failureReason));
-        }
+        if (isSuccess) pendingPromise.resolve('connected');
+        else if (isFailure) pendingPromise.reject(new Error(failureReason));
         appDeploymentPromises.delete(appName);
     } else if (isFailure) {
         const userId = await dbServices.getUserIdByBotName(appName);
         if (userId) {
-            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
+            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -4818,8 +4801,6 @@ bot.on('channel_post', async msg => {
         }
     }
 });
-
-// --- ADD this block AFTER the bot.on('channel_post',...) handler ---
 
 // === Free Trial Channel Membership Monitoring ===
 const ONE_HOUR_IN_MS = 60 * 60 * 1000;
