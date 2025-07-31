@@ -926,7 +926,7 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-      app.post('/paystack/webhook', express.json(), async (req, res) => {
+          app.post('/paystack/webhook', express.json(), async (req, res) => {
         // Verify the webhook signature for security
         const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
                            .update(JSON.stringify(req.body))
@@ -941,6 +941,10 @@ const crypto = require('crypto');
 
         if (event.event === 'charge.success') {
             const reference = event.data.reference;
+            const amount = event.data.amount / 100; // Convert from kobo to Naira
+            const currency = event.data.currency;
+            const customerEmail = event.data.customer.email;
+
             try {
                 const result = await pool.query('SELECT user_id FROM pending_payments WHERE reference = $1', [reference]);
                 if (result.rows.length === 0) {
@@ -949,19 +953,33 @@ const crypto = require('crypto');
                 }
                 const { user_id } = result.rows[0];
 
-                // Generate a new 1-use key and add it to the database
                 const newKey = generateKey();
                 await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
 
-                // Send the key to the user
                 await bot.sendMessage(user_id,
-                    `Payment confirmed!\n\nThank you. Here is your one-time deploy key:\n\n` +
+                    `Payment confirmed!\n\nThank you for your purchase. Here is your one-time deploy key:\n\n` +
                     `\`${newKey}\`\n\n` +
                     `You can now use this key to deploy your bot.`,
                     { parse_mode: 'Markdown' }
                 );
                 
-                // Clean up the pending payment record
+                // --- START: Admin Notification Logic ---
+                const userChat = await bot.getChat(user_id);
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''} ${userChat.last_name || ''}`.trim();
+
+                const adminMessage = `
+*New Successful Payment!*
+
+*Amount:* ${amount} ${currency}
+*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)
+*Email:* ${escapeMarkdown(customerEmail)}
+*Reference:* \`${reference}\`
+
+*Key Generated:* \`${newKey}\`
+                `;
+                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+                // --- END: Admin Notification Logic ---
+                
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
                 console.log(`Successfully processed payment and delivered key for reference: ${reference}`);
 
@@ -973,6 +991,7 @@ const crypto = require('crypto');
         
         res.sendStatus(200);
     });
+
 
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
 app.get('/api/get-key', async (req, res) => {
@@ -4367,7 +4386,7 @@ if (action === 'info') {
       return;
   }
 
-    if (action === 'varselect') {
+        if (action === 'varselect') {
         const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
         const st = userStates[cid];
         
@@ -4378,7 +4397,14 @@ if (action === 'info') {
         }
         const messageId = q.message.message_id;
 
+        // Set state for the next step
+        userStates[cid].step = 'SETVAR_ENTER_VALUE';
+        userStates[cid].data.APP_NAME = appName;
+        userStates[cid].data.botType = botTypeFromVarSelect;
+
         if (varKey === 'STATUS_VIEW_EMOJI') {
+             // This needs a different handler, so we change the step
+             userStates[cid].step = 'AWAITING_EMOJI_CHOICE'; // A placeholder step
              return bot.editMessageText(`Set *STATUS_VIEW_EMOJI* to:`, {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
                 reply_markup: {
@@ -4390,6 +4416,8 @@ if (action === 'info') {
                 }
             });
         } else if (['AUTO_STATUS_VIEW', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'AUTO_READ_STATUS'].includes(varKey)) {
+            // This also needs a different handler
+            userStates[cid].step = 'AWAITING_BOOL_CHOICE'; // A placeholder step
             return bot.editMessageText(`Set *${varKey}* to:`, {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
                 reply_markup: {
@@ -4400,19 +4428,9 @@ if (action === 'info') {
                     ]
                 }
             });
-        } else if (varKey === 'SESSION_ID') {
-            userStates[cid].step = 'SETVAR_ENTER_VALUE';
-            userStates[cid].data.VAR_NAME = 'SESSION_ID';
-            userStates[cid].data.APP_NAME = appName;
-            userStates[cid].data.botType = botTypeFromVarSelect || 'levanter';
-            return bot.sendMessage(cid, `Please enter the new value for *SESSION_ID*:`, { parse_mode: 'Markdown' });
-        } else if (varKey === 'OTHER_VAR') {
-            userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
-            userStates[cid].data.appName = appName;
-            // THIS IS THE FIXED LINE
-            return bot.sendMessage(cid, 'Enter the variable name (e.g., `WORK_TYPE`):', { parse_mode: 'Markdown' });
         } else if (varKey === 'SUDO_VAR') {
-            return bot.editMessageText(`Manage *SUDO* for "*${appName}*":`, {
+             userStates[cid].step = 'AWAITING_SUDO_CHOICE'; // Placeholder
+             return bot.editMessageText(`Manage *SUDO* for "*${appName}*":`, {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
@@ -4422,8 +4440,22 @@ if (action === 'info') {
                     ]
                 }
             });
+        } else if (varKey === 'OTHER_VAR') {
+            userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
+            userStates[cid].data.appName = appName;
+            return bot.sendMessage(cid, 'Enter the variable name (e.g., `WORK_TYPE`):', { parse_mode: 'Markdown' });
+        } else {
+            // This is for SESSION_ID, HANDLERS, PREFIX, etc.
+            // It correctly asks the user to type the value.
+            userStates[cid].data.VAR_NAME = varKey;
+            await bot.editMessageText(`Please enter the new value for *${varKey}*:`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown'
+            });
         }
     }
+
 
 
 
