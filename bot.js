@@ -2816,7 +2816,7 @@ if (action === 'select_deploy_type') {
         st.step = 'AWAITING_KEY';
         const price = process.env.KEY_PRICE_NGN || '1000'; // Default price if not set
         await bot.editMessageText(
-            `You chose *${botType.toUpperCase()}*.\n\nPlease enter your Deploy Key, or purchase one for *₦${price}*.`, 
+            `You chose *${botType.toUpperCase()}*.\n\nPlease enter your Deploy Key.`, 
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
