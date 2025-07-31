@@ -2122,27 +2122,37 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
+  // THIS IS THE NEW, UPDATED CODE
   if (text === 'My Bots') {
     console.log(`[Flow] My Bots button clicked by user: ${cid}`);
-    const bots = await dbServices.getUserBots(cid); // Use dbServices
+    const bots = await dbServices.getUserBots(cid);
+
     if (!bots.length) {
         return bot.sendMessage(cid, "You have not deployed any bots yet. Would you like to deploy your first bot or restore a backup?", {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }] // New button
+                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
                 ]
             }
         });
     }
+
     const rows = chunkArray(bots, 3).map(r => r.map(n => ({
       text: n,
       callback_data: `selectbot:${n}`
     })));
+
+    // --- THIS IS THE NEW LINE ---
+    // Add the "Restore" button as the last row
+    rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+    // --- END OF NEW LINE ---
+
     return bot.sendMessage(cid, 'Your deployed bots:', {
       reply_markup: { inline_keyboard: rows }
     });
   }
+
 
   if (text === 'Support') {
   const supportKeyboard = {
