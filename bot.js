@@ -417,7 +417,6 @@ async function sendBannedUsersList(chatId, messageId = null) {
 
 
 
-// --- REPLACE your old sendBappList function with this one ---
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
     try {
         const queryText = `
@@ -428,11 +427,12 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
         `;
         const queryParams = [botTypeFilter];
 
-        const backupResult = await backupPool.query(queryText, queryParams);
-        const deployments = backupResult.rows;
+        // --- CHANGE: Use the main 'pool' instead of 'backupPool' ---
+        const result = await pool.query(queryText, queryParams);
+        const deployments = result.rows;
 
         if (deployments.length === 0) {
-            const text = `No backed-up bots found for the type: *${botTypeFilter.toUpperCase()}*`;
+            const text = `No bots found for the type: *${botTypeFilter.toUpperCase()}*`;
             if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
             return bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
         }
@@ -446,7 +446,7 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
         });
 
         const rows = chunkArray(appButtons, 3);
-        const text = `Select a backed-up *${botTypeFilter.toUpperCase()}* app to view details:`;
+        const text = `Select a *${botTypeFilter.toUpperCase()}* app to view details:`;
         const options = {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
@@ -458,10 +458,11 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
             await bot.sendMessage(chatId, text, options);
         }
     } catch (error) {
-        console.error(`Error fetching backup app list for /bapp:`, error.message);
-        await bot.sendMessage(chatId, `An error occurred while fetching the backup app list.`);
+        console.error(`Error fetching app list for /bapp:`, error.message);
+        await bot.sendMessage(chatId, `An error occurred while fetching the app list.`);
     }
 }
+
 
 
 
@@ -1554,7 +1555,6 @@ bot.onText(/^\/backupall$/, async (msg) => {
 });
 
 
-// NEW ADMIN COMMAND: /sendall <message>
 bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     const messageText = match[1];
@@ -1563,34 +1563,30 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
 
-    await bot.sendMessage(adminId, "Broadcasting message to all users from the backup list. This may take a while...");
+    await bot.sendMessage(adminId, "Broadcasting message to all users. This may take a while...");
 
     let successCount = 0;
     let failCount = 0;
     let blockedCount = 0;
 
     try {
-        // --- CHANGE: Query the backup database (backupPool) now ---
-        const allUserIdsResult = await backupPool.query('SELECT user_id FROM all_users_backup');
+        // --- CHANGE: Query the main 'pool' instead of 'backupPool' ---
+        const allUserIdsResult = await pool.query('SELECT user_id FROM all_users_backup');
         const userIds = allUserIdsResult.rows.map(row => row.user_id);
-
+        // ... (rest of the function is the same)
+        
         if (userIds.length === 0) {
-            return bot.sendMessage(adminId, "No users found in the backup database to send messages to.");
+            return bot.sendMessage(adminId, "No users found in the all_users_backup table to send messages to.");
         }
 
         for (const userId of userIds) {
-            if (userId === adminId) continue; // Skip admin
+            if (userId === adminId) continue;
 
             try {
-                const isBanned = await dbServices.isUserBanned(userId);
-                if (isBanned) {
-                    console.log(`[SendAll] Skipping banned user: ${userId}`);
-                    continue;
-                }
-
+                if (await dbServices.isUserBanned(userId)) continue;
                 await bot.sendMessage(userId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
                 successCount++;
-                await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+                await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
                 if (error.response?.body?.description.includes("bot was blocked")) {
                     blockedCount++;
@@ -1611,6 +1607,8 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
         console.error(`[SendAll] Error fetching user list for broadcast:`, error.message);
         await bot.sendMessage(adminId, `An error occurred during broadcast: ${error.message}`);
     }
+});
+
 });
 
 
@@ -2913,7 +2911,7 @@ if (action === 'dkey_cancel') {
     // Fetch the specific deployment from the backup database
     let selectedDeployment;
     try {
-        const result = await backupPool.query(
+        const result = await Pool.query(
             `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
              FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
             [appName, appUserId]
