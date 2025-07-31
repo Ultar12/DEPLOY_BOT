@@ -1609,8 +1609,6 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
     }
 });
 
-});
-
 
 // NEW ADMIN COMMAND: /ban <user_id>
 bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
