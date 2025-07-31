@@ -2664,7 +2664,6 @@ if (usesLeft === null) {
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
-});
 
 // 11) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
