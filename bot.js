@@ -3061,7 +3061,7 @@ ${configVarsDisplay}
       const appUserId = extra; // Owner of the app
       const messageId = q.message.message_id;
 
-      await bot.editMessageText(`🚀 Preparing to restore "*${escapeMarkdown(appName)}*" for user \`${escapeMarkdown(appUserId)}\`...`, { // Added preliminary message
+      await bot.editMessageText(`Preparing to restore "*${escapeMarkdown(appName)}*" for user \`${escapeMarkdown(appUserId)}\`...`, { // Added preliminary message
           chat_id: cid,
           message_id: messageId,
           parse_mode: 'Markdown'
@@ -4163,7 +4163,7 @@ if (action === 'info') {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'On (❤️,💕,💜)', callback_data: `set_emoji_status:${appName}:on` }],
+                        [{ text: 'On', callback_data: `set_emoji_status:${appName}:on` }],
                         [{ text: 'Off', callback_data: `set_emoji_status:${appName}:off` }],
                         [{ text: 'Back', callback_data: `setvar:${appName}` }]
                     ]
