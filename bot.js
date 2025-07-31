@@ -1308,46 +1308,43 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
 
 // --- REPLACE this entire function in bot.js ---
 
-// NEW ADMIN COMMAND: /stats
 bot.onText(/^\/stats$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
     await dbServices.updateUserActivity(cid);
 
     try {
-        // --- START of new code ---
-        // Get counts for each bot type
+        // --- Active Bot Stats (from main DB) ---
         const botCountsResult = await pool.query('SELECT bot_type, COUNT(bot_name) as count FROM user_bots GROUP BY bot_type');
-        
         let levanterCount = 0;
         let raganorkCount = 0;
         botCountsResult.rows.forEach(row => {
-            if (row.bot_type === 'levanter') {
-                levanterCount = parseInt(row.count, 10);
-            } else if (row.bot_type === 'raganork') {
-                raganorkCount = parseInt(row.count, 10);
-            }
+            if (row.bot_type === 'levanter') levanterCount = parseInt(row.count, 10);
+            else if (row.bot_type === 'raganork') raganorkCount = parseInt(row.count, 10);
         });
-        // --- END of new code ---
+        
+        const totalUsers = (await pool.query('SELECT COUNT(DISTINCT user_id) AS count FROM user_bots')).rows[0].count;
+        const totalBots = (await pool.query('SELECT COUNT(bot_name) AS count FROM user_bots')).rows[0].count;
 
-        const totalUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_users FROM user_bots');
-        const totalUsers = totalUsersResult.rows[0].total_users;
-
-        const totalBotsResult = await pool.query('SELECT COUNT(bot_name) AS total_bots FROM user_bots');
-        const totalBots = totalBotsResult.rows[0].total_bots;
+        // --- START OF NEW CODE: Backup Bot Stats (from backup DB) ---
+        const backupCountsResult = await backupPool.query('SELECT bot_type, COUNT(app_name) as count FROM user_deployments GROUP BY bot_type');
+        let backupLevanterCount = 0;
+        let backupRaganorkCount = 0;
+        backupCountsResult.rows.forEach(row => {
+            if (row.bot_type === 'levanter') backupLevanterCount = parseInt(row.count, 10);
+            else if (row.bot_type === 'raganork') backupRaganorkCount = parseInt(row.count, 10);
+        });
+        const totalBackupBots = backupLevanterCount + backupRaganorkCount;
+        // --- END OF NEW CODE ---
 
         const activeKeys = await dbServices.getAllDeployKeys();
         const keyDetails = activeKeys.length > 0
             ? activeKeys.map(k => `\`${k.key}\` (Uses Left: ${k.uses_left}, By: ${k.created_by || 'N/A'})`).join('\n')
             : 'No active deploy keys.';
 
-        const totalFreeTrialUsersResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total_trial_users FROM temp_deploys');
-        const totalFreeTrialUsers = totalFreeTrialUsersResult.rows[0].total_trial_users;
+        const totalFreeTrialUsers = (await pool.query('SELECT COUNT(DISTINCT user_id) AS count FROM temp_deploys')).rows[0].count;
+        const totalBannedUsers = (await pool.query('SELECT COUNT(user_id) AS count FROM banned_users')).rows[0].count;
 
-        const totalBannedUsersResult = await pool.query('SELECT COUNT(user_id) AS total_banned_users FROM banned_users');
-        const totalBannedUsers = totalBannedUsersResult.rows[0].total_banned_users;
-
-        // --- UPDATE the message string ---
         const statsMessage = `
 *Bot Statistics:*
 
@@ -1355,6 +1352,10 @@ bot.onText(/^\/stats$/, async (msg) => {
 *Total Deployed Bots:* ${totalBots}
   - *Levanter Bots:* ${levanterCount}
   - *Raganork Bots:* ${raganorkCount}
+
+*Total Backup Bots:* ${totalBackupBots}
+  - *Levanter Backups:* ${backupLevanterCount}
+  - *Raganork Backups:* ${backupRaganorkCount}
 
 *Users Who Used Free Trial:* ${totalFreeTrialUsers}
 *Total Banned Users:* ${totalBannedUsers}
@@ -1370,6 +1371,7 @@ ${keyDetails}
         await bot.sendMessage(cid, `An error occurred while fetching stats: ${error.message}`);
     }
 });
+
 
 
 // Command: /users (Admin only)
@@ -4092,7 +4094,7 @@ if (action === 'info') {
       });
   }
 
-     if (action === 'setvar') {
+         if (action === 'setvar') {
         const appName = payload;
         const messageId = q.message.message_id;
 
@@ -4115,33 +4117,35 @@ if (action === 'info') {
             return bot.editMessageText(`Error fetching config variables: ${e.response?.data?.message || e.message}`, { chat_id: cid, message_id: messageId });
         }
         
-        function formatVarValue(val) {
-            if (val === 'p') return 'enabled (anti-delete)';
-            if (val === 'no-dl') return 'enabled (no download)';
-            return val || 'Not Set';
+        // --- START OF THE FIX: Updated helper function and message string ---
+        function formatVarValue(val, maxLength = 25) {
+            if (!val) return '`Not Set`';
+            if (val === 'p') return '`enabled (anti-delete)`';
+            if (val === 'no-dl') return '`enabled (no download)`';
+            
+            let displayVal = String(val);
+            if (displayVal.length > maxLength) {
+                displayVal = displayVal.substring(0, maxLength) + '...';
+            }
+            return `\`${escapeMarkdown(displayVal)}\``;
         }
 
-        // --- START OF THE FIX ---
-        // 1. Get the actual owner of the bot, regardless of who is viewing the menu.
         const ownerId = await dbServices.getUserIdByBotName(appName);
         if (!ownerId) {
             return bot.editMessageText(`Error: Could not find the owner for "${appName}".`, { chat_id: cid, message_id: messageId });
         }
 
-        // 2. Use the correct ownerId to query for the bot type.
         const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [ownerId, appName])).rows[0]?.bot_type || 'levanter';
-        // --- END OF THE FIX ---
-
         const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
         const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
 
         let varInfo = `*Current Vars for ${appName} (${botTypeForSetVar.toUpperCase()}):*\n` +
-                     `\`SESSION_ID\`: ${configVars.SESSION_ID ? '`Set`' : '`Not Set`'}\n` +
+                     `\`SESSION_ID\`: ${formatVarValue(configVars.SESSION_ID, 15)}\n` +
                      `\`${statusViewVar}\`: ${formatVarValue(configVars[statusViewVar])}\n` +
                      `\`ALWAYS_ONLINE\`: ${formatVarValue(configVars.ALWAYS_ONLINE)}\n` +
                      `\`${prefixVar}\`: ${formatVarValue(configVars[prefixVar])}\n` +
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
-                     `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n`;
+                     `\`SUDO\`: ${formatVarValue(configVars.SUDO, 20)}\n`;
 
         const keyboard = [
             [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
@@ -4161,6 +4165,7 @@ if (action === 'info') {
 
         keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
         keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
+        // --- END OF THE FIX ---
 
         varInfo += `\nSelect a variable to set:`;
 
@@ -4169,6 +4174,7 @@ if (action === 'info') {
           reply_markup: { inline_keyboard: keyboard }
         });
     }
+
 
 
 
