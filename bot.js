@@ -369,6 +369,51 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
+async function sendBannedUsersList(chatId, messageId = null) {
+    if (String(chatId) !== ADMIN_ID) return;
+
+    try {
+        const result = await pool.query('SELECT user_id FROM banned_users ORDER BY banned_at DESC');
+        const bannedUsers = result.rows;
+
+        if (bannedUsers.length === 0) {
+            const text = "No users are currently banned.";
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, text);
+        }
+
+        const userButtons = [];
+        for (const user of bannedUsers) {
+            let userName = `ID: ${user.user_id}`;
+            try {
+                const chat = await bot.getChat(user.user_id);
+                userName = `${chat.first_name || ''} ${chat.last_name || ''} (${user.user_id})`.trim();
+            } catch (e) {
+                // User might have deleted their account, just use the ID
+                console.warn(`Could not fetch info for banned user ${user.user_id}`);
+            }
+            userButtons.push([{ text: `${userName}`, callback_data: `unban_user:${user.user_id}` }]);
+        }
+
+        const options = {
+            chat_id: chatId,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: userButtons }
+        };
+
+        const text = "*Banned Users:*\n_Click a user to unban them._";
+        if (messageId) {
+            await bot.editMessageText(text, { ...options, message_id: messageId });
+        } else {
+            await bot.sendMessage(chatId, text, options);
+        }
+    } catch (error) {
+        console.error("Error sending banned users list:", error);
+        await bot.sendMessage(chatId, "An error occurred while fetching the banned user list.");
+    }
+}
+
+
 
 // --- REPLACE your old sendBappList function with this one ---
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
@@ -1582,31 +1627,11 @@ bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
     }
 });
 
-// NEW ADMIN COMMAND: /unban <user_id>
-bot.onText(/^\/unban (\d+)$/, async (msg, match) => {
+// NEW CODE
+bot.onText(/^\/unban$/, async (msg) => {
     const adminId = msg.chat.id.toString();
-    const targetUserId = match[1];
-
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "You are not authorized to use this command.");
-    }
-
-    const isBanned = await dbServices.isUserBanned(targetUserId); // Use dbServices
-    if (!isBanned) {
-        return bot.sendMessage(adminId, `User \`${targetUserId}\` is not currently banned.`, { parse_mode: 'Markdown' });
-    }
-
-    const unbanned = await dbServices.unbanUser(targetUserId); // Use dbServices
-    if (unbanned) {
-        await bot.sendMessage(adminId, `User \`${targetUserId}\` has been unbanned.`, { parse_mode: 'Markdown' });
-        try {
-            await bot.sendMessage(targetUserId, `You have been unbanned from using this bot. Welcome back!`);
-        } catch (error) {
-            console.warn(`Could not notify unbanned user ${targetUserId}: ${error.message}`);
-        }
-    } else {
-        await bot.sendMessage(adminId, `Failed to unban user \`${targetUserId}\`. Check logs.`, { parse_mode: 'Markdown' });
-    }
+    if (adminId !== ADMIN_ID) return;
+    await sendBannedUsersList(adminId);
 });
 
 
@@ -4067,7 +4092,7 @@ if (action === 'info') {
       });
   }
 
- if (action === 'setvar') {
+     if (action === 'setvar') {
         const appName = payload;
         const messageId = q.message.message_id;
 
@@ -4096,7 +4121,17 @@ if (action === 'info') {
             return val || 'Not Set';
         }
 
-        const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+        // --- START OF THE FIX ---
+        // 1. Get the actual owner of the bot, regardless of who is viewing the menu.
+        const ownerId = await dbServices.getUserIdByBotName(appName);
+        if (!ownerId) {
+            return bot.editMessageText(`Error: Could not find the owner for "${appName}".`, { chat_id: cid, message_id: messageId });
+        }
+
+        // 2. Use the correct ownerId to query for the bot type.
+        const botTypeForSetVar = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [ownerId, appName])).rows[0]?.bot_type || 'levanter';
+        // --- END OF THE FIX ---
+
         const statusViewVar = botTypeForSetVar === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
         const prefixVar = botTypeForSetVar === 'raganork' ? 'HANDLERS' : 'PREFIX';
 
@@ -4108,31 +4143,24 @@ if (action === 'info') {
                      `\`ANTI_DELETE\`: ${formatVarValue(configVars.ANTI_DELETE)}\n` +
                      `\`SUDO\`: ${formatVarValue(configVars.SUDO)}\n`;
 
-        // --- START OF THE FIX ---
-        // Base keyboard layout
         const keyboard = [
             [{ text: 'SESSION_ID', callback_data: `varselect:SESSION_ID:${appName}:${botTypeForSetVar}` }],
             [{ text: statusViewVar, callback_data: `varselect:${statusViewVar}:${appName}:${botTypeForSetVar}` }, { text: 'ALWAYS_ONLINE', callback_data: `varselect:ALWAYS_ONLINE:${appName}:${botTypeForSetVar}` }],
             [{ text: prefixVar, callback_data: `varselect:${prefixVar}:${appName}:${botTypeForSetVar}` }, { text: 'ANTI_DELETE', callback_data: `varselect:ANTI_DELETE:${appName}:${botTypeForSetVar}` }]
         ];
         
-        // Conditionally add the next row based on bot type
         if (botTypeForSetVar === 'levanter') {
             varInfo += `\`STATUS_VIEW_EMOJI\`: ${formatVarValue(configVars.STATUS_VIEW_EMOJI)}\n`;
-            // Add the combined row with SUDO and STATUS_VIEW_EMOJI
             keyboard.push([
                 { text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` },
                 { text: 'STATUS_VIEW_EMOJI', callback_data: `varselect:STATUS_VIEW_EMOJI:${appName}:${botTypeForSetVar}` }
             ]);
         } else {
-            // For Raganork, add the SUDO-only row
             keyboard.push([{ text: 'SUDO', callback_data: `varselect:SUDO_VAR:${appName}:${botTypeForSetVar}` }]);
         }
 
-        // Add the final common rows
         keyboard.push([{ text: 'Add/Set Other Variable', callback_data: `varselect:OTHER_VAR:${appName}:${botTypeForSetVar}` }]);
         keyboard.push([{ text: 'Back', callback_data: `selectapp:${appName}` }]);
-        // --- END OF THE FIX ---
 
         varInfo += `\nSelect a variable to set:`;
 
@@ -4141,6 +4169,7 @@ if (action === 'info') {
           reply_markup: { inline_keyboard: keyboard }
         });
     }
+
 
 
   if (action === 'restore_all_bots') {
@@ -4245,6 +4274,27 @@ if (action === 'info') {
           return bot.sendMessage(cid, 'Please enter the number to *remove* from SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
       }
   }
+
+      if (action === 'unban_user') {
+        const targetUserId = payload;
+        const unbanned = await dbServices.unbanUser(targetUserId);
+
+        if (unbanned) {
+            await bot.answerCallbackQuery(q.id, { text: `User ${targetUserId} has been unbanned.` });
+            try {
+                await bot.sendMessage(targetUserId, `You have been unbanned by the admin. Welcome back!`);
+            } catch (error) {
+                console.warn(`Could not notify unbanned user ${targetUserId}: ${error.message}`);
+            }
+        } else {
+            await bot.answerCallbackQuery(q.id, { text: `Failed to unban user ${targetUserId}.`, show_alert: true });
+        }
+
+        // Refresh the list of banned users
+        await sendBannedUsersList(cid, q.message.message_id);
+        return;
+    }
+
 
   if (action === 'overwrite_var') {
       const confirmation = payload;
