@@ -1803,8 +1803,9 @@ bot.on('message', async msg => {
           delete userStates[cid];
       }
       return;
+  }
 
-      if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
+        if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
     const email = text.trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
@@ -1865,7 +1866,6 @@ bot.on('message', async msg => {
     return;
   }
 
-  }
 
   // --- REPLACE this entire block in bot.js ---
 
