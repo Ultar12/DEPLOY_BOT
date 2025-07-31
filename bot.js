@@ -1804,20 +1804,18 @@ bot.on('message', async msg => {
       }
       return;
 
-        if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
+      if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
     const email = text.trim();
-    // Simple email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
         return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
     }
 
     delete userStates[cid];
-    const sentMsg = await bot.sendMessage(cid, 'Generating your secure payment link...');
+    const sentMsg = await bot.sendMessage(cid, 'Generating payment link...');
 
     try {
         const reference = crypto.randomBytes(16).toString('hex');
-        // Price is read from your environment variables and converted to kobo
         const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1000) * 100;
 
         await pool.query(
@@ -1837,7 +1835,6 @@ bot.on('message', async msg => {
             },
             {
                 headers: {
-                    // Your SECRET KEY is read securely from environment variables
                     Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
                 }
             }
@@ -1860,7 +1857,7 @@ bot.on('message', async msg => {
 
     } catch (error) {
         console.error("Paystack error:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link. This could be due to an invalid API key. Please contact support.', {
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later or contact support.', {
             chat_id: cid,
             message_id: sentMsg.message_id
         });
@@ -1868,6 +1865,7 @@ bot.on('message', async msg => {
     return;
   }
 
+  }
 
   // --- REPLACE this entire block in bot.js ---
 
@@ -2664,6 +2662,7 @@ if (usesLeft === null) {
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
+});
 
 // 11) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
