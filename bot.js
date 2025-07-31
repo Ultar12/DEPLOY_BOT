@@ -4147,7 +4147,6 @@ if (action === 'info') {
       return;
   }
 
-if (action === 'varselect') {
     if (action === 'varselect') {
         const [varKey, appName, botTypeFromVarSelect] = [payload, extra, flag];
         const st = userStates[cid];
@@ -4190,7 +4189,8 @@ if (action === 'varselect') {
         } else if (varKey === 'OTHER_VAR') {
             userStates[cid].step = 'AWAITING_OTHER_VAR_NAME';
             userStates[cid].data.appName = appName;
-            return bot.sendMessage(cid, 'Enter the variable name (e.g., `WORK_TYPE`):`, { parse_mode: 'Markdown' });
+            // THIS IS THE FIXED LINE
+            return bot.sendMessage(cid, 'Enter the variable name (e.g., `WORK_TYPE`):', { parse_mode: 'Markdown' });
         } else if (varKey === 'SUDO_VAR') {
             return bot.editMessageText(`Manage *SUDO* for "*${appName}*":`, {
                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
@@ -4204,6 +4204,7 @@ if (action === 'varselect') {
             });
         }
     }
+
 
 
   if (action === 'sudo_action') {
