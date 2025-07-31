@@ -158,6 +158,17 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+      // ADD THIS BLOCK
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS pending_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_deployments (
         user_id TEXT NOT NULL,
