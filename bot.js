@@ -3031,7 +3031,7 @@ if (action === 'select_deploy_type') {
 
     // This is the updated logic that asks for confirmation first
     await bot.editMessageText(
-        `You've selected *${botType.toUpperCase()}*. Have you already generated your session ID?`,
+        `You've selected *${botType.toUpperCase()}*. Have you gotten your session ID?`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -3275,7 +3275,7 @@ if (action === 'dkey_cancel') {
     // Fetch the specific deployment from the backup database
     let selectedDeployment;
     try {
-        const result = await Pool.query(
+        const result = await pool.query(
             `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
              FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
             [appName, appUserId]
