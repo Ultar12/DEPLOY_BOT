@@ -3585,7 +3585,7 @@ if (action === 'dkey_cancel') {
   }
 
   // --- FIX: This block replaces the invalid bot.onCallbackQuery call ---
-/if (action === 'confirm_delete_bapp') {
+if (action === 'confirm_delete_bapp') {
     const appName = payload;
     const appUserId = extra;
 
