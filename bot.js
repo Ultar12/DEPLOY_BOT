@@ -441,27 +441,56 @@ async function sendBannedUsersList(chatId, messageId = null) {
 
 
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
+    const checkingMsg = await bot.editMessageText(
+        `Checking and syncing all *${botTypeFilter.toUpperCase()}* apps with Heroku...`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    }).catch(() => bot.sendMessage(chatId, `Checking apps...`, { parse_mode: 'Markdown' }));
+
+    messageId = checkingMsg.message_id;
+
     try {
-        const queryText = `
-            SELECT user_id, app_name, deleted_from_heroku_at 
-            FROM user_deployments 
-            WHERE bot_type = $1 
-            ORDER BY deploy_date DESC;
-        `;
-        const queryParams = [botTypeFilter];
+        // 1. Get ALL bots for the type from the database, regardless of status
+        const dbResult = await pool.query(
+            `SELECT user_id, app_name, deleted_from_heroku_at FROM user_deployments WHERE bot_type = $1 ORDER BY app_name ASC`,
+            [botTypeFilter]
+        );
+        const allDbBots = dbResult.rows;
 
-        // --- CHANGE: Use the main 'pool' instead of 'backupPool' ---
-        const result = await pool.query(queryText, queryParams);
-        const deployments = result.rows;
-
-        if (deployments.length === 0) {
-            const text = `No bots found for the type: *${botTypeFilter.toUpperCase()}*`;
-            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
-            return bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+        if (allDbBots.length === 0) {
+            return bot.editMessageText(`No bots (active or inactive) were found in the database for the type: *${botTypeFilter.toUpperCase()}*`, {
+                chat_id: chatId, message_id: messageId, parse_mode: 'Markdown'
+            });
         }
 
-        const appButtons = deployments.map(entry => {
-            const statusIndicator = entry.deleted_from_heroku_at === null ? '🟢' : '🔴';
+        // 2. Verify each bot against Heroku and update its status in our list
+        const verificationPromises = allDbBots.map(async (bot) => {
+            try {
+                await axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                // If it exists on Heroku but is marked as deleted in DB, correct it
+                if (bot.deleted_from_heroku_at) {
+                    await pool.query('UPDATE user_deployments SET deleted_from_heroku_at = NULL WHERE app_name = $1', [bot.app_name]);
+                }
+                return { ...bot, is_active: true };
+            } catch (error) {
+                if (error.response && error.response.status === 404) {
+                    // If it doesn't exist on Heroku but is NOT marked as deleted, correct it
+                    if (!bot.deleted_from_heroku_at) {
+                        await dbServices.markDeploymentDeletedFromHeroku(bot.user_id, bot.app_name);
+                    }
+                }
+                return { ...bot, is_active: false };
+            }
+        });
+        
+        const verifiedBots = await Promise.all(verificationPromises);
+
+        // 3. Build the final button list with accurate statuses
+        const appButtons = verifiedBots.map(entry => {
+            const statusIndicator = entry.is_active ? '🟢' : '🔴';
             return {
                 text: `${statusIndicator} ${entry.app_name}`,
                 callback_data: `select_bapp:${entry.app_name}:${entry.user_id}`
@@ -469,22 +498,22 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
         });
 
         const rows = chunkArray(appButtons, 3);
-        const text = `Select a *${botTypeFilter.toUpperCase()}* app to view details:`;
+        const text = `Select a *${botTypeFilter.toUpperCase()}* app to view details (🟢 Active, 🔴 Inactive):`;
         const options = {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         };
 
-        if (messageId) {
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
-        } else {
-            await bot.sendMessage(chatId, text, options);
-        }
+        await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
+
     } catch (error) {
-        console.error(`Error fetching app list for /bapp:`, error.message);
-        await bot.sendMessage(chatId, `An error occurred while fetching the app list.`);
+        console.error(`Error fetching and syncing app list for /bapp:`, error.message);
+        await bot.editMessageText(`An error occurred while syncing the app list. Please check the logs.`, {
+             chat_id: chatId, message_id: messageId
+        });
     }
 }
+
 
 
 
