@@ -3374,7 +3374,7 @@ if (action === 'dkey_cancel') {
     return;
   }
 
-  }
+  
 
       if (action === 'set_expiration') {
         const appName = payload;
