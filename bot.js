@@ -4488,6 +4488,52 @@ if (action === 'info') {
       });
   }
 
+      if (action === 'has_session') {
+        const botType = payload;
+        const st = userStates[cid];
+        if (!st) return; // State check
+
+        st.step = 'AWAITING_KEY';
+        const price = process.env.KEY_PRICE_NGN || '1000';
+        
+        await bot.editMessageText(
+            `Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
+                    ]
+                }
+            }
+        );
+        return;
+    }
+
+    if (action === 'needs_session') {
+        const botType = payload;
+        const st = userStates[cid];
+        if (!st) return; // State check
+
+        let sessionPrompt = `Please use the button below to get your session ID for *${botType.toUpperCase()}*.`;
+        const sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+
+        await bot.editMessageText(sessionPrompt, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Get Session ID', url: sessionUrl }],
+                    [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
+                ]
+            }
+        });
+        return;
+    }
+
 // ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
   if (action === 'confirmdelete') {
