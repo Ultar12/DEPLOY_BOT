@@ -118,6 +118,18 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+      await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS completed_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        amount     INTEGER NOT NULL, -- Stored in kobo
+        currency   TEXT NOT NULL,
+        paid_at    TIMESTAMP WITH TIME ZONE NOT NULL
+      );
+    `);
+
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
         key        TEXT PRIMARY KEY,
@@ -170,8 +182,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
 
 
-    await dbPool.query(`
-      CREATE TABLE IF NOT EXISTS user_deployments (
+       CREATE TABLE IF NOT EXISTS user_deployments (
         user_id TEXT NOT NULL,
         app_name TEXT NOT NULL,
         session_id TEXT,
@@ -180,9 +191,10 @@ async function createAllTablesInPool(dbPool, dbName) {
         deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expiration_date TIMESTAMP,
         deleted_from_heroku_at TIMESTAMP,
+        warning_sent_at TIMESTAMP, -- You already have this
         PRIMARY KEY (user_id, app_name)
       );
-    `);
+
 
   // --- ADD THIS LINE ---
     await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS warning_sent_at TIMESTAMP;`);
