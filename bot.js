@@ -171,6 +171,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     `);
 
       // ADD THIS BLOCK
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS pending_payments (
       reference  TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL,
