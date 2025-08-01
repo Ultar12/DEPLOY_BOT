@@ -2402,50 +2402,107 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
-      if (text === 'My Bots') {
-    // Fetch active bots and their expiration dates directly
-    const userBotsResult = await pool.query(
-        `SELECT app_name, expiration_date FROM user_deployments 
-         WHERE user_id = $1 AND deleted_from_heroku_at IS NULL 
-         ORDER BY app_name ASC`,
-        [cid]
-    );
-    const bots = userBotsResult.rows;
+        if (text === 'My Bots') {
+    const cid = msg.chat.id.toString();
+    const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on Heroku, please wait...');
 
-    if (bots.length === 0) {
-        return bot.sendMessage(cid, "You have not deployed any active bots.", {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
-                    [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
-                ]
+    try {
+        // 1. Get the list of bots the user SHOULD have from the database
+        const dbBotsResult = await pool.query(
+            `SELECT app_name, expiration_date FROM user_deployments 
+             WHERE user_id = $1 AND deleted_from_heroku_at IS NULL`,
+            [cid]
+        );
+        const expectedBots = dbBotsResult.rows;
+
+        if (expectedBots.length === 0) {
+            await bot.editMessageText("You have no active bots deployed.", {
+                chat_id: cid,
+                message_id: checkingMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
+                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                    ]
+                }
+            });
+            return;
+        }
+
+        // 2. Verify each bot against the Heroku API
+        const verificationPromises = expectedBots.map(bot =>
+            axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            }).then(() => ({ ...bot, exists: true }))
+              .catch(error => ({ ...bot, exists: false, error: error }))
+        );
+
+        const results = await Promise.all(verificationPromises);
+
+        const activeBots = [];
+        const botsToCleanup = [];
+
+        results.forEach(result => {
+            if (result.exists) {
+                activeBots.push(result);
+            } else if (result.error.response && result.error.response.status === 404) {
+                botsToCleanup.push(result.app_name);
             }
         });
-    }
 
-    const now = new Date();
-    const appButtons = bots.map(bot => {
-        let buttonText = bot.app_name;
-        if (bot.expiration_date) {
-            const expiration = new Date(bot.expiration_date);
-            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-            if (daysLeft > 0) {
-                buttonText += ` (${daysLeft} days)`;
-            } else {
-                buttonText += ` (Expired)`;
-            }
+        // 3. Flag ghost bots as inactive without deleting their backup record
+        if (botsToCleanup.length > 0) {
+            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bots for user ${cid}. Flagging them as inactive.`);
+            botsToCleanup.forEach(appName => {
+                // --- THIS IS THE CHANGE ---
+                // This ONLY flags the bot as deleted, preserving it for future restoration.
+                dbServices.markDeploymentDeletedFromHeroku(cid, appName);
+            });
         }
-        return { text: buttonText, callback_data: `selectbot:${bot.app_name}` };
-    });
 
-    const rows = chunkArray(appButtons, 3);
-    rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+        // 4. Display the menu with only the confirmed active bots
+        if (activeBots.length === 0) {
+            await bot.editMessageText("It seems your active bots were deleted from Heroku. They have been moved to your restore list.", {
+                chat_id: cid,
+                message_id: checkingMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
+                    ]
+                }
+            });
+            return;
+        }
 
-    return bot.sendMessage(cid, 'Your deployed bots:', {
-      reply_markup: { inline_keyboard: rows }
-    });
+        const now = new Date();
+        const appButtons = activeBots.map(bot => {
+            let buttonText = bot.app_name;
+            if (bot.expiration_date) {
+                const expiration = new Date(bot.expiration_date);
+                const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+                buttonText += daysLeft > 0 ? ` (${daysLeft} days)` : ` (Expired)`;
+            }
+            return { text: buttonText, callback_data: `selectbot:${bot.app_name}` };
+        });
+
+        const rows = chunkArray(appButtons, 3);
+        rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+
+        await bot.editMessageText('Your deployed bots:', {
+            chat_id: cid,
+            message_id: checkingMsg.message_id,
+            reply_markup: { inline_keyboard: rows }
+        });
+
+    } catch (error) {
+        console.error("Error in 'My Bots' handler:", error);
+        await bot.editMessageText("An error occurred while fetching your bots. Please try again.", {
+            chat_id: cid,
+            message_id: checkingMsg.message_id
+        });
+    }
+    return;
   }
-
 
   // Add this block inside bot.on('message', ...)
 
