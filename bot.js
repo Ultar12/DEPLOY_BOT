@@ -159,14 +159,15 @@ async function createAllTablesInPool(dbPool, dbName) {
     `);
 
       // ADD THIS BLOCK
-    await dbPool.query(`
-      CREATE TABLE IF NOT EXISTS pending_payments (
-        reference  TEXT PRIMARY KEY,
-        user_id    TEXT NOT NULL,
-        email      TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    CREATE TABLE IF NOT EXISTS pending_payments (
+      reference  TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      email      TEXT NOT NULL,
+      bot_type   TEXT, -- ADD THIS LINE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
 
 
     await dbPool.query(`
@@ -926,33 +927,30 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-              app.post('/paystack/webhook', express.json(), async (req, res) => {
-        // Verify the webhook signature for security
+                  app.post('/paystack/webhook', express.json(), async (req, res) => {
         const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
                            .update(JSON.stringify(req.body))
                            .digest('hex');
         if (hash !== req.headers['x-paystack-signature']) {
             console.warn('Invalid Paystack signature received.');
-            return res.sendStatus(401); // Unauthorized
+            return res.sendStatus(401);
         }
 
         const event = req.body;
-        console.log(`Received Paystack event: ${event.event}`);
 
         if (event.event === 'charge.success') {
-            const reference = event.data.reference;
+            const { reference, amount, currency, customer } = event.data;
             try {
-                const result = await pool.query('SELECT user_id FROM pending_payments WHERE reference = $1', [reference]);
+                const result = await pool.query('SELECT user_id, bot_type FROM pending_payments WHERE reference = $1', [reference]);
                 if (result.rows.length === 0) {
-                    console.warn(`Webhook for reference ${reference} received, but no pending payment found.`);
                     return res.sendStatus(200);
                 }
-                const { user_id } = result.rows[0];
+                const { user_id, bot_type } = result.rows[0];
 
                 const newKey = generateKey();
                 await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
 
-                // --- START OF CHANGE: Added reply_markup with a button ---
+                // Send the key to the user with the new "Deploy Now" button
                 await bot.sendMessage(user_id,
                     `Payment confirmed!\n\nThank you for your purchase. Here is your one-time deploy key:\n\n` +
                     `\`${newKey}\`\n\n` +
@@ -961,35 +959,38 @@ const crypto = require('crypto');
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                                [{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]
                             ]
                         }
                     }
                 );
-                // --- END OF CHANGE ---
-                  // Add this block to show a friendly message if someone visits the webhook URL in a browser
-    app.get('/paystack/webhook', (req, res) => {
-        res.status(200).send('<h1>Webhook URL</h1><p>This URL is for notifications from Paystack. Please return to your Telegram bot to continue.</p>');
-    });
-
                 
-                // Admin notification logic remains here...
+                // --- REFORMATTED ADMIN NOTIFICATION ---
                 const userChat = await bot.getChat(user_id);
                 const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
-                const adminMessage = `*New Payment!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key Generated:* \`${newKey}\``;
-                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+                const adminMessage = 
+`*New Successful Payment!*
 
+*Amount:* ${amount / 100} ${currency}
+*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)
+*Email:* ${escapeMarkdown(customer.email)}
+*Reference:* \`${reference}\`
+
+*Key Generated:* \`${newKey}\``;
+
+                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+                
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
-                console.log(`Successfully processed payment and delivered key for reference: ${reference}`);
+                console.log(`Successfully processed payment for reference: ${reference}`);
 
             } catch (dbError) {
                 console.error(`Webhook DB Error for reference ${reference}:`, dbError);
                 return res.sendStatus(500); 
             }
         }
-        
         res.sendStatus(200);
     });
+
 
 
 
@@ -1851,9 +1852,10 @@ bot.on('message', async msg => {
         const reference = crypto.randomBytes(16).toString('hex');
         const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1000) * 100;
 
+                
         await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email) VALUES ($1, $2, $3)',
-            [reference, cid, email]
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
+            [reference, cid, email, st.data.botType]
         );
 
         const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
@@ -2876,8 +2878,11 @@ if (action === 'select_deploy_type') {
     return;
 }
 
-      if (action === 'buy_key') {
-        userStates[cid] = { step: 'AWAITING_EMAIL_FOR_PAYMENT', data: {} };
+          if (action === 'buy_key') {
+        if (!st || !st.data.botType) {
+            return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start the deployment process again.", show_alert: true });
+        }
+        userStates[cid] = { step: 'AWAITING_EMAIL_FOR_PAYMENT', data: { botType: st.data.botType } };
         await bot.editMessageText('To proceed with the payment, please enter your email address:', {
             chat_id: cid,
             message_id: q.message.message_id
@@ -2949,6 +2954,25 @@ if (action === 'verify_join') {
     }
     return;
 }
+
+      if (action === 'start_deploy_after_payment') {
+        const botType = payload; // Get the botType we saved in the callback_data
+        
+        // Set the state correctly to continue the deployment flow
+        userStates[cid] = { 
+            step: 'AWAITING_KEY', 
+            data: { 
+                botType: botType,
+                isFreeTrial: false 
+            } 
+        };
+        
+        // Send a NEW message asking for the key
+        await bot.sendMessage(cid, `You chose *${botType.toUpperCase()}*.\n\nPlease enter the Deploy Key you just received:`, {
+            parse_mode: 'Markdown'
+        });
+        return;
+    }
 
 
   if (action === 'deploy_first_bot') { // Handled by select_deploy_type now
