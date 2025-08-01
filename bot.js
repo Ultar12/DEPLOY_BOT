@@ -1805,6 +1805,71 @@ bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const appName = match[1].trim();
+
+    try {
+        const botInfoResult = await pool.query(
+            `SELECT ub.user_id, ub.bot_type, ub.status, ud.expiration_date 
+             FROM user_bots ub
+             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+             WHERE ub.bot_name = $1`,
+            [appName]
+        );
+
+        if (botInfoResult.rows.length === 0) {
+            return bot.sendMessage(cid, `Sorry, no bot named \`${appName}\` was found in the database.`, { parse_mode: 'Markdown' });
+        }
+
+        const botInfo = botInfoResult.rows[0];
+        const ownerId = botInfo.user_id;
+
+        let ownerDetails = `*Owner ID:* \`${ownerId}\``;
+        try {
+            const ownerChat = await bot.getChat(ownerId);
+            const ownerName = `${ownerChat.first_name || ''} ${ownerChat.last_name || ''}`.trim();
+            ownerDetails += `\n*Owner Name:* ${escapeMarkdown(ownerName)}`;
+            if (ownerChat.username) {
+                ownerDetails += `\n*Owner Username:* @${ownerChat.username}`;
+            }
+        } catch (e) {
+            ownerDetails += "\n_Could not fetch owner's Telegram profile._";
+        }
+
+        let expirationInfo = "Not Set";
+        if (botInfo.expiration_date) {
+            const expiration = new Date(botInfo.expiration_date);
+            const now = new Date();
+            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+            expirationInfo = daysLeft > 0 ? `${daysLeft} days remaining` : "Expired";
+        }
+
+        const botStatus = botInfo.status === 'online' ? 'Online' : 'Logged Out';
+
+        const response = `
+*Bot Details for: \`${appName}\`*
+
+*Owner Info:*
+${ownerDetails}
+
+*Bot Info:*
+*Type:* ${botInfo.bot_type ? botInfo.bot_type.toUpperCase() : 'Unknown'}
+*Status:* ${botStatus}
+*Expiration:* ${expirationInfo}
+        `;
+
+        await bot.sendMessage(cid, response, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error during /findbot for "${appName}":`, error);
+        await bot.sendMessage(cid, `An error occurred while searching for the bot.`);
+    }
+});
+
+
 // NEW CODE
 bot.onText(/^\/unban$/, async (msg) => {
     const adminId = msg.chat.id.toString();
@@ -5212,6 +5277,31 @@ async function checkAndManageExpirations() {
 // Run the check once every day
 setInterval(checkAndManageExpirations, ONE_DAY_IN_MS);
 console.log('[Expiration] Scheduled daily check for expired bots.');
+
+// === Automatic Daily Database Backup ===
+async function runDailyBackup() {
+    console.log('[Backup] Starting daily automatic database sync...');
+    try {
+        // This uses the sync function from your services, which powers /copydb
+        const result = await dbServices.syncDatabases(pool, backupPool); 
+        if (result.success) {
+            console.log(`[Backup] Daily database sync successful. ${result.message}`);
+            // Optional: Notify admin on success
+            // await bot.sendMessage(ADMIN_ID, "Daily database backup completed successfully.");
+        } else {
+            throw new Error(result.message);
+        }
+    } catch (error) {
+        console.error(`[Backup] CRITICAL ERROR during daily automatic backup:`, error.message);
+        // Notify admin on failure
+        await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: The automatic daily database backup failed. Please check the logs.\n\nReason: ${error.message}`);
+    }
+}
+
+// Run the backup every 24 hours (24 * 60 * 60 * 1000 milliseconds)
+setInterval(runDailyBackup, 24 * 60 * 60 * 1000);
+console.log('[Backup] Scheduled daily automatic database backup.');
+
 
 async function checkAndPruneLoggedOutBots() {
     console.log('[Prune] Running hourly check for long-term logged-out bots...');
