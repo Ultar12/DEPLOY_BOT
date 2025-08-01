@@ -2336,11 +2336,18 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
-    if (text === 'My Bots') {
-    const bots = await dbServices.getUserBots(cid);
+      if (text === 'My Bots') {
+    // Fetch active bots and their expiration dates directly
+    const userBotsResult = await pool.query(
+        `SELECT app_name, expiration_date FROM user_deployments 
+         WHERE user_id = $1 AND deleted_from_heroku_at IS NULL 
+         ORDER BY app_name ASC`,
+        [cid]
+    );
+    const bots = userBotsResult.rows;
 
-    if (!bots.length) {
-        return bot.sendMessage(cid, "You have not deployed any bots yet.", {
+    if (bots.length === 0) {
+        return bot.sendMessage(cid, "You have not deployed any active bots.", {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
@@ -2350,42 +2357,26 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
     }
 
-    // --- NEW DASHBOARD LOGIC ---
-    let dashboardText = "*Your Bots Dashboard:*\n\n";
-    const keyboardRows = [];
     const now = new Date();
-
-    for (const botName of bots) {
-        const botDetails = (await pool.query(`
-            SELECT status, expiration_date FROM user_bots
-            LEFT JOIN user_deployments ON user_bots.user_id = user_deployments.user_id AND user_bots.bot_name = user_deployments.app_name
-            WHERE user_bots.user_id = $1 AND user_bots.bot_name = $2
-        `, [cid, botName])).rows[0];
-
-        let statusText = "Unknown";
-        if (botDetails) {
-            const expiration = new Date(botDetails.expiration_date);
+    const appButtons = bots.map(bot => {
+        let buttonText = bot.app_name;
+        if (bot.expiration_date) {
+            const expiration = new Date(bot.expiration_date);
             const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-
-            if (daysLeft <= 0) {
-                statusText = `Expired`;
-            } else if (botDetails.status === 'logged_out') {
-                statusText = `Logged Out`;
+            if (daysLeft > 0) {
+                buttonText += ` (${daysLeft} days)`;
             } else {
-                statusText = `Online - Expires in ${daysLeft} days`;
+                buttonText += ` (Expired)`;
             }
         }
-        dashboardText += `*${botName}*\nStatus: ${statusText}\n\n`;
-        // Add a button to manage this specific bot
-        keyboardRows.push([{ text: `Manage "${botName}"`, callback_data: `selectbot:${botName}` }]);
-    }
-    
-    // Add the restore button at the end
-    keyboardRows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+        return { text: buttonText, callback_data: `selectbot:${bot.app_name}` };
+    });
 
-    return bot.sendMessage(cid, dashboardText, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: keyboardRows }
+    const rows = chunkArray(appButtons, 3);
+    rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+
+    return bot.sendMessage(cid, 'Your deployed bots:', {
+      reply_markup: { inline_keyboard: rows }
     });
   }
 
@@ -4030,118 +4021,58 @@ if (action === 'levanter_wa_fallback') {
   }
 
 
-  if (action === 'add_assign_app') {
+    if (action === 'add_assign_app') {
     const appName = payload;
     const targetUserId = extra;
 
-    console.log(`[CallbackQuery - add_assign_app] Received selection for app: ${appName} to assign to user: ${targetUserId}`);
-    console.log(`[CallbackQuery - add_assign_app] Current state for ${cid} is:`, userStates[cid]);
-
     if (cid !== ADMIN_ID) {
-        await bot.editMessageText("You are not authorized to perform this action.", {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        return;
+        return bot.editMessageText("You are not authorized to perform this action.", { chat_id: cid, message_id: q.message.message_id });
     }
 
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) {
-        console.error(`[CallbackQuery - add_assign_app] State mismatch for ${cid}. Expected AWAITING_APP_FOR_ADD for ${targetUserId}, got:`, st);
-        await bot.editMessageText("This add session has expired or is invalid. Please start over with `/add <user_id>`.", {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        delete userStates[cid]; // Clear user state
+        await bot.editMessageText("This session has expired. Please start over with `/add <user_id>`.", { chat_id: cid, message_id: q.message.message_id });
+        delete userStates[cid];
         return;
     }
 
     await bot.editMessageText(`Assigning app "*${appName}*" to user \`${targetUserId}\`...`, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
+        chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     });
 
     try {
-        const existingEntry = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name=$1', [appName]);
-        let botTypeForAssignment = 'levanter'; // Default type
-        if (existingEntry.rows.length > 0) {
-            const oldUserId = existingEntry.rows[0].user_id;
-            botTypeForAssignment = existingEntry.rows[0].bot_type || 'levanter'; // Get type from existing entry
-            if (oldUserId !== targetUserId) {
-                console.log(`[Admin] Transferring ownership for bot "${appName}" from ${oldUserId} to ${targetUserId}. Deleting old entry.`);
-                await pool.query('DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2', [oldUserId, appName]);
-            } else {
-                console.log(`[Admin] Bot "${appName}" is already owned by ${targetUserId}. Proceeding with update.`);
-            }
+        const existingOwnerResult = await pool.query('SELECT user_id FROM user_bots WHERE bot_name=$1', [appName]);
+        if (existingOwnerResult.rows.length === 0) {
+            throw new Error(`The app "${appName}" does not exist in the bot's database.`);
         }
+        const oldOwnerId = existingOwnerResult.rows[0].user_id;
 
-        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
-            headers: {
-                Authorization: `Bearer ${HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3'
-            }
-        });
-        const currentSessionId = configRes.data.SESSION_ID;
+        // --- START OF FIX ---
+        // Transfer ownership by updating the user_id in both tables
+        await pool.query('UPDATE user_bots SET user_id = $1 WHERE bot_name = $2 AND user_id = $3', [targetUserId, appName, oldOwnerId]);
+        await pool.query('UPDATE user_deployments SET user_id = $1 WHERE app_name = $2 AND user_id = $3', [targetUserId, appName, oldOwnerId]);
+        // --- END OF FIX ---
 
-        if (!currentSessionId) {
-            await bot.editMessageText(`Cannot assign "*${appName}*". It does not have a SESSION_ID config variable set on Heroku. Please set it manually first or deploy it via the bot.`, {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'Markdown'
-            });
-            delete userStates[cid]; // Clear user state
-            return;
-        }
-        // Validate session ID starts with 'levanter_' or 'RGNK' when assigning
-        if (!currentSessionId.startsWith(LEVANTER_SESSION_PREFIX) && !currentSessionId.startsWith(RAGANORK_SESSION_PREFIX)) {
-            await bot.editMessageText(`Cannot assign "*${appName}*". Its current SESSION_ID on Heroku does not start with \`${LEVANTER_SESSION_PREFIX}\` or \`${RAGANORK_SESSION_PREFIX}\`. Please correct the session ID on Heroku first.`, {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'Markdown'
-            });
-            delete userStates[cid]; // Clear user state
-            return;
-        }
-        if (currentSessionId.startsWith(RAGANORK_SESSION_PREFIX)) { // Determine botType if not already known
-            botTypeForAssignment = 'raganork';
-        } else if (currentSessionId.startsWith(LEVANTER_SESSION_PREFIX)) {
-            botTypeForAssignment = 'levanter';
-        }
+        console.log(`[Admin] Transferred ownership of "${appName}" from ${oldOwnerId} to ${targetUserId}.`);
 
-
-        await dbServices.addUserBot(targetUserId, appName, currentSessionId, botTypeForAssignment); // Use dbServices, pass botType
-        await dbServices.saveUserDeployment(targetUserId, appName, currentSessionId, configRes.data, botTypeForAssignment); // Use dbServices
-
-        console.log(`[Admin] Successfully called addUserBot for ${appName} to user ${targetUserId} with fetched session ID.`);
-
-        await bot.editMessageText(`App "*${appName}*" (Type: ${botTypeForAssignment.toUpperCase()}) successfully assigned to user \`${targetUserId}\`! It will now appear in their "My Bots" menu.`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
+        await bot.editMessageText(`App "*${appName}*" successfully assigned to user \`${targetUserId}\`! Its original expiration date is preserved.`, {
+            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
         });
 
-        await bot.sendMessage(targetUserId, `Your bot "*${appName}*" (Type: ${botTypeForAssignment.toUpperCase()}) has been successfully assigned to your "My Bots" menu by the admin! You can now manage it.`, { parse_mode: 'Markdown' });
-        console.log(`[Admin] Sent success notification to target user ${targetUserId}.`);
+        await bot.sendMessage(targetUserId, `The admin has assigned the bot "*${appName}*" to your account. You can now manage it from "My Bots".`, { parse_mode: 'Markdown' });
 
     } catch (e) {
-        if (e.response && e.response.status === 404) {
-            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, q.message.message_id, false); // Use dbServices
-            return;
-        }
         const errorMsg = e.response?.data?.message || e.message;
-        console.error(`[Admin] Error assigning app "${appName}" to user ${targetUserId}:`, errorMsg, e.stack);
-        await bot.editMessageText(`Failed to assign app "*${appName}*" to user \`${targetUserId}\`: ${errorMsg}`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
+        console.error(`[Admin] Error assigning app "${appName}":`, errorMsg);
+        await bot.editMessageText(`Failed to assign app "*${appName}*": ${errorMsg}`, {
+            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
         });
     } finally {
-        delete userStates[cid]; // Clear user state
-        console.log(`[Admin] State cleared for ${cid} after add_assign_app flow.`);
+        delete userStates[cid];
     }
     return;
   }
+
 
   if (action === 'remove_app_from_user') {
     const appName = payload;
