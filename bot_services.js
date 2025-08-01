@@ -406,7 +406,7 @@ async function getUserDeploymentsForRestore(userId) {
 }
 
 // This new function deletes from BOTH user_bots and user_deployments
-async function permanentlyDeleteBotRecord(userId, appName) {
+async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
         // Delete from the active bots list
         await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
