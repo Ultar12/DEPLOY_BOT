@@ -5213,33 +5213,73 @@ if (action === 'setvarbool') {
 // --- REPLACE your old bot.on('channel_post', ...) with this ---
 
 bot.on('channel_post', async msg => {
-    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
-    if (String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID || !msg.text) return;
+    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // Your channel ID
 
-    const text = msg.text.trim();
-    let appName = null, isSuccess = false, isFailure = false, failureReason = 'Bot session became invalid.';
+    if (!msg || !msg.chat || String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID) {
+        return;
+    }
+    const text = msg.text?.trim();
+    if (!text) {
+        return;
+    }
+
+    console.log(`[Channel Post] Received: "${text}"`);
+
+    let appName = null;
+    let isSuccess = false;
+    let isFailure = false;
+    let failureReason = 'Bot session became invalid.';
+    let sessionPart = null;
 
     const connectedMatch = text.match(/\[([^\]]+)\]\s*connected/i);
     const logoutMatch = text.match(/User\s+\[([^\]]+)\]\s+has logged out/i);
-    const invalidMatch = text.match(/\[([^\]]+)\]\s*invalid/i) || text.match(/invalid session.*(RGNK[^\s,.]+)/i);
     
+    // Check for both Levanter and Raganork invalid session formats
+    const levanterInvalidMatch = text.match(/\[([^\]]+)\]\s*invalid/i);
+    const raganorkInvalidMatch = text.match(/invalid session.*(RGNK[^\s,.]+)/i);
+
+    if (levanterInvalidMatch) {
+        sessionPart = levanterInvalidMatch[1];
+    } else if (raganorkInvalidMatch) {
+        sessionPart = raganorkInvalidMatch[1];
+    }
+
+    // Determine action based on matches
     if (connectedMatch) {
         appName = connectedMatch[1];
         isSuccess = true;
+        console.log(`[Channel Post] Matched CONNECTED for app: ${appName}`);
     } else if (logoutMatch) {
         appName = logoutMatch[1];
         isFailure = true;
         failureReason = 'Bot session has logged out.';
-    } else if (invalidMatch) {
+        console.log(`[Channel Post] Matched LOGOUT for app: ${appName}`);
+    } else if (sessionPart) {
         isFailure = true;
-        const sessionPart = invalidMatch[1];
-        const res = await pool.query(`SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%' LIMIT 1`, [sessionPart]);
-        if (res.rows[0]) appName = res.rows[0].bot_name;
+        failureReason = 'The session ID was detected as invalid.';
+        console.log(`[Channel Post] Matched INVALID session part: ${sessionPart}. Looking up in DB...`);
+        try {
+            const res = await pool.query(
+                `SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%' ORDER BY created_at DESC LIMIT 1`,
+                [sessionPart]
+            );
+            
+            if (res.rows.length > 0) {
+                appName = res.rows[0].bot_name;
+                console.log(`[Channel Post] DB lookup successful. Matched session part to app: ${appName}`);
+            } else {
+                 console.warn(`[Channel Post] DB lookup failed. No bot found with a session ID containing '${sessionPart}'.`);
+            }
+        } catch (dbError) {
+            console.error(`[Channel Post] DB Error looking up invalid session part '${sessionPart}':`, dbError);
+        }
     }
-    
-    if (!appName) return;
 
-    if (isSuccess) {
+    if (!appName) {
+        console.log(`[Channel Post] Could not determine app name from message. Ignoring.`);
+        return;
+    }
+  if (isSuccess) {
         // Set status to 'online' and clear the timestamp
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
@@ -5247,22 +5287,21 @@ bot.on('channel_post', async msg => {
         // Set status to 'logged_out' and record the current time
         await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
-    }
+  }
 
     const pendingPromise = appDeploymentPromises.get(appName);
+
     if (pendingPromise) {
-        if (isSuccess) pendingPromise.resolve('connected');
-        else if (isFailure) pendingPromise.reject(new Error(failureReason));
+        if (isSuccess) {
+            pendingPromise.resolve('connected');
+        } else if (isFailure) {
+            pendingPromise.reject(new Error(failureReason));
+        }
         appDeploymentPromises.delete(appName);
     } else if (isFailure) {
         const userId = await dbServices.getUserIdByBotName(appName);
         if (userId) {
-            // --- UPDATED WARNING MESSAGE ---
-            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
-                                   `*Reason:* ${failureReason}\n` +
-                                   `Please update your session ID.\n\n` +
-                                   `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
-
+            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID to get it back online.`;
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
