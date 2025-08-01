@@ -630,80 +630,65 @@ async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessa
     }
 }
 
-async function sendBappList(chatId, messageId = null, botTypeFilter) {
-    const checkingMsg = await bot.editMessageText(
-        `Checking and syncing all *${botTypeFilter.toUpperCase()}* apps with Heroku...`, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    }).catch(() => bot.sendMessage(chatId, `Checking apps...`, { parse_mode: 'Markdown' }));
+// === API functions ===
 
-    messageId = checkingMsg.message_id;
-
+async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp', targetUserId = null, isRemoval = false) {
     try {
-        // 1. Get ALL bots for the type from the database, regardless of status
-        const dbResult = await pool.query(
-            `SELECT user_id, app_name, deleted_from_heroku_at FROM user_deployments WHERE bot_type = $1 ORDER BY app_name ASC`,
-            [botTypeFilter]
-        );
-        const allDbBots = dbResult.rows;
-
-        if (allDbBots.length === 0) {
-            return bot.editMessageText(`No bots (active or inactive) were found in the database for the type: *${botTypeFilter.toUpperCase()}*`, {
-                chat_id: chatId, message_id: messageId, parse_mode: 'Markdown'
-            });
-        }
-
-        // 2. Verify each bot against Heroku and update its status in our list
-        const verificationPromises = allDbBots.map(async (bot) => {
-            try {
-                await axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                });
-                // If it exists on Heroku but is marked as deleted in DB, correct it
-                if (bot.deleted_from_heroku_at) {
-                    await pool.query('UPDATE user_deployments SET deleted_from_heroku_at = NULL WHERE app_name = $1', [bot.app_name]);
-                }
-                return { ...bot, is_active: true };
-            } catch (error) {
-                if (error.response && error.response.status === 404) {
-                    // If it doesn't exist on Heroku but is NOT marked as deleted, correct it
-                    if (!bot.deleted_from_heroku_at) {
-                        await dbServices.markDeploymentDeletedFromHeroku(bot.user_id, bot.app_name);
-                    }
-                }
-                return { ...bot, is_active: false };
+        const res = await axios.get('https://api.heroku.com/apps', {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
             }
         });
-        
-        const verifiedBots = await Promise.all(verificationPromises);
+        const apps = res.data.map(a => a.name);
+        if (!apps.length) {
+            if (messageId) return bot.editMessageText('No apps found.', { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, 'No apps found.');
+        }
 
-        // 3. Build the final button list with accurate statuses
-        const appButtons = verifiedBots.map(entry => {
-            const statusIndicator = entry.is_active ? '🟢' : '🔴';
-            return {
-                text: `${statusIndicator} ${entry.app_name}`,
-                callback_data: `select_bapp:${entry.app_name}:${entry.user_id}`
-            };
-        });
-
-        const rows = chunkArray(appButtons, 3);
-        const text = `Select a *${botTypeFilter.toUpperCase()}* app to view details (🟢 Active, 🔴 Inactive):`;
-        const options = {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: rows }
+        const chunkArray = (arr, size) => {
+            const out = [];
+            for (let i = 0; i < arr.length; i += size) {
+                out.push(arr.slice(i, i + size));
+            }
+            return out;
         };
 
-        await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
+        const rows = chunkArray(apps, 3).map(r =>
+            r.map(name => ({
+                text: name,
+                callback_data: isRemoval
+                    ? `${callbackPrefix}:${name}:${targetUserId}`
+                    : targetUserId
+                        ? `${callbackPrefix}:${name}:${targetUserId}`
+                        : `${callbackPrefix}:${name}`
+            }))
+        );
 
-    } catch (error) {
-        console.error(`Error fetching and syncing app list for /bapp:`, error.message);
-        await bot.editMessageText(`An error occurred while syncing the app list. Please check the logs.`, {
-             chat_id: chatId, message_id: messageId
-        });
+        const message = `Total apps: ${apps.length}\nSelect an app:`;
+        if (messageId) {
+            await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: rows } });
+        } else {
+            await bot.sendMessage(chatId, message, { reply_markup: { inline_keyboard: rows } });
+        }
+    } catch (e) {
+        const errorMsg = `Error fetching apps: ${e.response?.data?.message || e.message}`;
+        if (e.response && e.response.status === 401) {
+            console.error(`Heroku API key is invalid/expired. Cannot fetch apps. User: ${chatId}`);
+            if (messageId) {
+                bot.editMessageText("Heroku API key invalid. Please contact the bot admin.", { chat_id: chatId, message_id: messageId });
+            } else {
+                bot.sendMessage(chatId, "Heroku API key invalid. Please contact the bot admin.");
+            }
+        } else {
+            if (messageId) {
+                bot.editMessageText(errorMsg, { chat_id: chatId, message_id: messageId });
+            } else {
+                bot.sendMessage(chatId, errorMsg);
+            }
+        }
     }
 }
-
 
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
   const name = vars.APP_NAME;
