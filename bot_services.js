@@ -1027,6 +1027,7 @@ module.exports = {
     handleAppNotFoundAndCleanDb,
     sendAppList,
     permanentlyDeleteßotRecord,
+    deleteUserDeploymentFromBackup,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
