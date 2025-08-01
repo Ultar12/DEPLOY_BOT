@@ -952,33 +952,50 @@ const crypto = require('crypto');
 
         if (event.event === 'charge.success') {
             const { reference, amount, currency, customer } = event.data;
-                        try {
+                                    try {
                 const result = await pool.query('SELECT user_id, bot_type FROM pending_payments WHERE reference = $1', [reference]);
                 if (result.rows.length === 0) return res.sendStatus(200);
                 
                 const { user_id, bot_type } = result.rows[0];
 
-                // Save to completed payments table for revenue tracking
+                // Save to completed payments table
                 await pool.query(
                     `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
                     [reference, user_id, customer.email, amount, currency, event.data.paid_at]
                 );
 
-                const newKey = generateKey();
-                await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
-
-                await bot.sendMessage(user_id,
-                    `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
-                    { 
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: [[{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
-                    }
-                );
-                
                 const userChat = await bot.getChat(user_id);
                 const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
-                const adminMessage = `✅ *New Payment!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key:* \`${newKey}\``;
-                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+
+                if (bot_type && bot_type.startsWith('renewal_')) {
+                    // --- RENEWAL LOGIC ---
+                    const appNameToRenew = bot_type.split('_')[1];
+                    await pool.query(
+                        `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`,
+                        [user_id, appNameToRenew]
+                    );
+
+                    await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameTorenew)}* has been successfully renewed for another 45 days.`, { parse_mode: 'Markdown' });
+                    
+                    const adminMessage = `*Bot Renewed!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameTorenew}\``;
+                    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+
+                } else {
+                    // --- NEW KEY PURCHASE LOGIC ---
+                    const newKey = generateKey();
+                    await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
+
+                    await bot.sendMessage(user_id,
+                        `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
+                        { 
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
+                        }
+                    );
+                    
+                    const adminMessage = `*New Key Sale!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key:* \`${newKey}\``;
+                    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+                }
                 
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
                 console.log(`Successfully processed payment for reference: ${reference}`);
@@ -987,9 +1004,6 @@ const crypto = require('crypto');
                 console.error(`Webhook DB Error for reference ${reference}:`, dbError);
                 return res.sendStatus(500); 
             }
-
-
-
 
 
 // --- UPDATED: Secure API Endpoint to GET or CREATE a deploy key ---
@@ -1872,11 +1886,10 @@ bot.on('message', async msg => {
       return;
   }
 
-        if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
+          if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
     const email = text.trim();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-        return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return bot.sendMessage(cid, "That's not a valid email. Please try again.");
     }
 
     delete userStates[cid];
@@ -1884,12 +1897,15 @@ bot.on('message', async msg => {
 
     try {
         const reference = crypto.randomBytes(16).toString('hex');
-        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1000) * 100;
+        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
 
-                
+        // Check if this is a renewal or a new key purchase
+        const isRenewal = st.data.renewal;
+        const appNameToRenew = st.data.appName;
+
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
-            [reference, cid, email, st.data.botType]
+            [reference, cid, email, isRenewal ? `renewal_${appNameTorenew}` : 'new_key']
         );
 
         const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
@@ -1899,36 +1915,25 @@ bot.on('message', async msg => {
                 reference: reference,
                 metadata: {
                     user_id: cid,
-                    product: "Telegram Bot Deploy Key"
+                    product: isRenewal ? `Renewal for ${appNameTorenew}` : "New Deploy Key"
                 }
             },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-                }
-            }
+            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
         );
 
         const paymentUrl = paystackResponse.data.data.authorization_url;
-
         await bot.editMessageText(
-            'Click the button below to complete your payment. You will receive your key automatically after payment is confirmed.',
+            'Click the button below to complete your payment. Your purchase will be confirmed automatically.',
             {
-                chat_id: cid,
-                message_id: sentMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Pay Now', url: paymentUrl }]
-                    ]
-                }
+                chat_id: cid, message_id: sentMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]] }
             }
         );
 
     } catch (error) {
         console.error("Paystack error:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later or contact support.', {
-            chat_id: cid,
-            message_id: sentMsg.message_id
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link.', {
+            chat_id: cid, message_id: sentMsg.message_id
         });
     }
     return;
@@ -3700,6 +3705,31 @@ if (action === 'levanter_wa_fallback') {
           }).catch(() => {});
       }
       return;
+
+        if (action === 'renew_bot') {
+        const appName = payload;
+        const renewalPrice = process.env.KEY_PRICE_NGN || '1500';
+
+        // Set the state to await email, but with renewal context
+        userStates[cid] = { 
+            step: 'AWAITING_EMAIL_FOR_PAYMENT', 
+            data: { 
+                renewal: true, 
+                appName: appName 
+            } 
+        };
+
+        await bot.editMessageText(
+            `You are about to renew *${appName}* for another 45 days for *₦${renewalPrice}*.\n\nPlease enter your email address to proceed.`,
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+        return;
+    }
+
   }
 
   if (action === 'setup') {
@@ -3779,7 +3809,7 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-  if (action === 'selectapp' || action === 'selectbot') {
+   if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id;
     const appName = payload;
@@ -3787,30 +3817,52 @@ if (action === 'levanter_wa_fallback') {
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName, messageId: messageId, isUserBot: isUserBot } };
 
     await bot.sendChatAction(cid, 'typing');
-    await bot.editMessageText(`Fetching app status for "*${appName}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+    
+    // --- START OF NEW LOGIC ---
+    // Fetch bot details to check expiration date
+    const botDetails = (await pool.query(
+        `SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2`,
+        [cid, appName]
+    )).rows[0];
+
+    const keyboard = [
+      [
+        { text: 'Info', callback_data: `info:${appName}` },
+        { text: 'Restart', callback_data: `restart:${appName}` },
+        { text: 'Logs', callback_data: `logs:${appName}` }
+      ],
+      [
+        { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
+        { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
+        { text: 'Set Variable', callback_data: `setvar:${appName}` }
+      ]
+    ];
+
+    // Conditionally add the "Renew" button
+    if (botDetails && botDetails.expiration_date) {
+        const expirationDate = new Date(botDetails.expiration_date);
+        const now = new Date();
+        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+
+        if (daysLeft <= 7) {
+            // Insert the Renew button in the first row
+            keyboard[0].splice(2, 0, { text: 'Renew (45 Days)', callback_data: `renew_bot:${appName}` });
+        }
+    }
+    
+    keyboard.push([{ text: 'Back', callback_data: 'back_to_app_list' }]);
+    // --- END OF NEW LOGIC ---
 
     return bot.editMessageText(`Manage app "*${appName}*":`, {
       chat_id: cid,
       message_id: messageId,
       parse_mode: 'Markdown',
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: 'Info', callback_data: `info:${appName}` },
-            { text: 'Restart', callback_data: `restart:${appName}` },
-            { text: 'Logs', callback_data: `logs:${appName}` }
-          ],
-          [
-            { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
-            { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
-            { text: 'Set Variable', callback_data: `setvar:${appName}` }
-          ],
-          [{ text: 'Backup', callback_data: `backup_app:${appName}` }], // NEW: Backup button
-          [{ text: 'Back', callback_data: 'back_to_app_list' }]
-        ]
+        inline_keyboard: keyboard
       }
     });
   }
+
 
 // ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
