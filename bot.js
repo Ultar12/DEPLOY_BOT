@@ -4196,72 +4196,56 @@ if (action === 'levanter_wa_fallback') {
 if (action === 'info') {
     const appName = payload;
     const messageId = q.message.message_id;
-    const st = userStates[cid];
-
-    if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) {
-        await bot.sendMessage(cid, "This menu has expired. Please select an app again.");
-        delete userStates[cid];
-        return;
-    }
 
     await bot.editMessageText(`Fetching app info for "*${escapeMarkdown(appName)}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
     
     try {
-      const apiHeaders = {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-      };
+        const [appRes, configRes, dynoRes] = await Promise.all([
+            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })
+        ]);
 
-      const [appRes, configRes, dynoRes] = await Promise.all([
-        axios.get(`https://api.heroku.com/apps/${appName}`, { headers: apiHeaders }),
-        axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: apiHeaders }),
-        axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: apiHeaders })
-      ]);
+        const appData = appRes.data;
+        const configData = configRes.data;
+        const dynoData = dynoRes.data;
 
-      const appData = appRes.data;
-      const configData = configRes.data;
-      const dynoData = dynoRes.data;
-
-      let dynoStatus = 'Inactive 🔴';
-      if (dynoData.length > 0) {
-          const mainDynoState = dynoData[0].state;
-          if (['up', 'starting', 'restarting'].includes(mainDynoState)) {
-              dynoStatus = 'Active 🟢';
-          }
-      }
+        let dynoStatus = 'Inactive';
+        if (dynoData.length > 0 && ['up', 'starting', 'restarting'].includes(dynoData[0].state)) {
+            dynoStatus = 'Active';
+        }
       
-      // --- FIX: Get the bot's actual owner ID first ---
-      const ownerId = await dbServices.getUserIdByBotName(appName);
-      let expirationInfo = "N/A (Not backed up)";
+        // --- START OF FIX ---
+        const ownerId = await dbServices.getUserIdByBotName(appName);
+        let expirationInfo = "N/A";
 
-      if (ownerId) {
-          const deploymentBackup = (await backupPool.query('SELECT deploy_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
-          if (deploymentBackup && deploymentBackup.deploy_date) {
-            const originalDeployDate = new Date(deploymentBackup.deploy_date);
-            const fixedExpirationDate = new Date(originalDeployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
-            const now = new Date();
-            const timeLeftMs = fixedExpirationDate.getTime() - now.getTime();
-            const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+        if (ownerId) {
+            // Correctly read the expiration_date from the main database
+            const deploymentDetails = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
             
-            if (daysLeft > 0) {
-                expirationInfo = `${daysLeft} days remaining`;
-            } else {
-                expirationInfo = 'Expired';
+            if (deploymentDetails && deploymentDetails.expiration_date) {
+                const expirationDate = new Date(deploymentDetails.expiration_date);
+                const now = new Date();
+                const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+                
+                if (daysLeft > 0) {
+                    expirationInfo = `${daysLeft} days remaining`;
+                } else {
+                    expirationInfo = 'Expired';
+                }
             }
-          }
-      }
-      // --- END OF FIX ---
+        }
+        // --- END OF FIX ---
 
-      // --- FIX: Removed "Last Release" and "Stack" lines ---
-      const info = `*App Info: ${appData.name}*\n\n` +
-                   `*Dyno Status:* ${dynoStatus}\n` +
-                   `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
-                   `*Expiration:* ${expirationInfo}\n\n` +
-                   `*Key Config Vars:*\n` +
-                   `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
-                   `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+        const infoText = `*App Info: ${appData.name}*\n\n` +
+                       `*Dyno Status:* ${dynoStatus}\n` +
+                       `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
+                       `*Expiration:* ${expirationInfo}\n\n` +
+                       `*Key Config Vars:*\n` +
+                       `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
+                       `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
-      return bot.editMessageText(info, {
+      return bot.editMessageText(infoText, {
         chat_id: cid,
         message_id: messageId,
         parse_mode: 'Markdown',
@@ -4277,14 +4261,12 @@ if (action === 'info') {
       }
       const errorMsg = e.response?.data?.message || e.message;
       return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
-        chat_id: cid,
-        message_id: messageId,
-        reply_markup: {
-            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
-        }
+        chat_id: cid, message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]] }
       });
     }
 }
+
   if (action === 'restart') {
     const st = userStates[cid];
     // Check if state is valid and appName matches
