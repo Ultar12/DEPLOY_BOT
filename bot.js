@@ -939,7 +939,7 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-                  app.post('/paystack/webhook', express.json(), async (req, res) => {
+       app.post('/paystack/webhook', express.json(), async (req, res) => {
         const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
                            .update(JSON.stringify(req.body))
                            .digest('hex');
@@ -952,44 +952,32 @@ const crypto = require('crypto');
 
         if (event.event === 'charge.success') {
             const { reference, amount, currency, customer } = event.data;
-            try {
+                        try {
                 const result = await pool.query('SELECT user_id, bot_type FROM pending_payments WHERE reference = $1', [reference]);
-                if (result.rows.length === 0) {
-                    return res.sendStatus(200);
-                }
+                if (result.rows.length === 0) return res.sendStatus(200);
+                
                 const { user_id, bot_type } = result.rows[0];
+
+                // Save to completed payments table for revenue tracking
+                await pool.query(
+                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+                );
 
                 const newKey = generateKey();
                 await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
 
-                // Send the key to the user with the new "Deploy Now" button
                 await bot.sendMessage(user_id,
-                    `Payment confirmed!\n\nThank you for your purchase. Here is your one-time deploy key:\n\n` +
-                    `\`${newKey}\`\n\n` +
-                    `You can now use this key to deploy your bot.`,
+                    `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
                     { 
                         parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]
-                            ]
-                        }
+                        reply_markup: { inline_keyboard: [[{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
                     }
                 );
                 
-                // --- REFORMATTED ADMIN NOTIFICATION ---
                 const userChat = await bot.getChat(user_id);
                 const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
-                const adminMessage = 
-`*New Successful Payment!*
-
-*Amount:* ${amount / 100} ${currency}
-*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)
-*Email:* ${escapeMarkdown(customer.email)}
-*Reference:* \`${reference}\`
-
-*Key Generated:* \`${newKey}\``;
-
+                const adminMessage = `✅ *New Payment!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key:* \`${newKey}\``;
                 await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
                 
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
@@ -999,9 +987,7 @@ const crypto = require('crypto');
                 console.error(`Webhook DB Error for reference ${reference}:`, dbError);
                 return res.sendStatus(500); 
             }
-        }
-        res.sendStatus(200);
-    });
+
 
 
 
@@ -1702,6 +1688,42 @@ bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/revenue$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    try {
+        const now = new Date();
+        const todayStart = new Date(now.setHours(0, 0, 0, 0)).toISOString();
+        const weekStart = new Date(now.setDate(now.getDate() - now.getDay())).toISOString();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+        const todayResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [todayStart]);
+        const weekResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [weekStart]);
+        const monthResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [monthStart]);
+
+        const formatRevenue = (result) => {
+            const total = result.rows[0].total || 0;
+            const count = result.rows[0].count || 0;
+            return `₦${(total / 100).toLocaleString()} (${count} keys)`;
+        };
+
+        const revenueMessage = `
+*Sales Revenue:*
+
+*Today:* ${formatRevenue(todayResult)}
+*This Week:* ${formatRevenue(weekResult)}
+*This Month:* ${formatRevenue(monthResult)}
+        `;
+        
+        await bot.sendMessage(cid, revenueMessage, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error("Error fetching revenue:", error);
+        await bot.sendMessage(cid, "An error occurred while calculating revenue.");
+    }
+});
+
+
 
 // NEW ADMIN COMMAND: /ban <user_id>
 bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
@@ -2274,13 +2296,11 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
-  // THIS IS THE NEW, UPDATED CODE
-  if (text === 'My Bots') {
-    console.log(`[Flow] My Bots button clicked by user: ${cid}`);
+  /  if (text === 'My Bots') {
     const bots = await dbServices.getUserBots(cid);
 
     if (!bots.length) {
-        return bot.sendMessage(cid, "You have not deployed any bots yet. Would you like to deploy your first bot or restore a backup?", {
+        return bot.sendMessage(cid, "You have not deployed any bots yet.", {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
@@ -2290,34 +2310,45 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
     }
 
-    const rows = chunkArray(bots, 3).map(r => r.map(n => ({
-      text: n,
-      callback_data: `selectbot:${n}`
-    })));
+    // --- NEW DASHBOARD LOGIC ---
+    let dashboardText = "*Your Bots Dashboard:*\n\n";
+    const keyboardRows = [];
+    const now = new Date();
 
-    // --- THIS IS THE NEW LINE ---
-    // Add the "Restore" button as the last row
-    rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
-    // --- END OF NEW LINE ---
+    for (const botName of bots) {
+        const botDetails = (await pool.query(`
+            SELECT status, expiration_date FROM user_bots
+            LEFT JOIN user_deployments ON user_bots.user_id = user_deployments.user_id AND user_bots.bot_name = user_deployments.app_name
+            WHERE user_bots.user_id = $1 AND user_bots.bot_name = $2
+        `, [cid, botName])).rows[0];
 
-    return bot.sendMessage(cid, 'Your deployed bots:', {
-      reply_markup: { inline_keyboard: rows }
+        let statusText = "Unknown";
+        if (botDetails) {
+            const expiration = new Date(botDetails.expiration_date);
+            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+
+            if (daysLeft <= 0) {
+                statusText = `Expired`;
+            } else if (botDetails.status === 'logged_out') {
+                statusText = `Logged Out`;
+            } else {
+                statusText = `Online - Expires in ${daysLeft} days`;
+            }
+        }
+        dashboardText += `*${botName}*\nStatus: ${statusText}\n\n`;
+        // Add a button to manage this specific bot
+        keyboardRows.push([{ text: `Manage "${botName}"`, callback_data: `selectbot:${botName}` }]);
+    }
+    
+    // Add the restore button at the end
+    keyboardRows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
+
+    return bot.sendMessage(cid, dashboardText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboardRows }
     });
   }
 
-
-  if (text === 'Support') {
-  const supportKeyboard = {
-      inline_keyboard: [
-          [{ text: 'Ask Admin a Question', callback_data: 'ask_admin_question' }],
-          [{ text: 'Contact Admin Directly', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }] // <<< FIX: Corrected URL format
-      ]
-  };
-  return bot.sendMessage(cid, `For help, you can contact the admin directly:`, {
-      reply_markup: supportKeyboard,
-      parse_mode: 'Markdown'
-  });
-}
 
   // Add this block inside bot.on('message', ...)
 
