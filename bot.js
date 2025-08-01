@@ -1236,6 +1236,45 @@ bot.onText(/\/restoreall/, (msg) => {
     bot.sendMessage(chatId, 'Which bot type would you like to restore all backed-up deployments for?', opts);
 });
 
+bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const days = parseInt(match[1], 10);
+    if (isNaN(days) || days <= 0) {
+        return bot.sendMessage(cid, "Please provide a valid number of days (e.g., /expire 45).");
+    }
+
+    try {
+        const allBots = await dbServices.getAllUserBots();
+        if (allBots.length === 0) {
+            return bot.sendMessage(cid, "There are no bots deployed to set an expiration for.");
+        }
+
+        userStates[cid] = {
+            step: 'AWAITING_APP_FOR_EXPIRATION',
+            data: { days: days }
+        };
+
+        const appButtons = allBots.map(bot => ({
+            text: bot.bot_name,
+            callback_data: `set_expiration:${bot.bot_name}`
+        }));
+
+        const keyboard = chunkArray(appButtons, 2);
+
+        await bot.sendMessage(cid, `Select an app to set its expiration to *${days} days* from now:`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: keyboard
+            }
+        });
+    } catch (error) {
+        console.error("Error fetching bots for /expire command:", error);
+        await bot.sendMessage(cid, "An error occurred while fetching the bot list.");
+    }
+});
+
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
@@ -3272,6 +3311,57 @@ ${configVarsDisplay}
     return;
   }
 
+      if (action === 'set_expiration') {
+        const appName = payload;
+        const st = userStates[cid];
+
+        if (!st || st.step !== 'AWAITING_APP_FOR_EXPIRATION') {
+            return bot.editMessageText("This session has expired. Please use the /expire command again.", {
+                chat_id: cid,
+                message_id: q.message.message_id
+            });
+        }
+
+        const days = st.data.days;
+        try {
+            const ownerIdResult = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
+            if (ownerIdResult.rows.length === 0) {
+                throw new Error(`Could not find owner for ${appName}`);
+            }
+            const ownerId = ownerIdResult.rows[0].user_id;
+
+            // Use a parameterized query to safely add the interval
+            const result = await pool.query(
+                `UPDATE user_deployments SET expiration_date = NOW() + ($1 * INTERVAL '1 day') WHERE app_name = $2 AND user_id = $3`,
+                [days, appName, ownerId]
+            );
+
+            if (result.rowCount > 0) {
+                await bot.editMessageText(`Success! Expiration for *${escapeMarkdown(appName)}* has been set to *${days} days* from now.`, {
+                    chat_id: cid,
+                    message_id: q.message.message_id,
+                    parse_mode: 'Markdown'
+                });
+            } else {
+                 await bot.editMessageText(`Could not find *${escapeMarkdown(appName)}* in the deployments table to update.`, {
+                    chat_id: cid,
+                    message_id: q.message.message_id,
+                    parse_mode: 'Markdown'
+                });
+            }
+
+        } catch (error) {
+            console.error(`Error setting expiration for ${appName}:`, error);
+            await bot.editMessageText(`An error occurred while updating the expiration date. Please check the logs.`, {
+                chat_id: cid,
+                message_id: q.message.message_id
+            });
+        } finally {
+            delete userStates[cid];
+        }
+        return;
+    }
+
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
     const appName = payload;
@@ -3796,7 +3886,7 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-   if (action === 'selectapp' || action === 'selectbot') {
+     if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id;
     const appName = payload;
@@ -3805,7 +3895,6 @@ if (action === 'levanter_wa_fallback') {
 
     await bot.sendChatAction(cid, 'typing');
     
-    // --- START OF NEW LOGIC ---
     // Fetch bot details to check expiration date
     const botDetails = (await pool.query(
         `SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2`,
@@ -3822,23 +3911,23 @@ if (action === 'levanter_wa_fallback') {
         { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
         { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
         { text: 'Set Variable', callback_data: `setvar:${appName}` }
-      ]
+      ],
+      // --- THIS ROW WAS ADDED BACK ---
+      [{ text: 'Backup', callback_data: `backup_app:${appName}` }],
     ];
 
-    // Conditionally add the "Renew" button
+    // Conditionally add the "Renew" button to the first row
     if (botDetails && botDetails.expiration_date) {
         const expirationDate = new Date(botDetails.expiration_date);
         const now = new Date();
         const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
 
         if (daysLeft <= 7) {
-            // Insert the Renew button in the first row
             keyboard[0].splice(2, 0, { text: 'Renew (45 Days)', callback_data: `renew_bot:${appName}` });
         }
     }
     
     keyboard.push([{ text: 'Back', callback_data: 'back_to_app_list' }]);
-    // --- END OF NEW LOGIC ---
 
     return bot.editMessageText(`Manage app "*${appName}*":`, {
       chat_id: cid,
@@ -3849,7 +3938,6 @@ if (action === 'levanter_wa_fallback') {
       }
     });
   }
-
 
 // ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
