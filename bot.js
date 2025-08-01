@@ -4144,7 +4144,6 @@ if (action === 'levanter_wa_fallback') {
   }
 
 
-    if (action === 'add_assign_app') {
       if (action === 'add_assign_app') {
     const appName = payload;
     const targetUserId = extra;
@@ -4223,6 +4222,7 @@ if (action === 'levanter_wa_fallback') {
     }
     return;
   }
+
 
 
 
