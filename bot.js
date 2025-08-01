@@ -2853,7 +2853,7 @@ bot.on('callback_query', async q => {
   const payload = dataParts[1];
   const extra = dataParts[2];
   const flag = dataParts[3];
-
+  const st = userStates[cid];
   // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
       const banned = await dbServices.isUserBanned(cid); // Use dbServices
