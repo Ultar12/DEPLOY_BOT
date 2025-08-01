@@ -3023,62 +3023,32 @@ if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
 
-    if (!st || (st.step !== 'AWAITING_BOT_TYPE_SELECTION' && st.step !== 'AWAITING_KEY')) {
-        await bot.editMessageText('This deployment session has expired or is invalid. Please start over.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        delete userStates[cid];
-        return;
+    if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION') {
+        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: q.message.message_id });
     }
       
     st.data.botType = botType;
 
-    // NEW CODE
-    if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
-        st.step = 'AWAITING_KEY';
-        const price = process.env.KEY_PRICE_NGN || '1000'; // Default price if not set
-        await bot.editMessageText(
-            `You chose *${botType.toUpperCase()}*.\n\nPlease enter your Deploy Key.`, 
-            {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
-                    ]
-                }
-            }
-        );
-
-    } else { 
-        st.step = 'SESSION_ID';
-        let sessionPrompt = `You chose *${botType.toUpperCase()}*. Now send your session ID.`;
-        let replyMarkup = {};
-        const levanterUrl = 'https://levanter-delta.vercel.app/';
-
-        if (botType === 'raganork') {
-            sessionPrompt += ` (Must start with \`${RAGANORK_SESSION_PREFIX}\`).`;
-            replyMarkup = {
-                inline_keyboard: [[{ text: 'Get Session ID', url: RAGANORK_SESSION_SITE_URL }]]
-            };
-        } else { // Levanter
-            sessionPrompt += ` (Must start with \`${LEVANTER_SESSION_PREFIX}\`).`;
-            replyMarkup = {
-                inline_keyboard: [[{ text: 'Get Session ID', url: levanterUrl }]]
-            };
-        }
-        
-        await bot.editMessageText(sessionPrompt, {
+    // This is the updated logic that asks for confirmation first
+    await bot.editMessageText(
+        `You've selected *${botType.toUpperCase()}*. Have you already generated your session ID?`,
+        {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
-            reply_markup: replyMarkup
-        });
-    }
-    return;
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, I have my Session ID", callback_data: `has_session:${botType}` },
+                        { text: "No, I need to get it", callback_data: `needs_session:${botType}` }
+                    ]
+                ]
+            }
+        }
+    );
+    return; // This return is crucial
 }
+
 
           if (action === 'buy_key') {
         if (!st || !st.data.botType) {
