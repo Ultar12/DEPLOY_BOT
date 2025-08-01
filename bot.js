@@ -3023,16 +3023,32 @@ if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
 
-    if (!st || (st.step !== 'AWAITING_BOT_TYPE_SELECTION' && st.step !== 'AWAITING_KEY')) {
-        await bot.editMessageText('This deployment session has expired or is invalid. Please start over.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        delete userStates[cid];
-        return;
+    if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION') {
+        return bot.editMessageText('This session has expired. Please start over.', { chat_id: cid, message_id: q.message.message_id });
     }
       
     st.data.botType = botType;
+
+    // Ask the new confirmation question
+    await bot.editMessageText(
+        `You've selected *${botType.toUpperCase()}*. Have you already generated your session ID?`,
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, I have my Session ID", callback_data: `has_session:${botType}` },
+                        { text: "No, I need to get it", callback_data: `needs_session:${botType}` }
+                    ]
+                ]
+            }
+        }
+    );
+    return;
+}
+
 
     // NEW CODE
     if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
@@ -3270,6 +3286,53 @@ if (action === 'dkey_select') {
     return;
 }
 
+      if (action === 'has_session') {
+        const botType = payload;
+        const st = userStates[cid];
+        if (!st) return; // State check
+
+        st.step = 'AWAITING_KEY';
+        const price = process.env.KEY_PRICE_NGN || '1000';
+        
+        await bot.editMessageText(
+            `Great! Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
+                    ]
+                }
+            }
+        );
+        return;
+    }
+
+    if (action === 'needs_session') {
+        const botType = payload;
+        const st = userStates[cid];
+        if (!st) return; // State check
+
+        let sessionPrompt = `Please use the button below to get your session ID for *${botType.toUpperCase()}*.`;
+        const sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+
+        await bot.editMessageText(sessionPrompt, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Get Session ID', url: sessionUrl }],
+                    [{ text: "I have my Session ID now", callback_data: `has_session:${botType}` }]
+                ]
+            }
+        });
+        return;
+    }
+
+
 if (action === 'dkey_confirm') {
     const keyToDelete = payload;
     const success = await dbServices.deleteDeployKey(keyToDelete);
@@ -3305,7 +3368,7 @@ if (action === 'dkey_cancel') {
     // Fetch the specific deployment from the backup database
     let selectedDeployment;
     try {
-        const result = await Pool.query(
+        const result = await pool.query(
             `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
              FROM user_deployments WHERE app_name = $1 AND user_id = $2;`, // Use both app_name and user_id for uniqueness
             [appName, appUserId]
