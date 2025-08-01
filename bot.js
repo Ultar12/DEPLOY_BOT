@@ -1987,7 +1987,7 @@ bot.on('message', async msg => {
       return;
   }
 
-          if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
+            if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
     const email = text.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return bot.sendMessage(cid, "That's not a valid email. Please try again.");
@@ -2000,14 +2000,18 @@ bot.on('message', async msg => {
         const reference = crypto.randomBytes(16).toString('hex');
         const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
 
-        // Check if this is a renewal or a new key purchase
         const isRenewal = st.data.renewal;
         const appNameToRenew = st.data.appName;
+        
+        // --- THIS IS THE FIX ---
+        // We now correctly save the actual botType for a new key purchase
+        const botTypeToSave = isRenewal ? `renewal_${appNameTorenew}` : st.data.botType;
 
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
-            [reference, cid, email, isRenewal ? `renewal_${appNameTorenew}` : 'new_key']
+            [reference, cid, email, botTypeToSave]
         );
+        // --- END OF FIX ---
 
         const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
             {
@@ -2039,6 +2043,7 @@ bot.on('message', async msg => {
     }
     return;
   }
+
 
 
   // --- REPLACE this entire block in bot.js ---
