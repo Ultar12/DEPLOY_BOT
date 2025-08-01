@@ -178,6 +178,7 @@ async function createAllTablesInPool(dbPool, dbName) {
       bot_type   TEXT, -- ADD THIS LINE
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+  `);
 
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
 
@@ -194,6 +195,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         warning_sent_at TIMESTAMP, -- You already have this
         PRIMARY KEY (user_id, app_name)
       );
+    `);
 
 
   // --- ADD THIS LINE ---
