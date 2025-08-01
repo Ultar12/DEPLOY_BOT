@@ -5018,7 +5018,7 @@ if (action === 'setvarbool') {
     console.error(`[API_CALL_ERROR] Error updating boolean variable ${actualVarNameForHeroku} for ${appName}:`, errorMsg, e.response?.data); // <<< CHANGED
     return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
   }
-}
+
 
   if (action === 'change_session') {
     const appName = payload;
