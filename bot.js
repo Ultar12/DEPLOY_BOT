@@ -171,6 +171,9 @@ async function createAllTablesInPool(dbPool, dbName) {
         PRIMARY KEY (user_id, app_name)
       );
     `);
+
+      await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
+
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -5122,7 +5125,7 @@ if (action === 'setvarbool') {
 // --- REPLACE your old bot.on('channel_post', ...) with this ---
 
 bot.on('channel_post', async msg => {
-    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574'; // Your channel ID
+    const TELEGRAM_LISTEN_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_LISTEN_CHANNEL_ID || !msg.text) return;
 
     const text = msg.text.trim();
@@ -5148,17 +5151,15 @@ bot.on('channel_post', async msg => {
     
     if (!appName) return;
 
-    // --- START OF NEW/UPDATED LOGIC ---
     if (isSuccess) {
-        // Set status to 'online' in the database
-        await pool.query(`UPDATE user_bots SET status = 'online' WHERE bot_name = $1`, [appName]);
+        // Set status to 'online' and clear the timestamp
+        await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
     } else if (isFailure) {
-        // Set status to 'logged_out' in the database
-        await pool.query(`UPDATE user_bots SET status = 'logged_out' WHERE bot_name = $1`, [appName]);
+        // Set status to 'logged_out' and record the current time
+        await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
     }
-    // --- END OF NEW/UPDATED LOGIC ---
 
     const pendingPromise = appDeploymentPromises.get(appName);
     if (pendingPromise) {
@@ -5168,7 +5169,12 @@ bot.on('channel_post', async msg => {
     } else if (isFailure) {
         const userId = await dbServices.getUserIdByBotName(appName);
         if (userId) {
-            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n*Reason:* ${failureReason}\nPlease update your session ID.`;
+            // --- UPDATED WARNING MESSAGE ---
+            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
+                                   `*Reason:* ${failureReason}\n` +
+                                   `Please update your session ID.\n\n` +
+                                   `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
+
             await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -5178,6 +5184,7 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
 
 // === Free Trial Channel Membership Monitoring ===
 const ONE_HOUR_IN_MS = 60 * 60 * 1000;
@@ -5274,3 +5281,50 @@ async function checkAndManageExpirations() {
 // Run the check once every day
 setInterval(checkAndManageExpirations, ONE_DAY_IN_MS);
 console.log('[Expiration] Scheduled daily check for expired bots.');
+
+async function checkAndPruneLoggedOutBots() {
+    console.log('[Prune] Running hourly check for long-term logged-out bots...');
+    try {
+        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+        const result = await pool.query(
+            "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
+            [fiveDaysAgo]
+        );
+
+        const botsToDelete = result.rows;
+        if (botsToDelete.length === 0) {
+            console.log('[Prune] No logged-out bots found for deletion.');
+            return;
+        }
+
+        for (const botInfo of botsToDelete) {
+            const { user_id, bot_name } = botInfo;
+            console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 5 days.`);
+            
+            try {
+                // 1. Delete from Heroku
+                await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+
+                // 2. Delete from all database tables
+                await dbServices.deleteUserBot(user_id, bot_name);
+                await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name); // This function now targets the main DB
+
+                // 3. Notify user and admin
+                await bot.sendMessage(user_id, `Your bot "*${escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 5 days.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 5 days.`, { parse_mode: 'Markdown' });
+
+            } catch (error) {
+                console.error(`[Prune] Failed to delete bot ${bot_name}:`, error.response?.data?.message || error.message);
+                await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs.`, { parse_mode: 'Markdown' });
+            }
+        }
+    } catch (dbError) {
+        console.error('[Prune] DB Error while checking for logged-out bots:', dbError);
+    }
+}
+
+// Run the check every hour
+setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
+
