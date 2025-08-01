@@ -3029,7 +3029,7 @@ if (action === 'select_deploy_type') {
       
     st.data.botType = botType;
 
-    // Ask the new confirmation question
+    // This block ONLY asks the session ID question and then stops.
     await bot.editMessageText(
         `You've selected *${botType.toUpperCase()}*. Have you gotten your session ID?`,
         {
@@ -3046,7 +3046,9 @@ if (action === 'select_deploy_type') {
             }
         }
     );
-
+    // This "return" is crucial to prevent the old code from running.
+    return;
+}
 
     // NEW CODE
     if (cid !== ADMIN_ID && !st.data.isFreeTrial) {
