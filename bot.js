@@ -114,21 +114,10 @@ async function createAllTablesInPool(dbPool, dbName) {
         session_id TEXT,
         bot_type   TEXT DEFAULT 'levanter',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status     TEXT DEFAULT 'online',
         PRIMARY KEY (user_id, bot_name)
       );
     `);
-
-      await dbPool.query(`
-      CREATE TABLE IF NOT EXISTS completed_payments (
-        reference  TEXT PRIMARY KEY,
-        user_id    TEXT NOT NULL,
-        email      TEXT NOT NULL,
-        amount     INTEGER NOT NULL, -- Stored in kobo
-        currency   TEXT NOT NULL,
-        paid_at    TIMESTAMP WITH TIME ZONE NOT NULL
-      );
-    `);
-
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
@@ -138,8 +127,6 @@ async function createAllTablesInPool(dbPool, dbName) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-  await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'online';`);
-          
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
@@ -170,21 +157,8 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
-      // ADD THIS BLOCK
-  await dbPool.query(`
-    CREATE TABLE IF NOT EXISTS pending_payments (
-      reference  TEXT PRIMARY KEY,
-      user_id    TEXT NOT NULL,
-      email      TEXT NOT NULL,
-      bot_type   TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
-
-       await dbPool.query(`
-       CREATE TABLE IF NOT EXISTS user_deployments (
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS user_deployments (
         user_id TEXT NOT NULL,
         app_name TEXT NOT NULL,
         session_id TEXT,
@@ -193,15 +167,10 @@ async function createAllTablesInPool(dbPool, dbName) {
         deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expiration_date TIMESTAMP,
         deleted_from_heroku_at TIMESTAMP,
-        warning_sent_at TIMESTAMP, -- You already have this
+        warning_sent_at TIMESTAMP,
         PRIMARY KEY (user_id, app_name)
       );
     `);
-
-
-  // --- ADD THIS LINE ---
-    await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS warning_sent_at TIMESTAMP;`);
-    // --- END OF ADDITION ---
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -210,6 +179,27 @@ async function createAllTablesInPool(dbPool, dbName) {
         channel_id TEXT NOT NULL,
         trial_start_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         warning_sent_at TIMESTAMP
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS pending_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        bot_type   TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS completed_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        amount     INTEGER NOT NULL, -- Stored in kobo
+        currency   TEXT NOT NULL,
+        paid_at    TIMESTAMP WITH TIME ZONE NOT NULL
       );
     `);
 
