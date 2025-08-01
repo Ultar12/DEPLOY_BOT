@@ -185,7 +185,7 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
-    await dbPool.query(`
+        await dbPool.query(`
       CREATE TABLE IF NOT EXISTS pending_payments (
         reference  TEXT PRIMARY KEY,
         user_id    TEXT NOT NULL,
@@ -194,6 +194,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS completed_payments (
