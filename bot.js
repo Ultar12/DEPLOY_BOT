@@ -2304,7 +2304,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
-  /  if (text === 'My Bots') {
+    if (text === 'My Bots') {
     const bots = await dbServices.getUserBots(cid);
 
     if (!bots.length) {
