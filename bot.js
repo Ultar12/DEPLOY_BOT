@@ -3031,7 +3031,7 @@ if (action === 'select_deploy_type') {
 
     // Ask the new confirmation question
     await bot.editMessageText(
-        `You've selected *${botType.toUpperCase()}*. Have you already generated your session ID?`,
+        `You've selected *${botType.toUpperCase()}*. Have you gotten your session ID?`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
