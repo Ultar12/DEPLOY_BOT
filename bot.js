@@ -183,7 +183,7 @@ async function createAllTablesInPool(dbPool, dbName) {
 
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
 
-
+       await dbPool.query(`
        CREATE TABLE IF NOT EXISTS user_deployments (
         user_id TEXT NOT NULL,
         app_name TEXT NOT NULL,
