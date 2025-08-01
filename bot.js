@@ -3648,51 +3648,36 @@ ${configVarsDisplay}
   }
 
   // --- FIX: This block replaces the invalid bot.onCallbackQuery call ---
-// --- REPLACE this entire block in bot.js ---
-
-if (action === 'confirm_delete_bapp') {
+/if (action === 'confirm_delete_bapp') {
     const appName = payload;
     const appUserId = extra;
-    const messageId = q.message.message_id;
 
-    await bot.editMessageText(`Permanently deleting backup for "*${escapeMarkdown(appName)}*"...`, {
-        chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+    await bot.editMessageText(`Permanently deleting all database records for "*${escapeMarkdown(appName)}*"...`, {
+        chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     }).catch(()=>{});
 
     try {
-        const deleted = await dbServices.deleteUserDeploymentFromBackup(appUserId, appName);
+        // Call the new, more thorough delete function
+        const deleted = await dbServices.permanentlyDeleteBotRecord(appUserId, appName);
+        
         if (deleted) {
-            await bot.editMessageText(`Backup for "*${escapeMarkdown(appName)}*" has been permanently deleted. Returning to menu...`, {
-                chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+            await bot.answerCallbackQuery(q.id, { text: `All records for ${appName} deleted.`, show_alert: true });
+            await bot.editMessageText(`All database records for "*${escapeMarkdown(appName)}*" have been permanently deleted.`, {
+                chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
             });
         } else {
-            await bot.editMessageText(`Could not find backup for "*${escapeMarkdown(appName)}*" to delete. Returning to menu...`, {
-                 chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+            await bot.editMessageText(`Could not find records for "*${escapeMarkdown(appName)}*" to delete. It may have already been removed.`, {
+                 chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
             });
         }
-        
-        // FIX: Instead of trying to refresh a list, go back to the main selection menu.
-        const opts = {
-            chat_id: q.message.chat.id,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Levanter', callback_data: 'bapp_select_type:levanter' },
-                        { text: 'Raganork', callback_data: 'bapp_select_type:raganork' }
-                    ]
-                ]
-            }
-        };
-        await bot.editMessageText('Which bot type do you want to manage from the backup list?', opts);
-
     } catch (e) {
-        await bot.editMessageText(`Failed to permanently delete backup for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
-            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+        await bot.editMessageText(`Failed to delete records for "*${escapeMarkdown(appName)}*": ${escapeMarkdown(e.message)}`, {
+            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
         });
     }
     return;
 }
+
 
 
 // --- REPLACE your old 'back_to_bapp_list' logic with this ---
