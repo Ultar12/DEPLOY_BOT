@@ -176,7 +176,7 @@ async function createAllTablesInPool(dbPool, dbName) {
       reference  TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL,
       email      TEXT NOT NULL,
-      bot_type   TEXT, -- ADD THIS LINE
+      bot_type   TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
