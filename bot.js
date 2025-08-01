@@ -5211,7 +5211,6 @@ if (action === 'setvarbool') {
 });
 
 bot.on('channel_post', async msg => {
-bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
         return;
