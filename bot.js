@@ -4088,47 +4088,75 @@ if (action === 'levanter_wa_fallback') {
 
 
     if (action === 'add_assign_app') {
+      if (action === 'add_assign_app') {
     const appName = payload;
     const targetUserId = extra;
 
     if (cid !== ADMIN_ID) {
-        return bot.editMessageText("You are not authorized to perform this action.", { chat_id: cid, message_id: q.message.message_id });
+        return bot.editMessageText("You are not authorized for this action.", { chat_id: cid, message_id: q.message.message_id });
     }
 
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_APP_FOR_ADD' || st.data.targetUserId !== targetUserId) {
-        await bot.editMessageText("This session has expired. Please start over with `/add <user_id>`.", { chat_id: cid, message_id: q.message.message_id });
+        await bot.editMessageText("This session has expired. Please use `/add <user_id>` again.", { chat_id: cid, message_id: q.message.message_id });
         delete userStates[cid];
         return;
     }
 
-    await bot.editMessageText(`Assigning app "*${appName}*" to user \`${targetUserId}\`...`, {
+    await bot.editMessageText(`Verifying and assigning app "*${appName}*" to user \`${targetUserId}\`...`, {
         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     });
 
     try {
-        const existingOwnerResult = await pool.query('SELECT user_id FROM user_bots WHERE bot_name=$1', [appName]);
-        if (existingOwnerResult.rows.length === 0) {
-            throw new Error(`The app "${appName}" does not exist in the bot's database.`);
-        }
-        const oldOwnerId = existingOwnerResult.rows[0].user_id;
-
-        // --- START OF FIX ---
-        // Transfer ownership by updating the user_id in both tables
-        await pool.query('UPDATE user_bots SET user_id = $1 WHERE bot_name = $2 AND user_id = $3', [targetUserId, appName, oldOwnerId]);
-        await pool.query('UPDATE user_deployments SET user_id = $1 WHERE app_name = $2 AND user_id = $3', [targetUserId, appName, oldOwnerId]);
-        // --- END OF FIX ---
-
-        console.log(`[Admin] Transferred ownership of "${appName}" from ${oldOwnerId} to ${targetUserId}.`);
-
-        await bot.editMessageText(`App "*${appName}*" successfully assigned to user \`${targetUserId}\`! Its original expiration date is preserved.`, {
-            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+        // 1. Get the app's current config from Heroku. This also verifies it exists there.
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
+        const configVars = configRes.data;
+        const sessionId = configVars.SESSION_ID;
+
+        // 2. Determine bot type from session ID
+        let botType = 'levanter';
+        if (sessionId && sessionId.startsWith(RAGANORK_SESSION_PREFIX)) {
+            botType = 'raganork';
+        }
+
+        // 3. Check if the bot is already in our DB to see if this is an INSERT or an UPDATE
+        const existingOwnerResult = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
+
+        if (existingOwnerResult.rows.length > 0) {
+            // --- SCENARIO 1: OWNERSHIP TRANSFER ---
+            const oldOwnerId = existingOwnerResult.rows[0].user_id;
+            console.log(`[Admin] Transferring ownership of "${appName}" from ${oldOwnerId} to ${targetUserId}.`);
+
+            await pool.query('UPDATE user_bots SET user_id = $1, session_id = $2, bot_type = $3 WHERE bot_name = $4 AND user_id = $5', [targetUserId, sessionId, botType, appName, oldOwnerId]);
+            await pool.query('UPDATE user_deployments SET user_id = $1, session_id = $2, config_vars = $3, bot_type = $4 WHERE app_name = $5 AND user_id = $6', [targetUserId, sessionId, configVars, botType, appName, oldOwnerId]);
+            
+            await bot.editMessageText(`App "*${appName}*" successfully *transferred* to user \`${targetUserId}\`. Its expiration date is preserved.`, {
+                chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+            });
+
+        } else {
+            // --- SCENARIO 2: ADDING A NEW BOT ---
+            console.log(`[Admin] Adding new bot "${appName}" to database for user ${targetUserId}.`);
+
+            await dbServices.addUserBot(targetUserId, appName, sessionId, botType);
+            await dbServices.saveUserDeployment(targetUserId, appName, sessionId, configVars, botType);
+
+            await bot.editMessageText(`App "*${appName}*" successfully *added* to the database and assigned to user \`${targetUserId}\`.`, {
+                chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+            });
+        }
 
         await bot.sendMessage(targetUserId, `The admin has assigned the bot "*${appName}*" to your account. You can now manage it from "My Bots".`, { parse_mode: 'Markdown' });
 
     } catch (e) {
-        const errorMsg = e.response?.data?.message || e.message;
+        let errorMsg = e.message;
+        if (e.response?.status === 404) {
+            errorMsg = `The app "${appName}" was not found on your Heroku account.`;
+        } else if (e.response?.data?.message) {
+            errorMsg = e.response.data.message;
+        }
         console.error(`[Admin] Error assigning app "${appName}":`, errorMsg);
         await bot.editMessageText(`Failed to assign app "*${appName}*": ${errorMsg}`, {
             chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
@@ -4138,6 +4166,7 @@ if (action === 'levanter_wa_fallback') {
     }
     return;
   }
+
 
 
   if (action === 'remove_app_from_user') {
