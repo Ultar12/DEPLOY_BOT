@@ -3717,7 +3717,7 @@ if (action === 'levanter_wa_fallback') {
         return;
     }
 
-  }
+
 
   if (action === 'setup') {
       const st = userStates[cid];
