@@ -3783,11 +3783,10 @@ if (action === 'levanter_wa_fallback') {
       return;
   }
 
-        if (action === 'renew_bot') {
+  if (action === 'renew_bot') {
         const appName = payload;
         const renewalPrice = process.env.KEY_PRICE_NGN || '1500';
 
-        // Set the state to await email, but with renewal context
         userStates[cid] = { 
             step: 'AWAITING_EMAIL_FOR_PAYMENT', 
             data: { 
@@ -3801,7 +3800,13 @@ if (action === 'levanter_wa_fallback') {
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
-                parse_mode: 'Markdown'
+                parse_mode: 'Markdown',
+                // --- ADDED THIS KEYBOARD ---
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Back to Manage Menu', callback_data: `selectapp:${appName}` }]
+                    ]
+                }
             }
         );
         return;
