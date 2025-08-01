@@ -2827,7 +2827,7 @@ if (action === 'copydb_confirm_simple') {
             throw new Error(result.message);
         }
     } catch (error) {
-        await bot.editMessageText(`❌ Copy Failed! Reason: ${error.message}`, {
+        await bot.editMessageText(`Copy Failed! Reason: ${error.message}`, {
             chat_id: cid,
             message_id: q.message.message_id
         });
@@ -3698,6 +3698,7 @@ if (action === 'levanter_wa_fallback') {
           }).catch(() => {});
       }
       return;
+  }
 
         if (action === 'renew_bot') {
         const appName = payload;
