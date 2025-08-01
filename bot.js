@@ -986,7 +986,7 @@ const crypto = require('crypto');
                         `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
                         { 
                             parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: [[{ text: '🚀 Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
+                            reply_markup: { inline_keyboard: [[{ text: 'Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
                         }
                     );
                     
