@@ -3046,8 +3046,6 @@ if (action === 'select_deploy_type') {
             }
         }
     );
-    return;
-}
 
 
     // NEW CODE
