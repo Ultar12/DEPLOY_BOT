@@ -118,6 +118,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         PRIMARY KEY (user_id, bot_name)
       );
     `);
+    await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
@@ -171,9 +172,6 @@ async function createAllTablesInPool(dbPool, dbName) {
         PRIMARY KEY (user_id, app_name)
       );
     `);
-
-      await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
-
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -185,16 +183,17 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
-        await dbPool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS pending_payments (
         reference  TEXT PRIMARY KEY,
         user_id    TEXT NOT NULL,
         email      TEXT NOT NULL,
-        bot_type   TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
+    // --- THIS IS THE FIX ---
+    // This line ensures the 'bot_type' column is added to the existing table
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS completed_payments (
@@ -209,6 +208,7 @@ async function createAllTablesInPool(dbPool, dbName) {
 
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
+
 
 // Main startup logic
 (async () => {
