@@ -362,18 +362,13 @@ async function unbanUser(userId) {
     }
 }
 
-// === Functions for user deployments backup/restore/expiration (using 'backupPool') ===
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType) {
     try {
-        const cleanConfigVars = {};
-        for (const key in configVars) {
-            if (Object.prototype.hasOwnProperty.call(configVars, key)) {
-                cleanConfigVars[key] = String(configVars[key]);
-            }
-        }
+        const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
         const expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
 
+        // This query now preserves the original dates on conflict
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at)
             VALUES($1, $2, $3, $4, $5, $6, $7, NULL)
@@ -381,14 +376,19 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                session_id = EXCLUDED.session_id,
                config_vars = EXCLUDED.config_vars,
                bot_type = EXCLUDED.bot_type,
-               deleted_from_heroku_at = NULL;
+               deleted_from_heroku_at = NULL,
+               -- Keep the original deploy_date and expiration_date
+               deploy_date = user_deployments.deploy_date,
+               expiration_date = user_deployments.expiration_date;
         `;
-        await Pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
-        console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
+        // Using the main 'pool' as per your previous request
+        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
+        console.log(`[DB-Main] Saved/Updated deployment for app ${appName}. Dates preserved on update.`);
     } catch (error) {
-        console.error(`[DB-Backup] Failed to save user deployment for ${appName}:`, error.message, error.stack);
+        console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message);
     }
 }
+
 
 async function getUserDeploymentsForRestore(userId) {
     try {
