@@ -1246,10 +1246,14 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
     }
 
     try {
-        const allBots = await dbServices.getAllUserBots();
+        let allBots = await dbServices.getAllUserBots();
         if (allBots.length === 0) {
             return bot.sendMessage(cid, "There are no bots deployed to set an expiration for.");
         }
+
+        // --- START OF CHANGES ---
+        // Sort the bots alphabetically by name
+        allBots.sort((a, b) => a.bot_name.localeCompare(b.bot_name));
 
         userStates[cid] = {
             step: 'AWAITING_APP_FOR_EXPIRATION',
@@ -1261,7 +1265,9 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
             callback_data: `set_expiration:${bot.bot_name}`
         }));
 
-        const keyboard = chunkArray(appButtons, 2);
+        // Arrange the buttons in rows of 3
+        const keyboard = chunkArray(appButtons, 3);
+        // --- END OF CHANGES ---
 
         await bot.sendMessage(cid, `Select an app to set its expiration to *${days} days* from now:`, {
             parse_mode: 'Markdown',
@@ -1274,6 +1280,7 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
         await bot.sendMessage(cid, "An error occurred while fetching the bot list.");
     }
 });
+
 
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
