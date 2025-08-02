@@ -1004,7 +1004,6 @@ module.exports = {
     getUserIdByBotName,
     getAllUserBots,
     getBotNameBySessionId,
-    deleteUserBot,
     updateUserSession,
     addDeployKey,
     useDeployKey,
