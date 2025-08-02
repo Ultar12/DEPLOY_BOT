@@ -188,16 +188,15 @@ async function getBotNameBySessionId(sessionId) {
     }
 }
 
-async function deleteUserBot(u, b) {
-  try {
-    await pool.query(
-      'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2'
-      ,[u, b]
-    );
-    console.log(`[DB] deleteUserBot: Successfully deleted bot "${b}" for user "${u}".`);
-  } catch (error) {
-    console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
-  }
+async function permanentlyDeleteBotRecord(userId, appName) {
+    try {
+        await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
+        const result = await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;', [userId, appName]);
+        return result.rowCount > 0;
+    } catch (error) {
+        console.error(`[DB-Main] Failed to permanently delete records for ${appName}:`, error.message);
+        return false;
+    }
 }
 
 async function updateUserSession(u, b, s) {
@@ -1025,6 +1024,7 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
+    permanentlyDeleteBotRecord,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
