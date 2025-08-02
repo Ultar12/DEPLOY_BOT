@@ -407,7 +407,7 @@ async function getUserDeploymentsForRestore(userId) {
 
 async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
-        const result = await Pool.query(
+        const result = await pool.query(
             'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;',
             [userId, appName]
         );
@@ -425,7 +425,7 @@ async function deleteUserDeploymentFromBackup(userId, appName) {
 
 async function markDeploymentDeletedFromHeroku(userId, appName) {
     try {
-        await Pool.query(
+        await pool.query(
             `UPDATE user_deployments
              SET deleted_from_heroku_at = NOW()
              WHERE user_id = $1 AND app_name = $2;`,
@@ -485,7 +485,7 @@ async function updateFreeTrialWarning(userId) {
 
 async function removeMonitoredFreeTrial(userId) {
     try {
-        await Pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
+        await pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
         console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
     } catch (error) {
         console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
