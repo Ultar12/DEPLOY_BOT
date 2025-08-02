@@ -439,23 +439,25 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
 async function getAllDeploymentsFromBackup(botType) {
     try {
         // --- THIS IS THE FIX ---
-        // It now correctly looks for bots that have been marked as deleted from Heroku
-        const result = await pool.query(
+        // It now fetches ALL bots of the specified type from your backup database,
+        // ignoring whether they are active or inactive.
+        const result = await backupPool.query(
             `SELECT user_id, app_name, session_id, config_vars
              FROM user_deployments 
-             WHERE bot_type = $1 AND deleted_from_heroku_at IS NOT NULL 
-             ORDER BY deploy_date;`,
+             WHERE bot_type = $1
+             ORDER BY app_name ASC;`,
             [botType]
         );
         // --- END OF FIX ---
 
-        console.log(`[DB-Main] Fetched ${result.rows.length} inactive deployments for mass restore.`);
+        console.log(`[DB-Backup] Fetched all ${result.rows.length} deployments for mass restore from backup pool.`);
         return result.rows;
     } catch (error) {
-        console.error(`[DB-Main] Failed to get all deployments for mass restore:`, error.message);
+        console.error(`[DB-Backup] Failed to get all deployments for mass restore:`, error.message);
         return [];
     }
 }
+
 
 
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
