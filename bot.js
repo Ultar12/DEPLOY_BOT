@@ -898,6 +898,7 @@ async function notifyAdminUserOnline(msg) {
     animateMessage: animateMessage,
     sendAnimatedMessage: sendAnimatedMessage,
     monitorSendTelegramAlert: monitorSendTelegramAlert,
+     permanentlyDeleteBotRecord: dbServices.permanentlyDeleteBotRecord,
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
     // Initialize bot_faq.js
