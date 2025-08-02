@@ -554,15 +554,6 @@ async function loadMaintenanceStatus() {
     }
 }
 
-// --- THIS IS THE FIX ---
-            await dbServices.permanentlyDeleteBotRecord(botInfo.user_id, botInfo.app_name);
-
-            await bot.sendMessage(ADMIN_ID, Bot *${escapeMarkdown(botInfo.app_name)}* for user \${botInfo.user_id}\ expired and was auto-deleted., { parse_mode: 'Markdown' });
-        } catch (error) {
-            console.error([Expiration] Failed to delete expired bot ${botInfo.app_name}:, error.message);
-        }
-    }
-}
 async function saveMaintenanceStatus(status) {
     try {
         await fs.promises.writeFile(MAINTENANCE_FILE, JSON.stringify({ isMaintenanceMode: status }), 'utf8');
@@ -898,7 +889,6 @@ async function notifyAdminUserOnline(msg) {
     animateMessage: animateMessage,
     sendAnimatedMessage: sendAnimatedMessage,
     monitorSendTelegramAlert: monitorSendTelegramAlert,
-     permanentlyDeleteBotRecord: dbServices.permanentlyDeleteBotRecord,
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
     // Initialize bot_faq.js
