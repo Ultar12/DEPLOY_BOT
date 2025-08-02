@@ -1024,6 +1024,7 @@ module.exports = {
     markDeploymentDeletedFromHeroku,
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
+    permanentlyDeleteßotRecord,
     sendAppList,
     buildWithProgress,
     recordFreeTrialForMonitoring,
