@@ -89,6 +89,18 @@ async function addUserBot(u, b, s, botType) {
   }
 }
 
+async function deleteUserBot(u, b) {
+  try {
+    await pool.query(
+      'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2'
+      ,[u, b]
+    );
+    console.log(`[DB] deleteUserBot: Successfully deleted bot "${b}" for user "${u}".`);
+  } catch (error) {
+    console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
+  }
+}
+
 async function getUserBots(u) {
   try {
     const r = await pool.query(
@@ -188,17 +200,26 @@ async function getBotNameBySessionId(sessionId) {
     }
 }
 
-async function deleteUserBot(u, b) {
-  try {
-    await pool.query(
-      'DELETE FROM user_bots WHERE user_id=$1 AND bot_name=$2'
-      ,[u, b]
-    );
-    console.log(`[DB] deleteUserBot: Successfully deleted bot "${b}" for user "${u}".`);
-  } catch (error) {
-    console.error(`[DB] deleteUserBot: Failed to delete bot "${b}" for user "${u}":`, error.message);
-  }
+// This new version deletes the bot record from BOTH databases.
+async function permanentlyDeleteBotRecord(userId, appName) {
+    try {
+        // Delete from the main database (pool)
+        await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
+        await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        
+        // --- THIS IS THE NEW LOGIC ---
+        // Also delete from the backup database (backupPool)
+        await backupPool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        // --- END OF NEW LOGIC ---
+
+        console.log(`[DB-Cleanup] Permanently deleted all records for app ${appName} from all databases.`);
+        return true;
+    } catch (error) {
+        console.error(`[DB-Cleanup] Failed to permanently delete records for ${appName}:`, error.message);
+        return false;
+    }
 }
+
 
 async function updateUserSession(u, b, s) {
   try {
@@ -362,18 +383,13 @@ async function unbanUser(userId) {
     }
 }
 
-// === Functions for user deployments backup/restore/expiration (using 'backupPool') ===
 async function saveUserDeployment(userId, appName, sessionId, configVars, botType) {
     try {
-        const cleanConfigVars = {};
-        for (const key in configVars) {
-            if (Object.prototype.hasOwnProperty.call(configVars, key)) {
-                cleanConfigVars[key] = String(configVars[key]);
-            }
-        }
+        const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
         const expirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
 
+        // This query now preserves the original dates on conflict
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at)
             VALUES($1, $2, $3, $4, $5, $6, $7, NULL)
@@ -381,14 +397,19 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                session_id = EXCLUDED.session_id,
                config_vars = EXCLUDED.config_vars,
                bot_type = EXCLUDED.bot_type,
-               deleted_from_heroku_at = NULL;
+               deleted_from_heroku_at = NULL,
+               -- Keep the original deploy_date and expiration_date
+               deploy_date = user_deployments.deploy_date,
+               expiration_date = user_deployments.expiration_date;
         `;
-        await Pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
-        console.log(`[DB-Backup] Saved/Updated deployment for user ${userId}, app ${appName}.`);
+        // Using the main 'pool' as per your previous request
+        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate]);
+        console.log(`[DB-Main] Saved/Updated deployment for app ${appName}. Dates preserved on update.`);
     } catch (error) {
-        console.error(`[DB-Backup] Failed to save user deployment for ${appName}:`, error.message, error.stack);
+        console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message);
     }
 }
+
 
 async function getUserDeploymentsForRestore(userId) {
     try {
@@ -407,7 +428,7 @@ async function getUserDeploymentsForRestore(userId) {
 
 async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
-        const result = await Pool.query(
+        const result = await pool.query(
             'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;',
             [userId, appName]
         );
@@ -425,7 +446,7 @@ async function deleteUserDeploymentFromBackup(userId, appName) {
 
 async function markDeploymentDeletedFromHeroku(userId, appName) {
     try {
-        await Pool.query(
+        await pool.query(
             `UPDATE user_deployments
              SET deleted_from_heroku_at = NOW()
              WHERE user_id = $1 AND app_name = $2;`,
@@ -439,18 +460,27 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
 
 async function getAllDeploymentsFromBackup(botType) {
     try {
-        const result = await Pool.query(
+        // --- THIS IS THE FIX ---
+        // It now fetches ALL bots of the specified type from your backup database,
+        // ignoring whether they are active or inactive.
+        const result = await pool.query(
             `SELECT user_id, app_name, session_id, config_vars
-             FROM user_deployments WHERE bot_type = $1 ORDER BY deploy_date;`,
+             FROM user_deployments 
+             WHERE bot_type = $1
+             ORDER BY app_name ASC;`,
             [botType]
         );
-        console.log(`[DB-Backup] Fetched ${result.rows.length} deployments for mass restore (type: ${botType}).`);
+        // --- END OF FIX ---
+
+        console.log(`[DB-Backup] Fetched all ${result.rows.length} deployments for mass restore from backup pool.`);
         return result.rows;
     } catch (error) {
-        console.error(`[DB-Backup] Failed to get all deployments for mass restore (type: ${botType}):`, error.message);
+        console.error(`[DB-Backup] Failed to get all deployments for mass restore:`, error.message);
         return [];
     }
 }
+
+
 
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
     try {
@@ -485,7 +515,7 @@ async function updateFreeTrialWarning(userId) {
 
 async function removeMonitoredFreeTrial(userId) {
     try {
-        await Pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
+        await pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
         console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
     } catch (error) {
         console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
@@ -1005,7 +1035,6 @@ module.exports = {
     getUserIdByBotName,
     getAllUserBots,
     getBotNameBySessionId,
-    deleteUserBot,
     updateUserSession,
     addDeployKey,
     useDeployKey,
@@ -1025,6 +1054,8 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
+    permanentlyDeleteBotRecord,
+    deleteUserBot,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
