@@ -451,7 +451,7 @@ async function getAllDeploymentsFromBackup(botType) {
         // --- THIS IS THE FIX ---
         // It now fetches ALL bots of the specified type from your backup database,
         // ignoring whether they are active or inactive.
-        const result = await backupPool.query(
+        const result = await pool.query(
             `SELECT user_id, app_name, session_id, config_vars
              FROM user_deployments 
              WHERE bot_type = $1
