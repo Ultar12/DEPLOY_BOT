@@ -405,21 +405,20 @@ async function getUserDeploymentsForRestore(userId) {
     }
 }
 
-// This new function deletes from BOTH user_bots and user_deployments
 async function deleteUserDeploymentFromBackup(userId, appName) {
     try {
-        // Delete from the active bots list
-        await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
-        // Delete from the deployment/backup history
-        const result = await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;', [userId, appName]);
-        
+        const result = await Pool.query(
+            'DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2 RETURNING app_name;',
+            [userId, appName]
+        );
         if (result.rowCount > 0) {
-            console.log(`[DB-Main] Permanently deleted all records for app ${appName}.`);
+            console.log(`[DB-Backup] Permanently deleted deployment for user ${userId}, app ${appName} from backup DB.`);
             return true;
         }
+        console.log(`[DB-Backup] No deployment found to permanently delete for user ${userId}, app ${appName}.`);
         return false;
     } catch (error) {
-        console.error(`[DB-Main] Failed to permanently delete records for ${appName}:`, error.message);
+        console.error(`[DB-Backup] Failed to permanently delete user deployment from backup for ${appName}:`, error.message);
         return false;
     }
 }
@@ -1026,7 +1025,6 @@ module.exports = {
     getAllDeploymentsFromBackup,
     handleAppNotFoundAndCleanDb,
     sendAppList,
-    deleteUserDeploymentFromBackup,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
