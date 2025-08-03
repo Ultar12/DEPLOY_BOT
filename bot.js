@@ -3042,12 +3042,6 @@ if (action === 'users_page') {
 }
 
   // ... inside bot.on('callback_query', ...)
-if (action === 'users_page') {
-    handleUsersPage(q);
-    return;
-}
-
-
 if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
@@ -3058,7 +3052,20 @@ if (action === 'select_deploy_type') {
       
     st.data.botType = botType;
 
-    // This is the updated logic that asks for confirmation first
+    // If this is a free trial, SKIP the key, go directly to SESSION_ID step:
+    if (st.data.isFreeTrial) {
+        st.step = 'SESSION_ID';
+        return bot.editMessageText(
+            `You've selected *${botType.toUpperCase()}* (Free Trial).\n\nPlease enter your SESSION ID to continue:`,
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    }
+
+    // For paid users, continue with the key check as usual:
     await bot.editMessageText(
         `You've selected *${botType.toUpperCase()}*. Have you gotten your session ID?`,
         {
@@ -3075,7 +3082,7 @@ if (action === 'select_deploy_type') {
             }
         }
     );
-    return; // This return is crucial
+    return;
 }
 
 
