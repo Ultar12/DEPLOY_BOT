@@ -2438,7 +2438,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
         if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
-    const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on Heroku, please wait...');
+    const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on the server, please wait...');
 
     try {
         // 1. Get the list of bots the user SHOULD have from the database
