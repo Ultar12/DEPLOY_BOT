@@ -484,7 +484,7 @@ async function getAllDeploymentsFromBackup(botType) {
 
 async function recordFreeTrialForMonitoring(userId, appName, channelId) {
     try {
-        await Pool.query(
+        await pool.query(
             `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
              ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
             [userId, appName, channelId]
@@ -497,7 +497,7 @@ async function recordFreeTrialForMonitoring(userId, appName, channelId) {
 
 async function getMonitoredFreeTrials() {
     try {
-        const result = await Pool.query('SELECT * FROM free_trial_monitoring;');
+        const result = await pool.query('SELECT * FROM free_trial_monitoring;');
         return result.rows;
     } catch (error) {
         console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
@@ -507,7 +507,7 @@ async function getMonitoredFreeTrials() {
 
 async function updateFreeTrialWarning(userId) {
     try {
-        await Pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
+        await pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
     } catch (error) {
         console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
     }
