@@ -3508,7 +3508,7 @@ if (action === 'dkey_cancel') {
 
       let selectedDeployment;
       try {
-          const result = await backupPool.query(
+          const result = await pool.query(
               `SELECT user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at
                FROM user_deployments WHERE app_name = $1 AND user_id = $2;`,
               [appName, appUserId]
@@ -4016,7 +4016,7 @@ if (action === 'levanter_wa_fallback') {
 
     try {
         // --- NEW: Check if already backed up and active on Heroku ---
-        const existingBackup = await backupPool.query(
+        const existingBackup = await pool.query(
             `SELECT deleted_from_heroku_at FROM user_deployments WHERE user_id = $1 AND app_name = $2;`,
             [cid, appName] // Query by user_id and app_name
         );
