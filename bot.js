@@ -4425,7 +4425,7 @@ if (action === 'info') {
     if (cid === ADMIN_ID) {
         st.step = 'SESSION_ID';
         await bot.editMessageText(
-            `Admin detected. Please enter your SESSION ID for *${botType.toUpperCase()}* deployment:`,
+            `My boss. Please enter your SESSION ID for *${botType.toUpperCase()}* deployment:`,
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
