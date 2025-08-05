@@ -4416,29 +4416,16 @@ if (action === 'info') {
       });
   }
 
-      
-if (action === 'has_session') {
-    const botType = payload;
-    const st = userStates[cid];
-    if (!st) return;
+      if (action === 'has_session') {
+        const botType = payload;
+        const st = userStates[cid];
+        if (!st) return; // State check
 
-    const botLabel = (botType || 'your').toUpperCase();
-
-    if (cid === ADMIN_ID) {
-        st.step = 'SESSION_ID';
-        await bot.editMessageText(
-            `My boss, Please enter the SESSION_ID for your *${botLabel}* bot.`,
-            {
-                chat_id: cid,
-                message_id: q.message.message_id, // Ensure 'q' is defined
-                parse_mode: 'Markdown'
-            }
-        );
-    } else {
         st.step = 'AWAITING_KEY';
         const price = process.env.KEY_PRICE_NGN || '1000';
+        
         await bot.editMessageText(
-            `Please enter your Deploy Key to continue deploying your *${botLabel}* bot.`,
+            `Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
@@ -4450,11 +4437,10 @@ if (action === 'has_session') {
                 }
             }
         );
+        return;
     }
-    return;
-}
-  
-  if (action === 'needs_session') {
+
+    if (action === 'needs_session') {
         const botType = payload;
         const st = userStates[cid];
         if (!st) return; // State check
