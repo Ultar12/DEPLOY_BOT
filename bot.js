@@ -4417,28 +4417,42 @@ if (action === 'info') {
   }
 
       if (action === 'has_session') {
-        const botType = payload;
-        const st = userStates[cid];
-        if (!st) return; // State check
+    const botType = payload;
+    const st = userStates[cid];
+    if (!st) return; // State check
 
-        st.step = 'AWAITING_KEY';
-        const price = process.env.KEY_PRICE_NGN || '1000';
-        
+    // If admin, skip deploy key and go straight to SESSION_ID step
+    if (cid === ADMIN_ID) {
+        st.step = 'SESSION_ID';
         await bot.editMessageText(
-            `Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
+            `Admin detected. Please enter your SESSION ID for *${botType.toUpperCase()}* deployment:`,
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
-                    ]
-                }
+                parse_mode: 'Markdown'
             }
         );
         return;
     }
+
+    // Non-admin: normal deploy key flow
+    st.step = 'AWAITING_KEY';
+    const price = process.env.KEY_PRICE_NGN || '1000';
+    await bot.editMessageText(
+        `Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }]
+                ]
+            }
+        }
+    );
+    return;
+}
 
     if (action === 'needs_session') {
         const botType = payload;
