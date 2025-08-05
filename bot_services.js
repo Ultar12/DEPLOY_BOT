@@ -413,7 +413,7 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
 
 async function getUserDeploymentsForRestore(userId) {
     try {
-        const result = await Pool.query(
+        const result = await pool.query(
             `SELECT app_name, session_id, config_vars, deploy_date, expiration_date, bot_type, deleted_from_heroku_at
              FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC;`,
             [userId]
