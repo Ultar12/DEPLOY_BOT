@@ -19,11 +19,11 @@ function init(params) {
 const FAQ_QUESTIONS = [
     {
         question: "How do I get a session ID?",
-        answer: "Tap 'Get Session' and follow the prompts to provide your WhatsApp number for a pairing code. Alternatively, visit our website https://levanter-delta.vercel.app/ to generate one yourself."
+        answer: "Tap 'Get Session ID' and follow the prompts. Alternatively, visit our website https://levanter-delta.vercel.app/ to generate one yourself."
     },
     {
         question: "What is a 'Deploy Key'?",
-        answer: "A Deploy Key is a special code that authorizes you to use our service to deploy a bot. You might receive it from the admin."
+        answer: "A Deploy Key is a special code that authorizes you to use our service to deploy a bot. You might receive it from the admin or Purchase."
     },
     {
         question: "How do I deploy my bot after getting a session ID and/or deploy key?",
@@ -31,11 +31,11 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "What is the 'Free Trial' option?",
-        answer: "The Free Trial allows you to deploy a bot for 1 hour to test the service. You can use it once every 14 days."
+        answer: "The Free Trial allows you to deploy a bot for 3 days to test the service. You can use it once every 14 days."
     },
     {
         question: "My bot failed to deploy, what should I do?",
-        answer: "Check the error message provided by the bot. Common issues are incorrect session IDs, app names already taken, or Heroku API issues. Try again, or contact support if the issue persists."
+        answer: "Check the error message provided by the bot. Common issues are incorrect session IDs, app names already taken, or Server issues. Try again, or contact support if the issue persists."
     },
     {
         question: "How can I see my deployed bots?",
@@ -47,7 +47,7 @@ const FAQ_QUESTIONS = [
     },
     {
         question: "What do 'Restart', 'Logs', 'Redeploy' do?",
-        answer: "Restart: Restarts your bot application on Heroku.\nLogs: Shows the recent activity and error logs of your bot, useful for debugging.\nRedeploy: Rebuilds and deploys your bot from the latest code on GitHub, useful for updates or fresh installs."
+        answer: "Restart: Restarts your bot application on server.\nLogs: Shows the recent activity and error logs of your bot, useful for debugging.\nRedeploy: Rebuilds and deploys your bot from the latest code on GitHub, useful for updates or fresh installs."
     },
     {
         question: "How do I change my bot's settings/variables like AUTO_STATUS_VIEW or PREFIX?",
