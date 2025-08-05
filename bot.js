@@ -4416,14 +4416,26 @@ if (action === 'info') {
       });
   }
 
-      if (action === 'has_session') {
-        const botType = payload;
-        const st = userStates[cid];
-        if (!st) return; // State check
+      
+if (action === 'has_session') {
+    const botType = payload;
+    const st = userStates[cid];
+    if (!st) return; // State check
 
+    if (cid === ADMIN_ID) {
+        // Bypass deploy key for admin!
+        st.step = 'SESSION_ID'; // Skip directly to SESSION_ID step
+        await bot.editMessageText(
+            `My boss, Please enter the SESSION_ID for your *${botType.toUpperCase()}* bot.`,
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    } else {
         st.step = 'AWAITING_KEY';
         const price = process.env.KEY_PRICE_NGN || '1000';
-        
         await bot.editMessageText(
             `Please enter your Deploy Key to continue deploying your *${botType.toUpperCase()}* bot.`, 
             {
@@ -4437,10 +4449,11 @@ if (action === 'info') {
                 }
             }
         );
-        return;
     }
-
-    if (action === 'needs_session') {
+    return;
+}
+  
+  if (action === 'needs_session') {
         const botType = payload;
         const st = userStates[cid];
         if (!st) return; // State check
