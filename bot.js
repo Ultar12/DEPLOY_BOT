@@ -151,6 +151,13 @@ async function createAllTablesInPool(dbPool, dbName) {
         banned_by TEXT
       );
     `);
+
+  await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS key_rewards (
+          user_id TEXT PRIMARY KEY,
+          reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS all_users_backup (
