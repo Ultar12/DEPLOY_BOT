@@ -260,45 +260,51 @@ async function updateUserSession(u, b, s) {
   }
 }
 
-async function addDeployKey(key, uses, createdBy) {
+// --- FIX: addDeployKey now accepts an optional userId ---
+async function addDeployKey(key, uses, createdBy, userId = null) {
   await pool.query(
-    'INSERT INTO deploy_keys(key,uses_left,created_by) VALUES($1,$2,$3)',
-    [key, uses, createdBy]
+    'INSERT INTO deploy_keys(key, uses_left, created_by, user_id) VALUES($1, $2, $3, $4)',
+    [key, uses, createdBy, userId]
   );
-  console.log(`[DB] addDeployKey: Added key "${key}" with ${uses} uses by "${createdBy}".`);
+  console.log(`[DB] addDeployKey: Added key "${key}" for user "${userId || 'General'}" with ${uses} uses by "${createdBy}".`);
 }
 
-async function useDeployKey(key) {
+
+// --- FIX: useDeployKey now requires the user's ID for verification ---
+async function useDeployKey(key, userId) {
   const res = await pool.query(
     `UPDATE deploy_keys
      SET uses_left = uses_left - 1
-     WHERE key = $1 AND uses_left > 0
+     WHERE key = $1 AND uses_left > 0 AND (user_id = $2 OR user_id IS NULL)
      RETURNING uses_left`,
-    [key]
+    [key, userId]
   );
   if (res.rowCount === 0) {
-    console.log(`[DB] useDeployKey: Key "${key}" not found or no uses left.`);
+    console.log(`[DB] useDeployKey: Key "${key}" not found, no uses left, or not authorized for user "${userId}".`);
     return null;
   }
   const left = res.rows[0].uses_left;
   if (left === 0) {
     await pool.query('DELETE FROM deploy_keys WHERE key=$1', [key]);
-    console.log(`[DB] useDeployKey: Key "${key}" fully used and deleted.`);
+    console.log(`[DB] useDeployKey: Key "${key}" for user "${userId}" fully used and deleted.`);
   } else {
-    console.log(`[DB] useDeployKey: Key "${key}" used. ${left} uses left.`);
+    console.log(`[DB] useDeployKey: Key "${key}" for user "${userId}" used. ${left} uses left.`);
   }
   return left;
 }
 
+
+// --- FIX: getAllDeployKeys now includes user_id ---
 async function getAllDeployKeys() {
     try {
-        const res = await pool.query('SELECT key, uses_left, created_by, created_at FROM deploy_keys ORDER BY created_at DESC');
+        const res = await pool.query('SELECT key, uses_left, created_by, user_id, created_at FROM deploy_keys ORDER BY created_at DESC');
         return res.rows;
     } catch (error) {
         console.error('[DB] getAllDeployKeys: Failed to get all deploy keys:', error.message);
         return [];
     }
 }
+
 
 async function deleteDeployKey(key) {
   try {
