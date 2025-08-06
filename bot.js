@@ -5261,39 +5261,24 @@ bot.on('channel_post', async msg => {
     let failureReason = 'Bot session became invalid.';
     let match;
 
-    // --- START: Updated and Accurate Pattern Matching ---
-
-    // Case 1: Levanter Connected (e.g., "[lcricboi] connected.")
-    if ((match = text.match(/\[([^\]]+)\]\s*connected\./i))) {
-        appName = match[1];
+    // Case 1: Bot has connected successfully (Handles both formats)
+    if ((match = text.match(/\[([^\]]+)\]\s*connected\.|^(\S+)\s+connected\./i))) {
+        appName = match[1] || match[2];
         isSuccess = true;
-        console.log(`[Channel Post] Matched Levanter CONNECTED for app: ${appName}`);
+        console.log(`[Channel Post] Matched CONNECTED for app: ${appName}`);
     
-    // Case 2: Raganork Connected (e.g., "luna007 connected.")
-    } else if ((match = text.match(/^(\S+)\s+connected\./i))) {
-        appName = match[1];
-        isSuccess = true;
-        console.log(`[Channel Post] Matched Raganork CONNECTED for app: ${appName}`);
-
-    // Case 3: Levanter Logged Out (e.g., "User [onowuuuuu12] has logged out.")
-    } else if ((match = text.match(/User\s+\[([^\]]+)\]\s+has logged out/i))) {
+    // Case 2: Bot has logged out (Handles both formats)
+    } else if ((match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i))) {
         appName = match[1];
         isFailure = true;
         failureReason = 'Bot session has logged out.';
-        console.log(`[Channel Post] Matched Levanter LOGOUT for app: ${appName}`);
+        console.log(`[Channel Post] Matched LOGOUT for app: ${appName}`);
 
-    // Case 4: Raganork Logged Out (e.g., "User zpzpzpzpzpzppzzz has logged out.")
-    } else if ((match = text.match(/User\s+(\S+)\s+has logged out/i))) {
-        appName = match[1];
-        isFailure = true;
-        failureReason = 'Bot session has logged out.';
-        console.log(`[Channel Post] Matched Raganork LOGOUT for app: ${appName}`);
-
-    // Case 5: Invalid Session (Levanter or Raganork)
-    } else if ((match = text.match(/\[(levanter_[^\]]+)\]\s*invalid/i)) || (match = text.match(/Session\s+(\S+)\s+is invalid/i))) {
+    // Case 3: Invalid session (Handles both formats, including the new one)
+    } else if ((match = text.match(/\[([^\]]+)\]\s*invalid|^(\S+)\s+invalid/i))) {
         isFailure = true;
         failureReason = 'The session ID was detected as invalid.';
-        const sessionPart = match[1];
+        const sessionPart = match[1] || match[2];
         try {
             const res = await pool.query(`SELECT bot_name FROM user_bots WHERE session_id LIKE '%' || $1 || '%' LIMIT 1`, [sessionPart]);
             if (res.rows.length > 0) {
@@ -5302,7 +5287,6 @@ bot.on('channel_post', async msg => {
             }
         } catch (dbError) { console.error(`[Channel Post] DB Error looking up session part:`, dbError); }
     }
-    // --- END: Updated Pattern Matching ---
 
     if (!appName) {
         console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
@@ -5338,6 +5322,7 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
 
 // === Free Trial Channel Membership Monitoring ===
 const ONE_HOUR_IN_MS = 60 * 60 * 1000;
