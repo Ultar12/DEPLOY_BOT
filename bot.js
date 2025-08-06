@@ -5424,8 +5424,8 @@ async function runDailyBackup() {
 }
 
 // Run the backup every 24 hours (24 * 60 * 60 * 1000 milliseconds)
-setInterval(runDailyBackup, 24 * 60 * 60 * 1000);
-console.log('[Backup] Scheduled daily automatic database backup.');
+setInterval(runDailyBackup, 60 * 60 * 1000);
+console.log('[Backup] Scheduled hourly automatic database backup.');
 
 
 async function checkAndPruneLoggedOutBots() {
