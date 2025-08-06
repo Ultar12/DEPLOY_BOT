@@ -2797,7 +2797,7 @@ if (st && st.step === 'AWAITING_KEY') {
 
 
 
-  // --- FIX: This block now asks for a FINAL confirmation before payment ---
+  // --- FIX: This block now adds an 'Edit' button and a new confirmation step ---
 if (st && st.step === 'AWAITING_APP_NAME') {
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
@@ -2816,19 +2816,19 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         if (e.response?.status === 404) {
             st.data.APP_NAME = nm;
             
-            // This is the new state: AWAITING_FINAL_CONFIRMATION
             st.step = 'AWAITING_FINAL_CONFIRMATION';
             
             const confirmationMessage = `*Review Deployment Details:*\n\n` +
                                         `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` +
                                         `*Session ID:* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\n` +
                                         `*App Name:* \`${escapeMarkdown(nm)}\`\n\n` +
-                                        `Looks good? Tap 'Confirm' to continue.`;
+                                        `Tap 'Confirm' to continue.`;
             
             await bot.sendMessage(cid, confirmationMessage, {
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }]
+                        [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }],
+                        [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }] // <-- NEW 'Edit' Button
                     ]
                 },
                 parse_mode: 'Markdown'
@@ -2839,6 +2839,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         }
     }
 }
+
 
 
   if (st && st.step === 'SETVAR_ENTER_VALUE') { // This state is reached after variable selection or overwrite confirmation
@@ -3227,6 +3228,66 @@ if (action === 'verify_join') {
       });
       return;
   }
+
+  // --- NEW: Callback handler for the 'Edit' button ---
+if (action === 'edit_deployment_start_over') {
+    delete userStates[cid]; // Clear the state entirely
+    const botType = st.data.botType;
+    const sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+
+    userStates[cid] = { step: 'SESSION_ID', data: { isFreeTrial: st.data.isFreeTrial, botType: botType } };
+
+    await bot.editMessageText(
+        'Okay, let\'s start over. Please get your session ID from the link below and send it here.',
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Get Session ID for ${botType.toUpperCase()}`, url: sessionUrl }]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+// --- NEW: Callback handler for the 'auto_status_view' choice ---
+if (action === 'set_auto_status_choice') {
+    const st = userStates[cid];
+    const autoStatusChoice = payload; // 'true' or 'false'
+    if (!st || st.step !== 'AWAITING_AUTO_STATUS_CHOICE') return;
+
+    st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
+    st.step = 'AWAITING_KEY_OR_PAYMENT';
+
+    const price = process.env.KEY_PRICE_NGN || '1000';
+    const isFreeTrial = st.data.isFreeTrial;
+
+    let confirmationMessage = `*Auto Status View* has been set to \`${st.data.AUTO_STATUS_VIEW}\`.\n\n`;
+    let keyboard;
+    
+    if (isFreeTrial) {
+        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
+        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
+    } else {
+        confirmationMessage += `Do you have a key or would you like to purchase one?`;
+        keyboard = [
+            [{ text: 'Use a Key', callback_data: 'deploy_with_key:paid' }],
+            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+        ];
+    }
+    
+    await bot.editMessageText(confirmationMessage, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: { inline_keyboard: keyboard },
+        parse_mode: 'Markdown'
+    });
+    return;
+}
+
 
   if (action === 'restore_from_backup') { // Handle Restore button click
     const userDeployments = await dbServices.getUserDeploymentsForRestore(cid); // Use dbServices
@@ -4013,37 +4074,30 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-  // --- FIX: New callback to handle the final confirmation before payment ---
+  // --- FIX: New confirmation step to handle auto status view choice ---
 if (action === 'confirm_and_pay_step') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
 
-    st.step = 'AWAITING_KEY_OR_PAYMENT';
-    const price = process.env.KEY_PRICE_NGN || '1000';
-    const isFreeTrial = st.data.isFreeTrial;
-
-    let confirmationMessage = `Your bot is ready to be deployed.\n\n`;
-    let keyboard;
+    st.step = 'AWAITING_AUTO_STATUS_CHOICE'; // <-- NEW INTERMEDIATE STATE
     
-    if (isFreeTrial) {
-        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
-        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
-    } else {
-        confirmationMessage += `Do you have a key or would you like to purchase one?`;
-        keyboard = [
-            [{ text: 'Use an Existing Key', callback_data: 'deploy_with_key:paid' }],
-            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-        ];
-    }
+    const confirmationMessage = `*Next Step:*\n` +
+                                `Enable automatic status view?`;
     
     await bot.editMessageText(confirmationMessage, {
         chat_id: cid,
         message_id: q.message.message_id,
-        reply_markup: { inline_keyboard: keyboard },
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
+            ]
+        },
         parse_mode: 'Markdown'
     });
     return;
 }
+
 
      if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
