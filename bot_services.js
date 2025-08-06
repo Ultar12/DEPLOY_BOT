@@ -89,6 +89,38 @@ async function addUserBot(u, b, s, botType) {
   }
 }
 
+// --- NEW FUNCTIONS FOR REWARDS AND STATS ---
+
+async function getUserBotCount(userId) {
+    try {
+        const result = await pool.query('SELECT COUNT(bot_name) as count FROM user_bots WHERE user_id = $1', [userId]);
+        return parseInt(result.rows[0].count, 10) || 0;
+    } catch (error) {
+        console.error(`[DB] Failed to get bot count for user ${userId}:`, error.message);
+        return 0;
+    }
+}
+
+async function hasReceivedReward(userId) {
+    try {
+        const result = await pool.query('SELECT 1 FROM key_rewards WHERE user_id = $1', [userId]);
+        return result.rows.length > 0;
+    } catch (error) {
+        console.error(`[DB] Failed to check for reward for user ${userId}:`, error.message);
+        return false;
+    }
+}
+
+async function recordReward(userId) {
+    try {
+        await pool.query('INSERT INTO key_rewards(user_id) VALUES ($1)', [userId]);
+        console.log(`[DB] Recorded reward for user ${userId}.`);
+    } catch (error) {
+        console.error(`[DB] Failed to record reward for user ${userId}:`, error.message);
+    }
+}
+
+
 // --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
 
 async function getExpiringBots() {
@@ -962,6 +994,28 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
       }
+      
+      // --- NEW REWARD LOGIC START ---
+      try {
+          const userBotCount = await getUserBotCount(chatId);
+          const userHasReceivedReward = await hasReceivedReward(chatId);
+
+          if (userBotCount >= 10 && !userHasReceivedReward) {
+              const newKey = generateKey();
+              await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId); // <-- NOTE: Added chatId to link the key
+              await recordReward(chatId);
+
+              const rewardMessage = `Congratulations! You have deployed 10 or more bots with our service. As a token of our appreciation, here is a free one-time deploy key:\n\n\`${newKey}\``;
+              await bot.sendMessage(chatId, rewardMessage, { parse_mode: 'Markdown' });
+
+              await bot.sendMessage(ADMIN_ID, `Reward issued to user \`${chatId}\` for reaching 10 deployments. Key: \`${newKey}\``, { parse_mode: 'Markdown' });
+              console.log(`[Reward] Issued free key to user ${chatId}.`);
+          }
+      } catch (rewardError) {
+          console.error(`[Reward] Failed to check or issue reward to user ${chatId}:`, rewardError.message);
+      }
+      // --- NEW REWARD LOGIC END ---
+
       const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
       const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
       const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
@@ -980,6 +1034,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           }, STATUS_CHECK_TIMEOUT);
           appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
       });
+
 
       try {
           await appStatusPromise;
@@ -1071,6 +1126,7 @@ module.exports = {
     getUserIdByBotName,
     getAllUserBots,
     getExpiringBots,
+    getUserBotCount,
     getBotNameBySessionId,
     updateUserSession,
     addDeployKey,
