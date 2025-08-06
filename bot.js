@@ -2819,7 +2819,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
             st.step = 'AWAITING_AUTO_STATUS_CHOICE'; // <-- NEW STATE ORDER
             
             const confirmationMessage = `*Next Step:*\n` +
-                                        `Enable automatic status view? This marks statuses as seen automatically.`;
+                                        `Enable automatic status view?`;
             
             await bot.sendMessage(cid, confirmationMessage, {
                 reply_markup: {
@@ -4075,38 +4075,34 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-// --- FIX: This block now handles the final confirmation before moving to payment ---
+// --- FIX: This block now moves directly to the AWAITING_KEY step ---
 if (action === 'confirm_and_pay_step') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
 
-    st.step = 'AWAITING_KEY_OR_PAYMENT'; // <-- NEW STATE ORDER
-
-    const price = process.env.KEY_PRICE_NGN || '1000';
+    const price = process.env.KEY_PRICE_NGN || '1500';
     const isFreeTrial = st.data.isFreeTrial;
-
-    let confirmationMessage = `Your bot is ready to be deployed.\n\n`;
-    let keyboard;
     
+    // --- New, consolidated logic ---
     if (isFreeTrial) {
-        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
-        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
+        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
+        delete userStates[cid];
+        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
     } else {
-        confirmationMessage += `Do you have a key or would you like to purchase one?`;
-        keyboard = [
-            [{ text: 'Use an Existing Key', callback_data: 'deploy_with_key:paid' }],
-            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-        ];
+        st.step = 'AWAITING_KEY'; // <-- Directly move to AWAITING_KEY
+        await bot.editMessageText('Enter your Deploy key:', {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+                ]
+            }
+        });
     }
-    
-    await bot.editMessageText(confirmationMessage, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        reply_markup: { inline_keyboard: keyboard },
-        parse_mode: 'Markdown'
-    });
     return;
 }
+
 
 
 
