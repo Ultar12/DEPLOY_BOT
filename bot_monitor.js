@@ -1,3 +1,5 @@
+// bot_monitor.js
+
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -7,8 +9,8 @@ const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
 
 let stdoutBuffer = '';
-let stderrBuffer = '';
 
+// FIX: lastLogoutAlertTime is now a global variable used for the short cooldown check
 let lastLogoutAlertTime = null;
 
 // --- Parameters that will be passed from bot.js ---
@@ -20,12 +22,7 @@ let moduleParams = {};
 function init(params) {
     moduleParams = params;
     
-    // FIX: A much shorter cooldown to prevent alert spamming but allow new alerts after a few minutes
-    const ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-
-    // --- CRITICAL DEBUG TEST: If you see this, the bot_monitor.js is loading! ---
     originalStdoutWrite.apply(process.stdout, ['--- bot_monitor.js initialized and active! ---\n']);
-    // -----------------------------------------------------------------
 
     // FIX: Only override stdout to prevent infinite recursion from stderr log errors
     process.stdout.write = (chunk, encoding, callback) => {
@@ -42,7 +39,8 @@ function init(params) {
     // The originalStderrWrite is not replaced, so errors will log normally without triggering a new alert loop.
 
     // === Load initial state from Heroku config vars ===
-    loadLastLogoutAlertTime();
+    // FIX: Removed loadLastLogoutAlertTime as Heroku config var persistence is no longer used
+    // to prevent 404 recursion errors. The cooldown is now in-memory.
 
     // === Start Scheduled Tasks ===
     // Every 5 minutes for logout reminders
@@ -52,13 +50,12 @@ function init(params) {
 }
 
 
-// Function to process each log line captured by the overrides
+// FIX: The cooldown check is now inside this function to prevent spamming
+const ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 function handleLogLine(line, streamType) {
-    // This console.log will go to original stdout/stderr, avoiding recursion
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    // FIX: Check for logout patterns
-    // Using a broader set of patterns to catch various logout scenarios
     const logoutPatterns = [
         'ERROR: Failed to initialize bot. Details: No valid session found',
         'SESSION LOGGED OUT. Please rescan QR and update SESSION.',
@@ -71,8 +68,15 @@ function handleLogLine(line, streamType) {
 
     if (logoutPatterns.some(pattern => line.includes(pattern))) {
         originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
+        
+        const now = new Date();
+        if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < ALERT_COOLDOWN_MS) {
+            originalStdoutWrite.apply(process.stdout, ['Skipping logout alert -- cooldown not expired.\n']);
+            return;
+        }
+        
+        lastLogoutAlertTime = now;
 
-        // Attempt to extract session ID more generally (captures any word after "for " or within brackets)
         let specificSessionId = null;
         const matchForSession = line.match(/for (\S+)\./);
         if (matchForSession) specificSessionId = matchForSession[1];
@@ -81,12 +85,8 @@ function handleLogLine(line, streamType) {
             if (raganorkLogoutMatch) specificSessionId = raganorkLogoutMatch[1];
         }
 
-        // FIX: The log stream from Heroku doesn't know the app name of the user bot.
-        // It's the monitoring bot that has the app name here.
-        // This line is now for general alerting from the monitor itself.
         sendInvalidSessionAlert(specificSessionId, moduleParams.APP_NAME).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
-        // Trigger restart, but only if HEROKU_API_KEY is set for production
         if (moduleParams.HEROKU_API_KEY) {
             originalStderrWrite.apply(process.stderr, [`Detected logout for session ${specificSessionId || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
             setTimeout(() => process.exit(1), moduleParams.RESTART_DELAY_MINUTES * 60 * 1000);
@@ -98,7 +98,7 @@ function handleLogLine(line, streamType) {
 
 
 // === Telegram helper ===
-async function sendTelegramAlert(text, chatId) { // chatId is now required
+async function sendTelegramAlert(text, chatId) {
     if (!moduleParams.TELEGRAM_BOT_TOKEN) {
         originalStderrWrite.apply(process.stderr, ['TELEGRAM_BOT_TOKEN is not set. Cannot send Telegram alerts.\n']);
         return null;
@@ -124,18 +124,11 @@ async function sendTelegramAlert(text, chatId) { // chatId is now required
     }
 }
 
-// === "Logged out" alert with 5-minute cooldown ===
+// === "Logged out" alert ===
 async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert = null) {
     const now = new Date();
-    const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
     const timeZone = 'Africa/Lagos';
     const nowStr = now.toLocaleString('en-GB', { timeZone: timeZone });
-
-    // FIX: Use a much shorter cooldown to prevent message spamming
-    if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < ALERT_COOLDOWN_MS) {
-        originalStdoutWrite.apply(process.stdout, ['Skipping logout alert -- cooldown not expired.\n']);
-        return;
-    }
 
     const hour = now.getHours();
     const greeting = hour < 12 ? 'good morning'
@@ -147,7 +140,7 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
 
     let message =
-        `Hey Ult-AR, ${greeting}!\n\n` +
+        `🚨 Hey Ult-AR, ${greeting}!\n\n` +
         `Bot "*${moduleParams.escapeMarkdown(botNameForAlert || moduleParams.APP_NAME)}*" has logged out.`;
 
     if (specificSessionId) {
@@ -160,48 +153,21 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         `Restarting in ${restartTimeDisplay}.`;
 
     try {
-        // FIX: Only send to the monitoring channel, as per user's request
-        const msgId = await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-        if (!msgId) return;
-        
-        lastLogoutAlertTime = now;
-        
-        // FIX: Do not persist LAST_LOGOUT_ALERT to config vars as it causes 404 recursion errors
-        originalStdoutWrite.apply(process.stdout, ['LAST_LOGOUT_ALERT persistence is disabled to prevent recursion errors.\n']);
+        // FIX: Only send to the monitoring channel, as per user's request.
+        // Removed the line that sends the message to moduleParams.TELEGRAM_USER_ID
+        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+        originalStdoutWrite.apply(process.stdout, [`Sent new logout alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
     } catch (err) {
         originalStderrWrite.apply(process.stderr, [`Failed during sendInvalidSessionAlert(): ${err.message}\n`]);
     }
 }
 
-// FIX: This function is now removed entirely. Its logic is consolidated into bot.js.
+
+// FIX: This function is now removed entirely as its logic is redundant with bot.js.
 // async function sendBotConnectedAlert() { ... }
 
-// === Load LAST_LOGOUT_ALERT from Heroku config vars ===
-async function loadLastLogoutAlertTime() {
-    if (!moduleParams.HEROKU_API_KEY || !moduleParams.APP_NAME) {
-        originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY or APP_NAME is not set. Cannot load LAST_LOGOUT_ALERT from Heroku config vars.\n']);
-        return;
-    }
-    const url = `https://api.heroku.com/apps/${moduleParams.APP_NAME}/config-vars`;
-    const headers = {
-        Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-    };
-
-    try {
-        const res = await axios.get(url, { headers });
-        const saved = res.data.LAST_LOGOUT_ALERT;
-        if (saved) {
-            const parsed = new Date(saved);
-            if (!isNaN(parsed)) {
-                lastLogoutAlertTime = parsed;
-                originalStdoutWrite.apply(process.stdout, [`Loaded LAST_LOGOUT_ALERT: ${parsed.toISOString()}\n`]);
-            }
-        }
-    } catch (err) {
-        originalStderrWrite.apply(process.stderr, [`Failed to load LAST_LOGOUT_ALERT from Heroku: ${err.message}\n`]);
-    }
-}
+// FIX: This function is now removed as Heroku config var persistence is no longer used
+// async function loadLastLogoutAlertTime() { ... }
 
 
 // === Scheduled Task for Logout Reminders & Expiration Cleanup ===
@@ -224,13 +190,14 @@ async function checkAndRemindLoggedOutBots() {
                 Accept: 'application/vnd.heroku+json; version=3'
             };
 
-            // FIX: Gracefully handle 404 for app not found.
             const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
             const workerDyno = dynoRes.data.find(d => d.type === 'worker');
 
             const isBotRunning = workerDyno && workerDyno.state === 'up';
 
-            // Check bot status from the database, not Heroku config.
+            const now = new Date();
+
+            // FIX: Check bot status from the database, not Heroku config.
             const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
@@ -334,5 +301,4 @@ async function checkAndExpireBots() {
     }
 }
 
-// Export the init function AND the sendTelegramAlert function
 module.exports = { init, sendTelegramAlert };
