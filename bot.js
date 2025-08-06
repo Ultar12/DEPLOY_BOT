@@ -2797,7 +2797,7 @@ if (st && st.step === 'AWAITING_KEY') {
 
 
 
-  // --- FIX: This block now adds an 'Edit' button and a new confirmation step ---
+  // --- FIX: This block now asks for auto status view first ---
 if (st && st.step === 'AWAITING_APP_NAME') {
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
@@ -2816,19 +2816,16 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         if (e.response?.status === 404) {
             st.data.APP_NAME = nm;
             
-            st.step = 'AWAITING_FINAL_CONFIRMATION';
+            st.step = 'AWAITING_AUTO_STATUS_CHOICE'; // <-- NEW STATE ORDER
             
-            const confirmationMessage = `*Review Deployment Details:*\n\n` +
-                                        `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` +
-                                        `*Session ID:* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\n` +
-                                        `*App Name:* \`${escapeMarkdown(nm)}\`\n\n` +
-                                        `Tap 'Confirm' to continue.`;
+            const confirmationMessage = `*Next Step:*\n` +
+                                        `Enable automatic status view? This marks statuses as seen automatically.`;
             
             await bot.sendMessage(cid, confirmationMessage, {
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }],
-                        [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }] // <-- NEW 'Edit' Button
+                        [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                        [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
                     ]
                 },
                 parse_mode: 'Markdown'
@@ -2839,6 +2836,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         }
     }
 }
+
 
 
 
@@ -3253,40 +3251,36 @@ if (action === 'edit_deployment_start_over') {
     return;
 }
 
-// --- NEW: Callback handler for the 'auto_status_view' choice ---
+// --- FIX: This block now handles auto status choice and then moves to final confirmation ---
 if (action === 'set_auto_status_choice') {
     const st = userStates[cid];
-    const autoStatusChoice = payload; // 'true' or 'false'
+    const autoStatusChoice = payload;
     if (!st || st.step !== 'AWAITING_AUTO_STATUS_CHOICE') return;
 
     st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
-    st.step = 'AWAITING_KEY_OR_PAYMENT';
+    st.step = 'AWAITING_FINAL_CONFIRMATION'; // <-- NEW STATE ORDER
 
-    const price = process.env.KEY_PRICE_NGN || '1000';
-    const isFreeTrial = st.data.isFreeTrial;
-
-    let confirmationMessage = `*Auto Status View* has been set to \`${st.data.AUTO_STATUS_VIEW}\`.\n\n`;
-    let keyboard;
-    
-    if (isFreeTrial) {
-        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
-        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
-    } else {
-        confirmationMessage += `Do you have a key or would you like to purchase one?`;
-        keyboard = [
-            [{ text: 'Use a Key', callback_data: 'deploy_with_key:paid' }],
-            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-        ];
-    }
+    const confirmationMessage = `*Review Deployment Details:*\n\n` +
+                                `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` +
+                                `*Session ID:* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\n` +
+                                `*App Name:* \`${escapeMarkdown(st.data.APP_NAME)}\`\n` +
+                                `*Auto Status View:* \`${st.data.AUTO_STATUS_VIEW}\`\n\n` +
+                                `Tap 'Confirm' to continue.`;
     
     await bot.editMessageText(confirmationMessage, {
         chat_id: cid,
         message_id: q.message.message_id,
-        reply_markup: { inline_keyboard: keyboard },
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }],
+                [{ text: 'Edit (Start Over)', callback_data: `edit_deployment_start_over` }]
+            ]
+        },
         parse_mode: 'Markdown'
     });
     return;
 }
+
 
 
   if (action === 'restore_from_backup') { // Handle Restore button click
@@ -3471,18 +3465,24 @@ if (action === 'dkey_cancel') {
 
   // --- FIX: New callbacks to handle key entry or payment ---
 
-// This handler is now the entry point for paid deployments (asking for the key)
+// --- FIX: Awaiting key handler now includes a payment button ---
 if (action === 'deploy_with_key') {
     const isFreeTrialFromCallback = payload === 'free_trial';
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
 
-    // For paid deployments, ask for the key.
+    // For paid deployments, ask for the key with a payment option.
     if (!isFreeTrialFromCallback) {
         st.step = 'AWAITING_KEY';
-        await bot.editMessageText('Please enter your one-time Deploy Key to continue:', {
+        const price = process.env.KEY_PRICE_NGN || '1000';
+        await bot.editMessageText('Enter your Deploy key:', {
             chat_id: cid,
             message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+                ]
+            }
         });
     } else {
         // For free trials, trigger the deployment directly.
@@ -3492,6 +3492,7 @@ if (action === 'deploy_with_key') {
     }
     return;
 }
+
 
 if (action === 'buy_key_for_deploy') {
     const st = userStates[cid];
@@ -4074,29 +4075,40 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-  // --- FIX: New confirmation step to handle auto status view choice ---
+// --- FIX: This block now handles the final confirmation before moving to payment ---
 if (action === 'confirm_and_pay_step') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
 
-    st.step = 'AWAITING_AUTO_STATUS_CHOICE'; // <-- NEW INTERMEDIATE STATE
+    st.step = 'AWAITING_KEY_OR_PAYMENT'; // <-- NEW STATE ORDER
+
+    const price = process.env.KEY_PRICE_NGN || '1000';
+    const isFreeTrial = st.data.isFreeTrial;
+
+    let confirmationMessage = `Your bot is ready to be deployed.\n\n`;
+    let keyboard;
     
-    const confirmationMessage = `*Next Step:*\n` +
-                                `Enable automatic status view?`;
+    if (isFreeTrial) {
+        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
+        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
+    } else {
+        confirmationMessage += `Do you have a key or would you like to purchase one?`;
+        keyboard = [
+            [{ text: 'Use an Existing Key', callback_data: 'deploy_with_key:paid' }],
+            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+        ];
+    }
     
     await bot.editMessageText(confirmationMessage, {
         chat_id: cid,
         message_id: q.message.message_id,
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
-                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
-            ]
-        },
+        reply_markup: { inline_keyboard: keyboard },
         parse_mode: 'Markdown'
     });
     return;
 }
+
+
 
 
      if (action === 'selectapp' || action === 'selectbot') {
