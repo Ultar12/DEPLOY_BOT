@@ -204,6 +204,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     // --- THIS IS THE FIX ---
     // This line ensures the 'bot_type' column is added to the existing table
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
+  await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS completed_payments (
@@ -976,76 +977,78 @@ if (process.env.NODE_ENV === 'production') {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-       app.post('/paystack/webhook', express.json(), async (req, res) => {
-        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-                           .update(JSON.stringify(req.body))
-                           .digest('hex');
-        if (hash !== req.headers['x-paystack-signature']) {
-            console.warn('Invalid Paystack signature received.');
-            return res.sendStatus(401);
-        }
+              app.post('/paystack/webhook', express.json(), async (req, res) => {
+    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
+    if (hash !== req.headers['x-paystack-signature']) {
+        console.warn('Invalid Paystack signature received.');
+        return res.sendStatus(401);
+    }
 
-        const event = req.body;
+    const event = req.body;
 
-        if (event.event === 'charge.success') {
-            const { reference, amount, currency, customer } = event.data;
-                                    try {
-                const result = await pool.query('SELECT user_id, bot_type FROM pending_payments WHERE reference = $1', [reference]);
-                if (result.rows.length === 0) return res.sendStatus(200);
-                
-                const { user_id, bot_type } = result.rows[0];
+    if (event.event === 'charge.success') {
+        const { reference, amount, currency, customer } = event.data;
+        try {
+            // Fetch ALL data from pending payments, including app name and session ID
+            const result = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+            if (result.rows.length === 0) return res.sendStatus(200);
 
-                // Save to completed payments table
+            const { user_id, bot_type, app_name, session_id } = result.rows[0];
+
+            // Save to completed payments table
+            await pool.query(
+                `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+            );
+
+            const userChat = await bot.getChat(user_id);
+            const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+
+            if (bot_type && bot_type.startsWith('renewal_')) {
+                // --- RENEWAL LOGIC ---
+                const appNameToRenew = bot_type.split('_')[1];
                 await pool.query(
-                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-                    [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`,
+                    [user_id, appNameToRenew]
                 );
 
-                const userChat = await bot.getChat(user_id);
-                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+                await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameToRenew)}* has been successfully renewed for another 45 days.`, { parse_mode: 'Markdown' });
 
-                if (bot_type && bot_type.startsWith('renewal_')) {
-                    // --- RENEWAL LOGIC ---
-                    const appNameToRenew = bot_type.split('_')[1];
-                    await pool.query(
-                        `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`,
-                        [user_id, appNameToRenew]
-                    );
+                const adminMessage = `*Bot Renewed!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameToRenew}\``;
+                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
 
-                    await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameTorenew)}* has been successfully renewed for another 45 days.`, { parse_mode: 'Markdown' });
-                    
-                    const adminMessage = `*Bot Renewed!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameTorenew}\``;
-                    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+            } else {
+                // --- NEW LOGIC: START DEPLOYMENT IMMEDIATELY ---
+                await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
 
-                } else {
-                    // --- NEW KEY PURCHASE LOGIC ---
-                    const newKey = generateKey();
-                    await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE', user_id);
+                // Construct the deployment variables from the stored data
+                const deployVars = {
+                    SESSION_ID: session_id,
+                    APP_NAME: app_name,
+                };
 
-                    await bot.sendMessage(user_id,
-                        `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
-                        { 
-                            parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: [[{ text: 'Deploy Now', callback_data: `start_deploy_after_payment:${bot_type}` }]] }
-                        }
-                    );
-                    
-                    const adminMessage = `*New Key Sale!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Key:* \`${newKey}\``;
-                    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
-                }
-                
-                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
-                console.log(`Successfully processed payment for reference: ${reference}`);
+                // Call the deployment function directly.
+                dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
 
-                        } catch (dbError) {
-                console.error(`Webhook DB Error for reference ${reference}:`, dbError);
-                return res.sendStatus(500); 
+                const adminMessage = `*New App Deployed (Paid via Paystack)*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``;
+                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
             }
-        } // <-- This brace for 'if (event.event === 'charge.success')' was missing
-        
-        // Acknowledge the event to Paystack
-        res.sendStatus(200);
-    }); // <-- This brace and parenthesis to close the webhook handler was missing
+
+            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
+            console.log(`Successfully processed payment for reference: ${reference}`);
+
+        } catch (dbError) {
+            console.error(`Webhook DB Error for reference ${reference}:`, dbError);
+            return res.sendStatus(500);
+        }
+    }
+
+    res.sendStatus(200);
+});
+
+
 
     // This GET handler is for users who visit the webhook URL in a browser
     app.get('/paystack/webhook', (req, res) => {
@@ -2714,24 +2717,26 @@ if (st && st.step === 'AWAITING_KEY') {
     const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
     const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
     
-    if (usesLeft === null) {
-        const price = process.env.KEY_PRICE_NGN || '1000';
-        const invalidKeyMessage = `Invalid Key. Please try another key, or purchase a new one.`;
-        
-        const invalidKeyKeyboard = {
-            inline_keyboard: [
-                [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }],
-                [{ text: 'Contact Owner (Telegram)', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }]
-            ]
-        };
+    // --- FIX: AWAITING_KEY invalid key message updated ---
+if (usesLeft === null) {
+    const price = process.env.KEY_PRICE_NGN || '1500';
+    const invalidKeyMessage = `Invalid key. Please try another key or make payment.`;
+    
+    // Create a new keyboard with the "Make payment" button
+    const invalidKeyKeyboard = {
+        inline_keyboard: [
+            [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+        ]
+    };
 
-        await bot.editMessageText(invalidKeyMessage, {
-            chat_id: cid,
-            message_id: verificationMsg.message_id,
-            reply_markup: invalidKeyKeyboard
-        });
-        return;
-    }
+    await bot.editMessageText(invalidKeyMessage, {
+      chat_id: cid,
+      message_id: verificationMsg.message_id,
+      reply_markup: invalidKeyKeyboard
+    });
+    return;
+}
+
     
     // Key is valid. Now trigger the deployment with the previously saved data.
     await bot.editMessageText('Key verified! Initiating deployment...', { chat_id: cid, message_id: verificationMsg.message_id });
@@ -3494,13 +3499,16 @@ if (action === 'deploy_with_key') {
 }
 
 
+// --- FIX: New payment flow saves all deployment data to the DB ---
 if (action === 'buy_key_for_deploy') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
 
-    // This is the new entry point for buying a key
+    // Save all collected data into the state
     st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
-    st.data.emailBotType = st.data.botType; // Store bot type for the payment webhook
+    st.data.emailBotType = st.data.botType;
+    st.data.deploySessionId = st.data.SESSION_ID; // Stored session ID
+    st.data.deployAppName = st.data.APP_NAME; // Stored app name
     
     await bot.editMessageText('To proceed with the payment, please enter your email address:', {
         chat_id: cid,
