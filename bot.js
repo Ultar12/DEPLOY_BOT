@@ -1012,7 +1012,7 @@ const crypto = require('crypto');
                 } else {
                     // --- NEW KEY PURCHASE LOGIC ---
                     const newKey = generateKey();
-                    await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE');
+                    await dbServices.addDeployKey(newKey, 1, 'PAYSTACK_SALE', user_id);
 
                     await bot.sendMessage(user_id,
                         `Payment confirmed!\n\nHere is your one-time deploy key:\n\n\`${newKey}\``,
@@ -1056,11 +1056,11 @@ const crypto = require('crypto');
 
         try {
             const result = await pool.query(
-                'SELECT key FROM deploy_keys WHERE uses_left > 0 ORDER BY created_at DESC LIMIT 1'
-            );
+    'SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1'
+);
 
-            if (result.rows.length > 0) {
-                const key = result.rows[0].key;
+if (result.rows.length > 0) {
+    const key = result.rows[0].key;
                 console.log(`[API] Provided existing key ${key} to authorized request.`);
                 return res.json({ success: true, key: key });
             } else {
@@ -2675,12 +2675,13 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
 
 
-    if (st && st.step === 'AWAITING_KEY') { // This state is reached after selecting deploy type
+    // --- FIX: AWAITING_KEY handler now passes the user's ID ---
+ if (st && st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
-    const verificationMsg = await sendAnimatedMessage(cid, `Verifying key`);
+    const verificationMsg = await sendAnimatedMessage(cid, Verifying key);
     const startTime = Date.now();
-    const usesLeft = await dbServices.useDeployKey(keyAttempt); // Use dbServices
+    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid); // <-- ADDED cid
     const elapsedTime = Date.now() - startTime;
     const remainingDelay = 5000 - elapsedTime; // Ensure at least 5 seconds total for verification
     if (remainingDelay > 0) {
