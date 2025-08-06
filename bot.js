@@ -876,6 +876,7 @@ async function notifyAdminUserOnline(msg) {
         deleteUserDeploymentFromBackup: dbServices.deleteUserDeploymentFromBackup, // Pass DB service function
         backupPool: backupPool,                            // Pass the backup DB pool
         ADMIN_ID: ADMIN_ID, // Pass ADMIN_ID for critical errors
+       escapeMarkdown: escapeMarkdown,
     });
 
     //// Initialize bot_services.js
