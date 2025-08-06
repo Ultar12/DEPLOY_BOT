@@ -2709,7 +2709,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
  if (st && st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
 
-    const verificationMsg = await sendAnimatedMessage(cid, Verifying key);
+    const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
     const startTime = Date.now();
     const usesLeft = await dbServices.useDeployKey(keyAttempt, cid); // <-- ADDED cid
     const elapsedTime = Date.now() - startTime;
