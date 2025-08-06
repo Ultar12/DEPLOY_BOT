@@ -5247,6 +5247,7 @@ if (action === 'setvarbool') {
   }
 });
 
+// --- FIX: Updated bot.on('channel_post') handler to prevent message race condition ---
 bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
@@ -5292,6 +5293,22 @@ bot.on('channel_post', async msg => {
         console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
         return;
     }
+    
+    // Check if a promise is waiting for this app, but only clear it for failures
+    const pendingPromise = appDeploymentPromises.get(appName);
+    if (pendingPromise) {
+        // If a failure is detected, immediately reject the promise
+        if (isFailure) {
+            console.log(`[Race Condition Resolved] App "${appName}" failed. Rejecting promise.`);
+            pendingPromise.reject(new Error(failureReason));
+            appDeploymentPromises.delete(appName);
+        } else if (isSuccess) {
+            // If a success is detected, resolve the promise immediately
+            console.log(`[Race Condition Resolved] App "${appName}" is stable. Resolving promise.`);
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(appName);
+        }
+    }
 
     if (isSuccess) {
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
@@ -5300,28 +5317,8 @@ bot.on('channel_post', async msg => {
         await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
     }
-
-    const pendingPromise = appDeploymentPromises.get(appName);
-    if (pendingPromise) {
-        if (isSuccess) pendingPromise.resolve('connected');
-        else if (isFailure) pendingPromise.reject(new Error(failureReason));
-        appDeploymentPromises.delete(appName);
-    } else if (isFailure) {
-        const userId = await dbServices.getUserIdByBotName(appName);
-        if (userId) {
-            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
-                                   `*Reason:* ${failureReason}\n` +
-                                   `Please update your session ID.\n\n` +
-                                   `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
-            await bot.sendMessage(userId, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
-                }
-            }).catch(e => console.error(`Failed to send failure alert to user ${userId}: ${e.message}`));
-        }
-    }
 });
+
 
 
 // === Free Trial Channel Membership Monitoring ===
