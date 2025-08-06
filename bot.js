@@ -5249,6 +5249,7 @@ if (action === 'setvarbool') {
 });
 
 // --- FIX: Updated bot.on('channel_post') handler to prevent message race condition ---
+// --- FIX: Updated bot.on('channel_post') handler to be more resilient ---
 bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
@@ -5295,17 +5296,20 @@ bot.on('channel_post', async msg => {
         return;
     }
     
-    // Check if a promise is waiting for this app, but only clear it for failures
     const pendingPromise = appDeploymentPromises.get(appName);
     if (pendingPromise) {
-        // If a failure is detected, immediately reject the promise
+        // As soon as we get a definite status message, clear the animation and timeout.
+        if (pendingPromise.animateIntervalId) {
+            clearInterval(pendingPromise.animateIntervalId);
+        }
+        if (pendingPromise.timeoutId) {
+            clearTimeout(pendingPromise.timeoutId);
+        }
+
         if (isFailure) {
-            console.log(`[Race Condition Resolved] App "${appName}" failed. Rejecting promise.`);
             pendingPromise.reject(new Error(failureReason));
             appDeploymentPromises.delete(appName);
         } else if (isSuccess) {
-            // If a success is detected, resolve the promise immediately
-            console.log(`[Race Condition Resolved] App "${appName}" is stable. Resolving promise.`);
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(appName);
         }
@@ -5319,6 +5323,7 @@ bot.on('channel_post', async msg => {
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
     }
 });
+
 
 
 
