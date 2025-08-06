@@ -1506,6 +1506,28 @@ bot.onText(/^\/stats$/, async (msg) => {
         const loggedOutRaganork = loggedOutBots.filter(b => b.bot_type === 'raganork').map(b => `  - \`${b.bot_name}\``).join('\n');
         // --- END OF NEW LOGIC ---
 
+        // --- NEW LOGIC: Query for Top Deployers ---
+        const topDeployersResult = await pool.query(`
+            SELECT user_id, COUNT(bot_name) AS bot_count
+            FROM user_bots
+            GROUP BY user_id
+            ORDER BY bot_count DESC
+            LIMIT 5
+        `);
+        const topDeployers = [];
+        for (const row of topDeployersResult.rows) {
+            try {
+                const chat = await bot.getChat(row.user_id);
+                const userName = chat.username ? `@${escapeMarkdown(chat.username)}` : escapeMarkdown(chat.first_name || 'N/A');
+                topDeployers.push(`- ${userName} (Bots: ${row.bot_count})`);
+            } catch (e) {
+                // If bot can't get chat info, fall back to user ID
+                topDeployers.push(`- \`${row.user_id}\` (Bots: ${row.bot_count})`);
+            }
+        }
+        const topDeployersList = topDeployers.length > 0 ? topDeployers.join('\n') : 'No users found.';
+        // --- END NEW LOGIC ---
+
         const activeKeys = await dbServices.getAllDeployKeys();
         const keyDetails = activeKeys.length > 0 ? activeKeys.map(k => `\`${k.key}\` (Uses: ${k.uses_left})`).join('\n') : 'No active deploy keys.';
         const totalFreeTrialUsers = (await pool.query('SELECT COUNT(user_id) AS count FROM temp_deploys')).rows[0].count;
@@ -1525,6 +1547,9 @@ bot.onText(/^\/stats$/, async (msg) => {
 
 *Users Who Used Free Trial:* ${totalFreeTrialUsers}
 *Total Banned Users:* ${totalBannedUsers}
+
+*Top Deployers:*
+${topDeployersList}
 
 *Active Deploy Keys:*
 ${keyDetails}
@@ -1548,8 +1573,6 @@ ${keyDetails}
         await bot.sendMessage(cid, `An error occurred while fetching stats: ${error.message}`);
     }
 });
-
-
 
 
 // Command: /users (Admin only)
