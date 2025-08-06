@@ -3499,10 +3499,11 @@ if (action === 'deploy_with_key') {
 }
 
 
-// --- FIX: New payment flow saves all deployment data to the DB ---
+// --- FIX: Corrected state check for the buy_key_for_deploy callback ---
 if (action === 'buy_key_for_deploy') {
     const st = userStates[cid];
-    if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
+    // This state check is now corrected to match the AWAITING_KEY state
+    if (!st || st.step !== 'AWAITING_KEY') return;
 
     // Save all collected data into the state
     st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
@@ -3516,6 +3517,7 @@ if (action === 'buy_key_for_deploy') {
     });
     return;
 }
+
 
 
       if (action === 'set_expiration') {
