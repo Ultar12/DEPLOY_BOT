@@ -2706,74 +2706,57 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
 
 
-    // --- FIX: AWAITING_KEY handler now passes the user's ID ---
- if (st && st.step === 'AWAITING_KEY') {
+    // --- FIX: AWAITING_KEY handler now triggers deployment upon success ---
+if (st && st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
+    const st = userStates[cid];
 
     const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
-    const startTime = Date.now();
-    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid); // <-- ADDED cid
-    const elapsedTime = Date.now() - startTime;
-    const remainingDelay = 5000 - elapsedTime; // Ensure at least 5 seconds total for verification
-    if (remainingDelay > 0) {
-        await new Promise(r => setTimeout(r, remainingDelay));
+    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
+    
+    if (usesLeft === null) {
+        const price = process.env.KEY_PRICE_NGN || '1000';
+        const invalidKeyMessage = `Invalid Key. Please try another key, or purchase a new one.`;
+        
+        const invalidKeyKeyboard = {
+            inline_keyboard: [
+                [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }],
+                [{ text: 'Contact Owner (Telegram)', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }]
+            ]
+        };
+
+        await bot.editMessageText(invalidKeyMessage, {
+            chat_id: cid,
+            message_id: verificationMsg.message_id,
+            reply_markup: invalidKeyKeyboard
+        });
+        return;
     }
     
-    // WITH THIS CORRECTED BLOCK:
-// ===================================================================
-// THIS IS THE NEW CODE
-if (usesLeft === null) {
-    const price = process.env.KEY_PRICE_NGN || '1000'; // Get price from env
-    const invalidKeyMessage = `Invalid Key. Please try another key, or purchase a new one.`;
-    
-    // Create a new keyboard with the "Buy Key" button
-    const invalidKeyKeyboard = {
-        inline_keyboard: [
-            [
-                { text: `Buy a Key (₦${price})`, callback_data: 'buy_key' }
-            ],
-            [
-                { text: 'Contact Owner (Telegram)', url: `https://t.me/${SUPPORT_USERNAME.substring(1)}` }
-            ]
-        ]
-    };
+    // Key is valid. Now trigger the deployment with the previously saved data.
+    await bot.editMessageText('Key verified! Initiating deployment...', { chat_id: cid, message_id: verificationMsg.message_id });
 
-    await bot.editMessageText(invalidKeyMessage, {
-      chat_id: cid,
-      message_id: verificationMsg.message_id,
-      reply_markup: invalidKeyKeyboard
-    });
+    // --- START ADMIN NOTIFICATION ---
+    const { first_name, last_name, username } = msg.from;
+    const userFullName = [first_name, last_name].filter(Boolean).join(' ');
+    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : 'N/A';
+    await bot.sendMessage(ADMIN_ID,
+        `*Key Used By:*\n` +
+        `*Name:* ${escapeMarkdown(userFullName || 'N/A')}\n` +
+        `*Username:* ${userNameDisplay}\n` +
+        `*Chat ID:* \`${escapeMarkdown(cid)}\`\n\n` +
+        `*Key Used:* \`${escapeMarkdown(keyAttempt)}\`\n` +
+        `*Uses Left:* ${usesLeft}`,
+        { parse_mode: 'Markdown' }
+    );
+    // --- END ADMIN NOTIFICATION ---
+
+    const deploymentData = st.data;
+    delete userStates[cid]; // Clear state before deployment
+    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType);
     return;
 }
 
-    await bot.editMessageText(`Verified! Now send your SESSION ID.`, {
-        chat_id: cid,
-        message_id: verificationMsg.message_id
-    });
-    await new Promise(r => setTimeout(r, 1000)); // Short delay before proceeding to next step.
-
-    authorizedUsers.add(cid);
-    st.step = 'SESSION_ID'; // Transition to the next state to await the session ID.
-
-    // --- START MODIFICATION FOR ADMIN KEY USED NOTIFICATION ---
-    const { first_name, last_name, username } = msg.from;
-    const userFullName = [first_name, last_name].filter(Boolean).join(' '); // Combines first and last name if both exist
-    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : 'N/A'; // Use N/A if no username
-
-    await bot.sendMessage(ADMIN_ID,
-      `*Key Used By:*\n` + // 🔑 Emojis are at the beginning of some words in my bot.
-      `*Name:* ${escapeMarkdown(userFullName || 'N/A')}\n` + // Use userFullName
-      `*Username:* ${userNameDisplay}\n` +
-      `*Chat ID:* \`${escapeMarkdown(cid)}\`\n\n` + // Use escaped chat ID
-      `*Key Used:* \`${escapeMarkdown(keyAttempt)}\`\n` + // <-- ADDED: The key that was used
-      `*Uses Left:* ${usesLeft}`,
-      { parse_mode: 'Markdown' }
-    );
-    // --- END MODIFICATION ---
-
-    // The flow will now correctly wait for the SESSION_ID input in the next message.
-    return;
-  }
 
 
  if (st && st.step === 'SESSION_ID') {
@@ -2808,52 +2791,55 @@ if (usesLeft === null) {
 
     // This part runs if the session was valid
     st.data.SESSION_ID = sessionID;
-    st.step = 'APP_NAME';
+    st.step = 'AWAITING_APP_NAME';
     return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
 }
 
 
 
-  if (st && st.step === 'APP_NAME') {
+  // --- FIX: This block now asks for a FINAL confirmation before payment ---
+if (st && st.step === 'AWAITING_APP_NAME') {
     const nm = text.toLowerCase().replace(/\s+/g, '-');
     if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-      return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
+        return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
     }
     await bot.sendChatAction(cid, 'typing');
     try {
-      await axios.get(`https://api.heroku.com/apps/${nm}`, {
-        headers: {
-          Authorization: `Bearer ${HEROKU_API_KEY}`,
-          Accept: 'application/vnd.heroku+json; version=3'
-        }
-      });
-      return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
-    } catch (e) {
-      if (e.response?.status === 404) {
-        st.data.APP_NAME = nm;
-
-        st.step = 'AWAITING_WIZARD_CHOICE';
-
-        const wizardText = `App name "*${nm}*" is available.\n\n*Next Step:*\nEnable automatic status view? This marks statuses as seen automatically.`;
-        const wizardKeyboard = {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Yes (Your choice)', callback_data: `setup:autostatus:true` },
-                        { text: 'No', callback_data: `setup:autostatus:false` }
-                    ]
-                ]
+        await axios.get(`https://api.heroku.com/apps/${nm}`, {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
             }
-        };
-        const wizardMsg = await bot.sendMessage(cid, wizardText, { ...wizardKeyboard, parse_mode: 'Markdown' });
-        st.message_id = wizardMsg.message_id;
-
-      } else {
-        console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
-        return bot.sendMessage(cid, `Kindly Use A Long Name!`);
-      }
+        });
+        return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
+    } catch (e) {
+        if (e.response?.status === 404) {
+            st.data.APP_NAME = nm;
+            
+            // This is the new state: AWAITING_FINAL_CONFIRMATION
+            st.step = 'AWAITING_FINAL_CONFIRMATION';
+            
+            const confirmationMessage = `*Review Deployment Details:*\n\n` +
+                                        `*Bot Type:* \`${st.data.botType.toUpperCase()}\`\n` +
+                                        `*Session ID:* \`${escapeMarkdown(st.data.SESSION_ID.slice(0, 15))}...\`\n` +
+                                        `*App Name:* \`${escapeMarkdown(nm)}\`\n\n` +
+                                        `Looks good? Tap 'Confirm' to continue.`;
+            
+            await bot.sendMessage(cid, confirmationMessage, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Confirm', callback_data: `confirm_and_pay_step` }]
+                    ]
+                },
+                parse_mode: 'Markdown'
+            });
+        } else {
+            console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
+            return bot.sendMessage(cid, `Kindly Use A Long Name!`);
+        }
     }
-  }
+}
+
 
   if (st && st.step === 'SETVAR_ENTER_VALUE') { // This state is reached after variable selection or overwrite confirmation
     const { APP_NAME, VAR_NAME, botType } = st.data; // Get botType from state
@@ -3091,6 +3077,7 @@ if (action === 'users_page') {
 }
 
   // ... inside bot.on('callback_query', ...)
+// --- FIX: Refactored select_deploy_type to ask for Session ID first ---
 if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
@@ -3101,38 +3088,29 @@ if (action === 'select_deploy_type') {
       
     st.data.botType = botType;
 
-    // If this is a free trial, SKIP the key, go directly to SESSION_ID step:
-    if (st.data.isFreeTrial) {
-        st.step = 'SESSION_ID';
-        return bot.editMessageText(
-            `You've selected *${botType.toUpperCase()}* (Free Trial).\n\nPlease enter your SESSION ID to continue:`,
-            {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
-    }
+    // The flow now always goes to SESSION_ID first, regardless of free trial status.
+    st.step = 'SESSION_ID';
+    
+    let botName = botType.charAt(0).toUpperCase() + botType.slice(1);
+    let sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
 
-    // For paid users, continue with the key check as usual:
+    // Send a message asking for the session ID. The key step comes later.
     await bot.editMessageText(
-        `You've selected *${botType.toUpperCase()}*. Have you gotten your session ID?`,
+        `You've selected *${botName}*. Please get your session ID from the link below and send it here.`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    [
-                        { text: "Yes, I have my Session ID", callback_data: `has_session:${botType}` },
-                        { text: "No, I need to get it", callback_data: `needs_session:${botType}` }
-                    ]
+                    [{ text: `Get Session ID for ${botName}`, url: sessionUrl }]
                 ]
             }
         }
     );
     return;
 }
+
 
 
           if (action === 'buy_key') {
@@ -3430,7 +3408,45 @@ if (action === 'dkey_cancel') {
     return;
   }
 
-  
+  // --- FIX: New callbacks to handle key entry or payment ---
+
+// This handler is now the entry point for paid deployments (asking for the key)
+if (action === 'deploy_with_key') {
+    const isFreeTrialFromCallback = payload === 'free_trial';
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
+
+    // For paid deployments, ask for the key.
+    if (!isFreeTrialFromCallback) {
+        st.step = 'AWAITING_KEY';
+        await bot.editMessageText('Please enter your one-time Deploy Key to continue:', {
+            chat_id: cid,
+            message_id: q.message.message_id,
+        });
+    } else {
+        // For free trials, trigger the deployment directly.
+        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
+        delete userStates[cid];
+        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
+    }
+    return;
+}
+
+if (action === 'buy_key_for_deploy') {
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
+
+    // This is the new entry point for buying a key
+    st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
+    st.data.emailBotType = st.data.botType; // Store bot type for the payment webhook
+    
+    await bot.editMessageText('To proceed with the payment, please enter your email address:', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
 
       if (action === 'set_expiration') {
         const appName = payload;
@@ -3996,6 +4012,38 @@ if (action === 'levanter_wa_fallback') {
     }).catch(() => {});
     return;
   }
+
+  // --- FIX: New callback to handle the final confirmation before payment ---
+if (action === 'confirm_and_pay_step') {
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
+
+    st.step = 'AWAITING_KEY_OR_PAYMENT';
+    const price = process.env.KEY_PRICE_NGN || '1000';
+    const isFreeTrial = st.data.isFreeTrial;
+
+    let confirmationMessage = `Your bot is ready to be deployed.\n\n`;
+    let keyboard;
+    
+    if (isFreeTrial) {
+        confirmationMessage += `Tap 'Confirm & Deploy' to launch your free trial.`;
+        keyboard = [[{ text: 'Confirm & Deploy', callback_data: `deploy_with_key:free_trial` }]];
+    } else {
+        confirmationMessage += `Do you have a key or would you like to purchase one?`;
+        keyboard = [
+            [{ text: 'Use an Existing Key', callback_data: 'deploy_with_key:paid' }],
+            [{ text: `Buy a Key (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+        ];
+    }
+    
+    await bot.editMessageText(confirmationMessage, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: { inline_keyboard: keyboard },
+        parse_mode: 'Markdown'
+    });
+    return;
+}
 
      if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
