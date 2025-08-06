@@ -195,7 +195,7 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
 
     let message =
-        `🚨 Hey Ult-AR, ${greeting}!\n\n` +
+        `Hey Ult-AR, ${greeting}!\n\n` +
         `Bot "*${moduleParams.escapeMarkdown(botNameForAlert || moduleParams.APP_NAME)}*" has logged out.`; // Use the passed botNameForAlert or moduleParams.APP_NAME
 
     if (specificSessionId) {
