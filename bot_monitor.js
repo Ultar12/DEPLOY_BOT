@@ -84,8 +84,12 @@ function handleLogLine(line, streamType) {
             const raganorkLogoutMatch = line.match(/\[([^\]]+)\] invalid/i);
             if (raganorkLogoutMatch) specificSessionId = raganorkLogoutMatch[1];
         }
+        
+        // FIX: Removed the call to sendInvalidSessionAlert here.
+        // The log message itself is the primary alert.
+        // The bot_monitor's job is now to just restart the process, not send alerts.
+        // sendInvalidSessionAlert(specificSessionId, moduleParams.APP_NAME).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
-        sendInvalidSessionAlert(specificSessionId, moduleParams.APP_NAME).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
         if (moduleParams.HEROKU_API_KEY) {
             originalStderrWrite.apply(process.stderr, [`Detected logout for session ${specificSessionId || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
