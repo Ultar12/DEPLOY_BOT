@@ -5508,8 +5508,6 @@ setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
 
 // --- NEW FUNCTION TO CHECK AND SEND REMINDERS ---
 
-const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
-
 async function checkAndSendExpirationReminders() {
     console.log('[Expiration] Running daily check for expiring bots...');
 
