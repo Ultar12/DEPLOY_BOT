@@ -89,6 +89,33 @@ async function addUserBot(u, b, s, botType) {
   }
 }
 
+// --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
+
+async function getExpiringBots() {
+    try {
+        const result = await pool.query(
+            `SELECT user_id, app_name FROM user_deployments 
+             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
+        );
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get expiring bots:`, error.message);
+        return [];
+    }
+}
+
+async function setExpirationWarningSent(userId, appName) {
+    try {
+        await pool.query(
+            'UPDATE user_deployments SET warning_sent_at = NOW() WHERE user_id = $1 AND app_name = $2;',
+            [userId, appName]
+        );
+    } catch (error) {
+        console.error(`[DB] Failed to set expiration warning sent for ${appName}:`, error.message);
+    }
+}
+
+
 async function deleteUserBot(u, b) {
   try {
     await pool.query(
@@ -1037,6 +1064,7 @@ module.exports = {
     getUserBots,
     getUserIdByBotName,
     getAllUserBots,
+    getExpiringBots,
     getBotNameBySessionId,
     updateUserSession,
     addDeployKey,
