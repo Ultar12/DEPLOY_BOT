@@ -172,6 +172,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         PRIMARY KEY (user_id, app_name)
       );
     `);
+
+  await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
     
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
@@ -1843,12 +1845,13 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
 
     try {
         const botInfoResult = await pool.query(
-            `SELECT ub.user_id, ub.bot_type, ub.status, ud.expiration_date 
-             FROM user_bots ub
-             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-             WHERE ub.bot_name = $1`,
-            [appName]
-        );
+    `SELECT ub.user_id, ub.bot_type, ub.status, ud.expiration_date, ud.is_free_trial, ud.deploy_date
+     FROM user_bots ub
+     LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+     WHERE ub.bot_name = $1`,
+    [appName]
+);
+
 
         if (botInfoResult.rows.length === 0) {
             return bot.sendMessage(cid, `Sorry, no bot named \`${appName}\` was found in the database.`, { parse_mode: 'Markdown' });
@@ -1870,12 +1873,25 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
         }
 
         let expirationInfo = "Not Set";
-        if (botInfo.expiration_date) {
-            const expiration = new Date(botInfo.expiration_date);
-            const now = new Date();
-            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-            expirationInfo = daysLeft > 0 ? `${daysLeft} days remaining` : "Expired";
-        }
+if (botInfo.is_free_trial) {
+    const deployDate = new Date(botInfo.deploy_date);
+    const expirationDate = new Date(deployDate.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days for free trial
+    const now = new Date();
+    const timeLeftMs = expirationDate.getTime() - now.getTime();
+    const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+
+    if (daysLeft > 0) {
+        expirationInfo = `${daysLeft} days remaining (Free Trial)`;
+    } else {
+        expirationInfo = 'Expired (Free Trial)';
+    }
+} else if (botInfo.expiration_date) {
+    const expiration = new Date(botInfo.expiration_date);
+    const now = new Date();
+    const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+    expirationInfo = daysLeft > 0 ? `${daysLeft} days remaining` : "Expired";
+}
+
 
         const botStatus = botInfo.status === 'online' ? 'Online' : 'Logged Out';
 
