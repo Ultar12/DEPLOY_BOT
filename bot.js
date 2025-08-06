@@ -128,6 +128,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+  await dbPool.query(`ALTER TABLE deploy_keys ADD COLUMN IF NOT EXISTS user_id TEXT;`);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS temp_deploys (
