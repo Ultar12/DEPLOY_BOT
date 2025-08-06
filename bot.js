@@ -5473,3 +5473,35 @@ async function checkAndPruneLoggedOutBots() {
 
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
+
+// --- NEW FUNCTION TO CHECK AND SEND REMINDERS ---
+
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+async function checkAndSendExpirationReminders() {
+    console.log('[Expiration] Running daily check for expiring bots...');
+
+    const expiringBots = await dbServices.getExpiringBots();
+    
+    for (const botInfo of expiringBots) {
+        try {
+            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* is about to expire. To continue service, please redeploy with a new key.`;
+            await bot.sendMessage(botInfo.user_id, warningMessage, { parse_mode: 'Markdown' });
+            
+            // Notify the admin as well
+            await bot.sendMessage(ADMIN_ID, `Expiration Warning sent for bot *${escapeMarkdown(botInfo.app_name)}* to user \`${botInfo.user_id}\`.`, { parse_mode: 'Markdown' });
+
+            await dbServices.setExpirationWarningSent(botInfo.user_id, botInfo.app_name);
+            
+            console.log(`[Expiration] Sent expiration warning for ${botInfo.app_name} to user ${botInfo.user_id}.`);
+        } catch (error) {
+            console.error(`[Expiration] Failed to send warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
+        }
+    }
+}
+
+// --- SCHEDULE THE REMINDERS ---
+
+setInterval(checkAndSendExpirationReminders, ONE_DAY_IN_MS);
+console.log('[Expiration] Scheduled daily check for expiring bots.');
+
