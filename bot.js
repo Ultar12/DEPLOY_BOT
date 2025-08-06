@@ -4224,36 +4224,18 @@ if (action === 'levanter_wa_fallback') {
   // --- REPLACE your old 'info' block with this new one ---
 // --- REPLACE your old 'info' block with this new one ---
 
+
 if (action === 'info') {
     const appName = payload;
     const messageId = q.message.message_id;
 
-    await bot.editMessageText(`Fetching app info for "*${escapeMarkdown(appName)}*"...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    });
-
+    await bot.editMessageText(`Fetching app info for "*${escapeMarkdown(appName)}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
+    
     try {
         const [appRes, configRes, dynoRes] = await Promise.all([
-            axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3'
-                }
-            }),
-            axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3'
-                }
-            }),
-            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3'
-                }
-            })
+            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })
         ]);
 
         const appData = appRes.data;
@@ -4264,78 +4246,56 @@ if (action === 'info') {
         if (dynoData.length > 0 && ['up', 'starting', 'restarting'].includes(dynoData[0].state)) {
             dynoStatus = 'Active';
         }
-
-        // --- EXPIRATION INFO LOGIC ---
+      
+        // --- START OF FIX ---
+        const ownerId = await dbServices.getUserIdByBotName(appName);
         let expirationInfo = "N/A";
-        const now = new Date();
 
-        // Check if it's a free trial app
-        const trialDetails = (await pool.query(
-            'SELECT trial_start_at FROM free_trial_monitoring WHERE app_name = $1',
-            [appName]
-        )).rows[0];
-
-        if (trialDetails && trialDetails.trial_start_at) {
-            const trialStart = new Date(trialDetails.trial_start_at);
-            const THREE_DAYS_IN_MS = 3 * 24 * 60 * 60 * 1000;
-            const timeLeftMs = trialStart.getTime() + THREE_DAYS_IN_MS - now.getTime();
-            const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
-
-            if (daysLeft > 0) {
-                expirationInfo = `Free Trial – ${daysLeft} day${daysLeft > 1 ? 's' : ''} remaining`;
-            } else {
-                expirationInfo = 'Free Trial – Expired';
-            }
-        } else {
-            // Fallback to standard expiration tracking
-            const ownerId = await dbServices.getUserIdByBotName(appName);
-            if (ownerId) {
-                const deploymentDetails = (await pool.query(
-                    'SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2',
-                    [ownerId, appName]
-                )).rows[0];
-
-                if (deploymentDetails && deploymentDetails.expiration_date) {
-                    const expirationDate = new Date(deploymentDetails.expiration_date);
-                    const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-                    expirationInfo = daysLeft > 0
-                        ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} remaining`
-                        : 'Expired';
+        if (ownerId) {
+            // Correctly read the expiration_date from the main database
+            const deploymentDetails = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
+            
+            if (deploymentDetails && deploymentDetails.expiration_date) {
+                const expirationDate = new Date(deploymentDetails.expiration_date);
+                const now = new Date();
+                const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+                
+                if (daysLeft > 0) {
+                    expirationInfo = `${daysLeft} days remaining`;
+                } else {
+                    expirationInfo = 'Expired';
                 }
             }
         }
+        // --- END OF FIX ---
 
-        // --- BUILD INFO TEXT ---
         const infoText = `*App Info: ${appData.name}*\n\n` +
-                         `*Dyno Status:* ${dynoStatus}\n` +
-                         `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
-                         `*Expiration:* ${expirationInfo}\n\n` +
-                         `*Key Config Vars:*\n` +
-                         `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
-                         `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+                       `*Dyno Status:* ${dynoStatus}\n` +
+                       `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
+                       `*Expiration:* ${expirationInfo}\n\n` +
+                       `*Key Config Vars:*\n` +
+                       `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
+                       `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
 
-        return bot.editMessageText(infoText, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            disable_web_page_preview: true,
-            reply_markup: {
-                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
-    } catch (e) {
-        if (e.response && e.response.status === 404) {
-            await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
-            return;
+      return bot.editMessageText(infoText, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: {
+            inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
         }
-        const errorMsg = e.response?.data?.message || e.message;
-        return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
-            chat_id: cid,
-            message_id: messageId,
-            reply_markup: {
-                inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]]
-            }
-        });
+      });
+    } catch (e) {
+      if (e.response && e.response.status === 404) {
+          await dbServices.handleAppNotFoundAndCleanDb(cid, appName, messageId, true);
+          return;
+      }
+      const errorMsg = e.response?.data?.message || e.message;
+      return bot.editMessageText(`Error fetching info: ${errorMsg}`, {
+        chat_id: cid, message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${appName}` }]] }
+      });
     }
 }
 
