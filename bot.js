@@ -2620,7 +2620,18 @@ if (text === 'Deploy' || text === 'Free Trial') {
     }
     return;
   }
-
+// --- FIX: Add this new handler for the 'Support' button ---
+  if (text === 'Support') {
+      await dbServices.updateUserActivity(cid);
+      if (cid === ADMIN_ID) {
+        return bot.sendMessage(cid, "You are the admin, you cannot ask yourself questions!");
+      }
+      delete userStates[cid]; // Clear user state
+      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
+      await bot.sendMessage(cid, 'Please type your question for the admin:');
+      return;
+  }
+  // --- END OF FIX ---
   // Add this block inside bot.on('message', ...)
 
   if (text === 'More Features') {
