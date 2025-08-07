@@ -2783,7 +2783,7 @@ if (usesLeft === null) {
     if (!isValidSession) {
         // This is the updated logic to send an error with a button
         let botName = botType.charAt(0).toUpperCase() + botType.slice(1);
-        let errorMessage = `Incorrect session ID. Your *${botName}* session ID is not valid. Please get a new one using the button below.`;
+        let errorMessage = `Incorrect session ID. Your *${botName}* session ID is not valid. Please input the correct one`;
         let sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
         
         return bot.sendMessage(cid, errorMessage, {
@@ -3100,7 +3100,7 @@ if (action === 'select_deploy_type') {
 
     // Send a message asking for the session ID. The key step comes later.
     await bot.editMessageText(
-        `You've selected *${botName}*. Please get your session ID from the link below and send it here.`,
+        `You've selected *${botName}*. Please send your SESSION_ID`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -4062,7 +4062,55 @@ if (action === 'confirm_and_pay_step') {
     return;
 }
 
+// --- FIX: New callbacks to handle key entry or payment ---
 
+// --- FIX: Awaiting key handler now includes a payment button ---
+if (action === 'deploy_with_key') {
+    const isFreeTrialFromCallback = payload === 'free_trial';
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
+
+    // For paid deployments, ask for the key with a payment option.
+    if (!isFreeTrialFromCallback) {
+        st.step = 'AWAITING_KEY';
+        const price = process.env.KEY_PRICE_NGN || '1500';
+        await bot.editMessageText('Enter your Deploy key:', {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+                ]
+            }
+        });
+    } else {
+        // For free trials, trigger the deployment directly.
+        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
+        delete userStates[cid];
+        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
+    }
+    return;
+}
+
+
+// --- FIX: Corrected state check for the buy_key_for_deploy callback ---
+if (action === 'buy_key_for_deploy') {
+    const st = userStates[cid];
+    // This state check is now corrected to match the AWAITING_KEY state
+    if (!st || st.step !== 'AWAITING_KEY') return;
+
+    // Save all collected data into the state
+    st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
+    st.data.emailBotType = st.data.botType;
+    st.data.deploySessionId = st.data.SESSION_ID; // Stored session ID
+    st.data.deployAppName = st.data.APP_NAME; // Stored app name
+    
+    await bot.editMessageText('To proceed with the payment, please enter your email address:', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
 
 // --- NEW: Handler for the 'Cancel' button on the payment screen ---
 if (action === 'cancel_payment_and_deploy') {
