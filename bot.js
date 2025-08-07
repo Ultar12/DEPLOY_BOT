@@ -3468,57 +3468,6 @@ if (action === 'dkey_cancel') {
     return;
   }
 
-  // --- FIX: New callbacks to handle key entry or payment ---
-
-// --- FIX: Awaiting key handler now includes a payment button ---
-if (action === 'deploy_with_key') {
-    const isFreeTrialFromCallback = payload === 'free_trial';
-    const st = userStates[cid];
-    if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
-
-    // For paid deployments, ask for the key with a payment option.
-    if (!isFreeTrialFromCallback) {
-        st.step = 'AWAITING_KEY';
-        const price = process.env.KEY_PRICE_NGN || '1000';
-        await bot.editMessageText('Enter your Deploy key:', {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-                ]
-            }
-        });
-    } else {
-        // For free trials, trigger the deployment directly.
-        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
-        delete userStates[cid];
-        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
-    }
-    return;
-}
-
-
-// --- FIX: Corrected state check for the buy_key_for_deploy callback ---
-if (action === 'buy_key_for_deploy') {
-    const st = userStates[cid];
-    // This state check is now corrected to match the AWAITING_KEY state
-    if (!st || st.step !== 'AWAITING_KEY') return;
-
-    // Save all collected data into the state
-    st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
-    st.data.emailBotType = st.data.botType;
-    st.data.deploySessionId = st.data.SESSION_ID; // Stored session ID
-    st.data.deployAppName = st.data.APP_NAME; // Stored app name
-    
-    await bot.editMessageText('To proceed with the payment, please enter your email address:', {
-        chat_id: cid,
-        message_id: q.message.message_id
-    });
-    return;
-}
-
-
 
       if (action === 'set_expiration') {
         const appName = payload;
@@ -4092,7 +4041,7 @@ if (action === 'confirm_and_pay_step') {
 
     const price = process.env.KEY_PRICE_NGN || '1500';
     const isFreeTrial = st.data.isFreeTrial;
-    
+
     // --- New, consolidated logic ---
     if (isFreeTrial) {
         await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
@@ -4105,7 +4054,7 @@ if (action === 'confirm_and_pay_step') {
             message_id: q.message.message_id,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }] // <-- ADDED CANCEL BUTTON
                 ]
             }
         });
@@ -4114,6 +4063,29 @@ if (action === 'confirm_and_pay_step') {
 }
 
 
+
+// --- NEW: Handler for the 'Cancel' button on the payment screen ---
+if (action === 'cancel_payment_and_deploy') {
+    const st = userStates[cid];
+    if (!st) return;
+
+    // Delete the pending payment record if it exists
+    if (st.data && st.data.reference) {
+        try {
+            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [st.data.reference]);
+            console.log(`[Payment] Canceled pending payment with reference: ${st.data.reference}`);
+        } catch (error) {
+            console.error(`Error deleting pending payment:`, error.message);
+        }
+    }
+
+    delete userStates[cid]; // Clear the state to cancel the deployment flow
+    await bot.editMessageText('Deployment process canceled.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
 
 
 
