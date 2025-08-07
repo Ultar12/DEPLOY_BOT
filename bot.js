@@ -3100,7 +3100,7 @@ if (action === 'select_deploy_type') {
 
     // Send a message asking for the session ID. The key step comes later.
     await bot.editMessageText(
-        `You've selected *${botName}*. Please send your SESSION_ID`,
+        `You've selected *${botName}*. `Please send your SESSION_ID`,
         {
             chat_id: cid,
             message_id: q.message.message_id,
