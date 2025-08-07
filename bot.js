@@ -17,6 +17,9 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const crypto = require('crypto');
+// --- NEW GLOBAL CONSTANT ---
+const KEYBOARD_VERSION = 1.1; // Increment this number for every new keyboard update
+// --- END OF NEW GLOBAL CONSTANT ---
 
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
@@ -143,6 +146,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+  await dbPool.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS keyboard_version INTEGER DEFAULT 0;`);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS banned_users (
@@ -404,6 +408,24 @@ async function animateMessage(chatId, messageId, baseText) {
     }, 2000);
     return intervalId;
 }
+
+// --- NEW HELPER FUNCTION ---
+async function sendLatestKeyboard(chatId) {
+    const isAdmin = String(chatId) === ADMIN_ID;
+    const currentKeyboard = buildKeyboard(isAdmin);
+
+    try {
+        await bot.sendMessage(chatId, 'Keyboard updated to the latest version!', {
+            reply_markup: { keyboard: currentKeyboard, resize_keyboard: true }
+        });
+        
+        await pool.query('UPDATE user_activity SET keyboard_version = $1 WHERE user_id = $2', [KEYBOARD_VERSION, chatId]);
+    } catch (error) {
+        console.error(`Failed to send latest keyboard to user ${chatId}:`, error.message);
+    }
+}
+// --- END OF NEW HELPER FUNCTION ---
+
 
 async function sendBannedUsersList(chatId, messageId = null) {
     if (String(chatId) !== ADMIN_ID) return;
@@ -1982,7 +2004,14 @@ bot.on('message', async msg => {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
       return;
   }
-
+ // Automatic Keyboard Update Check
+const userActivity = await pool.query('SELECT keyboard_version FROM user_activity WHERE user_id = $1', [cid]);
+if (userActivity.rows.length > 0) {
+    const userVersion = userActivity.rows[0].keyboard_version || 0;
+    if (userVersion < KEYBOARD_VERSION) {
+        await sendLatestKeyboard(cid);
+    }
+}
   const st = userStates[cid];
   const isAdmin = cid === ADMIN_ID;
 
