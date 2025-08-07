@@ -18,7 +18,7 @@ const fs = require('fs');
 const express = require('express');
 const crypto = require('crypto');
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 1.1; // Increment this number for every new keyboard update
+const KEYBOARD_VERSION = 1; // Increment this number for every new keyboard update
 // --- END OF NEW GLOBAL CONSTANT ---
 
 
