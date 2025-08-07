@@ -4077,27 +4077,29 @@ if (action === 'levanter_wa_fallback') {
     return;
   }
 
-// --- FIX: This block now moves directly to the AWAITING_KEY step ---
+/// --- FIX: This block now bypasses key/payment for admin ---
 if (action === 'confirm_and_pay_step') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
 
     const price = process.env.KEY_PRICE_NGN || '1500';
     const isFreeTrial = st.data.isFreeTrial;
+    const isAdmin = cid === ADMIN_ID; // <-- CHECK IF USER IS ADMIN
 
     // --- New, consolidated logic ---
-    if (isFreeTrial) {
-        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
+    if (isFreeTrial || isAdmin) { // <-- ADDED isAdmin CHECK
+        await bot.editMessageText('Initiating deployment...', { chat_id: cid, message_id: q.message.message_id });
         delete userStates[cid];
-        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
+        // The isAdmin deployment is not a free trial
+        await dbServices.buildWithProgress(cid, st.data, isFreeTrial, false, st.data.botType);
     } else {
-        st.step = 'AWAITING_KEY'; // <-- Directly move to AWAITING_KEY
+        st.step = 'AWAITING_KEY';
         await bot.editMessageText('Enter your Deploy key:', {
             chat_id: cid,
             message_id: q.message.message_id,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }] // <-- ADDED CANCEL BUTTON
+                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
                 ]
             }
         });
