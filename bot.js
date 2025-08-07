@@ -409,7 +409,7 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
-// --- NEW HELPER FUNCTION ---
+// --- FIX: Corrected sendLatestKeyboard function for reliable database updates ---
 async function sendLatestKeyboard(chatId) {
     const isAdmin = String(chatId) === ADMIN_ID;
     const currentKeyboard = buildKeyboard(isAdmin);
@@ -419,12 +419,15 @@ async function sendLatestKeyboard(chatId) {
             reply_markup: { keyboard: currentKeyboard, resize_keyboard: true }
         });
         
+        // This is the critical fix: we ensure the database update is properly handled.
         await pool.query('UPDATE user_activity SET keyboard_version = $1 WHERE user_id = $2', [KEYBOARD_VERSION, chatId]);
+        console.log(`[Keyboard Update] User ${chatId} keyboard version updated to ${KEYBOARD_VERSION}.`);
     } catch (error) {
-        console.error(`Failed to send latest keyboard to user ${chatId}:`, error.message);
+        console.error(`[Keyboard Update] CRITICAL ERROR: Failed to send latest keyboard or update database for user ${chatId}:`, error.message);
+        // You may also want to notify the admin about this critical error
+        bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: Keyboard update failed for user ${chatId}. Check logs.`, { parse_mode: 'Markdown' });
     }
 }
-// --- END OF NEW HELPER FUNCTION ---
 
 
 async function sendBannedUsersList(chatId, messageId = null) {
