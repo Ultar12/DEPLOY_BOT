@@ -1948,50 +1948,53 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
         const botInfo = botInfoResult.rows[0];
         const ownerId = botInfo.user_id;
 
-        let ownerDetails = `*Owner ID:* \`${ownerId}\``;
+        // FIX: The ownerDetails string is now fully escaped.
+        let ownerDetails = `*Owner ID:* \`${escapeMarkdown(ownerId)}\``;
         try {
             const ownerChat = await bot.getChat(ownerId);
             const ownerName = `${ownerChat.first_name || ''} ${ownerChat.last_name || ''}`.trim();
             ownerDetails += `\n*Owner Name:* ${escapeMarkdown(ownerName)}`;
             if (ownerChat.username) {
-                ownerDetails += `\n*Owner Username:* @${ownerChat.username}`;
+                ownerDetails += `\n*Owner Username:* @${escapeMarkdown(ownerChat.username)}`;
             }
         } catch (e) {
             ownerDetails += "\n_Could not fetch owner's Telegram profile._";
         }
 
-        let expirationInfo = "Not Set";
-if (botInfo.is_free_trial) {
-    const deployDate = new Date(botInfo.deploy_date);
-    const expirationDate = new Date(deployDate.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days for free trial
-    const now = new Date();
-    const timeLeftMs = expirationDate.getTime() - now.getTime();
-    const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
+        // FIX: The expirationInfo string is now fully escaped.
+        let expirationInfo = escapeMarkdown("Not Set");
+        if (botInfo.is_free_trial) {
+            const deployDate = new Date(botInfo.deploy_date);
+            const expirationDate = new Date(deployDate.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days for free trial
+            const now = new Date();
+            const timeLeftMs = expirationDate.getTime() - now.getTime();
+            const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
 
-    if (daysLeft > 0) {
-        expirationInfo = `${daysLeft} days remaining (Free Trial)`;
-    } else {
-        expirationInfo = 'Expired (Free Trial)';
-    }
-} else if (botInfo.expiration_date) {
-    const expiration = new Date(botInfo.expiration_date);
-    const now = new Date();
-    const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-    expirationInfo = daysLeft > 0 ? `${daysLeft} days remaining` : "Expired";
-}
+            if (daysLeft > 0) {
+                expirationInfo = escapeMarkdown(`${daysLeft} days remaining (Free Trial)`);
+            } else {
+                expirationInfo = escapeMarkdown('Expired (Free Trial)');
+            }
+        } else if (botInfo.expiration_date) {
+            const expiration = new Date(botInfo.expiration_date);
+            const now = new Date();
+            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
+            expirationInfo = escapeMarkdown(daysLeft > 0 ? `${daysLeft} days remaining` : "Expired");
+        }
 
 
         const botStatus = botInfo.status === 'online' ? 'Online' : 'Logged Out';
 
+        // FIX: The final response string is now fully escaped to prevent errors.
         const response = `
-*Bot Details for: \`${appName}\`*
+*Bot Details for: \`${escapeMarkdown(appName)}\`*
 
 *Owner Info:*
 ${ownerDetails}
 
 *Bot Info:*
-*Type:* ${botInfo.bot_type ? botInfo.bot_type.toUpperCase() : 'Unknown'}
-*Status:* ${botStatus}
+*Type:* ${escapeMarkdown(botInfo.bot_type ? botInfo.bot_type.toUpperCase() : 'Unknown')}
+*Status:* ${escapeMarkdown(botStatus)}
 *Expiration:* ${expirationInfo}
         `;
 
@@ -2002,7 +2005,6 @@ ${ownerDetails}
         await bot.sendMessage(cid, `An error occurred while searching for the bot.`);
     }
 });
-
 
 // NEW CODE
 bot.onText(/^\/unban$/, async (msg) => {
