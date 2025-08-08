@@ -1700,7 +1700,7 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-// --- FIX: Updated /send command to support text, photos, and videos ---
+// --- FIX: Full corrected /send command to support text, photos, and videos ---
 bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
@@ -1717,14 +1717,17 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     if (isPhoto || isVideo) {
         const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : repliedMsg.video.file_id;
         const sendMethod = isPhoto ? bot.sendPhoto : bot.sendVideo;
+        const options = {
+            caption: caption,
+            parse_mode: 'Markdown'
+        };
         
         try {
-            await sendMethod(targetUserId, fileId, { caption: caption, parse_mode: 'Markdown' });
+            await sendMethod(targetUserId, fileId, options);
             await bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
         } catch (error) {
-            const escapedError = escapeMarkdown(error.message);
-            console.error(`Error sending media to user ${targetUserId}:`, escapedError);
-            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
+            console.error(`Error sending media to user ${targetUserId}:`, error.message);
+            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`. The file format may not be supported.`, { parse_mode: 'Markdown' });
         }
     } else {
         // Fallback to the old text-only behavior if not replying to media
@@ -1741,8 +1744,6 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
         }
     }
 });
-
-
 
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
