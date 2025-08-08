@@ -1743,6 +1743,7 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
 });
 
 
+
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
