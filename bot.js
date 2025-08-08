@@ -1722,8 +1722,9 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
             await sendMethod(targetUserId, fileId, { caption: caption, parse_mode: 'Markdown' });
             await bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
         } catch (error) {
-            console.error(`Error sending media to user ${targetUserId}:`, error.message);
-            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`: ${error.message}`, { parse_mode: 'Markdown' });
+            const escapedError = escapeMarkdown(error.message);
+            console.error(`Error sending media to user ${targetUserId}:`, escapedError);
+            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
         }
     } else {
         // Fallback to the old text-only behavior if not replying to media
@@ -1734,12 +1735,15 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
             await bot.sendMessage(targetUserId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
             await bot.sendMessage(adminId, `Message sent to user \`${targetUserId}\`.`);
         } catch (error) {
-            console.error(`Error sending message to user ${targetUserId}:`, error.message);
-            await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${error.message}`, { parse_mode: 'Markdown' });
+            const escapedError = escapeMarkdown(error.message);
+            console.error(`Error sending message to user ${targetUserId}:`, escapedError);
+            await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
         }
     }
 });
 
+
+// --- FIX: Updated /sendall command to support text, photos, and videos ---
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -1791,6 +1795,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
             if (error.response?.body?.description.includes("bot was blocked")) {
                 blockedCount++;
             } else {
+                console.error(`Error sending broadcast to user ${userId}:`, escapeMarkdown(error.message));
                 failCount++;
             }
         }
