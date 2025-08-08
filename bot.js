@@ -1700,35 +1700,110 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-// NEW ADMIN COMMAND: /send <user_id> <message>
-bot.onText(/^\/send (\d+) (.+)$/, async (msg, match) => {
+// --- FIX: Updated /send command to support text, photos, and videos ---
+bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
-    const targetUserId = match[1];
-    const messageText = match[2];
-
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
+    
+    const targetUserId = match[1];
+    const caption = match[2] ? match[2].trim() : '';
 
-    try {
-        await bot.sendMessage(targetUserId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
-        await bot.sendMessage(adminId, `Message sent to user \`${targetUserId}\`.`);
-    } catch (error) {
-        console.error(`Error sending message to user ${targetUserId}:`, error.message);
-        let errorReason = "Unknown error";
-        if (error.response && error.response.body && error.response.body.description) {
-            errorReason = error.response.body.description;
-            if (errorReason.includes("chat not found") || errorReason.includes("user not found")) {
-                errorReason = `User with ID \`${targetUserId}\` not found or has not started a chat with the bot.`;
-            } else if (errorReason.includes("bot was blocked by the user")) {
-                errorReason = `Bot is blocked by user \`${targetUserId}\`.`;
-            }
+    const repliedMsg = msg.reply_to_message;
+    const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
+    const isVideo = repliedMsg && repliedMsg.video;
+
+    if (isPhoto || isVideo) {
+        const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : repliedMsg.video.file_id;
+        const sendMethod = isPhoto ? bot.sendPhoto : bot.sendVideo;
+        
+        try {
+            await sendMethod(targetUserId, fileId, { caption: caption, parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+        } catch (error) {
+            console.error(`Error sending media to user ${targetUserId}:`, error.message);
+            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`: ${error.message}`, { parse_mode: 'Markdown' });
         }
-        await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${errorReason}`);
+    } else {
+        // Fallback to the old text-only behavior if not replying to media
+        if (!caption) {
+             return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to send.");
+        }
+        try {
+            await bot.sendMessage(targetUserId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(adminId, `Message sent to user \`${targetUserId}\`.`);
+        } catch (error) {
+            console.error(`Error sending message to user ${targetUserId}:`, error.message);
+            await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${error.message}`, { parse_mode: 'Markdown' });
+        }
     }
 });
 
-// --- REPLACE your /copydb command handler with this ---
+// --- FIX: Updated /sendall command to support text, photos, and videos ---
+bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+    
+    const caption = match[1] ? match[1].trim() : '';
+
+    const repliedMsg = msg.reply_to_message;
+    const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
+    const isVideo = repliedMsg && repliedMsg.video;
+    
+    if (!isPhoto && !isVideo && !caption) {
+         return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to broadcast.");
+    }
+
+    await bot.sendMessage(adminId, "Broadcasting message to all users. This may take a while...");
+
+    let successCount = 0;
+    let failCount = 0;
+    let blockedCount = 0;
+    
+    const allUserIdsResult = await pool.query('SELECT user_id FROM all_users_backup');
+    const userIds = allUserIdsResult.rows.map(row => row.user_id);
+    
+    if (userIds.length === 0) {
+        return bot.sendMessage(adminId, "No users found in the all_users_backup table to send messages to.");
+    }
+    
+    const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
+    const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : isVideo ? repliedMsg.video.file_id : null;
+
+    for (const userId of userIds) {
+        if (userId === adminId) continue;
+        
+        try {
+            if (await dbServices.isUserBanned(userId)) continue;
+            
+            if (isPhoto || isVideo) {
+                await sendMethod(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+            } else {
+                await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+            }
+            
+            successCount++;
+            await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+            if (error.response?.body?.description.includes("bot was blocked")) {
+                blockedCount++;
+            } else {
+                failCount++;
+            }
+        }
+    }
+    
+    await bot.sendMessage(adminId,
+        `Broadcast complete!\n\n` +
+        `*Successfully sent:* ${successCount}\n` +
+        `*Blocked by user:* ${blockedCount}\n` +
+        `*Other failures:* ${failCount}`,
+        { parse_mode: 'Markdown' }
+    );
+});
 
 bot.onText(/^\/copydb$/, async (msg) => {
     const cid = msg.chat.id.toString();
@@ -1774,60 +1849,6 @@ bot.onText(/^\/backupall$/, async (msg) => {
     }
 });
 
-
-bot.onText(/^\/sendall (.+)$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    const messageText = match[1];
-
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "You are not authorized to use this command.");
-    }
-
-    await bot.sendMessage(adminId, "Broadcasting message to all users. This may take a while...");
-
-    let successCount = 0;
-    let failCount = 0;
-    let blockedCount = 0;
-
-    try {
-        // --- CHANGE: Query the main 'pool' instead of 'backupPool' ---
-        const allUserIdsResult = await pool.query('SELECT user_id FROM all_users_backup');
-        const userIds = allUserIdsResult.rows.map(row => row.user_id);
-        // ... (rest of the function is the same)
-        
-        if (userIds.length === 0) {
-            return bot.sendMessage(adminId, "No users found in the all_users_backup table to send messages to.");
-        }
-
-        for (const userId of userIds) {
-            if (userId === adminId) continue;
-
-            try {
-                if (await dbServices.isUserBanned(userId)) continue;
-                await bot.sendMessage(userId, `*Message from Admin:*\n${messageText}`, { parse_mode: 'Markdown' });
-                successCount++;
-                await new Promise(resolve => setTimeout(resolve, 100));
-            } catch (error) {
-                if (error.response?.body?.description.includes("bot was blocked")) {
-                    blockedCount++;
-                } else {
-                    failCount++;
-                }
-            }
-        }
-        await bot.sendMessage(adminId,
-            `Broadcast complete!\n\n` +
-            `*Successfully sent:* ${successCount}\n` +
-            `*Blocked by user:* ${blockedCount}\n` +
-            `*Other failures:* ${failCount}`,
-            { parse_mode: 'Markdown' }
-        );
-
-    } catch (error) {
-        console.error(`[SendAll] Error fetching user list for broadcast:`, error.message);
-        await bot.sendMessage(adminId, `An error occurred during broadcast: ${error.message}`);
-    }
-});
 
 bot.onText(/^\/revenue$/, async (msg) => {
     const cid = msg.chat.id.toString();
