@@ -4983,32 +4983,44 @@ if (action === 'info') {
 
 
 
-  if (action === 'sudo_action') {
-      const sudoAction = payload;
-      const appName = extra;
+  // --- FIX: Corrected sudo_action handler with proper state management ---
+if (action === 'sudo_action') {
+    const sudoAction = payload;
+    const appName = extra;
+    const st = userStates[cid];
 
-      // Ensure that the user is managing the correct app or is admin
-      const st = userStates[cid];
-      if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== appName) { // Added state check
-          await bot.sendMessage(cid, "Please select an app again from 'My Bots' or 'Apps'.");
-          delete userStates[cid]; // Clear invalid state
-          return;
-      }
+    // FIX: This check is now more robust and looks for the correct state
+    if (!st || (st.step !== 'APP_MANAGEMENT' && st.step !== 'AWAITING_SUDO_CHOICE')) {
+        await bot.sendMessage(cid, "This session has expired or is invalid. Please select an app again.");
+        delete userStates[cid];
+        return;
+    }
+    
+    // Store the appName in the state if it's not already there
+    st.data.APP_NAME = appName;
+    st.data.targetUserId = cid;
+    st.data.attempts = 0;
+    st.data.isFreeTrial = false;
 
+    if (sudoAction === 'add') {
+        st.step = 'AWAITING_SUDO_ADD_NUMBER';
+        await bot.editMessageText('Please enter the number to *add* to SUDO (without + or spaces, e.g., `2349163916314`):', {
+             chat_id: cid,
+             message_id: q.message.message_id,
+             parse_mode: 'Markdown'
+        });
+        return;
+    } else if (sudoAction === 'remove') {
+        st.step = 'AWAITING_SUDO_REMOVE_NUMBER';
+        await bot.editMessageText('Please enter the number to *remove* from SUDO (without + or spaces, e.g., `2349163916314`):', {
+             chat_id: cid,
+             message_id: q.message.message_id,
+             parse_mode: 'Markdown'
+        });
+        return;
+    }
+}
 
-      userStates[cid].data.APP_NAME = appName;
-      userStates[cid].data.targetUserId = cid;
-      userStates[cid].data.attempts = 0;
-      userStates[cid].data.isFreeTrial = false; // Ensure it's treated as permanent for backup on update
-
-      if (sudoAction === 'add') {
-          userStates[cid].step = 'AWAITING_SUDO_ADD_NUMBER';
-          return bot.sendMessage(cid, 'Please enter the number to *add* to SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
-      } else if (sudoAction === 'remove') {
-          userStates[cid].step = 'AWAITING_SUDO_REMOVE_NUMBER';
-          return bot.sendMessage(cid, 'Please enter the number to *remove* from SUDO (without + or spaces, e.g., `2349163916314`):', { parse_mode: 'Markdown' });
-      }
-  }
 
       if (action === 'unban_user') {
         const targetUserId = payload;
