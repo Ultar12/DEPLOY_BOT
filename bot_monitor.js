@@ -10,21 +10,15 @@ const originalStderrWrite = process.stderr.write;
 
 let stdoutBuffer = '';
 
-// FIX: lastLogoutAlertTime is now a global variable used for the short cooldown check
 let lastLogoutAlertTime = null;
 
-// --- Parameters that will be passed from bot.js ---
 let moduleParams = {};
 
-/**
- * Initializes the bot monitoring system.
- */
 function init(params) {
     moduleParams = params;
     
     originalStdoutWrite.apply(process.stdout, ['--- bot_monitor.js initialized and active! ---\n']);
 
-    // FIX: Only override stdout to prevent infinite recursion from stderr log errors
     process.stdout.write = (chunk, encoding, callback) => {
         stdoutBuffer += chunk.toString();
         let newlineIndex;
@@ -36,37 +30,20 @@ function init(params) {
         return originalStdoutWrite.apply(process.stdout, [chunk, encoding, callback]);
     };
     
-    // The originalStderrWrite is not replaced, so errors will log normally without triggering a new alert loop.
-
-    // === Load initial state from Heroku config vars ===
-    // FIX: Removed loadLastLogoutAlertTime as Heroku config var persistence is no longer used
-    // to prevent 404 recursion errors. The cooldown is now in-memory.
-
-    // === Start Scheduled Tasks ===
-    // Every 5 minutes for logout reminders
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
-    // Every 24 hours for expiration check (based on original deploy date)
     setInterval(checkAndExpireBots, 24 * 60 * 60 * 1000);
 }
 
 
-// FIX: The cooldown check is now inside this function to prevent spamming
-const ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    const logoutPatterns = [
-        'ERROR: Failed to initialize bot. Details: No valid session found',
-        'SESSION LOGGED OUT. Please rescan QR and update SESSION.',
-        'Reason: logout',
-        'Authentication Error',
-        'User [', ' has logged out.',
-        '] invalid',
-        'invalid'
-    ];
+    // FIX: Refactored regex to be more specific and capture the app name or session ID
+    let logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)|(\[([^\]]+)\] invalid)|(SESSION LOGGED OUT)/i);
 
-    if (logoutPatterns.some(pattern => line.includes(pattern))) {
+    if (logoutMatch) {
         originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
         
         const now = new Date();
@@ -74,25 +51,23 @@ function handleLogLine(line, streamType) {
             originalStdoutWrite.apply(process.stdout, ['Skipping logout alert -- cooldown not expired.\n']);
             return;
         }
-        
         lastLogoutAlertTime = now;
 
-        let specificSessionId = null;
-        const matchForSession = line.match(/for (\S+)\./);
-        if (matchForSession) specificSessionId = matchForSession[1];
-        else {
-            const raganorkLogoutMatch = line.match(/\[([^\]]+)\] invalid/i);
-            if (raganorkLogoutMatch) specificSessionId = raganorkLogoutMatch[1];
+        // FIX: Extract appName correctly from different log patterns
+        let appName = null;
+        if (logoutMatch[2]) { // Matched the "User [appname] has logged out" pattern
+            appName = logoutMatch[2];
+        } else if (logoutMatch[4]) { // Matched the "[sessionid] invalid" pattern
+            appName = logoutMatch[4];
+        } else if (logoutMatch[5]) { // Matched the "SESSION LOGGED OUT" pattern
+            // No appName in this pattern, so we rely on the monitoring bot's name
+            appName = moduleParams.APP_NAME;
         }
-        
-        // FIX: Removed the call to sendInvalidSessionAlert here.
-        // The log message itself is the primary alert.
-        // The bot_monitor's job is now to just restart the process, not send alerts.
-        // sendInvalidSessionAlert(specificSessionId, moduleParams.APP_NAME).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
+        sendInvalidSessionAlert(appName).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
 
         if (moduleParams.HEROKU_API_KEY) {
-            originalStderrWrite.apply(process.stderr, [`Detected logout for session ${specificSessionId || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
+            originalStderrWrite.apply(process.stderr, [`Detected logout for session ${appName || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
             setTimeout(() => process.exit(1), moduleParams.RESTART_DELAY_MINUTES * 60 * 1000);
         } else {
             originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY not set. Not forcing process exit after logout detection.\n']);
@@ -101,7 +76,6 @@ function handleLogLine(line, streamType) {
 }
 
 
-// === Telegram helper ===
 async function sendTelegramAlert(text, chatId) {
     if (!moduleParams.TELEGRAM_BOT_TOKEN) {
         originalStderrWrite.apply(process.stderr, ['TELEGRAM_BOT_TOKEN is not set. Cannot send Telegram alerts.\n']);
@@ -128,8 +102,9 @@ async function sendTelegramAlert(text, chatId) {
     }
 }
 
-// === "Logged out" alert ===
-async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert = null) {
+
+// FIX: Refactored sendInvalidSessionAlert to use botName for the message
+async function sendInvalidSessionAlert(botNameForAlert = null) {
     const now = new Date();
     const timeZone = 'Africa/Lagos';
     const nowStr = now.toLocaleString('en-GB', { timeZone: timeZone });
@@ -144,21 +119,13 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
         : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
 
     let message =
-        `🚨 Hey Ult-AR, ${greeting}!\n\n` +
+        `Hey Ult-AR, ${greeting}!\n\n` +
         `Bot "*${moduleParams.escapeMarkdown(botNameForAlert || moduleParams.APP_NAME)}*" has logged out.`;
-
-    if (specificSessionId) {
-        message += `\n\`${moduleParams.escapeMarkdown(specificSessionId)}\` invalid`;
-    } else {
-        message += `\n\`UNKNOWN_SESSION\` invalid`;
-    }
 
     message += `\nTime: ${nowStr}\n` +
         `Restarting in ${restartTimeDisplay}.`;
 
     try {
-        // FIX: Only send to the monitoring channel, as per user's request.
-        // Removed the line that sends the message to moduleParams.TELEGRAM_USER_ID
         await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
         originalStdoutWrite.apply(process.stdout, [`Sent new logout alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
     } catch (err) {
@@ -167,14 +134,6 @@ async function sendInvalidSessionAlert(specificSessionId = null, botNameForAlert
 }
 
 
-// FIX: This function is now removed entirely as its logic is redundant with bot.js.
-// async function sendBotConnectedAlert() { ... }
-
-// FIX: This function is now removed as Heroku config var persistence is no longer used
-// async function loadLastLogoutAlertTime() { ... }
-
-
-// === Scheduled Task for Logout Reminders & Expiration Cleanup ===
 async function checkAndRemindLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
@@ -201,7 +160,6 @@ async function checkAndRemindLoggedOutBots() {
 
             const now = new Date();
 
-            // FIX: Check bot status from the database, not Heroku config.
             const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
@@ -213,7 +171,7 @@ async function checkAndRemindLoggedOutBots() {
 
                 if (timeSinceLogout > twentyFourHours) {
                     const reminderMessage =
-                        `📢 Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
+                        `Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
                     await moduleParams.bot.sendMessage(user_id, reminderMessage, {
@@ -242,7 +200,6 @@ async function checkAndRemindLoggedOutBots() {
     }
 }
 
-// === Scheduled Task for 45-day bot expiration ===
 async function checkAndExpireBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for expiring bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
