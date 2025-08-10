@@ -5478,34 +5478,24 @@ bot.on('channel_post', async msg => {
 
     let appName = null;
     let status = null;
+    let sessionId = null;
     let failureReason = 'Bot session became invalid.';
     let match;
 
-    // FIX: New, simplified regex to match the standardized format from bot_monitor
+    // FIX: New, simplified regex to match the standardized format from bot_monitor.js
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
 
     if (match) {
         appName = match[1];
         status = match[2];
-        const sessionId = match[3];
-        const time = match[4];
-        
+        sessionId = match[3];
         console.log(`[Channel Post] Parsed: App=${appName}, Status=${status}, Session=${sessionId}`);
     } else {
-        // Fallback for direct messages from bots themselves, e.g., "[appname] connected."
-        match = text.match(/\[([^\]]+)\] connected/i);
-        if (match) {
-            appName = match[1];
-            status = 'ONLINE';
-        }
-    }
-
-    if (!appName) {
         console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
         return;
     }
     
-    // FIX: Simplified the status logic. All state management is now here.
+    // FIX: All state management is now centralized here.
     if (status === 'ONLINE') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -5545,6 +5535,7 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
 
 
 
