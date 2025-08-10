@@ -9,7 +9,6 @@ const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
 
 let stdoutBuffer = '';
-
 let lastLogoutAlertTime = null;
 let moduleParams = {};
 
@@ -39,24 +38,10 @@ const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    // FIX: Simplified logout regex to match the exact format
-    const logoutMatch = line.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
-    const invalidMatch = line.match(/\[([^\]]+)\] invalid/i);
-
-    let appName = null;
-    let sessionId = null;
-    let isFailure = false;
+    // FIX: A new regex to capture both app name and session ID from multiple log lines
+    const logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)|(SESSION LOGGED OUT[\s\S]*?\[([^\]]+)\] invalid)/i);
 
     if (logoutMatch) {
-        appName = logoutMatch[1];
-        isFailure = true;
-    } else if (invalidMatch) {
-        // We will assume the invalid match provides the session ID for a logged-out bot
-        sessionId = invalidMatch[1];
-        isFailure = true;
-    }
-
-    if (isFailure) {
         originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
         
         const now = new Date();
@@ -66,11 +51,13 @@ function handleLogLine(line, streamType) {
         }
         lastLogoutAlertTime = now;
 
-        // FIX: The alert message now includes the session ID
+        const appName = logoutMatch[2] || logoutMatch[4];
+        const sessionId = logoutMatch[4] || null;
+
         sendStandardizedAlert(appName, sessionId).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending standardized alert from bot_monitor: ${err.message}\n`]));
 
         if (moduleParams.HEROKU_API_KEY) {
-            originalStderrWrite.apply(process.stderr, [`Detected logout for session ${appName || sessionId || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
+            originalStderrWrite.apply(process.stderr, [`Detected logout for app ${appName} and session ${sessionId}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
             setTimeout(() => process.exit(1), moduleParams.RESTART_DELAY_MINUTES * 60 * 1000);
         } else {
             originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY not set. Not forcing process exit after logout detection.\n']);
@@ -106,7 +93,6 @@ async function sendTelegramAlert(text, chatId) {
 }
 
 
-// FIX: Refactored sendStandardizedAlert to use appName and sessionId
 async function sendStandardizedAlert(appName, sessionId) {
     const now = new Date();
     const timeZone = 'Africa/Lagos';
@@ -124,12 +110,7 @@ async function sendStandardizedAlert(appName, sessionId) {
     const appDisplayName = appName ? appName : 'Unknown Bot';
     const sessionDisplayName = sessionId ? sessionId : 'UNKNOWN_SESSION';
 
-    const message =
-        `*Hey Ult-AR, ${greeting}!*
-App: \`${moduleParams.escapeMarkdown(appDisplayName)}\`
-Session: \`${moduleParams.escapeMarkdown(sessionDisplayName)}\` invalid
-Time: ${nowStr}
-Restarting in ${restartTimeDisplay}.`;
+    const message = `[LOG] App: ${appDisplayName} | Status: LOGGED OUT | Session: ${sessionDisplayName} | Time: ${nowStr}`;
 
     try {
         await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
