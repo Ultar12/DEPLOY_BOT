@@ -5467,7 +5467,7 @@ if (action === 'setvarbool') {
   }
 });
 
-// --- FIX: Corrected bot.on('channel_post') handler to parse standardized message ---
+// --- FIX: Corrected bot.on('channel_post') handler to be more robust ---
 bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
@@ -5478,19 +5478,35 @@ bot.on('channel_post', async msg => {
 
     let appName = null;
     let status = null;
-    let sessionId = null;
-    let failureReason = 'Bot session became invalid.';
+    let failureReason = 'Bot session has logged out.';
     let match;
 
-    // FIX: New, simplified regex to match the standardized format from bot_monitor.js
+    // FIX: New, more robust regex patterns to handle multiple message sources
+    // Pattern 1: Standardized message from bot_monitor
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
-
     if (match) {
         appName = match[1];
         status = match[2];
-        sessionId = match[3];
-        console.log(`[Channel Post] Parsed: App=${appName}, Status=${status}, Session=${sessionId}`);
+        console.log(`[Channel Post] Parsed (Standardized): App=${appName}, Status=${status}`);
     } else {
+        // Pattern 2: Direct message from Levanter/Raganork
+        match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+        if (match) {
+            appName = match[1];
+            status = 'LOGGED OUT';
+            console.log(`[Channel Post] Parsed (Direct Logout): App=${appName}, Status=${status}`);
+        } else {
+            // Pattern 3: Direct message from a bot that just connected
+            match = text.match(/\[([^\]]+)\] connected/i);
+            if (match) {
+                appName = match[1];
+                status = 'ONLINE';
+                console.log(`[Channel Post] Parsed (Direct Connect): App=${appName}, Status=${status}`);
+            }
+        }
+    }
+
+    if (!appName) {
         console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
         return;
     }
