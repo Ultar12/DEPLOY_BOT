@@ -4,10 +4,12 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
+// --- Global variables for log interception and state ---
 const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
 
 let stdoutBuffer = '';
+
 let lastLogoutAlertTime = null;
 let moduleParams = {};
 
@@ -37,38 +39,41 @@ const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    const logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)|(SESSION LOGGED OUT)/i);
-    const connectedMatch = line.match(/Bot started/i);
+    // FIX: Simplified logout regex to match the exact format
+    const logoutMatch = line.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+    const invalidMatch = line.match(/\[([^\]]+)\] invalid/i);
 
     let appName = null;
-    let status = null;
-    let reason = null;
+    let sessionId = null;
+    let isFailure = false;
 
     if (logoutMatch) {
-        appName = logoutMatch[2] || moduleParams.APP_NAME; // Use captured group or a default
-        status = 'logged_out';
-        reason = 'Bot session has logged out.';
-    } else if (connectedMatch) {
-        appName = moduleParams.APP_NAME;
-        status = 'online';
-        reason = 'Bot started successfully.';
+        appName = logoutMatch[1];
+        isFailure = true;
+    } else if (invalidMatch) {
+        // We will assume the invalid match provides the session ID for a logged-out bot
+        sessionId = invalidMatch[1];
+        isFailure = true;
     }
 
-    if (appName && status) {
+    if (isFailure) {
+        originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
+        
         const now = new Date();
-        if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < ALERT_COOLDOWN_MS && status === 'logged_out') {
+        if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < ALERT_COOLDOWN_MS) {
             originalStdoutWrite.apply(process.stdout, ['Skipping logout alert -- cooldown not expired.\n']);
             return;
         }
         lastLogoutAlertTime = now;
-        
-        // FIX: send a single, standardized message that bot.js can parse
-        const standardizedMessage = `[${appName}] - Status: ${status.toUpperCase()} - Reason: ${reason}`;
-        sendTelegramAlert(standardizedMessage, moduleParams.TELEGRAM_CHANNEL_ID).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending standardized alert from bot_monitor: ${err.message}\n`]));
 
-        if (status === 'logged_out' && moduleParams.HEROKU_API_KEY) {
-            originalStderrWrite.apply(process.stderr, [`Logout detected. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
+        // FIX: The alert message now includes the session ID
+        sendStandardizedAlert(appName, sessionId).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending standardized alert from bot_monitor: ${err.message}\n`]));
+
+        if (moduleParams.HEROKU_API_KEY) {
+            originalStderrWrite.apply(process.stderr, [`Detected logout for session ${appName || sessionId || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
             setTimeout(() => process.exit(1), moduleParams.RESTART_DELAY_MINUTES * 60 * 1000);
+        } else {
+            originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY not set. Not forcing process exit after logout detection.\n']);
         }
     }
 }
@@ -97,6 +102,40 @@ async function sendTelegramAlert(text, chatId) {
             originalStderrWrite.apply(process.stderr, [`   Telegram API Response: Status ${err.response.status}, Data: ${JSON.stringify(err.response.data)}\n`]);
         }
         return null;
+    }
+}
+
+
+// FIX: Refactored sendStandardizedAlert to use appName and sessionId
+async function sendStandardizedAlert(appName, sessionId) {
+    const now = new Date();
+    const timeZone = 'Africa/Lagos';
+    const nowStr = now.toLocaleString('en-GB', { timeZone: timeZone });
+
+    const hour = now.getHours();
+    const greeting = hour < 12 ? 'good morning'
+        : hour < 17 ? 'good afternoon'
+            : 'good evening';
+
+    const restartTimeDisplay = moduleParams.RESTART_DELAY_MINUTES >= 60 && (moduleParams.RESTART_DELAY_MINUTES % 60 === 0)
+        ? `${moduleParams.RESTART_DELAY_MINUTES / 60} hour(s)`
+        : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
+
+    const appDisplayName = appName ? appName : 'Unknown Bot';
+    const sessionDisplayName = sessionId ? sessionId : 'UNKNOWN_SESSION';
+
+    const message =
+        `*Hey Ult-AR, ${greeting}!*
+App: \`${moduleParams.escapeMarkdown(appDisplayName)}\`
+Session: \`${moduleParams.escapeMarkdown(sessionDisplayName)}\` invalid
+Time: ${nowStr}
+Restarting in ${restartTimeDisplay}.`;
+
+    try {
+        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+        originalStdoutWrite.apply(process.stdout, [`Sent new standardized alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
+    } catch (err) {
+        originalStderrWrite.apply(process.stderr, [`Failed during sendStandardizedAlert(): ${err.message}\n`]);
     }
 }
 
