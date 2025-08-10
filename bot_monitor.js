@@ -4,14 +4,12 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-// --- Global variables for log interception and state ---
 const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
 
 let stdoutBuffer = '';
 
 let lastLogoutAlertTime = null;
-
 let moduleParams = {};
 
 function init(params) {
@@ -40,10 +38,11 @@ const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    // FIX: Refactored regex to be more specific and capture the app name or session ID
-    let logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)|(\[([^\]]+)\] invalid)|(SESSION LOGGED OUT)/i);
+    // FIX: Simplified logout regex to match the exact format
+    const logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)/i);
+    const invalidMatch = line.match(/(\[([^\]]+)\] invalid)/i);
 
-    if (logoutMatch) {
+    if (logoutMatch || invalidMatch) {
         originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
         
         const now = new Date();
@@ -53,18 +52,15 @@ function handleLogLine(line, streamType) {
         }
         lastLogoutAlertTime = now;
 
-        // FIX: Extract appName correctly from different log patterns
         let appName = null;
-        if (logoutMatch[2]) { // Matched the "User [appname] has logged out" pattern
+        if (logoutMatch && logoutMatch[2]) {
             appName = logoutMatch[2];
-        } else if (logoutMatch[4]) { // Matched the "[sessionid] invalid" pattern
-            appName = logoutMatch[4];
-        } else if (logoutMatch[5]) { // Matched the "SESSION LOGGED OUT" pattern
-            // No appName in this pattern, so we rely on the monitoring bot's name
-            appName = moduleParams.APP_NAME;
+        } else if (invalidMatch && invalidMatch[2]) {
+            appName = invalidMatch[2];
         }
 
-        sendInvalidSessionAlert(appName).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending logout alert from bot_monitor: ${err.message}\n`]));
+        // We will no longer send an alert from here. The channel post handler in bot.js will do it.
+        originalStdoutWrite.apply(process.stdout, [`[ALERT] Logout detected for app: ${appName || 'unknown'}. Restarting process.\n`]);
 
         if (moduleParams.HEROKU_API_KEY) {
             originalStderrWrite.apply(process.stderr, [`Detected logout for session ${appName || 'unknown'}. Scheduling process exit in ${moduleParams.RESTART_DELAY_MINUTES} minute(s).\n`]);
@@ -75,64 +71,9 @@ function handleLogLine(line, streamType) {
     }
 }
 
-
-async function sendTelegramAlert(text, chatId) {
-    if (!moduleParams.TELEGRAM_BOT_TOKEN) {
-        originalStderrWrite.apply(process.stderr, ['TELEGRAM_BOT_TOKEN is not set. Cannot send Telegram alerts.\n']);
-        return null;
-    }
-    if (!chatId) {
-        originalStderrWrite.apply(process.stderr, ['Telegram chatId is not provided for alert. Cannot send.\n']);
-        return null;
-    }
-
-    const url = `https://api.telegram.org/bot${moduleParams.TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const payload = { chat_id: chatId, text, parse_mode: 'Markdown' };
-
-    try {
-        const res = await axios.post(url, payload);
-        originalStdoutWrite.apply(process.stdout, [`Telegram message sent to chat ID ${chatId}: ${text.substring(0, 50)}...\n`]);
-        return res.data.result.message_id;
-    } catch (err) {
-        originalStderrWrite.apply(process.stderr, [`Telegram alert failed for chat ID ${chatId}: ${err.message}\n`]);
-        if (err.response) {
-            originalStderrWrite.apply(process.stderr, [`   Telegram API Response: Status ${err.response.status}, Data: ${JSON.stringify(err.response.data)}\n`]);
-        }
-        return null;
-    }
-}
-
-
-// FIX: Refactored sendInvalidSessionAlert to use botName for the message
-async function sendInvalidSessionAlert(botNameForAlert = null) {
-    const now = new Date();
-    const timeZone = 'Africa/Lagos';
-    const nowStr = now.toLocaleString('en-GB', { timeZone: timeZone });
-
-    const hour = now.getHours();
-    const greeting = hour < 12 ? 'good morning'
-        : hour < 17 ? 'good afternoon'
-            : 'good evening';
-
-    const restartTimeDisplay = moduleParams.RESTART_DELAY_MINUTES >= 60 && (moduleParams.RESTART_DELAY_MINUTES % 60 === 0)
-        ? `${moduleParams.RESTART_DELAY_MINUTES / 60} hour(s)`
-        : `${moduleParams.RESTART_DELAY_MINUTES} minute(s)`;
-
-    let message =
-        `Hey Ult-AR, ${greeting}!\n\n` +
-        `Bot "*${moduleParams.escapeMarkdown(botNameForAlert || moduleParams.APP_NAME)}*" has logged out.`;
-
-    message += `\nTime: ${nowStr}\n` +
-        `Restarting in ${restartTimeDisplay}.`;
-
-    try {
-        await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-        originalStdoutWrite.apply(process.stdout, [`Sent new logout alert to channel ${moduleParams.TELEGRAM_CHANNEL_ID}\n`]);
-    } catch (err) {
-        originalStderrWrite.apply(process.stderr, [`Failed during sendInvalidSessionAlert(): ${err.message}\n`]);
-    }
-}
-
+// FIX: All Telegram sending functions are removed from this file.
+// async function sendTelegramAlert(...) { ... }
+// async function sendInvalidSessionAlert(...) { ... }
 
 async function checkAndRemindLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
@@ -171,7 +112,7 @@ async function checkAndRemindLoggedOutBots() {
 
                 if (timeSinceLogout > twentyFourHours) {
                     const reminderMessage =
-                        `Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
+                        `📢 Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
                     await moduleParams.bot.sendMessage(user_id, reminderMessage, {
@@ -262,4 +203,4 @@ async function checkAndExpireBots() {
     }
 }
 
-module.exports = { init, sendTelegramAlert };
+module.exports = { init };
