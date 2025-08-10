@@ -28,20 +28,19 @@ function init(params) {
         return originalStdoutWrite.apply(process.stdout, [chunk, encoding, callback]);
     };
     
+    // Check for logged out and expiring bots every 5 minutes
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
-    setInterval(checkAndExpireBots, 24 * 60 * 60 * 1000);
+    setInterval(checkAndExpireBots, 5 * 60 * 1000);
 }
 
 
 const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
-// FIX: A single, persistent object to store information across fragmented log lines
 let lastDetectedLogout = { appName: null, sessionId: null, timestamp: null };
 
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    // Check for "SESSION LOGGED OUT" pattern and capture session ID
     const sessionLoggedOutMatch = line.match(/\[([^\]]+)\] SESSION LOGGED OUT/i);
     if (sessionLoggedOutMatch) {
         lastDetectedLogout.sessionId = sessionLoggedOutMatch[1];
@@ -49,7 +48,6 @@ function handleLogLine(line, streamType) {
         originalStdoutWrite.apply(process.stdout, [`[DEBUG] Detected session logout: ${lastDetectedLogout.sessionId}\n`]);
     }
 
-    // Check for "User [appname] has logged out" and capture app name
     const appLoggedOutMatch = line.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
     if (appLoggedOutMatch) {
         lastDetectedLogout.appName = appLoggedOutMatch[1];
@@ -57,7 +55,6 @@ function handleLogLine(line, streamType) {
         originalStdoutWrite.apply(process.stdout, [`[DEBUG] Detected app logout: ${lastDetectedLogout.appName}\n`]);
     }
 
-    // Now, check if we have both pieces of information within a short time frame
     if (lastDetectedLogout.appName && lastDetectedLogout.sessionId && (new Date() - lastDetectedLogout.timestamp < 10000)) {
         originalStderrWrite.apply(process.stderr, ['[DEBUG] Full logout event detected!\n']);
         
@@ -80,7 +77,6 @@ function handleLogLine(line, streamType) {
             originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY not set. Not forcing process exit after logout detection.\n']);
         }
 
-        // Reset the state after sending the alert
         lastDetectedLogout = { appName: null, sessionId: null, timestamp: null };
     }
 }
@@ -141,6 +137,7 @@ async function sendStandardizedAlert(appName, sessionId) {
 }
 
 
+// --- FIX: checkAndRemindLoggedOutBots now handles the 5-day warning ---
 async function checkAndRemindLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
@@ -149,24 +146,13 @@ async function checkAndRemindLoggedOutBots() {
     }
 
     const allBots = await moduleParams.getAllUserBots();
+    const now = new Date();
 
     for (const botEntry of allBots) {
         const { user_id, bot_name } = botEntry;
         const herokuApp = bot_name;
 
         try {
-            const apiHeaders = {
-                Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3'
-            };
-
-            const dynoRes = await axios.get(`https://api.heroku.com/apps/${herokuApp}/dynos`, { headers: apiHeaders });
-            const workerDyno = dynoRes.data.find(d => d.type === 'worker');
-
-            const isBotRunning = workerDyno && workerDyno.state === 'up';
-
-            const now = new Date();
-
             const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
@@ -175,10 +161,23 @@ async function checkAndRemindLoggedOutBots() {
             if (status === 'logged_out' && status_changed_at) {
                 const timeSinceLogout = now.getTime() - status_changed_at.getTime();
                 const twentyFourHours = 24 * 60 * 60 * 1000;
+                const fiveDays = 5 * twentyFourHours;
 
-                if (timeSinceLogout > twentyFourHours) {
+                if (timeSinceLogout > fiveDays) {
+                    originalStdoutWrite.apply(process.stdout, [`[Scheduled Task] Bot ${bot_name} for user ${user_id} logged out for >5 days. Auto-deleting now.\n`]);
+
+                    await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
+                        headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                    });
+                    
+                    await moduleParams.deleteUserBot(user_id, bot_name);
+                    await moduleParams.deleteUserDeploymentFromBackup(user_id, bot_name);
+                    
+                    await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 5 days.`, { parse_mode: 'Markdown' });
+                    await moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `Auto-deleted bot "*${moduleParams.escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 5 days.`, { parse_mode: 'Markdown' });
+                } else if (timeSinceLogout > twentyFourHours) {
                     const reminderMessage =
-                        `📢 Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
+                        `Reminder: Your *${bot_type.toUpperCase()}* bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been logged out for more than 24 hours!\n` +
                         `It appears to still be offline. Please update your session ID to bring it back online.`;
 
                     await moduleParams.bot.sendMessage(user_id, reminderMessage, {
