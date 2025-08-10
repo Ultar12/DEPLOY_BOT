@@ -35,14 +35,31 @@ function init(params) {
 
 const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
+// FIX: A single, persistent object to store information across fragmented log lines
+let lastDetectedLogout = { appName: null, sessionId: null, timestamp: null };
+
 function handleLogLine(line, streamType) {
     originalStdoutWrite.apply(process.stdout, [`[DEBUG - ${streamType.toUpperCase()} INTERCEPTED] Line: "${line.trim()}"\n`]);
 
-    // FIX: A new regex to capture both app name and session ID from multiple log lines
-    const logoutMatch = line.match(/(User\s+\[?([^\]\s]+)\]?\s+has logged out)|(SESSION LOGGED OUT[\s\S]*?\[([^\]]+)\] invalid)/i);
+    // Check for "SESSION LOGGED OUT" pattern and capture session ID
+    const sessionLoggedOutMatch = line.match(/\[([^\]]+)\] SESSION LOGGED OUT/i);
+    if (sessionLoggedOutMatch) {
+        lastDetectedLogout.sessionId = sessionLoggedOutMatch[1];
+        lastDetectedLogout.timestamp = new Date();
+        originalStdoutWrite.apply(process.stdout, [`[DEBUG] Detected session logout: ${lastDetectedLogout.sessionId}\n`]);
+    }
 
-    if (logoutMatch) {
-        originalStderrWrite.apply(process.stderr, ['[DEBUG] Logout pattern detected in log!\n']);
+    // Check for "User [appname] has logged out" and capture app name
+    const appLoggedOutMatch = line.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+    if (appLoggedOutMatch) {
+        lastDetectedLogout.appName = appLoggedOutMatch[1];
+        lastDetectedLogout.timestamp = new Date();
+        originalStdoutWrite.apply(process.stdout, [`[DEBUG] Detected app logout: ${lastDetectedLogout.appName}\n`]);
+    }
+
+    // Now, check if we have both pieces of information within a short time frame
+    if (lastDetectedLogout.appName && lastDetectedLogout.sessionId && (new Date() - lastDetectedLogout.timestamp < 10000)) {
+        originalStderrWrite.apply(process.stderr, ['[DEBUG] Full logout event detected!\n']);
         
         const now = new Date();
         if (lastLogoutAlertTime && (now - lastLogoutAlertTime) < ALERT_COOLDOWN_MS) {
@@ -51,9 +68,9 @@ function handleLogLine(line, streamType) {
         }
         lastLogoutAlertTime = now;
 
-        const appName = logoutMatch[2] || logoutMatch[4];
-        const sessionId = logoutMatch[4] || null;
-
+        const appName = lastDetectedLogout.appName;
+        const sessionId = lastDetectedLogout.sessionId;
+        
         sendStandardizedAlert(appName, sessionId).catch(err => originalStderrWrite.apply(process.stderr, [`Error sending standardized alert from bot_monitor: ${err.message}\n`]));
 
         if (moduleParams.HEROKU_API_KEY) {
@@ -62,6 +79,9 @@ function handleLogLine(line, streamType) {
         } else {
             originalStdoutWrite.apply(process.stdout, ['HEROKU_API_KEY not set. Not forcing process exit after logout detection.\n']);
         }
+
+        // Reset the state after sending the alert
+        lastDetectedLogout = { appName: null, sessionId: null, timestamp: null };
     }
 }
 
