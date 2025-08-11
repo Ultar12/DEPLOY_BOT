@@ -801,13 +801,46 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-    await axios.post('https://api.heroku.com/apps', { name }, {
-      headers: {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-      }
-    });
-    clearInterval(createMsgAnimate);
+    
+    // --- START OF THE FIX ---
+    let appCreationSuccess = false;
+    let attemptCount = 0;
+    let originalName = name;
+    
+    while (!appCreationSuccess && attemptCount < 5) { // Try up to 5 times
+        try {
+            await axios.post('https://api.heroku.com/apps', { name }, {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3'
+                }
+            });
+            appCreationSuccess = true;
+        } catch (error) {
+            if (error.response && error.response.status === 409 && error.response.data.message.includes('Name is already taken')) {
+                // Name conflict detected, generate a new name and try again
+                attemptCount++;
+                const newSuffix = Math.floor(Math.random() * 9999).toString().padStart(4, '0');
+                name = `${originalName.substring(0, 20)}${newSuffix}`; // Max 30 chars, so trim if needed
+                console.log(`App name "${originalName}" already taken. Trying a new name: "${name}"`);
+                await bot.editMessageText(`${getAnimatedEmoji()} Name already taken. Retrying with "${name}"...`, { chat_id: chatId, message_id: createMsg.message_id });
+                // We need to update the `vars` object as well for the final Heroku build to use the new name
+                vars.APP_NAME = name; 
+            } else {
+                // It's a different kind of error, re-throw it.
+                clearInterval(createMsgAnimate);
+                throw error;
+            }
+        }
+    }
+    
+    if (!appCreationSuccess) {
+        clearInterval(createMsgAnimate);
+        await bot.editMessageText(`Failed to create application "${originalName}" after multiple attempts. All generated names were taken. Contact Adminfor support.`, { chat_id: chatId, message_id: createMsg.message_id });
+        return false;
+    }
+    // --- END OF THE FIX ---
+
 
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
