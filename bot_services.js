@@ -801,13 +801,25 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-    // --- FIX STARTS HERE: Preemptively add a suffix for restores ---
-    // This code will add a suffix to the app name before creating it.
+    / --- FIX STARTS HERE: Corrected logic for preemptive name change on restore ---
     if (isRestore) {
-        const newSuffix = `-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
-        // Ensure the name doesn't exceed Heroku's 30-character limit
-        name = name.substring(0, 30 - newSuffix.length) + newSuffix;
-        name = name.toLowerCase();
+        const originalName = name;
+        let newName = originalName;
+        
+        // This is a more robust way to handle a name change on restore
+        const endsWithNumber = /-\d+$/; // Regex to match a dash followed by numbers at the end
+        if (endsWithNumber.test(newName)) {
+            // If the name already ends with a number suffix, replace it
+            const prefix = newName.replace(/-\d+$/, '');
+            const newSuffix = `-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
+            newName = `${prefix}${newSuffix}`;
+        } else {
+            // If the name does not end with a number, add a new one
+            const newSuffix = `-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
+            newName = `${newName.substring(0, 30 - newSuffix.length)}${newSuffix}`;
+        }
+
+        name = newName.toLowerCase();
         vars.APP_NAME = name;
         console.log(`[Restore] App is being restored. Using new name to avoid conflict: "${name}".`);
         await bot.editMessageText(`${getAnimatedEmoji()} Restoring app with new name: "${name}"...`, { chat_id: chatId, message_id: createMsg.message_id });
