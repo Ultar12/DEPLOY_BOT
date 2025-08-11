@@ -1003,6 +1003,24 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
+
+        // --- FIX STARTS HERE ---
+      let expirationDateToUse;
+      if (isRestore && name !== originalName) {
+        // This is a restore that required a new name. Fetch the original expiration.
+        try {
+            const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+            if (originalDeployment) {
+              expirationDateToUse = originalDeployment.expiration_date;
+              // Also, delete the old deployment record to avoid duplicates and confusion.
+              await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
+              console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
+            }
+        } catch (dbError) {
+            console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
+        }
+      }
+      // --- FIX ENDS HERE ---
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
       await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial);
