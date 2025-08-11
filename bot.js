@@ -934,6 +934,7 @@ async function notifyAdminUserOnline(msg) {
     animateMessage: animateMessage,
     sendAnimatedMessage: sendAnimatedMessage,
     monitorSendTelegramAlert: monitorSendTelegramAlert,
+     getAllUserBots: dbServices.getAllUserBots, 
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
     // Initialize bot_faq.js
