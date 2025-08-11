@@ -3628,15 +3628,17 @@ if (action === 'dkey_cancel') {
         return;
     }
 
-  // --- NEW CALLBACK: confirm_updateall ---
+  // --- FIX: Refactored confirm_updateall to use an editable progress message ---
 if (action === 'confirm_updateall') {
     const adminId = q.message.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
     const botType = payload;
     const messageId = q.message.message_id;
-
-    await bot.editMessageText(`Starting mass redeployment for all *${botType.toUpperCase()}* bots. This will take some time...`, {
+    let progressMessage = `Starting mass redeployment for all *${botType.toUpperCase()}* bots...`;
+    
+    // Send an initial message to be edited later
+    const progressMsg = await bot.editMessageText(progressMessage, {
         chat_id: adminId,
         message_id: messageId,
         parse_mode: 'Markdown'
@@ -3646,10 +3648,25 @@ if (action === 'confirm_updateall') {
         const allBots = await pool.query('SELECT bot_name FROM user_bots WHERE bot_type = $1', [botType]);
         const botsToUpdate = allBots.rows.map(row => row.bot_name);
         const botCount = botsToUpdate.length;
+        
+        let progressLog = [];
 
         for (const [index, appName] of botsToUpdate.entries()) {
-            await bot.sendMessage(adminId, `[${index + 1}/${botCount}] Redeploying "*${appName}*"...`, { parse_mode: 'Markdown' });
-            
+            let status = '...';
+            let statusEmoji = '⏳';
+            let messageToLog = '';
+
+            // Update progress message with current bot
+            progressMessage = `*Progress:* ${index + 1}/${botCount}\n`;
+            progressMessage += `*Current Bot:* \`${escapeMarkdown(appName)}\`\n\n`;
+            progressMessage += `*Log:*\n${progressLog.slice(-5).join('\n')}\n`; // Show last 5 logs
+
+            await bot.editMessageText(progressMessage, {
+                chat_id: adminId,
+                message_id: progressMsg.message_id,
+                parse_mode: 'Markdown'
+            }).catch(() => {});
+
             try {
                 const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
                 await axios.post(
@@ -3657,26 +3674,59 @@ if (action === 'confirm_updateall') {
                     { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
-                await bot.sendMessage(adminId, `Redeploy triggered for *${appName}*. Waiting 30 seconds before next bot.`, { parse_mode: 'Markdown' });
-                await new Promise(r => setTimeout(r, 30000)); // 30-second delay
+                statusEmoji = '✅';
+                messageToLog = `${statusEmoji} Redeploy triggered for \`${escapeMarkdown(appName)}\`.`;
             } catch (error) {
                 if (error.response?.status === 404) {
-                    await bot.sendMessage(adminId, `App "*${appName}*" not found on Heroku. Skipping...`, { parse_mode: 'Markdown' });
-                    // Clean up DB records for this missing app
+                    statusEmoji = '❌';
+                    messageToLog = `${statusEmoji} App \`${escapeMarkdown(appName)}\` not found on Heroku. Skipping...`;
                     await dbServices.handleAppNotFoundAndCleanDb(adminId, appName, null, false);
                 } else {
+                    statusEmoji = '❌';
                     const errorMsg = escapeMarkdown(error.response?.data?.message || error.message);
-                    await bot.sendMessage(adminId, `Failed to redeploy "*${appName}*": ${errorMsg}. Skipping...`, { parse_mode: 'Markdown' });
+                    messageToLog = `${statusEmoji} Failed for \`${escapeMarkdown(appName)}\`: ${errorMsg}. Skipping...`;
                 }
             }
+            
+            progressLog.push(messageToLog);
+
+            // Add a final log entry for the current bot to the message
+            progressMessage = `*Progress:* ${index + 1}/${botCount}\n`;
+            progressMessage += `*Current Bot:* \`${escapeMarkdown(appName)}\`\n\n`;
+            progressMessage += `*Log:*\n${progressLog.slice(-5).join('\n')}\n`;
+            if (index < botCount - 1) {
+                progressMessage += `\nWaiting 30 seconds before next bot...`;
+            }
+
+            await bot.editMessageText(progressMessage, {
+                chat_id: adminId,
+                message_id: progressMsg.message_id,
+                parse_mode: 'Markdown'
+            }).catch(() => {});
+
+            if (index < botCount - 1) {
+                await new Promise(r => setTimeout(r, 30000)); // 30-second delay
+            }
         }
-        await bot.sendMessage(adminId, `Mass redeployment complete! Processed ${botCount} bots.`, { parse_mode: 'Markdown' });
+
+        // Final message with a summary
+        const finalMessage = `Mass redeployment complete! Processed ${botCount} bots.`;
+        await bot.editMessageText(finalMessage, {
+            chat_id: adminId,
+            message_id: progressMsg.message_id,
+            parse_mode: 'Markdown'
+        });
 
     } catch (error) {
         console.error(`Error confirming /updateall:`, error.message);
-        await bot.sendMessage(adminId, `An error occurred during mass redeployment: ${error.message}`, { parse_mode: 'Markdown' });
+        await bot.editMessageText(`An error occurred during mass redeployment: ${escapeMarkdown(error.message)}`, {
+            chat_id: adminId,
+            message_id: progressMsg.message_id,
+            parse_mode: 'Markdown'
+        });
     }
 }
+
 
 
 
