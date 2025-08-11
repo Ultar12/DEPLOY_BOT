@@ -801,7 +801,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-    // FIX: Add a loop to handle app name conflicts during restore
+        // FIX: Add a loop to handle app name conflicts during restore
     let appCreationSuccess = false;
     let attemptCount = 0;
     while (!appCreationSuccess && attemptCount < 5) {
