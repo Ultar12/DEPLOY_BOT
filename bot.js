@@ -2007,6 +2007,41 @@ bot.onText(/^\/unban$/, async (msg) => {
     await sendBannedUsersList(adminId);
 });
 
+// --- NEW COMMAND: /updateall <botType> ---
+bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const botType = match[1];
+
+    try {
+        const allBots = await pool.query('SELECT bot_name FROM user_bots WHERE bot_type = $1', [botType]);
+        const botCount = allBots.rows.length;
+
+        if (botCount === 0) {
+            return bot.sendMessage(adminId, `No *${botType.toUpperCase()}* bots found in the database to update.`, { parse_mode: 'Markdown' });
+        }
+
+        const confirmMessage = `You are about to trigger a mass redeployment for all *${botCount}* *${botType.toUpperCase()}* bots. This will cause a brief downtime for each bot. Do you want to proceed?`;
+        
+        await bot.sendMessage(adminId, confirmMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Yes, Proceed', callback_data: `confirm_updateall:${botType}` }],
+                    [{ text: 'Cancel', callback_data: `cancel_updateall` }]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error(`Error with /updateall command:`, error.message);
+        await bot.sendMessage(adminId, `An error occurred: ${error.message}`, { parse_mode: 'Markdown' });
+    }
+});
+
+
 
 // 10) Message handler for buttons & state machine
 bot.on('message', async msg => {
@@ -3592,6 +3627,57 @@ if (action === 'dkey_cancel') {
         }
         return;
     }
+
+  // --- NEW CALLBACK: confirm_updateall ---
+if (action === 'confirm_updateall') {
+    const adminId = q.message.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const botType = payload;
+    const messageId = q.message.message_id;
+
+    await bot.editMessageText(`Starting mass redeployment for all *${botType.toUpperCase()}* bots. This will take some time...`, {
+        chat_id: adminId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        const allBots = await pool.query('SELECT bot_name FROM user_bots WHERE bot_type = $1', [botType]);
+        const botsToUpdate = allBots.rows.map(row => row.bot_name);
+        const botCount = botsToUpdate.length;
+
+        for (const [index, appName] of botsToUpdate.entries()) {
+            await bot.sendMessage(adminId, `[${index + 1}/${botCount}] Redeploying "*${appName}*"...`, { parse_mode: 'Markdown' });
+            
+            try {
+                const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+                await axios.post(
+                    `https://api.heroku.com/apps/${appName}/builds`,
+                    { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
+                    { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+                );
+                await bot.sendMessage(adminId, `Redeploy triggered for *${appName}*. Waiting 30 seconds before next bot.`, { parse_mode: 'Markdown' });
+                await new Promise(r => setTimeout(r, 30000)); // 30-second delay
+            } catch (error) {
+                if (error.response?.status === 404) {
+                    await bot.sendMessage(adminId, `App "*${appName}*" not found on Heroku. Skipping...`, { parse_mode: 'Markdown' });
+                    // Clean up DB records for this missing app
+                    await dbServices.handleAppNotFoundAndCleanDb(adminId, appName, null, false);
+                } else {
+                    const errorMsg = escapeMarkdown(error.response?.data?.message || error.message);
+                    await bot.sendMessage(adminId, `Failed to redeploy "*${appName}*": ${errorMsg}. Skipping...`, { parse_mode: 'Markdown' });
+                }
+            }
+        }
+        await bot.sendMessage(adminId, `Mass redeployment complete! Processed ${botCount} bots.`, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`Error confirming /updateall:`, error.message);
+        await bot.sendMessage(adminId, `An error occurred during mass redeployment: ${error.message}`, { parse_mode: 'Markdown' });
+    }
+}
+
 
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
