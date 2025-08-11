@@ -5467,7 +5467,7 @@ if (action === 'setvarbool') {
   }
 });
 
-// --- FIX: Corrected bot.on('channel_post') handler to be more robust ---
+// --- FIX: Corrected bot.on('channel_post') handler to be more robust and complete ---
 bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
@@ -5478,30 +5478,31 @@ bot.on('channel_post', async msg => {
 
     let appName = null;
     let status = null;
+    let sessionId = null;
     let failureReason = 'Bot session has logged out.';
     let match;
 
-    // FIX: New, more robust regex patterns to handle multiple message sources
     // Pattern 1: Standardized message from bot_monitor
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
     if (match) {
         appName = match[1];
         status = match[2];
-        console.log(`[Channel Post] Parsed (Standardized): App=${appName}, Status=${status}`);
+        sessionId = match[3];
+        console.log(`[Channel Post] Parsed (Standardized): App=${appName}, Status=${status}, Session=${sessionId}`);
     } else {
-        // Pattern 2: Direct message from Levanter/Raganork
-        match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+        // Fallback for direct messages from bots themselves, e.g., "[appname] connected."
+        match = text.match(/\[([^\]]+)\] connected/i);
         if (match) {
             appName = match[1];
-            status = 'LOGGED OUT';
-            console.log(`[Channel Post] Parsed (Direct Logout): App=${appName}, Status=${status}`);
+            status = 'ONLINE';
+            console.log(`[Channel Post] Parsed (Direct Connect): App=${appName}, Status=${status}`);
         } else {
-            // Pattern 3: Direct message from a bot that just connected
-            match = text.match(/\[([^\]]+)\] connected/i);
+            // Fallback for direct messages from a bot that just logged out
+            match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
             if (match) {
                 appName = match[1];
-                status = 'ONLINE';
-                console.log(`[Channel Post] Parsed (Direct Connect): App=${appName}, Status=${status}`);
+                status = 'LOGGED OUT';
+                console.log(`[Channel Post] Parsed (Direct Logout): App=${appName}, Status=${status}`);
             }
         }
     }
@@ -5511,7 +5512,7 @@ bot.on('channel_post', async msg => {
         return;
     }
     
-    // FIX: All state management is now centralized here.
+    // All state management is now centralized here.
     if (status === 'ONLINE') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -5524,7 +5525,6 @@ bot.on('channel_post', async msg => {
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
         
-    // --- FIX: Added pinChatMessage to the logout warning message ---
     } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -5544,7 +5544,6 @@ bot.on('channel_post', async msg => {
                                    `Please update your session ID.\n\n` +
                                    `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
             
-            // FIX: Capture the message object to get the message_id for pinning
             const sentMessage = await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
@@ -5552,7 +5551,6 @@ bot.on('channel_post', async msg => {
                 }
             }).catch(e => console.error(`Failed to send failure alert to user ${userId}: ${e.message}`));
             
-            // FIX: Pin the message to the top of the chat
             if (sentMessage) {
                 try {
                     await bot.pinChatMessage(userId, sentMessage.message_id);
@@ -5563,7 +5561,7 @@ bot.on('channel_post', async msg => {
             }
         }
     }
-
+});
 
 
 
