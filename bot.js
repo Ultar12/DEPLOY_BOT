@@ -2910,14 +2910,13 @@ if (usesLeft === null) {
 
 
 
-  // --- FIX: AWAITING_APP_NAME now suggests names in button form ---
+ // --- FIX: AWAITING_APP_NAME handler now provides suggestions first ---
 if (st && st.step === 'AWAITING_APP_NAME') {
-    const nm = text.toLowerCase().replace(/\s+/g, '-');
     const username = msg.from.username ? msg.from.username.toLowerCase() : null;
     let suggestions = [];
+    const userInput = text.toLowerCase().replace(/\s+/g, '-');
 
     if (username) {
-        // Generate three name variations and check their availability
         const potentialNames = [
             `${username}-${Math.floor(Math.random() * 1000)}`,
             `${username}-bot`,
@@ -2929,7 +2928,6 @@ if (st && st.step === 'AWAITING_APP_NAME') {
                 await axios.get(`https://api.heroku.com/apps/${name}`, {
                     headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                 });
-                // Name is taken, do nothing
             } catch (e) {
                 if (e.response?.status === 404) {
                     suggestions.push(name);
@@ -2938,17 +2936,17 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         }
     }
     
-    // Now handle the user's input
-    if (nm && nm.length >= 5 && /^[a-z0-9-]+$/.test(nm)) {
+    // Check if user input is a valid app name
+    if (userInput && userInput.length >= 5 && /^[a-z0-9-]+$/.test(userInput)) {
         await bot.sendChatAction(cid, 'typing');
         try {
-            await axios.get(`https://api.heroku.com/apps/${nm}`, {
+            await axios.get(`https://api.heroku.com/apps/${userInput}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
-            return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
+            return bot.sendMessage(cid, `The name "${userInput}" is already taken. Please choose another.`);
         } catch (e) {
             if (e.response?.status === 404) {
-                st.data.APP_NAME = nm;
+                st.data.APP_NAME = userInput;
                 st.step = 'AWAITING_AUTO_STATUS_CHOICE';
                 const confirmationMessage = `*Next Step:*\n` + `Enable automatic status view?`;
                 await bot.sendMessage(cid, confirmationMessage, {
@@ -2963,13 +2961,12 @@ if (st && st.step === 'AWAITING_APP_NAME') {
                 return;
             } else {
                 const errorMsg = e.response?.data?.message || e.message;
-                console.error(`Error checking app name "${nm}":`, errorMsg);
+                console.error(`Error checking app name "${userInput}":`, errorMsg);
                 return bot.sendMessage(cid, `An error occurred while checking the app name: ${escapeMarkdown(errorMsg)}. Please try again later.`, { parse_mode: 'Markdown' });
             }
         }
     }
 
-    // This is the new logic that sends the suggestions
     let message = 'Please enter a unique name for your bot (e.g., mybot123):';
     let keyboard = [];
 
@@ -2987,6 +2984,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
     });
     return;
 }
+
 
 
 
