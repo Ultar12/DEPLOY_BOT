@@ -221,6 +221,14 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+      await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS pinned_messages (
+        message_id BIGINT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        unpin_at TIMESTAMP WITH TIME ZONE NOT NULL
+      );
+    `);
+
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
 
@@ -5525,10 +5533,9 @@ bot.on('channel_post', async msg => {
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
         
-    } else if (status === 'LOGGED OUT') {
+        } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
-            // Clean up all pending actions and reject the promise
             if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
             if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
             pendingPromise.reject(new Error(failureReason));
@@ -5555,13 +5562,20 @@ bot.on('channel_post', async msg => {
                 try {
                     await bot.pinChatMessage(userId, sentMessage.message_id);
                     console.log(`[PinChat] Pinned logout warning for app "${appName}" to user ${userId}.`);
+                    
+                    // FIX: Add the pinned message to the new database table with a timestamp for 6 hours from now
+                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
+                    await pool.query(
+                        'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
+                        [sentMessage.message_id, userId, unpinAt]
+                    );
+                    console.log(`[PinChat] Scheduled unpin for message ${sentMessage.message_id} at ${unpinAt.toISOString()}`);
                 } catch (pinError) {
                     console.error(`[PinChat] Failed to pin message for user ${userId}:`, pinError.message);
                 }
             }
         }
     }
-});
 
 
 
@@ -5681,6 +5695,35 @@ async function runDailyBackup() {
         await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: The automatic daily database backup failed. Please check the logs.\n\nReason: ${error.message}`);
     }
 }
+
+// --- NEW SCHEDULED TASK ---
+async function checkAndUnpinMessages() {
+    console.log('[Unpin] Running scheduled check for messages to unpin...');
+    try {
+        const now = new Date();
+        const messagesToUnpin = await pool.query(
+            'SELECT message_id, chat_id FROM pinned_messages WHERE unpin_at <= $1',
+            [now]
+        );
+
+        for (const row of messagesToUnpin.rows) {
+            console.log(`[Unpin] Unpinning message ${row.message_id} in chat ${row.chat_id}`);
+            try {
+                await bot.unpinChatMessage(row.chat_id, { message_id: row.message_id });
+                // Delete the record from the database after unpinning
+                await pool.query('DELETE FROM pinned_messages WHERE message_id = $1', [row.message_id]);
+            } catch (error) {
+                console.error(`[Unpin] Failed to unpin message ${row.message_id} in chat ${row.chat_id}:`, error.message);
+            }
+        }
+    } catch (dbError) {
+        console.error('[Unpin] DB Error fetching messages to unpin:', dbError.message);
+    }
+}
+
+// Run the check every 5 minutes
+setInterval(checkAndUnpinMessages, 5 * 60 * 1000);
+console.log('[Unpin] Scheduled task to check for messages to unpin.');
 
 // Run the backup every 24 hours (24 * 60 * 60 * 1000 milliseconds)
 setInterval(runDailyBackup, 60 * 60 * 1000);
