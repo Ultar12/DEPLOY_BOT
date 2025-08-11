@@ -5524,6 +5524,7 @@ bot.on('channel_post', async msg => {
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
         
+    // --- FIX: Added pinChatMessage to the logout warning message ---
     } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -5542,15 +5543,26 @@ bot.on('channel_post', async msg => {
                                    `*Reason:* ${escapeMarkdown(failureReason)}\n` +
                                    `Please update your session ID.\n\n` +
                                    `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
-            await bot.sendMessage(userId, warningMessage, {
+            
+            // FIX: Capture the message object to get the message_id for pinning
+            const sentMessage = await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
                 }
             }).catch(e => console.error(`Failed to send failure alert to user ${userId}: ${e.message}`));
+            
+            // FIX: Pin the message to the top of the chat
+            if (sentMessage) {
+                try {
+                    await bot.pinChatMessage(userId, sentMessage.message_id);
+                    console.log(`[PinChat] Pinned logout warning for app "${appName}" to user ${userId}.`);
+                } catch (pinError) {
+                    console.error(`[PinChat] Failed to pin message for user ${userId}:`, pinError.message);
+                }
+            }
         }
     }
-});
 
 
 
