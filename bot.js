@@ -2910,45 +2910,84 @@ if (usesLeft === null) {
 
 
 
-  // --- FIX: This block now asks for auto status view first ---
+  // --- FIX: AWAITING_APP_NAME now suggests names in button form ---
 if (st && st.step === 'AWAITING_APP_NAME') {
     const nm = text.toLowerCase().replace(/\s+/g, '-');
-    if (nm.length < 5 || !/^[a-z0-9-]+$/.test(nm)) {
-        return bot.sendMessage(cid, 'Invalid name. Use at least 5 lowercase letters, numbers, or hyphens.');
-    }
-    await bot.sendChatAction(cid, 'typing');
-    try {
-        await axios.get(`https://api.heroku.com/apps/${nm}`, {
-            headers: {
-                Authorization: `Bearer ${HEROKU_API_KEY}`,
-                Accept: 'application/vnd.heroku+json; version=3'
+    const username = msg.from.username ? msg.from.username.toLowerCase() : null;
+    let suggestions = [];
+
+    if (username) {
+        // Generate three name variations and check their availability
+        const potentialNames = [
+            `${username}-${Math.floor(Math.random() * 1000)}`,
+            `${username}-bot`,
+            `${username}-md`
+        ];
+
+        for (const name of potentialNames) {
+            try {
+                await axios.get(`https://api.heroku.com/apps/${name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                // Name is taken, do nothing
+            } catch (e) {
+                if (e.response?.status === 404) {
+                    suggestions.push(name);
+                }
             }
-        });
-        return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
-    } catch (e) {
-        if (e.response?.status === 404) {
-            st.data.APP_NAME = nm;
-            
-            st.step = 'AWAITING_AUTO_STATUS_CHOICE'; // <-- NEW STATE ORDER
-            
-            const confirmationMessage = `*Next Step:*\n` +
-                                        `Enable automatic status view?`;
-            
-            await bot.sendMessage(cid, confirmationMessage, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
-                        [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
-                    ]
-                },
-                parse_mode: 'Markdown'
-            });
-        } else {
-            console.error(`Error checking app name "${nm}":`, e.response?.data?.message || e.message);
-            return bot.sendMessage(cid, `Kindly Use A Long Name!`);
         }
     }
+    
+    // Now handle the user's input
+    if (nm && nm.length >= 5 && /^[a-z0-9-]+$/.test(nm)) {
+        await bot.sendChatAction(cid, 'typing');
+        try {
+            await axios.get(`https://api.heroku.com/apps/${nm}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            return bot.sendMessage(cid, `The name "${nm}" is already taken. Please choose another.`);
+        } catch (e) {
+            if (e.response?.status === 404) {
+                st.data.APP_NAME = nm;
+                st.step = 'AWAITING_AUTO_STATUS_CHOICE';
+                const confirmationMessage = `*Next Step:*\n` + `Enable automatic status view?`;
+                await bot.sendMessage(cid, confirmationMessage, {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                            [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
+                        ]
+                    },
+                    parse_mode: 'Markdown'
+                });
+                return;
+            } else {
+                const errorMsg = e.response?.data?.message || e.message;
+                console.error(`Error checking app name "${nm}":`, errorMsg);
+                return bot.sendMessage(cid, `An error occurred while checking the app name: ${escapeMarkdown(errorMsg)}. Please try again later.`, { parse_mode: 'Markdown' });
+            }
+        }
+    }
+
+    // This is the new logic that sends the suggestions
+    let message = 'Please enter a unique name for your bot (e.g., mybot123):';
+    let keyboard = [];
+
+    if (suggestions.length > 0) {
+        message += `\n\nOr choose from these suggestions:`;
+        keyboard = chunkArray(suggestions, 3).map(r => r.map(name => ({
+            text: name,
+            callback_data: `use_suggested_name:${name}`
+        })));
+    }
+    
+    await bot.sendMessage(cid, message, {
+        reply_markup: { inline_keyboard: keyboard },
+        parse_mode: 'Markdown'
+    });
+    return;
 }
+
 
 
 
