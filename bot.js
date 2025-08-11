@@ -2910,11 +2910,12 @@ if (usesLeft === null) {
 
 
 
- // --- FIX: AWAITING_APP_NAME handler now provides suggestions first ---
+ // --- FIX: AWAITING_APP_NAME handler now sends suggestions in a single message ---
 if (st && st.step === 'AWAITING_APP_NAME') {
+    const userInput = text.toLowerCase().replace(/\s+/g, '-');
     const username = msg.from.username ? msg.from.username.toLowerCase() : null;
     let suggestions = [];
-    const userInput = text.toLowerCase().replace(/\s+/g, '-');
+    let message = 'Great. Now enter a unique name for your bot (e.g., mybot123):';
 
     if (username) {
         const potentialNames = [
@@ -2936,47 +2937,13 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         }
     }
     
-    // Check if user input is a valid app name
-    if (userInput && userInput.length >= 5 && /^[a-z0-9-]+$/.test(userInput)) {
-        await bot.sendChatAction(cid, 'typing');
-        try {
-            await axios.get(`https://api.heroku.com/apps/${userInput}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            return bot.sendMessage(cid, `The name "${userInput}" is already taken. Please choose another.`);
-        } catch (e) {
-            if (e.response?.status === 404) {
-                st.data.APP_NAME = userInput;
-                st.step = 'AWAITING_AUTO_STATUS_CHOICE';
-                const confirmationMessage = `*Next Step:*\n` + `Enable automatic status view?`;
-                await bot.sendMessage(cid, confirmationMessage, {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
-                            [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
-                        ]
-                    },
-                    parse_mode: 'Markdown'
-                });
-                return;
-            } else {
-                const errorMsg = e.response?.data?.message || e.message;
-                console.error(`Error checking app name "${userInput}":`, errorMsg);
-                return bot.sendMessage(cid, `An error occurred while checking the app name: ${escapeMarkdown(errorMsg)}. Please try again later.`, { parse_mode: 'Markdown' });
-            }
-        }
-    }
-
-    let message = 'Please enter a unique name for your bot (e.g., mybot123):';
-    let keyboard = [];
-
-    if (suggestions.length > 0) {
-        message += `\n\nOr choose from these suggestions:`;
-        keyboard = chunkArray(suggestions, 3).map(r => r.map(name => ({
-            text: name,
-            callback_data: `use_suggested_name:${name}`
-        })));
-    }
+    // Create the keyboard with suggestions if they exist
+    const keyboard = suggestions.length > 0
+        ? chunkArray(suggestions, 3).map(r => r.map(name => ({
+              text: name,
+              callback_data: `use_suggested_name:${name}`
+          })))
+        : [];
     
     await bot.sendMessage(cid, message, {
         reply_markup: { inline_keyboard: keyboard },
@@ -2984,8 +2951,6 @@ if (st && st.step === 'AWAITING_APP_NAME') {
     });
     return;
 }
-
-
 
 
 
@@ -4028,6 +3993,33 @@ if (action === 'select_get_session_type') {
         return;
     }
 }
+
+  // --- NEW: Handler for using a suggested app name ---
+if (action === 'use_suggested_name') {
+    const appName = payload;
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_APP_NAME') return;
+    
+    st.data.APP_NAME = appName;
+    st.step = 'AWAITING_AUTO_STATUS_CHOICE';
+
+    const confirmationMessage = `*Next Step:*\n` +
+                                `Enable automatic status view?`;
+    
+    await bot.editMessageText(confirmationMessage, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
+            ]
+        },
+        parse_mode: 'Markdown'
+    });
+    return;
+}
+
 
   // --- ADD this new block ---
 
