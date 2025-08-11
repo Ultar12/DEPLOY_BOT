@@ -801,13 +801,35 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-    await axios.post('https://api.heroku.com/apps', { name }, {
-      headers: {
-        Authorization: `Bearer ${HEROKU_API_KEY}`,
-        Accept: 'application/vnd.heroku+json; version=3'
-      }
-    });
+    //FIX: Add a loop to handle app name conflicts during restore
+    let appCreationSuccess = false;
+    let attemptCount = 0;
+    while (!appCreationSuccess && attemptCount < 5) {
+        try {
+            await axios.post('https://api.heroku.com/apps', { name }, {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3'
+                }
+            });
+            appCreationSuccess = true;
+        } catch (error) {
+            if (error.response?.status === 409 && isRestore) {
+                attemptCount++;
+                const newName = `${vars.APP_NAME}${attemptCount}`;
+                name = newName;
+                vars.APP_NAME = newName;
+            } else {
+                throw error;
+            }
+        }
+    }
     clearInterval(createMsgAnimate);
+
+    if (!appCreationSuccess) {
+        throw new Error(`Failed to create app after multiple attempts. The app name "${name}" might be unavailable.`);
+    }
+
 
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
