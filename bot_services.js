@@ -1037,6 +1037,261 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
               const newKey = generateKey();
               await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId); // <-- NOTE: Added chatId to link the key
               await recordReward(chatId);
+async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
+  let name = vars.APP_NAME; // Use `let` so it can be reassigned
+  const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+
+  const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
+
+  let buildResult = false;
+  const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
+
+  try {
+    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
+
+    // --- START OF THE FIX ---
+    let appCreationSuccess = false;
+    let attemptCount = 0;
+    const originalName = name; // Preserve the original name
+    
+    while (!appCreationSuccess && attemptCount < 5) { // Try up to 5 times
+        try {
+            await axios.post('https://api.heroku.com/apps', { name }, {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3'
+                }
+            });
+            appCreationSuccess = true;
+        } catch (error) {
+            // Check for the specific Heroku API conflict error
+            if (error.response && error.response.status === 409 && error.response.data.message.includes('Name is already taken')) {
+                // Name conflict detected, generate a new name and try again
+                attemptCount++;
+                const newSuffix = `-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
+                
+                // Construct the new name, ensuring it doesn't exceed Heroku's 30-character limit
+                let newName = originalName.substring(0, 30 - newSuffix.length) + newSuffix;
+                name = newName.toLowerCase(); // Heroku app names must be lowercase
+                
+                console.log(`App name "${originalName}" already taken. Trying a new name: "${name}"`);
+                await bot.editMessageText(`${getAnimatedEmoji()} Name already taken. Retrying with "${name}"...`, { chat_id: chatId, message_id: createMsg.message_id });
+                
+                // Crucially, update the vars object for later steps
+                vars.APP_NAME = name;
+            } else {
+                // It's a different kind of error, re-throw it.
+                clearInterval(createMsgAnimate);
+                throw error;
+            }
+        }
+    }
+    
+    if (!appCreationSuccess) {
+        clearInterval(createMsgAnimate);
+        await bot.editMessageText(`Failed to create application "${originalName}" after multiple attempts. All generated names were taken. Contact Adminfor support.`, { chat_id: chatId, message_id: createMsg.message_id });
+        return false;
+    }
+    // --- END OF THE FIX ---
+
+    clearInterval(createMsgAnimate);
+
+    await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
+
+    await axios.post(
+      `https://api.heroku.com/apps/${name}/addons`,
+      { plan: 'heroku-postgresql' },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    await axios.put(
+      `https://api.heroku.com/apps/${name}/buildpack-installations`,
+      {
+        updates: [
+          { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+          { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest' },
+          { buildpack: 'heroku/nodejs' }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    clearInterval(configMsgAnimate);
+
+    await bot.editMessageText(`${getAnimatedEmoji()} Setting environment variables...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const varsMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Setting environment variables');
+
+    const filteredVars = {};
+    for (const key in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
+            filteredVars[key] = vars[key];
+        }
+    }
+
+    let finalConfigVars = {};
+    if (isRestore) {
+        finalConfigVars = filteredVars;
+    } else {
+        finalConfigVars = {
+            ...botTypeSpecificDefaults,
+            ...filteredVars
+        };
+    }
+
+    await axios.patch(
+      `https://api.heroku.com/apps/${name}/config-vars`,
+      {
+        ...finalConfigVars,
+        APP_NAME: name
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    clearInterval(varsMsgAnimate);
+
+    await bot.editMessageText(`Starting build process...`, { chat_id: chatId, message_id: createMsg.message_id });
+    const bres = await axios.post(
+      `https://api.heroku.com/apps/${name}/builds`,
+      { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
+      {
+        headers: {
+          Authorization: `Bearer ${HEROKU_API_KEY}`,
+          Accept: 'application/vnd.heroku+json; version=3',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    let buildStatus;
+
+    if (botType === 'raganork') {
+        console.log(`[Build] Starting simulated build for Raganork app: ${name}`);
+        buildStatus = 'pending';
+
+        await new Promise(resolve => {
+            const buildDuration = 72000;
+            const updateInterval = 1500;
+            let elapsedTime = 0;
+
+            const simulationInterval = setInterval(async () => {
+                elapsedTime += updateInterval;
+                const percentage = Math.min(100, Math.floor((elapsedTime / buildDuration) * 100));
+                try {
+                    await bot.editMessageText(`Building... ${percentage}%`, {
+                        chat_id: chatId,
+                        message_id: createMsg.message_id
+                    });
+                } catch (e) {
+                    if (!e.message.includes('message is not modified')) {
+                        console.error("Error editing message during build simulation:", e.message);
+                    }
+                }
+                if (elapsedTime >= buildDuration) {
+                    clearInterval(simulationInterval);
+                    buildStatus = 'succeeded';
+                    resolve();
+                }
+            }, updateInterval);
+        });
+
+    } else {
+        const statusUrl = `https://api.heroku.com/apps/${name}/builds/${bres.data.id}`;
+        buildStatus = 'pending';
+        let currentPct = 0;
+
+        const buildProgressInterval = setInterval(async () => {
+            try {
+                const poll = await axios.get(statusUrl, {
+                    headers: {
+                        Authorization: `Bearer ${HEROKU_API_KEY}`,
+                        Accept: 'application/vnd.heroku+json; version=3'
+                    }
+                });
+                buildStatus = poll.data.status;
+                if (buildStatus === 'pending') {
+                    currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
+                } else if (buildStatus === 'succeeded') {
+                    currentPct = 100;
+                } else if (buildStatus === 'failed') {
+                    currentPct = 'Error';
+                }
+                await bot.editMessageText(`Building... ${currentPct}%`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+                if (buildStatus !== 'pending' || currentPct === 100 || currentPct === 'Error') {
+                    clearInterval(buildProgressInterval);
+                }
+            } catch (error) {
+                console.error(`Error polling build status for ${name}:`, error.message);
+                clearInterval(buildProgressInterval);
+                await bot.editMessageText(`Building... Error`, {
+                    chat_id: chatId,
+                    message_id: createMsg.message_id
+                }).catch(() => {});
+                buildStatus = 'error';
+            }
+        }, 5000);
+
+        try {
+            const BUILD_COMPLETION_TIMEOUT = 300 * 1000;
+            let completionTimeoutId = setTimeout(() => {
+                clearInterval(buildProgressInterval);
+                buildStatus = 'timed out';
+                throw new Error(`Build process timed out after ${BUILD_COMPLETION_TIMEOUT / 1000} seconds.`);
+            }, BUILD_COMPLETION_TIMEOUT);
+            while (buildStatus === 'pending') {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            clearTimeout(completionTimeoutId);
+            clearInterval(buildProgressInterval);
+        } catch (err) {
+            clearInterval(buildProgressInterval);
+            await bot.editMessageText(`Build process for "${name}" timed out. Check Heroku logs.`, {
+                chat_id: chatId,
+                message_id: createMsg.message_id
+            });
+            buildResult = false;
+            return buildResult;
+        }
+    }
+
+    if (buildStatus === 'succeeded') {
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
+      await addUserBot(chatId, name, vars.SESSION_ID, botType);
+      const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial);
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+      }
+      
+      // --- NEW REWARD LOGIC START ---
+      try {
+          const userBotCount = await getUserBotCount(chatId);
+          const userHasReceivedReward = await hasReceivedReward(chatId);
+
+          if (userBotCount >= 10 && !userHasReceivedReward) {
+              const newKey = generateKey();
+              await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId); // <-- NOTE: Added chatId to link the key
+              await recordReward(chatId);
 
               const rewardMessage = `Congratulations! You have deployed 10 or more bots with our service. As a token of our appreciation, here is a free one-time deploy key:\n\n\`${newKey}\``;
               await bot.sendMessage(chatId, rewardMessage, { parse_mode: 'Markdown' });
@@ -1150,6 +1405,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
   }
   return buildResult;
 }
+
 
 
 module.exports = {
