@@ -448,14 +448,14 @@ async function unbanUser(userId) {
     }
 }
 
-async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false) {
+async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null) {
     try {
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
-        const expirationInterval = isFreeTrial ? '3 days' : '45 days';
-        const expirationDate = new Date(deployDate.getTime() + (isFreeTrial ? 3 : 45) * 24 * 60 * 60 * 1000);
 
-        // We now update the query to include the new 'is_free_trial' column
+        // Use a provided expiration date if it exists, otherwise calculate a new one.
+        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 3 : 45) * 24 * 60 * 60 * 1000);
+
         const query = `
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial)
             VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8)
@@ -465,18 +465,16 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                bot_type = EXCLUDED.bot_type,
                deleted_from_heroku_at = NULL,
                is_free_trial = EXCLUDED.is_free_trial,
-               -- Keep the original deploy_date and expiration_date
+               -- Keep the original deploy_date and expiration_date on update
                deploy_date = user_deployments.deploy_date,
                expiration_date = user_deployments.expiration_date;
         `;
-        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, expirationDate, isFreeTrial]);
-        console.log(`[DB-Main] Saved/Updated deployment for app ${appName}. Is Free Trial: ${isFreeTrial}.`);
+        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial]);
+        console.log(`[DB-Main] Saved/Updated deployment for app ${appName}. Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
     } catch (error) {
         console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message);
     }
 }
-
-
 
 
 async function getUserDeploymentsForRestore(userId) {
@@ -1003,6 +1001,24 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
+
+        // --- FIX STARTS HERE ---
+      let expirationDateToUse;
+      if (isRestore && name !== originalName) {
+        // This is a restore that required a new name. Fetch the original expiration.
+        try {
+            const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+            if (originalDeployment) {
+              expirationDateToUse = originalDeployment.expiration_date;
+              // Also, delete the old deployment record to avoid duplicates and confusion.
+              await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
+              console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
+            }
+        } catch (dbError) {
+            console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
+        }
+      }
+      // --- FIX ENDS HERE ---
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
       await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial);
@@ -1018,6 +1034,79 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           if (userBotCount >= 10 && !userHasReceivedReward) {
               const newKey = generateKey();
               await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId); // <-- NOTE: Added chatId to link the key
+              await recordReward(chatId);
+
+              const rewardMessage = `Congratulations! You have deployed 10 or more bots with our service. As a token of our appreciation, here is a free one-time deploy key:\n\n\`${newKey}\``;
+              await bot.sendMessage(chatId, rewardMessage, { parse_mode: 'Markdown' });
+
+              await bot.sendMessage(ADMIN_ID, `Reward issued to user \`${chatId}\` for reaching 10 deployments. Key: \`${newKey}\``, { parse_mode: 'Markdown' });
+              console.log(`[Reward] Issued free key to user ${chatId}.`);
+          }
+      } catch (rewardError) {
+          console.error(`[Reward] Failed to check or issue reward to user ${chatId}:`, rewardError.message);
+      }
+      // --- NEW REWARD LOGIC END ---
+
+      const { first_name, last_name, username } = (await bot.getChat(chatId)).from || {};
+      const userDetails = [`*Name:* ${escapeMarkdown(first_name || '')} ${escapeMarkdown(last_name || '')}`, `*Username:* @${escapeMarkdown(username || 'N/A')}`, `*Chat ID:* \`${escapeMarkdown(chatId)}\``].join('\n');
+      const appDetails = `*App Name:* \`${escapeMarkdown(name)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Permanent'}`;
+      await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
+      const baseWaitingText = `Build successful! Waiting for bot to connect...`;
+      await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
+      const animateIntervalId = await animateMessage(chatId, createMsg.message_id, baseWaitingText);
+      const appStatusPromise = new Promise((resolve, reject) => {
+          const STATUS_CHECK_TIMEOUT = 120 * 1000;
+          const timeoutId = setTimeout(() => {
+              const appPromise = appDeploymentPromises.get(name);
+              if (appPromise) {
+                  appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
+                  appDeploymentPromises.delete(name);
+              }
+          }, STATUS_CHECK_TIMEOUT);
+          appDeploymentPromises.set(name, { resolve, reject, animateIntervalId, timeoutId });
+      });
+    if (buildStatus === 'succeeded') {
+      console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
+
+      let expirationDateToUse;
+      if (isRestore && name !== originalName) {
+        // This is a restore that required a new name. Fetch the original expiration.
+        try {
+            const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+            if (originalDeployment) {
+              expirationDateToUse = originalDeployment.expiration_date;
+              // Also, delete the old deployment record to avoid duplicates and confusion.
+              await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
+              console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
+            }
+            
+            // --- FIX STARTS HERE: Update the user_bots record with the new name ---
+            await pool.query('UPDATE user_bots SET bot_name = $1 WHERE user_id = $2 AND bot_name = $3', [name, chatId, originalName]);
+            console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
+            // --- FIX ENDS HERE ---
+
+        } catch (dbError) {
+            console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
+        }
+      }
+
+      await addUserBot(chatId, name, vars.SESSION_ID, botType);
+      const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+      
+      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
+      
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+      }
+      
+      // --- NEW REWARD LOGIC START ---
+      try {
+          const userBotCount = await getUserBotCount(chatId);
+          const userHasReceivedReward = await hasReceivedReward(chatId);
+
+          if (userBotCount >= 10 && !userHasReceivedReward) {
+              const newKey = generateKey();
+              await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId);
               await recordReward(chatId);
 
               const rewardMessage = `Congratulations! You have deployed 10 or more bots with our service. As a token of our appreciation, here is a free one-time deploy key:\n\n\`${newKey}\``;
@@ -1132,6 +1221,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
   }
   return buildResult;
 }
+
 
 
 module.exports = {
