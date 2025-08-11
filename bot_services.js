@@ -1226,7 +1226,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     } else {
       await bot.editMessageText(`Build status: ${buildStatus}. Contact Admin for support.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
-    }
+    
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message;
     bot.sendMessage(chatId, `An error occurred: ${escapeMarkdown(errorMsg)}\n\Contact Adminfor support.`, {parse_mode: 'Markdown'});
