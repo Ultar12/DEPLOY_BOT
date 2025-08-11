@@ -801,42 +801,13 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-        // FIX: Add a loop to handle app name conflicts during restore
-    let appCreationSuccess = false;
-    let attemptCount = 0;
-    while (!appCreationSuccess && attemptCount < 5) {
-        try {
-            await axios.post('https://api.heroku.com/apps', { name }, {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3'
-                }
-            });
-            appCreationSuccess = true;
-        } catch (error) {
-            if (error.response?.status === 409 && isRestore) {
-                attemptCount++;
-                let newSuffix = attemptCount;
-                if (attemptCount > 9) {
-                    newSuffix = String.fromCharCode(96 + (attemptCount - 9));
-                }
-                const newName = `${vars.APP_NAME}${newSuffix}`;
-                name = newName;
-                vars.APP_NAME = newName;
-            } else {
-                throw error;
-            }
-        }
-    }
+    await axios.post('https://api.heroku.com/apps', { name }, {
+      headers: {
+        Authorization: `Bearer ${HEROKU_API_KEY}`,
+        Accept: 'application/vnd.heroku+json; version=3'
+      }
+    });
     clearInterval(createMsgAnimate);
-
-    if (!appCreationSuccess) {
-        throw new Error(`Failed to create app after multiple attempts. The app name "${name}" might be unavailable.`);
-    }
-
-    // FIX: Add a short delay to mitigate Heroku API timing issues
-    await new Promise(r => setTimeout(r, 5000));
-
 
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
