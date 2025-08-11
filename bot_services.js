@@ -1055,6 +1055,17 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                   }
               }
           );
+                    // --- NEW: Automatically send the GIF tutorial without a caption ---
+          const tutorialFileId = 'CgACAgQAAxkBAAE5W1NomislFln1cMAyKRUerywvYrEzjQACEQMAAmGsdFD404fVImiwozYE'; // <-- REPLACE with your GIF file ID
+          try {
+              await bot.sendAnimation(chatId, tutorialFileId, {
+                  parse_mode: 'Markdown'
+              });
+          } catch (error) {
+              console.error(`Error sending tutorial GIF for app ${name}:`, error.message);
+          }
+          // --- END NEW CODE ---
+
           buildResult = true;
 
           if (isFreeTrial) {
