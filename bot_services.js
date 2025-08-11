@@ -801,6 +801,20 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
+    // --- FIX STARTS HERE: Preemptively add a suffix for restores ---
+    // This code will add a suffix to the app name before creating it.
+    if (isRestore) {
+        const newSuffix = `-${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}`;
+        // Ensure the name doesn't exceed Heroku's 30-character limit
+        name = name.substring(0, 30 - newSuffix.length) + newSuffix;
+        name = name.toLowerCase();
+        vars.APP_NAME = name;
+        console.log(`[Restore] App is being restored. Using new name to avoid conflict: "${name}".`);
+        await bot.editMessageText(`${getAnimatedEmoji()} Restoring app with new name: "${name}"...`, { chat_id: chatId, message_id: createMsg.message_id });
+    }
+    // --- FIX ENDS HERE ---
+    
+    // Now, attempt to create the app once with the (potentially modified) name.
     await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -811,6 +825,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
+
 
     await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
