@@ -1017,7 +1017,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
               console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
             }
 
-            / --- FIX STARTS HERE: Update the user_bots record with the new name ---
+            // --- FIX STARTS HERE: Update the user_bots record with the new name ---
             await pool.query('UPDATE user_bots SET bot_name = $1 WHERE user_id = $2 AND bot_name = $3', [name, chatId, originalName]);
             console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
             // --- FIX ENDS HERE ---
