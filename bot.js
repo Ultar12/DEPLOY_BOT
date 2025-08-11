@@ -5475,7 +5475,7 @@ if (action === 'setvarbool') {
   }
 });
 
-// --- FIX: Corrected bot.on('channel_post') handler to be more robust and complete ---
+// --- FIX: Final, corrected bot.on('channel_post') handler ---
 bot.on('channel_post', async msg => {
     const TELEGRAM_CHANNEL_ID = '-1002892034574';
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
@@ -5490,7 +5490,6 @@ bot.on('channel_post', async msg => {
     let failureReason = 'Bot session has logged out.';
     let match;
 
-    // Pattern 1: Standardized message from bot_monitor
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
     if (match) {
         appName = match[1];
@@ -5498,14 +5497,12 @@ bot.on('channel_post', async msg => {
         sessionId = match[3];
         console.log(`[Channel Post] Parsed (Standardized): App=${appName}, Status=${status}, Session=${sessionId}`);
     } else {
-        // Fallback for direct messages from bots themselves, e.g., "[appname] connected."
         match = text.match(/\[([^\]]+)\] connected/i);
         if (match) {
             appName = match[1];
             status = 'ONLINE';
             console.log(`[Channel Post] Parsed (Direct Connect): App=${appName}, Status=${status}`);
         } else {
-            // Fallback for direct messages from a bot that just logged out
             match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
             if (match) {
                 appName = match[1];
@@ -5520,11 +5517,9 @@ bot.on('channel_post', async msg => {
         return;
     }
     
-    // All state management is now centralized here.
     if (status === 'ONLINE') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
-             // Clean up all pending actions and resolve the promise
             if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
             if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
             pendingPromise.resolve('connected');
@@ -5533,7 +5528,7 @@ bot.on('channel_post', async msg => {
         await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'online'.`);
         
-        } else if (status === 'LOGGED OUT') {
+    } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
             if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
@@ -5563,7 +5558,6 @@ bot.on('channel_post', async msg => {
                     await bot.pinChatMessage(userId, sentMessage.message_id);
                     console.log(`[PinChat] Pinned logout warning for app "${appName}" to user ${userId}.`);
                     
-                    // FIX: Add the pinned message to the new database table with a timestamp for 6 hours from now
                     const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
                     await pool.query(
                         'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
@@ -5576,6 +5570,8 @@ bot.on('channel_post', async msg => {
             }
         }
     }
+});
+
 
 
 
