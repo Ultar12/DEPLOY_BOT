@@ -801,7 +801,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
     const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
 
-    / --- FIX STARTS HERE: Corrected logic for preemptive name change on restore ---
+    // --- FIX STARTS HERE: Corrected logic for preemptive name change on restore ---
     if (isRestore) {
         const originalName = name;
         let newName = originalName;
