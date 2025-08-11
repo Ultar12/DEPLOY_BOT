@@ -794,14 +794,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
   const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
 
-  let buildResult = false;
-  const createMsg = await sendAnimatedMessage(chatId, 'Creating application');
-
-  try {
-    await bot.editMessageText(`${getAnimatedEmoji()} Creating application...`, { chat_id: chatId, message_id: createMsg.message_id });
-    const createMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Creating application');
-
-        // FIX: Add a loop to handle app name conflicts during restore
+      // FIX: Add a loop to handle app name conflicts during restore
     let appCreationSuccess = false;
     let attemptCount = 0;
     while (!appCreationSuccess && attemptCount < 5) {
@@ -836,6 +829,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
     // FIX: Add a short delay to mitigate Heroku API timing issues
     await new Promise(r => setTimeout(r, 5000));
+
 
 
     await bot.editMessageText(`${getAnimatedEmoji()} Configuring resources...`, { chat_id: chatId, message_id: createMsg.message_id });
