@@ -870,8 +870,6 @@ async function syncDatabases(sourcePool, targetPool) {
     }
 }
 
-}
-
 
 
 
