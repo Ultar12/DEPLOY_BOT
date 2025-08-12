@@ -873,6 +873,7 @@ async function syncDatabases(sourcePool, targetPool) {
 
 
 
+
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
     console.log(`[AppNotFoundHandler] Handling 404 for app "${appName}". Initiated by ${callingChatId}.`);
 
