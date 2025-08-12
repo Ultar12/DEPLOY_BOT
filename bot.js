@@ -3535,81 +3535,73 @@ if (action === 'dkey_cancel') {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     }).catch(()=>{});
 
+    let herokuStatus = '';
+    let isAppActive = false;
     try {
-        // 1. Fetch deployment record from our database
-        const dbResult = await pool.query(
-            `SELECT * FROM user_deployments WHERE app_name = $1 AND user_id = $2;`,
-            [appName, appUserId]
-        );
-
-        if (dbResult.rows.length === 0) {
-            return bot.editMessageText(`Record for "*${escapeMarkdown(appName)}*" not found in the database.`, {
-                chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
-            });
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        herokuStatus = '🟢 Currently on Heroku';
+        isAppActive = true;
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            herokuStatus = '🔴 Deleted from Heroku';
+            isAppActive = false;
+        } else {
+            herokuStatus = '⚪ Unknown (API Error)';
+            isAppActive = false;
         }
-        const deployment = dbResult.rows[0];
+    }
 
-        // 2. Perform a LIVE check against the Heroku API
-        let herokuStatus = '';
-        try {
-            await axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            herokuStatus = '🟢 Currently on Heroku';
-            // If it exists on Heroku but our DB says it was deleted, correct our DB
-            if (deployment.deleted_from_heroku_at) {
-                await pool.query('UPDATE user_deployments SET deleted_from_heroku_at = NULL WHERE app_name = $1 AND user_id = $2', [appName, appUserId]);
-            }
-        } catch (error) {
-            if (error.response && error.response.status === 404) {
-                herokuStatus = '🔴 Deleted from Heroku';
-                // If it doesn't exist on Heroku but our DB says it's active, correct our DB
-                if (!deployment.deleted_from_heroku_at) {
-                    await dbServices.markDeploymentDeletedFromHeroku(appUserId, appName);
-                }
-            } else {
-                herokuStatus = '⚪ Unknown (API Error)';
-            }
-        }
+    const dbResult = await pool.query(
+        `SELECT * FROM user_deployments WHERE app_name = $1 AND user_id = $2;`,
+        [appName, appUserId]
+    );
 
-        // 3. Display the combined, accurate information
-        const { user_id, config_vars, bot_type, deploy_date } = deployment;
-        // ... (The rest of the message formatting logic is the same)
-        
-        let userDisplay = `\`${escapeMarkdown(user_id)}\``;
-        try {
-            const targetChat = await bot.getChat(user_id);
-            userDisplay = `${targetChat.first_name || ''} (@${targetChat.username || 'N/A'})`;
-        } catch (e) { /* ignore */ }
+    if (dbResult.rows.length === 0) {
+        return bot.editMessageText(`Record for "*${escapeMarkdown(appName)}*" not found in the database.`, {
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+        });
+    }
+    const deployment = dbResult.rows[0];
 
-        const deployDateDisplay = new Date(deploy_date).toLocaleString('en-US', { timeZone: 'Africa/Lagos' });
-        
-        const detailMessage = `
+    // Build the action buttons based on status
+    const actionButtons = [];
+    if (isAppActive) {
+        actionButtons.push([{ text: 'App is Active', callback_data: 'no_action' }]);
+    } else {
+        actionButtons.push([{ text: 'Restore App', callback_data: `restore_from_bapp:${appName}:${appUserId}` }]);
+    }
+    actionButtons.push(
+        [{ text: 'Delete From Database', callback_data: `delete_bapp:${appName}:${appUserId}` }],
+        [{ text: 'Back to List', callback_data: `back_to_bapp_list:${deployment.bot_type}` }]
+    );
+
+    let userDisplay = `\`${escapeMarkdown(deployment.user_id)}\``;
+    try {
+        const targetChat = await bot.getChat(deployment.user_id);
+        userDisplay = `${escapeMarkdown(targetChat.first_name || '')} (@${escapeMarkdown(targetChat.username || 'N/A')})`;
+    } catch (e) { /* ignore */ }
+
+    const deployDateDisplay = new Date(deployment.deploy_date).toLocaleString('en-US', { timeZone: 'Africa/Lagos' });
+
+    const detailMessage = `
 *App Details:*
 
 *App Name:* \`${escapeMarkdown(appName)}\`
-*Bot Type:* ${bot_type ? bot_type.toUpperCase() : 'Unknown'}
-*Owner:* ${escapeMarkdown(userDisplay)}
+*Bot Type:* ${deployment.bot_type ? deployment.bot_type.toUpperCase() : 'Unknown'}
+*Owner:* ${userDisplay}
 *Deployed On:* ${deployDateDisplay}
 *Heroku Status:* ${herokuStatus}
-        `; // Simplified for clarity, you can add more fields back if needed
+    `;
 
-        const actionButtons = [
-            [{ text: 'Restore App', callback_data: `restore_from_bapp:${appName}:${user_id}` }],
-            [{ text: 'Delete From Database', callback_data: `delete_bapp:${appName}:${user_id}` }],
-            [{ text: 'Back to List', callback_data: `back_to_bapp_list:${bot_type}` }]
-        ];
-
-        await bot.editMessageText(detailMessage, {
-            chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: actionButtons }
-        });
-
-    } catch (e) {
-        await bot.editMessageText(`An error occurred: ${e.message}`, { chat_id: cid, message_id: messageId });
-    }
+    await bot.editMessageText(detailMessage, {
+        chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: actionButtons }
+    });
     return;
-  }
+}
+
 
 
       if (action === 'set_expiration') {
