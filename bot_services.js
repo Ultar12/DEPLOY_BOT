@@ -89,6 +89,84 @@ async function addUserBot(u, b, s, botType) {
   }
 }
 
+// bot_services.js
+
+// ... other code ...
+
+/**
+ * Syncs the local database with the live Heroku app list.
+ * Adds missing apps to the database.
+ */
+async function syncDatabaseWithHeroku() {
+    console.log('[Sync] Starting full database synchronization with Heroku...');
+    const syncStats = {
+        addedToUserBots: 0,
+        addedToDeployments: 0,
+        unmatchedHerokuApps: []
+    };
+
+    try {
+        const herokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            }
+        });
+        const herokuApps = herokuAppsResponse.data.map(app => app.name);
+        
+        for (const appName of herokuApps) {
+            // Check if the app is already in user_bots table
+            const botRecord = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1', [appName]);
+            const isBotInDB = botRecord.rows.length > 0;
+
+            if (!isBotInDB) {
+                // App exists on Heroku but not in our database.
+                // Fetch config vars to get bot type and session ID
+                try {
+                    const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+                        headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                    });
+                    const configVars = configRes.data;
+                    const sessionId = configVars.SESSION_ID || 'N/A';
+                    let botType = 'unknown';
+                    if (sessionId && sessionId.startsWith(RAGANORK_SESSION_PREFIX)) {
+                        botType = 'raganork';
+                    } else if (sessionId && sessionId.startsWith(LEVANTER_SESSION_PREFIX)) {
+                        botType = 'levanter';
+                    }
+                    
+                    // Add the bot to the local database with ADMIN_ID as placeholder
+                    await addUserBot(ADMIN_ID, appName, sessionId, botType);
+                    await saveUserDeployment(ADMIN_ID, appName, sessionId, configVars, botType);
+                    
+                    syncStats.addedToUserBots++;
+                    syncStats.addedToDeployments++;
+                    console.log(`[Sync] Added missing app "${appName}" to DB with ADMIN_ID as owner.`);
+                } catch (configError) {
+                    // This could be a race condition where the app was just deleted.
+                    console.error(`[Sync] Failed to fetch config vars for app "${appName}". Skipping.`, configError.message);
+                    syncStats.unmatchedHerokuApps.push(appName);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Sync] CRITICAL ERROR during full sync:', error.message);
+        return { success: false, message: `An unexpected error occurred during sync: ${error.message}` };
+    }
+
+    const finalMessage = `Synchronization complete. Added ${syncStats.addedToUserBots} missing apps to the database.`;
+    console.log(`[Sync] ${finalMessage}`);
+    return { success: true, message: finalMessage, stats: syncStats };
+}
+
+// ... (export the new function) ...
+module.exports = {
+    // ... (existing exports) ...
+    syncDatabaseWithHeroku,
+    // ...
+};
+
+
 // --- NEW FUNCTIONS FOR REWARDS AND STATS ---
 
 async function getUserBotCount(userId) {
@@ -1496,6 +1574,7 @@ module.exports = {
     removeMonitoredFreeTrial,
     syncDatabases,
     createAllTablesInPool,
+    syncDatabaseWithHeroku,
     reconcileDatabaseWithHeroku,
     getExpiringBackups,
     setBackupWarningSent,
