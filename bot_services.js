@@ -817,6 +817,7 @@ async function createAllTablesInPool(dbPool, dbName) {
 }
 
 
+
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
