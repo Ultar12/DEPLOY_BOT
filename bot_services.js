@@ -636,21 +636,24 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// --- FIXED FUNCTION for backing up all bots ---
+// bot_services.js
+
+// ... (other code) ...
+
+// --- FIXED FUNCTION for backing up all bots (REMOVED FILTERING) ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
-    let skippedCount = 0;
     let notFoundCount = 0;
     const herokuAppList = [];
 
     const typeStats = {
-        levanter: { backedUp: 0, failed: 0, skipped: 0 },
-        raganork: { backedUp: 0, failed: 0, skipped: 0 },
-        unknown: { backedUp: 0, failed: 0, skipped: 0 }
+        levanter: { backedUp: 0, failed: 0 },
+        raganork: { backedUp: 0, failed: 0 },
+        unknown: { backedUp: 0, failed: 0 }
     };
     
-    // Fetch all apps directly from Heroku
+    // Fetch all apps directly from Heroku without any filtering
     try {
         const allHerokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
             headers: {
@@ -659,19 +662,11 @@ async function backupAllPaidBots() {
             }
         });
         const herokuApps = allHerokuAppsResponse.data.map(app => app.name);
+        herokuAppList.push(...herokuApps);
         
-        // Filter for relevant apps based on name pattern
-        for (const appName of herokuApps) {
-            if (appName.includes('-levanter') || appName.includes('-raganork')) {
-                herokuAppList.push(appName);
-            } else {
-                skippedCount++;
-            }
-        }
-        
-        console.log(`[DB-Backup] Found ${herokuAppList.length} relevant apps on Heroku.`);
+        console.log(`[DB-Backup] Found ${herokuAppList.length} apps on Heroku.`);
         if (herokuAppList.length === 0) {
-            return { success: true, message: 'No relevant apps found on Heroku to back up.' };
+            return { success: true, message: 'No apps found on Heroku to back up.' };
         }
 
     } catch (error) {
@@ -679,7 +674,7 @@ async function backupAllPaidBots() {
         return { success: false, message: `Failed to fetch app list from Heroku API: ${error.message}` };
     }
 
-    // Now iterate through the list of relevant apps from Heroku
+    // Now iterate through the full list of apps from Heroku
     for (const appName of herokuAppList) {
         let userId = ADMIN_ID; // Fallback to ADMIN_ID
         let botType = 'unknown';
@@ -728,6 +723,24 @@ async function backupAllPaidBots() {
             }
         }
     }
+    
+    const summary = `Backup complete! Processed ${herokuAppList.length} relevant apps on Heroku.`;
+    console.log(`[DB-Backup] ${summary}`);
+    
+    return { 
+        success: true, 
+        message: summary, 
+        stats: typeStats, 
+        miscStats: {
+            totalRelevantApps: herokuAppList.length,
+            appsBackedUp: backedUpCount,
+            appsNotFoundLocally: notFoundCount,
+            // appsSkipped is now always 0 with this logic
+            appsSkipped: 0
+        }
+    };
+}
+
     
     const summary = `Backup complete! Processed ${herokuAppList.length} relevant apps on Heroku.`;
     console.log(`[DB-Backup] ${summary}`);
