@@ -812,6 +812,14 @@ async function createAllTablesInPool(dbPool, dbName) {
             expires_at TIMESTAMP WITH TIME ZONE
         );
     `);
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        username TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
