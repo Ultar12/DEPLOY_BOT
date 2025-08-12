@@ -2949,47 +2949,66 @@ if (usesLeft === null) {
 
 
 
- // --- FIX: AWAITING_APP_NAME handler now sends suggestions in a single message ---
+ // bot.js
+
+// ... existing code ...
+
+// The core issue is that there are two separate pieces of code that
+// should be a single, cohesive state handler. We need to consolidate them.
+
+// First, find and remove this entire block, as it is incomplete and causes the bug:
+// if (st && st.step === 'AWAITING_APP_NAME') { ... }
+
+// Now, replace it with this single, comprehensive handler.
 if (st && st.step === 'AWAITING_APP_NAME') {
-    const userInput = text.toLowerCase().replace(/\s+/g, '-');
-    const username = msg.from.username ? msg.from.username.toLowerCase() : null;
-    let suggestions = [];
-    let message = 'Great. Now enter a unique name for your bot (e.g., mybot123):';
+    const appName = text.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
 
-    if (username) {
-        const potentialNames = [
-            `${username}-${Math.floor(Math.random() * 1000)}`,
-            `${username}-bot`,
-            `${username}-md`
-        ];
+    // Validate app name format. Heroku app names can only contain lowercase letters, numbers, and dashes.
+    if (!/^[a-z0-9-]{3,30}$/.test(appName)) {
+        // Send a new message asking for the name again, possibly with a hint.
+        await bot.sendMessage(cid, 'Invalid app name. It must be between 3 and 30 characters and only contain lowercase letters, numbers, and dashes.');
+        // Don't change the state, just wait for a new valid input.
+        return;
+    }
 
-        for (const name of potentialNames) {
-            try {
-                await axios.get(`https://api.heroku.com/apps/${name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                });
-            } catch (e) {
-                if (e.response?.status === 404) {
-                    suggestions.push(name);
-                }
-            }
+    try {
+        // Check if the app name is already taken on Heroku.
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        // If the request succeeds, the app exists.
+        await bot.sendMessage(cid, 'That app name is already taken. Please try another one:');
+        return;
+    } catch (e) {
+        // A 404 error is expected and means the app name is available.
+        if (e.response?.status !== 404) {
+            console.error(`[Heroku Check] Error checking app name existence for ${appName}:`, e.message);
+            await bot.sendMessage(cid, 'An error occurred while checking the app name. Please try again later.');
+            return;
         }
     }
+
+    // App name is valid and available. Proceed to the next step.
+    st.data.APP_NAME = appName;
+    st.step = 'AWAITING_AUTO_STATUS_CHOICE';
+
+    const confirmationMessage = `*Next Step:*\n` +
+                                `Enable automatic status view?`;
     
-    // Create the keyboard with suggestions if they exist
-    const keyboard = suggestions.length > 0
-        ? chunkArray(suggestions, 3).map(r => r.map(name => ({
-              text: name,
-              callback_data: `use_suggested_name:${name}`
-          })))
-        : [];
-    
-    await bot.sendMessage(cid, message, {
-        reply_markup: { inline_keyboard: keyboard },
+    await bot.sendMessage(cid, confirmationMessage, {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
+            ]
+        },
         parse_mode: 'Markdown'
     });
     return;
 }
+
+// ... existing code ...
+
 
 
 
