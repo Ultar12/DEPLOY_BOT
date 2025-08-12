@@ -790,6 +790,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
 async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = false, botType) {
   let name = vars.APP_NAME;
+  const originalName = name;
   const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
 
   const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
