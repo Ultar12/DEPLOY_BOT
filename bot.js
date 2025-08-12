@@ -3763,6 +3763,40 @@ if (action === 'confirm_updateall') {
 
   if (action === 'select_restore_app') { // Handle selection of app to restore
     const appName = payload;
+    const messageId = q.message.message_id;
+
+    // --- FIX STARTS HERE: Pre-check if app is already active ---
+    await bot.editMessageText(`Checking if app "*${escapeMarkdown(appName)}*" is already active...`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        // If we get here, the app exists on Heroku.
+        return bot.editMessageText(`App "*${escapeMarkdown(appName)}*" is already deployed and active. No restore is needed.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Back to My Bots', callback_data: 'back_to_app_list' }]]
+            }
+        });
+    } catch (e) {
+        if (e.response && e.response.status !== 404) {
+            // It's an API error other than "not found", so we should abort
+            return bot.editMessageText(`An error occurred while checking app status: ${escapeMarkdown(e.message)}`, {
+                chat_id: cid,
+                message_id: messageId,
+                parse_mode: 'Markdown'
+            });
+        }
+    }
+    // --- FIX ENDS HERE ---
+
     const deployments = await dbServices.getUserDeploymentsForRestore(cid); // Use dbServices
     const selectedDeployment = deployments.find(dep => dep.app_name === appName);
 
@@ -3817,7 +3851,6 @@ if (action === 'confirm_updateall') {
     // dbServices.saveUserDeployment handles setting deleted_from_heroku_at to NULL on update.
     return;
   }
-// bot.js
 
 // ... (existing code in bot.on('callback_query', async q => { ... })) ...
 
