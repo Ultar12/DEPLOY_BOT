@@ -828,8 +828,8 @@ async function syncDatabases(sourcePool, targetPool) {
             WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
         
-        // --- FIX STARTS HERE: Filter out the 'sessions' table to prevent the error ---
-        const tableNames = tablesResult.rows.map(row => row.tablename).filter(name => name !== 'sessions');
+        // --- FIX STARTS HERE: Filter out the 'sessions' table using a case-insensitive check ---
+        const tableNames = tablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
         // --- FIX ENDS HERE ---
 
         await clientTarget.query('BEGIN');
@@ -868,6 +868,8 @@ async function syncDatabases(sourcePool, targetPool) {
         clientSource.release();
         clientTarget.release();
     }
+}
+
 }
 
 
