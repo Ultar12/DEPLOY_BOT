@@ -638,12 +638,16 @@ async function backupAllPaidBots() {
     }
 }
 
-// --- NEW FUNCTION for /copydb ---
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
     
     try {
+        // --- FIX STARTS HERE: Ensure the target DB has all the tables first ---
+        console.log('[Sync] Ensuring target database schema is up-to-date...');
+        await createAllTablesInPool(targetPool, 'Backup-for-Sync');
+        // --- FIX ENDS HERE ---
+
         const tablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
             WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
@@ -687,7 +691,7 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
-// --- END NEW FUNCTION ---
+
 
 
 async function handleAppNotFoundAndCleanDb(callingChatId, appName, originalMessageId = null, isUserFacing = false) {
