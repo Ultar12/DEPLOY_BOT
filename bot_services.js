@@ -825,7 +825,7 @@ async function syncDatabases(sourcePool, targetPool) {
     try {
         const tablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
-            WHERE schemaname != 'pg_catalog' AND schemename != 'information_schema';
+            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
         
         // --- FIX STARTS HERE: Filter out the 'sessions' table to prevent the error ---
@@ -869,6 +869,7 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
+
 
 
 
