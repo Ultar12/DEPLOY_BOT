@@ -636,53 +636,115 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// --- NEW FUNCTION for backing up all bots ---
+// --- FIXED FUNCTION for backing up all bots ---
 async function backupAllPaidBots() {
-    console.log('[DB-Backup] Starting backup process for all paid bots...');
+    console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
+    let backedUpCount = 0;
+    let skippedCount = 0;
+    let notFoundCount = 0;
+    const herokuAppList = [];
+
+    const typeStats = {
+        levanter: { backedUp: 0, failed: 0, skipped: 0 },
+        raganork: { backedUp: 0, failed: 0, skipped: 0 },
+        unknown: { backedUp: 0, failed: 0, skipped: 0 }
+    };
+    
+    // Fetch all apps directly from Heroku
     try {
-        const allBots = await getAllUserBots();
-        if (!allBots || allBots.length === 0) {
-            console.log('[DB-Backup] No bots found in the main database to back up.');
-            return { success: true, message: 'No bots to back up.' };
+        const allHerokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            }
+        });
+        const herokuApps = allHerokuAppsResponse.data.map(app => app.name);
+        
+        // Filter for relevant apps based on name pattern
+        for (const appName of herokuApps) {
+            if (appName.includes('-levanter') || appName.includes('-raganork')) {
+                herokuAppList.push(appName);
+            } else {
+                skippedCount++;
+            }
+        }
+        
+        console.log(`[DB-Backup] Found ${herokuAppList.length} relevant apps on Heroku.`);
+        if (herokuAppList.length === 0) {
+            return { success: true, message: 'No relevant apps found on Heroku to back up.' };
         }
 
-        let backedUpCount = 0;
-        let failedCount = 0;
+    } catch (error) {
+        console.error('[DB-Backup] CRITICAL ERROR fetching apps from Heroku:', error);
+        return { success: false, message: `Failed to fetch app list from Heroku API: ${error.message}` };
+    }
 
-        for (const bot of allBots) {
-            const { user_id, bot_name, bot_type } = bot;
-            try {
-                const response = await axios.get(`https://api.heroku.com/apps/${bot_name}/config-vars`, {
-                    headers: {
-                        Authorization: `Bearer ${HEROKU_API_KEY}`,
-                        Accept: 'application/vnd.heroku+json; version=3'
-                    }
-                });
-                const configVars = response.data;
-                const sessionId = configVars.SESSION_ID || 'N/A';
+    // Now iterate through the list of relevant apps from Heroku
+    for (const appName of herokuAppList) {
+        let userId = ADMIN_ID; // Fallback to ADMIN_ID
+        let botType = 'unknown';
 
-                await saveUserDeployment(user_id, bot_name, sessionId, configVars, bot_type);
-                console.log(`[DB-Backup] Successfully backed up: ${bot_name}`);
-                backedUpCount++;
-            } catch (error) {
-                failedCount++;
-                if (error.response && error.response.status === 404) {
-                    console.warn(`[DB-Backup] App not found on Heroku during backup: ${bot_name}. Marking as deleted.`);
-                    await markDeploymentDeletedFromHeroku(user_id, bot_name);
+        try {
+            // Try to find the user_id and bot_type from the local database
+            const localBotRecord = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1', [appName]);
+            if (localBotRecord.rows.length > 0) {
+                userId = localBotRecord.rows[0].user_id;
+                botType = localBotRecord.rows[0].bot_type;
+            } else {
+                console.warn(`[DB-Backup] App "${appName}" found on Heroku but not in local 'user_bots' table. Using ADMIN_ID as placeholder.`);
+                notFoundCount++;
+            }
+
+            const response = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3'
+                }
+            });
+            const configVars = response.data;
+            const sessionId = configVars.SESSION_ID || 'N/A';
+
+            await saveUserDeployment(userId, appName, sessionId, configVars, botType);
+            console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId})`);
+            backedUpCount++;
+            if (typeStats[botType]) {
+                typeStats[botType].backedUp++;
+            } else {
+                typeStats.unknown.backedUp++;
+            }
+            
+        } catch (error) {
+            // A 404 here means the app was likely just deleted from Heroku
+            if (error.response && error.response.status === 404) {
+                 console.warn(`[DB-Backup] App not found on Heroku during backup: ${appName}. Skipping.`);
+                 notFoundCount++;
+            } else {
+                console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
+                if (typeStats[botType]) {
+                    typeStats[botType].failed++;
                 } else {
-                    console.error(`[DB-Backup] Failed to back up bot ${bot_name} for user ${user_id}. Error: ${error.message}`);
+                    typeStats.unknown.failed++;
                 }
             }
         }
-        const summary = `Backup complete. Success: ${backedUpCount}, Failed: ${failedCount}.`;
-        console.log(`[DB-Backup] ${summary}`);
-        return { success: true, message: summary };
-
-    } catch (error) {
-        console.error('[DB-Backup] CRITICAL ERROR during the backupAllPaidBots process:', error);
-        return { success: false, message: `An unexpected error occurred: ${error.message}` };
     }
+    
+    const summary = `Backup complete! Processed ${herokuAppList.length} relevant apps on Heroku.`;
+    console.log(`[DB-Backup] ${summary}`);
+    
+    return { 
+        success: true, 
+        message: summary, 
+        stats: typeStats, 
+        miscStats: {
+            totalRelevantApps: herokuAppList.length,
+            appsBackedUp: backedUpCount,
+            appsNotFoundLocally: notFoundCount,
+            appsSkipped: skippedCount
+        }
+    };
 }
+
 // Helper function to create all tables in a given database pool
 async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] Checking/creating all tables...`);
