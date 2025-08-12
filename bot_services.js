@@ -823,16 +823,14 @@ async function syncDatabases(sourcePool, targetPool) {
     const clientTarget = await targetPool.connect();
     
     try {
-        // --- FIX STARTS HERE: Ensure the target DB has all the tables first ---
-        console.log('[Sync] Ensuring target database schema is up-to-date...');
-        await createAllTablesInPool(targetPool, 'Backup-for-Sync');
-        // --- FIX ENDS HERE ---
-
         const tablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
-            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
+            WHERE schemaname != 'pg_catalog' AND schemename != 'information_schema';
         `);
-        const tableNames = tablesResult.rows.map(row => row.tablename);
+        
+        // --- FIX STARTS HERE: Filter out the 'sessions' table to prevent the error ---
+        const tableNames = tablesResult.rows.map(row => row.tablename).filter(name => name !== 'sessions');
+        // --- FIX ENDS HERE ---
 
         await clientTarget.query('BEGIN');
 
