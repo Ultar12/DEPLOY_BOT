@@ -1017,28 +1017,37 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-        // --- FIX STARTS HERE ---
-      let expirationDateToUse;
-      if (isRestore && name !== originalName) {
-        // This is a restore that required a new name. Fetch the original expiration.
-        try {
-            const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
-            if (originalDeployment) {
-              expirationDateToUse = originalDeployment.expiration_date;
-              // Also, delete the old deployment record to avoid duplicates and confusion.
-              await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
-              console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
+        // --- START OF NEW RESTORE LOGIC ---
+      if (isRestore) {
+        let expirationDateToUse;
+        if (name !== originalName) {
+            try {
+                const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+                if (originalDeployment) {
+                  expirationDateToUse = originalDeployment.expiration_date;
+                  await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
+                  console.log([Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).);
+                }
+                await pool.query('UPDATE user_bots SET bot_name = $1, session_id = $2, bot_type = $3 WHERE user_id = $4 AND bot_name = $5', [name, vars.SESSION_ID, botType, chatId, originalName]);
+                console.log([DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".);
+            } catch (dbError) {
+                console.error([Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:, dbError.message);
             }
-
-            // --- FIX STARTS HERE: Update the user_bots record with the new name ---
-            await pool.query('UPDATE user_bots SET bot_name = $1 WHERE user_id = $2 AND bot_name = $3', [name, chatId, originalName]);
-            console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
-            // --- FIX ENDS HERE ---
-        } catch (dbError) {
-            console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
+        } else {
+            await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
+        
+        const herokuConfigVars = (await axios.get(https://api.heroku.com/apps/${name}/config-vars, { headers: { Authorization: Bearer ${HEROKU_API_KEY}, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+        await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
+
+        // Send success message immediately and exit
+        await bot.editMessageText(
+            Restore successful! App *${escapeMarkdown(name)}* has been redeployed.,
+            { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
+        );
+        return true; // Mark as success and return
       }
-      // --- FIX ENDS HERE ---
+      // --- END OF NEW RESTORE LOGIC ---
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
       await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial);
