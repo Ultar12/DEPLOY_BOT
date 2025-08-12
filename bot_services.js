@@ -636,11 +636,7 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// bot_services.js
-
-// ... (other code) ...
-
-// --- FIXED FUNCTION for backing up all bots (REMOVED FILTERING) ---
+// --- FINAL FIXED FUNCTION: BACKS UP ALL APPS ON HEROKU ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
@@ -661,6 +657,8 @@ async function backupAllPaidBots() {
                 Accept: 'application/vnd.heroku+json; version=3'
             }
         });
+        
+        // This is the key change: we take ALL app names.
         const herokuApps = allHerokuAppsResponse.data.map(app => app.name);
         herokuAppList.push(...herokuApps);
         
@@ -735,28 +733,11 @@ async function backupAllPaidBots() {
             totalRelevantApps: herokuAppList.length,
             appsBackedUp: backedUpCount,
             appsNotFoundLocally: notFoundCount,
-            // appsSkipped is now always 0 with this logic
             appsSkipped: 0
         }
     };
 }
 
-    
-    const summary = `Backup complete! Processed ${herokuAppList.length} relevant apps on Heroku.`;
-    console.log(`[DB-Backup] ${summary}`);
-    
-    return { 
-        success: true, 
-        message: summary, 
-        stats: typeStats, 
-        miscStats: {
-            totalRelevantApps: herokuAppList.length,
-            appsBackedUp: backedUpCount,
-            appsNotFoundLocally: notFoundCount,
-            appsSkipped: skippedCount
-        }
-    };
-}
 
 // Helper function to create all tables in a given database pool
 async function createAllTablesInPool(dbPool, dbName) {
