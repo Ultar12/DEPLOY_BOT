@@ -767,54 +767,54 @@ async function handleRestoreAllConfirm(query) {
     let failureCount = 0;
 
     for (const [index, deployment] of deployments.entries()) {
-        const appName = deployment.app_name;
-        // --- FIX STARTS HERE: Pre-check if app is already active ---
-        await bot.sendMessage(chatId, `Checking app ${index + 1}/${deployments.length}: \`${appName}\`...`, { parse_mode: 'Markdown' });
-        try {
-            await axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            // If the app exists, this code will run.
-            await bot.sendMessage(chatId, `App \`${appName}\` is already active on Heroku. Skipping restore.`, { parse_mode: 'Markdown' });
-            continue; // This skips the rest of the loop for this app.
-        } catch (e) {
-            // If the app does not exist, a 404 error is returned, and we proceed below.
-            // Other errors are logged and we also skip.
-            if (e.response && e.response.status !== 404) {
-                console.error(`[RestoreAll] Error checking status for ${appName}: ${e.message}`);
-                await bot.sendMessage(chatId, `Error checking status for \`${appName}\`. Skipping.`, { parse_mode: 'Markdown' });
-                continue;
-            }
-        }
-        // --- FIX ENDS HERE ---
-
-        try {
-            await bot.sendMessage(chatId, `▶Restoring bot ${index + 1}/${deployments.length}: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
-            
-            const vars = { ...deployment.config_vars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id };
-            const success = await dbServices.buildWithProgress(deployment.user_id, vars, false, true, botType);
-
-            if (success) {
-                successCount++;
-                await bot.sendMessage(chatId, `Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
-                await bot.sendMessage(deployment.user_id, `Your bot \`${deployment.app_name}\` has been successfully restored by the admin.`, { parse_mode: 'Markdown' });
-
-                if (index < deployments.length - 1) {
-                    await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
-                    await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000));
-                }
-            } else {
-                failureCount++;
-                await bot.sendMessage(chatId, `Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing to the next app.`, { parse_mode: 'Markdown' });
-            }
-        } catch (error) {
-            failureCount++;
-            console.error(error);
-            await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
+    const appName = deployment.app_name;
+    await bot.sendMessage(chatId, `Checking app ${index + 1}/${deployments.length}: \`${appName}\`...`, { parse_mode: 'Markdown' });
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        await bot.sendMessage(chatId, `🟢 App \`${appName}\` is already active on Heroku. Skipping restore.`, { parse_mode: 'Markdown' });
+        continue;
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            // App not found, this is the expected behavior for a restore. Proceed with restore logic below.
+        } else if (e.response && (e.response.status === 401 || e.response.status === 403)) {
+            // API key does not have access. This is a common error.
+            await bot.sendMessage(chatId, `🚫 API key has no access to app \`${appName}\`. Skipping restore.`, { parse_mode: 'Markdown' });
+            continue;
+        } else {
+            // Other network or API errors.
+            await bot.sendMessage(chatId, `❌ Network error checking status for \`${appName}\`. Skipping restore.`, { parse_mode: 'Markdown' });
+            continue;
         }
     }
-    await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
+
+    try {
+        await bot.sendMessage(chatId, `▶Restoring bot ${index + 1}/${deployments.length}: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
+        
+        const vars = { ...deployment.config_vars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id };
+        const success = await dbServices.buildWithProgress(deployment.user_id, vars, false, true, botType);
+
+        if (success) {
+            successCount++;
+            await bot.sendMessage(chatId, `✅ Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
+            await bot.sendMessage(deployment.user_id, `Your bot \`${deployment.app_name}\` has been successfully restored by the admin.`, { parse_mode: 'Markdown' });
+
+            if (index < deployments.length - 1) {
+                await bot.sendMessage(chatId, `⏳ Waiting for 3 minutes before deploying the next app...`);
+                await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000));
+            }
+        } else {
+            failureCount++;
+            await bot.sendMessage(chatId, `❌ Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing to the next app.`, { parse_mode: 'Markdown' });
+        }
+    } catch (error) {
+        failureCount++;
+        console.error(error);
+        await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
+    }
 }
+
 
 
 
