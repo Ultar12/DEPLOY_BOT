@@ -3760,97 +3760,69 @@ if (action === 'confirm_updateall') {
 
 
 
+  if (action === 'restore_from_backup') {
+    const checkingMsg = await bot.editMessageText('Checking for restorable apps...', { chat_id: cid, message_id: q.message.message_id });
+    
+    const userDeployments = await dbServices.getUserDeploymentsForRestore(cid);
+    
+    // Filter out bots that are active on Heroku or have expired.
+    const restorableDeployments = [];
+    const now = new Date();
+    
+    for (const dep of userDeployments) {
+        // First check if the original 45-day period has expired.
+        const originalExpirationDate = new Date(new Date(dep.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
+        if (originalExpirationDate <= now) {
+             // Expired, permanently delete it from the backup table and skip.
+             await dbServices.deleteUserDeploymentFromBackup(cid, dep.app_name);
+             continue;
+        }
 
-  if (action === 'select_restore_app') { // Handle selection of app to restore
-    const appName = payload;
-    const messageId = q.message.message_id;
-
-    // --- FIX STARTS HERE: Pre-check if app is already active ---
-    await bot.editMessageText(`Checking if app "*${escapeMarkdown(appName)}*" is already active...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-    });
-
-    try {
-        await axios.get(`https://api.heroku.com/apps/${appName}`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        // If we get here, the app exists on Heroku.
-        return bot.editMessageText(`App "*${escapeMarkdown(appName)}*" is already deployed and active. No restore is needed.`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [[{ text: 'Back to My Bots', callback_data: 'back_to_app_list' }]]
-            }
-        });
-    } catch (e) {
-        if (e.response && e.response.status !== 404) {
-            // It's an API error other than "not found", so we should abort
-            return bot.editMessageText(`An error occurred while checking app status: ${escapeMarkdown(e.message)}`, {
-                chat_id: cid,
-                message_id: messageId,
-                parse_mode: 'Markdown'
+        try {
+            // Now check if it is active on Heroku.
+            await axios.get(`https://api.heroku.com/apps/${dep.app_name}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
+            // If the request succeeds, it's active, so we skip it.
+        } catch (e) {
+            // A 404 means the app is not on Heroku, so it's restorable.
+            if (e.response && e.response.status === 404) {
+                restorableDeployments.push(dep);
+            } else {
+                console.error(`[Restore] Error checking Heroku status for ${dep.app_name}: ${e.message}`);
+            }
         }
     }
-    // --- FIX ENDS HERE ---
 
-    const deployments = await dbServices.getUserDeploymentsForRestore(cid); // Use dbServices
-    const selectedDeployment = deployments.find(dep => dep.app_name === appName);
-
-    if (!selectedDeployment) {
-        return bot.editMessageText('Selected backup not found. Please try again.', {
+    if (restorableDeployments.length === 0) {
+        return bot.editMessageText('No restorable backups found for your account. Please deploy a new bot.', {
             chat_id: cid,
-            message_id: q.message.message_id
+            message_id: checkingMsg.message_id
         });
     }
 
-    // Check if the original 45-day expiration has passed for this specific record
-    const now = new Date();
-    const originalExpirationDate = new Date(new Date(selectedDeployment.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
-    if (originalExpirationDate <= now) { // Compare against current time
-        // If expired, delete it from the backup table and tell user
-        await dbServices.deleteUserDeploymentFromBackup(cid, appName); // This is a permanent delete
-        return bot.editMessageText(`Cannot restore "*${escapeMarkdown(appName)}*". Its original 45-day deployment period has expired.`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
-    }
-
-    // Determine the default env vars for the bot type being restored
-    const botTypeToRestore = selectedDeployment.bot_type || 'levanter';
-    // Access the correct defaultEnvVars object from the one passed to servicesInit
-    // This assumes defaultEnvVars (levanter/raganork) are globally accessible here,
-    // which they should be because they're declared at the top of bot.js.
-    const defaultVarsForRestore = (botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : levanterDefaultEnvVars) || {};
-
-    // Prepare variables for deployment:
-    // 1. Start with the appropriate default vars (e.g., HANDLERS for Raganork from app.json1)
-    // 2. Overlay with saved config_vars (e.g., specific SESSION_ID)
-    // 3. User-provided SESSION_ID for new deployments will override if needed, but not for restore.
-    const combinedVarsForRestore = {
-        ...defaultVarsForRestore,    // Apply type-specific defaults first
-        ...selectedDeployment.config_vars, // Overlay with the saved config vars (these take precedence)
-        APP_NAME: selectedDeployment.app_name, // Ensure APP_NAME is always correct
-        SESSION_ID: selectedDeployment.session_id // Explicitly ensure saved SESSION_ID is used
-    };
-
-    await bot.editMessageText(`Attempting to restore and deploy "*${escapeMarkdown(appName)}*"...`, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
+    const restoreOptions = restorableDeployments.map(dep => {
+        const deployDate = new Date(dep.deploy_date).toLocaleDateString();
+        const originalExpirationDate = new Date(new Date(dep.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
+        const daysLeft = Math.ceil((originalExpirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const expirationText = daysLeft > 0 ? ` (Expires in ${daysLeft} days)` : ` (Expired)`;
+        
+        return [{
+            text: `${dep.app_name} (${dep.bot_type ? dep.bot_type.toUpperCase() : 'Unknown'}) - Deployed: ${deployDate}${expirationText}`,
+            callback_data: `select_restore_app:${dep.app_name}`
+        }];
     });
 
-    // Call buildWithProgress with isRestore flag, the combined variables, and the original botType
-    await dbServices.buildWithProgress(cid, combinedVarsForRestore, false, true, botTypeToRestore);
-
-    // After successful build, save it to backup DB to clear 'deleted_from_heroku_at' flag (handled by saveUserDeployment on conflict)
-    // dbServices.saveUserDeployment handles setting deleted_from_heroku_at to NULL on update.
+    await bot.editMessageText('Select a bot to restore:', {
+        chat_id: cid,
+        message_id: checkingMsg.message_id,
+        reply_markup: {
+            inline_keyboard: restoreOptions
+        }
+    });
     return;
-  }
+}
+
 
 // ... (existing code in bot.on('callback_query', async q => { ... })) ...
 
