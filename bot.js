@@ -245,9 +245,13 @@ async function createAllTablesInPool(dbPool, dbName) {
 // Main startup logic
 (async () => {
   try {
-    // Run the table creation for both databases to ensure schemas are identical
+    console.log("Starting database table creation...");
     await createAllTablesInPool(pool, "Main");
+    console.log("Main database tables created successfully.");
+
     await createAllTablesInPool(backupPool, "Backup");
+    console.log("Backup database tables created successfully.");
+
   } catch (dbError) {
     console.error("[DB] CRITICAL ERROR during initial database table creation:", dbError.message);
     process.exit(1);
