@@ -1219,6 +1219,7 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
+    createAllTablesInPool,
     syncDatabases,
     getExpiringBackups,
     setBackupWarningSent,
