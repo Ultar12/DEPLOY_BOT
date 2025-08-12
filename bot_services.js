@@ -837,33 +837,48 @@ async function syncDatabases(sourcePool, targetPool) {
             WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
         
-        // --- FIX STARTS HERE: Filter out the 'sessions' table using a case-insensitive check ---
         const tableNames = tablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
-        // --- FIX ENDS HERE ---
 
         await clientTarget.query('BEGIN');
 
+        // Step 1: Truncate tables in the target database in reverse order to respect dependencies
         for (const tableName of tableNames.slice().reverse()) {
-            console.log(`[Sync] Clearing table ${tableName} in target DB...`);
+            console.log(`[Sync] Clearing table "${tableName}" in target DB...`);
             await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
         }
 
+        // Step 2: Copy data, ensuring column names match
         for (const tableName of tableNames) {
-            console.log(`[Sync] Copying data for table ${tableName}...`);
-            const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
+            console.log(`[Sync] Copying data for table "${tableName}"...`);
+            
+            // Get columns from both source and target to find a common subset
+            const sourceColumnsResult = await clientSource.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
+            const targetColumnsResult = await clientTarget.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
+
+            const sourceColumns = sourceColumnsResult.rows.map(row => row.column_name);
+            const targetColumns = targetColumnsResult.rows.map(row => row.column_name);
+            
+            // Find columns that exist in both tables
+            const commonColumns = sourceColumns.filter(col => targetColumns.includes(col));
+            
+            if (commonColumns.length === 0) {
+                console.warn(`[Sync] Skipping table "${tableName}" as no common columns were found.`);
+                continue;
+            }
+
+            const { rows } = await clientSource.query(`SELECT ${commonColumns.map(c => `"${c}"`).join(', ')} FROM "${tableName}";`);
 
             if (rows.length > 0) {
-                const columns = Object.keys(rows[0]);
-                const colNames = columns.map(c => `"${c}"`).join(', ');
-                const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+                const colNames = commonColumns.map(c => `"${c}"`).join(', ');
+                const valuePlaceholders = commonColumns.map((_, i) => `$${i + 1}`).join(', ');
 
                 for (const row of rows) {
-                    const values = columns.map(col => row[col]);
+                    const values = commonColumns.map(col => row[col]);
                     const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
                     await clientTarget.query(insertQuery, values);
                 }
             }
-            console.log(`[Sync] Copied ${rows.length} rows to ${tableName}.`);
+            console.log(`[Sync] Copied ${rows.length} rows to "${tableName}".`);
         }
 
         await clientTarget.query('COMMIT');
