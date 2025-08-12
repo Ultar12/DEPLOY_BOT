@@ -247,10 +247,14 @@ async function createAllTablesInPool(dbPool, dbName) {
 (async () => {
   try {
     console.log("Starting database table creation...");
-    await dbServices.createAllTablesInPool(pool, "Main"); // <-- Changed line
+    await createAllTablesInPool(pool, "Main");
     console.log("Main database tables created successfully.");
 
-    await dbServices.createAllTablesInPool(backupPool, "Backup"); // <-- Changed line
+    // --- ADD THIS LINE ---
+    console.log("Attempting to create tables in backup database...");
+    // ----------------------
+
+    await createAllTablesInPool(backupPool, "Backup");
     console.log("Backup database tables created successfully.");
 
   } catch (dbError) {
@@ -258,6 +262,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     process.exit(1);
   }
 })();
+
 
 
 // --- END OF REPLACEMENT ---
