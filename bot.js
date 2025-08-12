@@ -221,6 +221,15 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+  await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            data JSONB,
+            expires_at TIMESTAMP WITH TIME ZONE
+        );
+    `);
+
       await dbPool.query(`
       CREATE TABLE IF NOT EXISTS pinned_messages (
         message_id BIGINT PRIMARY KEY,
@@ -735,7 +744,6 @@ async function handleRestoreAllSelection(query) {
     });
 }
 
-// This function runs AFTER you click the "Proceed" button
 async function handleRestoreAllConfirm(query) {
     const chatId = query.message.chat.id;
     const botType = query.data.split(':')[1];
@@ -751,6 +759,26 @@ async function handleRestoreAllConfirm(query) {
     let failureCount = 0;
 
     for (const [index, deployment] of deployments.entries()) {
+        const appName = deployment.app_name;
+        // --- FIX STARTS HERE: Pre-check if app is already active ---
+        await bot.sendMessage(chatId, `Checking app ${index + 1}/${deployments.length}: \`${appName}\`...`, { parse_mode: 'Markdown' });
+        try {
+            await axios.get(`https://api.heroku.com/apps/${appName}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            // If the app exists, skip the restore
+            await bot.sendMessage(chatId, `App \`${appName}\` is already active on Heroku. Skipping restore.`, { parse_mode: 'Markdown' });
+            continue; // Go to the next app in the loop
+        } catch (e) {
+            if (e.response && e.response.status !== 404) {
+                // If it's a real API error, log it and continue
+                console.error(`[RestoreAll] Error checking status for ${appName}: ${e.message}`);
+                await bot.sendMessage(chatId, `Error checking status for \`${appName}\`. Skipping.`, { parse_mode: 'Markdown' });
+                continue;
+            }
+        }
+        // --- FIX ENDS HERE ---
+
         try {
             await bot.sendMessage(chatId, `▶Restoring bot ${index + 1}/${deployments.length}: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
             
@@ -762,10 +790,9 @@ async function handleRestoreAllConfirm(query) {
                 await bot.sendMessage(chatId, `Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
                 await bot.sendMessage(deployment.user_id, `Your bot \`${deployment.app_name}\` has been successfully restored by the admin.`, { parse_mode: 'Markdown' });
 
-                // Check if it's NOT the last deployment before waiting
                 if (index < deployments.length - 1) {
                     await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
-                    await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000)); // 3 minutes wait
+                    await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000));
                 }
             } else {
                 failureCount++;
@@ -779,6 +806,7 @@ async function handleRestoreAllConfirm(query) {
     }
     await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
 }
+
 
 // A new reusable function to display the key deletion menu
 async function sendKeyDeletionList(chatId, messageId = null) {
