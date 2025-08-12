@@ -121,6 +121,52 @@ async function recordReward(userId) {
 }
 
 
+async function reconcileDatabaseWithHeroku(botType) {
+    console.log(`[Sync] Starting database reconciliation for ${botType}...`);
+    try {
+        const [herokuAppsRes, dbAppsRes] = await Promise.all([
+            axios.get('https://api.heroku.com/apps', {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            }),
+            pool.query('SELECT app_name, user_id FROM user_deployments WHERE bot_type = $1', [botType])
+        ]);
+
+        const herokuApps = herokuAppsRes.data.map(app => app.name).filter(name => name.includes(botType));
+        const dbApps = dbAppsRes.rows;
+
+        const herokuAppSet = new Set(herokuApps);
+        const renamedApps = [];
+
+        for (const dbApp of dbApps) {
+            if (!herokuAppSet.has(dbApp.app_name)) {
+                const originalPrefix = dbApp.app_name.replace(/-\d+$/, '');
+                const potentialNewNames = herokuApps.filter(hName => hName.startsWith(originalPrefix));
+
+                if (potentialNewNames.length === 1) {
+                    const newName = potentialNewNames[0];
+                    console.log(`[Sync] Found renamed app: ${dbApp.app_name} -> ${newName}.`);
+                    renamedApps.push({ oldName: dbApp.app_name, newName, userId: dbApp.user_id });
+                }
+            }
+        }
+        
+        for (const app of renamedApps) {
+            await pool.query('UPDATE user_bots SET bot_name = $1 WHERE user_id = $2 AND bot_name = $3', [app.newName, app.userId, app.oldName]);
+            await pool.query('UPDATE user_deployments SET app_name = $1 WHERE user_id = $2 AND app_name = $3', [app.newName, app.userId, app.oldName]);
+            console.log(`[Sync] Successfully updated DB for ${app.oldName} to ${app.newName}.`);
+        }
+
+        console.log(`[Sync] Reconciliation complete. Found and fixed ${renamedApps.length} renamed apps.`);
+        return { success: true, message: `Reconciliation fixed ${renamedApps.length} renamed apps.` };
+        
+    } catch (error) {
+        console.error('[Sync] Reconciliation failed:', error);
+        return { success: false, message: error.message };
+    }
+}
+
+
+
 // --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
 
 async function getExpiringBots() {
@@ -1221,6 +1267,7 @@ module.exports = {
     removeMonitoredFreeTrial,
     createAllTablesInPool,
     syncDatabases,
+    reconcileDatabaseWithHeroku,
     getExpiringBackups,
     setBackupWarningSent,
     getExpiredBackups,
