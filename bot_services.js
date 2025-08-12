@@ -825,40 +825,54 @@ async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
 
-
+// ... (other functions) ...
 
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
     
     try {
-        const tablesResult = await clientSource.query(`
+        // Get list of tables from both source and target databases
+        const sourceTablesResult = await clientSource.query(`
+            SELECT tablename FROM pg_catalog.pg_tables 
+            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
+        `);
+        const targetTablesResult = await clientTarget.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
             WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
         
-        const tableNames = tablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
+        const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
+        const targetTableNames = new Set(targetTablesResult.rows.map(row => row.tablename));
+        
+        // Find tables that exist in both source and target
+        const commonTableNames = sourceTableNames.filter(name => targetTableNames.has(name));
+
+        if (commonTableNames.length === 0) {
+            await clientTarget.query('ROLLBACK');
+            return { success: false, message: 'No common tables found between the two databases. Sync aborted.' };
+        }
+
+        console.log('[Sync] Common tables to sync:', commonTableNames);
 
         await clientTarget.query('BEGIN');
 
         // Step 1: Truncate tables in the target database in reverse order to respect dependencies
-        for (const tableName of tableNames.slice().reverse()) {
+        for (const tableName of commonTableNames.slice().reverse()) {
             console.log(`[Sync] Clearing table "${tableName}" in target DB...`);
             await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
         }
 
         // Step 2: Copy data, ensuring column names match
-        for (const tableName of tableNames) {
+        for (const tableName of commonTableNames) {
             console.log(`[Sync] Copying data for table "${tableName}"...`);
             
-            // Get columns from both source and target to find a common subset
             const sourceColumnsResult = await clientSource.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
             const targetColumnsResult = await clientTarget.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
 
             const sourceColumns = sourceColumnsResult.rows.map(row => row.column_name);
             const targetColumns = targetColumnsResult.rows.map(row => row.column_name);
             
-            // Find columns that exist in both tables
             const commonColumns = sourceColumns.filter(col => targetColumns.includes(col));
             
             if (commonColumns.length === 0) {
@@ -882,7 +896,7 @@ async function syncDatabases(sourcePool, targetPool) {
         }
 
         await clientTarget.query('COMMIT');
-        return { success: true, message: `Successfully synced ${tableNames.length} tables.` };
+        return { success: true, message: `Successfully synced ${commonTableNames.length} tables.` };
 
     } catch (error) {
         await clientTarget.query('ROLLBACK');
@@ -893,6 +907,7 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
+
 
 
 
