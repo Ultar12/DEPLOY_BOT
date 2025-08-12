@@ -770,12 +770,13 @@ async function handleRestoreAllConfirm(query) {
             await axios.get(`https://api.heroku.com/apps/${appName}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
-            // If the app exists, skip the restore
+            // If the app exists, this code will run.
             await bot.sendMessage(chatId, `App \`${appName}\` is already active on Heroku. Skipping restore.`, { parse_mode: 'Markdown' });
-            continue; // Go to the next app in the loop
+            continue; // This skips the rest of the loop for this app.
         } catch (e) {
+            // If the app does not exist, a 404 error is returned, and we proceed below.
+            // Other errors are logged and we also skip.
             if (e.response && e.response.status !== 404) {
-                // If it's a real API error, log it and continue
                 console.error(`[RestoreAll] Error checking status for ${appName}: ${e.message}`);
                 await bot.sendMessage(chatId, `Error checking status for \`${appName}\`. Skipping.`, { parse_mode: 'Markdown' });
                 continue;
@@ -810,6 +811,7 @@ async function handleRestoreAllConfirm(query) {
     }
     await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
 }
+
 
 
 // A new reusable function to display the key deletion menu
