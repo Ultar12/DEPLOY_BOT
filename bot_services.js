@@ -1266,6 +1266,7 @@ module.exports = {
     updateFreeTrialWarning,
     removeMonitoredFreeTrial,
     syncDatabases,
+    createAllTablesInPool,
     reconcileDatabaseWithHeroku,
     getExpiringBackups,
     setBackupWarningSent,
