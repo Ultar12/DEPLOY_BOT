@@ -1506,6 +1506,50 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     }
 });
 
+// bot.js
+
+// ... other code ...
+
+// --- NEW COMMAND: /sync ---
+bot.onText(/^\/sync$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const sentMsg = await bot.sendMessage(cid, 'Starting full database synchronization with Heroku. This may take a moment...');
+
+    try {
+        const result = await dbServices.syncDatabaseWithHeroku();
+        
+        if (result.success) {
+            const finalMessage = `
+*Synchronization Complete!*
+- *Added to Database:* ${result.stats.addedToUserBots} missing apps.
+- *Total Heroku Apps now recognized:* The number on Heroku should now match your bot commands.
+
+You can now use /stats or /bapp to see the updated count of all your bots.
+            `;
+            await bot.editMessageText(finalMessage, {
+                chat_id: cid,
+                message_id: sentMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+        } else {
+            await bot.editMessageText(`Sync failed! Reason: ${result.message}`, {
+                chat_id: cid,
+                message_id: sentMsg.message_id,
+                parse_mode: 'Markdown'
+            });
+        }
+    } catch (error) {
+        await bot.editMessageText(`An unexpected error occurred during sync: ${error.message}`, {
+            chat_id: cid,
+            message_id: sentMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+});
+
+
 // NEW: /askadmin command for users to initiate support
 bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
