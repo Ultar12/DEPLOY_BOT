@@ -1778,7 +1778,10 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     }
 });
 
-// --- FIX: Updated /sendall command to support text, photos, and videos ---
+// bot.js
+
+// ... other code ...
+
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -1802,11 +1805,15 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     let failCount = 0;
     let blockedCount = 0;
     
-    const allUserIdsResult = await pool.query('SELECT user_id FROM all_users_backup');
+    // --- THIS IS THE CRITICAL FIX ---
+    // Change the table from 'all_users_backup' to 'user_activity'
+    const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
+    // --- END OF FIX ---
+    
     const userIds = allUserIdsResult.rows.map(row => row.user_id);
     
     if (userIds.length === 0) {
-        return bot.sendMessage(adminId, "No users found in the all_users_backup table to send messages to.");
+        return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
     }
     
     const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
@@ -1844,6 +1851,9 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         { parse_mode: 'Markdown' }
     );
 });
+
+// ... other code ...
+
 
 bot.onText(/^\/copydb$/, async (msg) => {
     const cid = msg.chat.id.toString();
