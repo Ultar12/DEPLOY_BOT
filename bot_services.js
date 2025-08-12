@@ -683,6 +683,139 @@ async function backupAllPaidBots() {
         return { success: false, message: `An unexpected error occurred: ${error.message}` };
     }
 }
+// Helper function to create all tables in a given database pool
+async function createAllTablesInPool(dbPool, dbName) {
+    console.log(`[DB-${dbName}] Checking/creating all tables...`);
+    
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS user_bots (
+        user_id    TEXT NOT NULL,
+        bot_name   TEXT NOT NULL,
+        session_id TEXT,
+        bot_type   TEXT DEFAULT 'levanter',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status     TEXT DEFAULT 'online',
+        PRIMARY KEY (user_id, bot_name)
+      );
+    `);
+    await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS deploy_keys (
+        key        TEXT PRIMARY KEY,
+        uses_left  INTEGER NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await dbPool.query(`ALTER TABLE deploy_keys ADD COLUMN IF NOT EXISTS user_id TEXT;`);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS temp_deploys (
+        user_id       TEXT PRIMARY KEY,
+        last_deploy_at TIMESTAMP NOT NULL
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS user_activity (
+        user_id TEXT PRIMARY KEY,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await dbPool.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS keyboard_version INTEGER DEFAULT 0;`);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS banned_users (
+        user_id TEXT PRIMARY KEY,
+        banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        banned_by TEXT
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS key_rewards (
+          user_id TEXT PRIMARY KEY,
+          reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS all_users_backup (
+        user_id TEXT PRIMARY KEY,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS user_deployments (
+        user_id TEXT NOT NULL,
+        app_name TEXT NOT NULL,
+        session_id TEXT,
+        config_vars JSONB,
+        bot_type TEXT,
+        deploy_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expiration_date TIMESTAMP,
+        deleted_from_heroku_at TIMESTAMP,
+        warning_sent_at TIMESTAMP,
+        PRIMARY KEY (user_id, app_name)
+      );
+    `);
+
+    await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
+    
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS free_trial_monitoring (
+        user_id TEXT PRIMARY KEY,
+        app_name TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        trial_start_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        warning_sent_at TIMESTAMP
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS pending_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS completed_payments (
+        reference  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        amount     INTEGER NOT NULL, -- Stored in kobo
+        currency   TEXT NOT NULL,
+        paid_at    TIMESTAMP WITH TIME ZONE NOT NULL
+      );
+    `);
+
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS pinned_messages (
+        message_id BIGINT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        unpin_at TIMESTAMP WITH TIME ZONE NOT NULL
+      );
+    `);
+
+    await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            data JSONB,
+            expires_at TIMESTAMP WITH TIME ZONE
+        );
+    `);
+
+    console.log(`[DB-${dbName}] All tables checked/created successfully.`);
+}
+
 
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
