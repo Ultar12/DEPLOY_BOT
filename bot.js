@@ -1826,7 +1826,7 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
 
 // ... other code ...
 
-// --- FIX: Updated /sendall command to support text, photos, and videos ---
+// --- FIXED /sendall command to use direct bot method calls ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
@@ -1849,19 +1849,12 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     let failCount = 0;
     let blockedCount = 0;
     
-    // --- THIS IS THE CRITICAL FIX ---
-    // Change the table from 'all_users_backup' to 'user_activity'
     const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
-    // --- END OF FIX ---
-    
     const userIds = allUserIdsResult.rows.map(row => row.user_id);
     
     if (userIds.length === 0) {
         return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
     }
-    
-    const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
-    const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : isVideo ? repliedMsg.video.file_id : null;
 
     for (const userId of userIds) {
         if (userId === adminId) continue;
@@ -1869,13 +1862,19 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
-            if (isPhoto || isVideo) {
-                await sendMethod(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+            // --- THIS IS THE FIX ---
+            // Call the methods directly on the `bot` object inside the loop.
+            if (isPhoto) {
+                await bot.sendPhoto(userId, repliedMsg.photo[repliedMsg.photo.length - 1].file_id, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+            } else if (isVideo) {
+                await bot.sendVideo(userId, repliedMsg.video.file_id, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
             }
+            // --- END OF FIX ---
             
             successCount++;
+            // The timeout is good practice, keep it to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
             if (error.response?.body?.description.includes("bot was blocked")) {
@@ -1896,7 +1895,6 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     );
 });
 
-// ... other code ...
 
 
 bot.onText(/^\/copydb$/, async (msg) => {
