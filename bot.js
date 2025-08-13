@@ -502,6 +502,25 @@ async function sendBannedUsersList(chatId, messageId = null) {
     }
 }
 
+// Function to send a message with a WebApp button
+async function sendMiniAppDeployMessage(chatId, text, miniAppUrl) {
+    const inlineKeyboard = {
+        inline_keyboard: [
+            [{
+                text: 'Deploy,
+                web_app: {
+                    url: miniAppUrl
+                }
+            }]
+        ]
+    };
+
+    return bot.sendMessage(chatId, text, {
+        reply_markup: inlineKeyboard
+    });
+}
+
+
 
 
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
