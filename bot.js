@@ -1063,6 +1063,68 @@ const crypto = require('crypto');
 
             if (event.event === 'charge.success') {
             const { reference, amount, currency, customer } = event.data;
+            try {
+                const result = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+                if (result.rows.length === 0) return res.sendStatus(200);
+
+                const { user_id, bot_type, app_name, session_id } = result.rows[0];
+
+                if (!app_name || !session_id) { // FIX: Check for missing app_name or session_id
+                    await bot.sendMessage(user_id, `Payment confirmed, but deployment failed due to missing app details. Please contact the admin.`, { parse_mode: 'Markdown' });
+                    await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: Paystack webhook for reference ${reference} received, but app_name or session_id was missing from pending_payments table.`, { parse_mode: 'Markdown' });
+                    return res.sendStatus(500);
+                }
+                
+                await pool.query(
+                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+                );
+
+                const userChat = await bot.getChat(user_id);
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+
+                if (bot_type && bot_type.startsWith('renewal_')) {
+                    // ... (Renewal logic is the same) ...
+                } else {
+                    await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
+                    const deployVars = {
+                        SESSION_ID: session_id,
+                        APP_NAME: app_name,
+                    };
+                    dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
+                    const adminMessage = `*New App Deployed (Paid via Paystack)*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``;
+                    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+                }
+
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
+                console.log(`Successfully processed payment for reference: ${reference}`);
+            } catch (dbError) {
+                console.error(`Webhook DB Error for reference ${reference}:`, dbError);
+                return res.sendStatus(500);
+            }
+        }
+        res.sendStatus(200);
+    });
+
+// --- NEW API Endpoint to check if an app name is available ---
+app.get('/api/check-app-name/:appName', async (req, res) => {
+    const appName = req.params.appName;
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        res.json({ available: false });
+    } catch (e) {
+        if (e.response?.status === 404) {
+            res.json({ available: true });
+        } else {
+            res.status(500).json({ available: false, error: 'API Error' });
+        }
+    }
+});
+
+// ... (your other app.get and app.post handlers) ...
+
 // bot.js
 
 // ... (your code above this line) ...
