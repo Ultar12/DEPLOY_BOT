@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const form = document.getElementById('deploy-form');
         const appNameInput = document.getElementById('appName');
         const sessionIdInput = document.getElementById('sessionId');
-        const emailInput = document.getElementById('email');
         const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
         const deployKeyInput = document.getElementById('deployKey');
         const nameStatus = document.getElementById('name-status');
@@ -16,14 +15,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const modalPayButton = document.getElementById('modal-pay-button');
         const paymentEmailInput = document.getElementById('paymentEmail');
 
-        let botType = 'levanter';
-        let userId = '';
+        // --- NEW: Read botType securely from initData or fallback ---
+        let botType = 'levanter'; // Default
+        const params = new URLSearchParams(window.location.search);
+        botType = params.get('bot_type') || botType;
+
         const appNameRegex = /^[a-z0-9-]+$/;
         let isAppNameAvailable = false;
 
-        const params = new URLSearchParams(window.location.search);
-        userId = params.get('user_id');
-        botType = params.get('bot_type') || botType;
+        // --- NEW: Check if WebApp is available and ready ---
+        if (typeof window.Telegram === 'undefined' || typeof window.Telegram.WebApp === 'undefined') {
+            console.error('Telegram WebApp object not found. This script must run inside a Telegram Mini App.');
+            displayMessage('error', 'Mini App is not running in a valid environment.');
+            return;
+        }
+
+        window.Telegram.WebApp.ready();
 
         const displayMessage = (type, text) => {
             errorMessage.textContent = '';
@@ -74,8 +81,17 @@ document.addEventListener('DOMContentLoaded', () => {
             nameStatus.className = 'status-message';
             
             try {
-                const response = await fetch(`/api/check-app-name/${appName}`);
+                // --- CRITICAL FIX: Add the security header ---
+                const response = await fetch(`/api/check-app-name/${appName}`, {
+                     headers: { 'X-Telegram-Init-Data': window.Telegram.WebApp.initData }
+                });
                 const data = await response.json();
+
+                if (response.status === 401) {
+                     nameStatus.textContent = 'Auth error. Reload Mini App.';
+                     nameStatus.className = 'status-message error';
+                     return;
+                }
 
                 if (data.available) {
                     nameStatus.textContent = 'Available!';
@@ -115,28 +131,37 @@ document.addEventListener('DOMContentLoaded', () => {
         autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
         deployKeyInput.addEventListener('input', toggleButtons);
 
+        // --- NEW: Event listener for the "Deploy Bot" (key-based) button ---
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
+            // Your form is set to submit with this button, so we use this handler for key-based deployment.
+            // Check if the key field is filled to confirm this flow.
+            if (!deployKeyInput.value.trim()) {
+                return; // Let the other button handle the payment flow
+            }
+
             displayMessage(null, '');
             submitButton.disabled = true;
             submitButton.textContent = 'Deploying...';
 
             const formData = new FormData(form);
             const data = {
-                userId: userId,
                 botType: botType,
                 appName: formData.get('appName'),
                 sessionId: formData.get('sessionId'),
                 autoStatusView: formData.get('autoStatusView'),
-                deployKey: formData.get('deployKey')
+                deployKey: formData.get('deployKey'),
+                isFreeTrial: false // This flow is never a free trial
             };
 
             try {
+                // --- CRITICAL FIX: Add the security header ---
                 const response = await fetch('/api/deploy', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': window.Telegram.WebApp.initData
                     },
                     body: JSON.stringify(data)
                 });
@@ -160,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         paystackButton.addEventListener('click', async () => {
+            // This button is for payment, so we open the email modal
             emailModal.classList.add('show');
         });
 
@@ -186,36 +212,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const formData = new FormData(form);
             const data = {
-                userId: userId,
                 botType: botType,
                 appName: formData.get('appName'),
                 sessionId: formData.get('sessionId'),
                 email: paymentEmail,
-                autoStatusView: formData.get('autoStatusView')
+                autoStatusView: formData.get('autoStatusView'),
+                isFreeTrial: false // This flow is for a paid deployment
             };
 
             try {
-                const response = await fetch('/api/paystack-init', {
+                // --- CRITICAL FIX: Match the backend API endpoint (/api/pay) ---
+                // --- CRITICAL FIX: Add the security header ---
+                const response = await fetch('/api/pay', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': window.Telegram.WebApp.initData
                     },
                     body: JSON.stringify(data)
                 });
 
                 const result = await response.json();
 
-                if (result.success) {
+                if (response.status === 401) {
+                    displayMessage('error', 'Authentication failed. Please reload the Mini App.');
+                } else if (result.success) {
+                    // --- CRITICAL FIX: The backend returns 'paymentUrl' not 'authorization_url' ---
                     Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
-                    window.location.href = result.authorization_url;
+                    window.location.href = result.paymentUrl;
                 } else {
                     displayMessage('error', result.message);
-                    modalPayButton.disabled = false;
-                    modalPayButton.textContent = 'Pay Now';
                 }
             } catch (error) {
                 console.error('Paystack initiation error:', error);
                 displayMessage('error', 'Failed to connect to server for payment.');
+            } finally {
+                // Restore button state
                 modalPayButton.disabled = false;
                 modalPayButton.textContent = 'Pay Now';
             }
