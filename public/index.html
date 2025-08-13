@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Deployment</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="welcome-screen">
+            <h1 class="welcome-text">Welcome to Bot Deployment</h1>
+            <div class="bot-animation">
+                <span class="bot-emoji">🤖</span>
+            </div>
+        </div>
+
+        <div id="main-content" class="hidden">
+            <header>
+                <h1 class="logo">Bot Deployment</h1>
+                <p class="tagline">Launch your Heroku bot instantly.</p>
+            </header>
+
+            <form id="deploy-form">
+                <div class="form-group">
+                    <label for="appName">App Name</label>
+                    <div class="input-with-status">
+                        <input type="text" id="appName" name="appName" placeholder="e.g., my-awesome-bot" required>
+                        <span id="name-status" class="status-message"></span>
+                    </div>
+                </div>
+                
+                <div id="additional-fields" style="display: none;">
+                    <div class="form-group">
+                        <label for="sessionId">Session ID</label>
+                        <input type="text" id="sessionId" name="sessionId" placeholder="Paste your session ID here" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Auto Status View</label>
+                        <div class="radio-group">
+                            <label>
+                                <input type="radio" name="autoStatusView" value="true" required> Yes
+                            </label>
+                            <label>
+                                <input type="radio" name="autoStatusView" value="false" required> No
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="deployKey">Deploy Key (Optional)</label>
+                        <input type="text" id="deployKey" name="deployKey" placeholder="Enter deploy key if you have one">
+                    </div>
+
+                    <div class="form-group action-buttons">
+                        <button type="submit" id="submit-button" class="btn primary" disabled>Deploy Bot 🚀</button>
+                        <button type="button" id="paystack-button" class="btn secondary">Pay with Paystack</button>
+                    </div>
+                </div>
+            </form>
+            <div class="message-area">
+                <p id="error-message" class="error"></p>
+                <p id="success-message" class="success"></p>
+            </div>
+        </div>
+    </div>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
