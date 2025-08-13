@@ -2,7 +2,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('deploy-form');
     const appNameInput = document.getElementById('appName');
     const sessionIdInput = document.getElementById('sessionId');
-    const emailInput = document.getElementById('email'); // <-- NEW
     const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
     const deployKeyInput = document.getElementById('deployKey');
     const nameStatus = document.getElementById('name-status');
@@ -10,6 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const paystackButton = document.getElementById('paystack-button');
     const errorMessage = document.getElementById('error-message');
     const successMessage = document.getElementById('success-message');
+
+    // New modal elements
+    const emailModal = document.getElementById('email-modal');
+    const closeButton = document.querySelector('.close-button');
+    const modalPayButton = document.getElementById('modal-pay-button');
+    const paymentEmailInput = document.getElementById('paymentEmail');
 
     let botType = 'levanter';
     let userId = '';
@@ -32,14 +37,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const toggleButtons = () => {
         const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
-        const isEmailFilled = emailInput.value.trim().length > 0; // <-- NEW
         const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
         const isDeployKeyFilled = deployKeyInput.value.trim().length > 0;
         
         const canProceed = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
         
         submitButton.disabled = !(canProceed && isDeployKeyFilled);
-        paystackButton.disabled = !(canProceed && isEmailFilled && !isDeployKeyFilled); // <-- NEW
+        paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
+        paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500'; // Dynamic button text
     };
 
     const debounce = (func, delay) => {
@@ -107,7 +112,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     sessionIdInput.addEventListener('input', toggleButtons);
-    emailInput.addEventListener('input', toggleButtons); // <-- NEW
     autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
     deployKeyInput.addEventListener('input', toggleButtons);
 
@@ -155,11 +159,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    paystackButton.addEventListener('click', async () => {
+    // --- NEW PAYMENT FLOW LOGIC ---
+    paystackButton.addEventListener('click', () => {
+        emailModal.classList.add('show');
+    });
+
+    closeButton.addEventListener('click', () => {
+        emailModal.classList.remove('show');
+    });
+
+    window.addEventListener('click', (e) => {
+        if (e.target === emailModal) {
+            emailModal.classList.remove('show');
+        }
+    });
+
+    modalPayButton.addEventListener('click', async () => {
+        const paymentEmail = paymentEmailInput.value.trim();
+        if (!paymentEmail || !paymentEmail.includes('@')) {
+            alert('Please enter a valid email.');
+            return;
+        }
+
         displayMessage(null, '');
-        submitButton.disabled = true;
-        paystackButton.disabled = true;
-        paystackButton.textContent = 'Processing...';
+        modalPayButton.disabled = true;
+        modalPayButton.textContent = 'Processing...';
 
         const formData = new FormData(form);
         const data = {
@@ -167,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
             botType: botType,
             appName: formData.get('appName'),
             sessionId: formData.get('sessionId'),
-            email: formData.get('email'), // <-- NEW
+            email: paymentEmail,
             autoStatusView: formData.get('autoStatusView')
         };
 
@@ -187,14 +211,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.location.href = result.authorization_url;
             } else {
                 displayMessage('error', result.message);
-                paystackButton.disabled = false;
-                paystackButton.textContent = 'Pay with Paystack';
+                modalPayButton.disabled = false;
+                modalPayButton.textContent = 'Pay Now';
             }
         } catch (error) {
             console.error('Paystack initiation error:', error);
             displayMessage('error', 'Failed to connect to server for payment.');
-            paystackButton.disabled = false;
-            paystackButton.textContent = 'Pay with Paystack';
+            modalPayButton.disabled = false;
+            modalPayButton.textContent = 'Pay Now';
         }
     });
 });
