@@ -1,3 +1,4 @@
+/* Custom Fonts and Global Styles */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
 
 body {
@@ -26,6 +27,11 @@ body {
     background-size: cover;
     background-position: center;
     overflow: hidden;
+    /* --- NEW: Center the content of the container --- */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 
 /* Modal Styles */
