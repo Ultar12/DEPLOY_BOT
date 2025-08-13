@@ -13,6 +13,7 @@ require('dotenv').config();
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
+const miniappServer = require('./miniapp_server');
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -970,6 +971,20 @@ async function notifyAdminUserOnline(msg) {
        escapeMarkdown: escapeMarkdown,
     });
 
+  miniappServer.init({
+  bot: bot,
+  HEROKU_API_KEY: HEROKU_API_KEY,
+  pool: pool,
+  ADMIN_ID: ADMIN_ID,
+  dbServices: dbServices,
+  buildWithProgress: dbServices.buildWithProgress, // Pass the correct function
+  TELEGRAM_BOT_TOKEN: TELEGRAM_BOT_TOKEN,
+  PAYSTACK_SECRET_KEY: PAYSTACK_SECRET_KEY,
+  RAGANORK_SESSION_PREFIX: RAGANORK_SESSION_PREFIX,
+  LEVANTER_SESSION_PREFIX: LEVANTER_SESSION_PREFIX,
+});
+
+
     //// Initialize bot_services.js
    servicesInit({
     mainPool: pool,
@@ -1055,6 +1070,8 @@ if (process.env.NODE_ENV === 'production') {
       console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
     }
     // --- END: Auto-Ping Logic ---
+
+  app.use(miniappServer.app);
 
     app.post(webhookPath, (req, res) => {
         bot.processUpdate(req.body);
