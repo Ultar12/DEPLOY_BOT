@@ -1135,6 +1135,10 @@ app.get('/api/check-app-name/:appName', async (req, res) => {
     }
 });
 
+  app.get('/deploy', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ... (your other app.get and app.post handlers) ...
 
 
