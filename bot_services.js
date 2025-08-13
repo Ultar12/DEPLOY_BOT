@@ -710,9 +710,15 @@ async function removeMonitoredFreeTrial(userId) {
 }
 
 // --- FINAL FIXED FUNCTION: BACKS UP ALL APPS ON HEROKU ---
+// bot_services.js
+
+// ... other code ...
+
+// --- FIXED FUNCTION: BACKS UP ALL APPS WITH ROBUST ERROR HANDLING ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
+    let failedCount = 0; // <-- RE-INTRODUCED FAILED COUNTER
     let notFoundCount = 0;
     const herokuAppList = [];
 
@@ -722,7 +728,6 @@ async function backupAllPaidBots() {
         unknown: { backedUp: 0, failed: 0 }
     };
     
-    // Fetch all apps directly from Heroku without any filtering
     try {
         const allHerokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
             headers: {
@@ -730,8 +735,6 @@ async function backupAllPaidBots() {
                 Accept: 'application/vnd.heroku+json; version=3'
             }
         });
-        
-        // This is the key change: we take ALL app names.
         const herokuApps = allHerokuAppsResponse.data.map(app => app.name);
         herokuAppList.push(...herokuApps);
         
@@ -745,13 +748,12 @@ async function backupAllPaidBots() {
         return { success: false, message: `Failed to fetch app list from Heroku API: ${error.message}` };
     }
 
-    // Now iterate through the full list of apps from Heroku
     for (const appName of herokuAppList) {
-        let userId = ADMIN_ID; // Fallback to ADMIN_ID
+        let userId = ADMIN_ID;
         let botType = 'unknown';
 
         try {
-            // Try to find the user_id and bot_type from the local database
+            // Check for owner in the local database
             const localBotRecord = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1', [appName]);
             if (localBotRecord.rows.length > 0) {
                 userId = localBotRecord.rows[0].user_id;
@@ -761,6 +763,7 @@ async function backupAllPaidBots() {
                 notFoundCount++;
             }
 
+            // Fetch app config vars from Heroku
             const response = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
                 headers: {
                     Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -770,8 +773,10 @@ async function backupAllPaidBots() {
             const configVars = response.data;
             const sessionId = configVars.SESSION_ID || 'N/A';
 
+            // Save to the database
             await saveUserDeployment(userId, appName, sessionId, configVars, botType);
             console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId})`);
+            
             backedUpCount++;
             if (typeStats[botType]) {
                 typeStats[botType].backedUp++;
@@ -780,17 +785,13 @@ async function backupAllPaidBots() {
             }
             
         } catch (error) {
-            // A 404 here means the app was likely just deleted from Heroku
-            if (error.response && error.response.status === 404) {
-                 console.warn(`[DB-Backup] App not found on Heroku during backup: ${appName}. Skipping.`);
-                 notFoundCount++;
+            // A 404 means the app was likely deleted, but other errors will also be caught.
+            console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
+            failedCount++; // <-- INCREMENT THE FAILED COUNTER
+            if (typeStats[botType]) {
+                typeStats[botType].failed++;
             } else {
-                console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
-                if (typeStats[botType]) {
-                    typeStats[botType].failed++;
-                } else {
-                    typeStats.unknown.failed++;
-                }
+                typeStats.unknown.failed++;
             }
         }
     }
@@ -806,10 +807,12 @@ async function backupAllPaidBots() {
             totalRelevantApps: herokuAppList.length,
             appsBackedUp: backedUpCount,
             appsNotFoundLocally: notFoundCount,
+            appsFailed: failedCount, // <-- ADD THE FAILED COUNT TO THE REPORT
             appsSkipped: 0
         }
     };
 }
+
 
 
 // Helper function to create all tables in a given database pool
