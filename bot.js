@@ -5740,6 +5740,38 @@ if (action === 'setvarbool') {
     return;
   }
 
+  /// bot.js
+
+// ... inside bot.on('callback_query', ... )
+
+if (action === 'select_deploy_type_miniapp') {
+    const botType = payload;
+    const st = userStates[cid];
+
+    if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION_MINIAPP') {
+        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: q.message.message_id });
+    }
+      
+    // --- THIS IS THE FIXED URL ---
+    const miniAppUrl = `https://deploy-bot-gd97.onrender.com/deploy?user_id=${cid}&bot_type=${botType}`;
+    // --- END FIX ---
+
+    await bot.editMessageText(`You have selected *${botType.toUpperCase()}*. Tap the button below to launch the Mini App and fill in your deployment details.`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Launch Deployment App 🚀', web_app: { url: miniAppUrl } }]
+            ]
+        }
+    });
+
+    delete userStates[cid];
+    return;
+}
+
+
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
@@ -5778,37 +5810,6 @@ if (action === 'setvarbool') {
     }
   }
 });
-
-// bot.js
-
-// ... inside bot.on('callback_query', ... )
-
-if (action === 'select_deploy_type_miniapp') {
-    const botType = payload;
-    const st = userStates[cid];
-
-    if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION_MINIAPP') {
-        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: q.message.message_id });
-    }
-      
-    // --- THIS IS THE FIXED URL ---
-    const miniAppUrl = `https://deploy-bot-gd97.onrender.com/deploy?user_id=${cid}&bot_type=${botType}`;
-    // --- END FIX ---
-
-    await bot.editMessageText(`You have selected *${botType.toUpperCase()}*. Tap the button below to launch the Mini App and fill in your deployment details.`, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Launch Deployment App 🚀', web_app: { url: miniAppUrl } }]
-            ]
-        }
-    });
-
-    delete userStates[cid];
-    return;
-}
 
 
 // --- FIX: Final, corrected bot.on('channel_post') handler ---
