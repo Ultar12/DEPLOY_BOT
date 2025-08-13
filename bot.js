@@ -1918,9 +1918,6 @@ bot.onText(/^\/copydb$/, async (msg) => {
     });
 });
 
-
-// bot.js
-
 // ... other code ...
 
 bot.onText(/^\/backupall$/, async (msg) => {
@@ -1936,6 +1933,9 @@ bot.onText(/^\/backupall$/, async (msg) => {
         if (result.success && result.stats) {
             const { levanter, raganork, unknown } = result.stats;
             const { appsBackedUp, appsFailed } = result.miscStats;
+
+            // Format the lists of app names
+            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
             
             finalMessage = `
 *Backup Summary:*
@@ -1945,18 +1945,17 @@ bot.onText(/^\/backupall$/, async (msg) => {
 *Total Failed:* ${appsFailed}
 
 *Levanter Bots:*
-  - Backed up: ${levanter.backedUp}
-  - Failed: ${levanter.failed}
+  - Success: ${levanter.backedUp.length}
+  - Failed: ${levanter.failed.length}
 
 *Raganork Bots:*
-  - Backed up: ${raganork.backedUp}
-  - Failed: ${raganork.failed}
+  - Success: ${raganork.backedUp.length}
+  - Failed: ${raganork.failed.length}
 
 *Misc. Bots:*
-  - Backed up: ${unknown.backedUp}
-  - Failed: ${unknown.failed}
-
-_Apps that were not found in the local database are now backed up under the admin's ID for safety._
+_The following apps were not found in the local database._
+  - **Success:** ${formatList(unknown.backedUp)}
+  - **Failed:** ${formatList(unknown.failed)}
             `;
         } else {
             finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
