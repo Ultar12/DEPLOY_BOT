@@ -2096,21 +2096,51 @@ bot.onText(/^\/copydb$/, async (msg) => {
 });
 
 
-// --- REPLACE this entire function in bot.js ---
-
-// --- ADD this new command to bot.js ---
-
 bot.onText(/^\/backupall$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
 
-    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all paid bots... This might take some time.');
+    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
 
     try {
         const result = await dbServices.backupAllPaidBots();
-        await bot.editMessageText(result.message, {
+        
+        let finalMessage;
+        if (result.success && result.stats) {
+            const { levanter, raganork, unknown } = result.stats;
+            const { appsBackedUp, appsFailed } = result.miscStats;
+
+            // Format the lists of app names
+            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
+            
+            finalMessage = `
+*Backup Summary:*
+
+*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
+*Total Success:* ${appsBackedUp}
+*Total Failed:* ${appsFailed}
+
+*Levanter Bots:*
+  - Success: ${levanter.backedUp.length}
+  - Failed: ${levanter.failed.length}
+
+*Raganork Bots:*
+  - Success: ${raganork.backedUp.length}
+  - Failed: ${raganork.failed.length}
+
+*Misc. Bots:*
+_The following apps were not found in the local database._
+  - **Success:** ${formatList(unknown.backedUp)}
+  - **Failed:** ${formatList(unknown.failed)}
+            `;
+        } else {
+            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
+        }
+        
+        await bot.editMessageText(finalMessage, {
             chat_id: cid,
-            message_id: sentMsg.message_id
+            message_id: sentMsg.message_id,
+            parse_mode: 'Markdown'
         });
     } catch (error) {
         await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
