@@ -976,6 +976,18 @@ async function notifyAdminUserOnline(msg) {
      getAllUserBots: dbServices.getAllUserBots, 
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
+
+  // --- ADD THIS CRITICAL BLOCK ---
+miniappApp.init({
+    bot: bot,
+    HEROKU_API_KEY: HEROKU_API_KEY,
+    pool: pool,
+    ADMIN_ID: ADMIN_ID,
+    dbServices: dbServices,
+    buildWithProgress: dbServices.buildWithProgress,
+    escapeMarkdown: escapeMarkdown
+});
+
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
