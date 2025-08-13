@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     try {
+        console.log("Mini App script loaded successfully."); // <-- Add this for debugging
+
         const form = document.getElementById('deploy-form');
         const appNameInput = document.getElementById('appName');
         const sessionIdInput = document.getElementById('sessionId');
@@ -51,7 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
             paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
             paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500';
             
-            // --- NEW: Add color logic based on app name availability ---
             if (isAppNameAvailable) {
                 submitButton.classList.add('green');
                 submitButton.classList.remove('red');
@@ -92,7 +93,6 @@ document.addEventListener('DOMContentLoaded', () => {
             nameStatus.className = 'status-message';
             
             try {
-                // --- MODIFIED: Added /miniapp to the URL ---
                 const response = await fetch(`/miniapp/api/check-app-name/${appName}`, {
                      headers: { 'X-Telegram-Init-Data': window.Telegram.WebApp.initData }
                 });
@@ -164,7 +164,6 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             try {
-                // --- MODIFIED: Added /miniapp to the URL ---
                 const response = await fetch('/miniapp/api/deploy', {
                     method: 'POST',
                     headers: {
@@ -228,7 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             try {
-                // --- MODIFIED: Added /miniapp to the URL ---
                 const response = await fetch('/miniapp/api/pay', {
                     method: 'POST',
                     headers: {
@@ -243,7 +241,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 401) {
                     displayMessage('error', 'Authentication failed. Please reload the Mini App.');
                 } else if (result.success) {
-                    // --- MODIFIED: Corrected property name from 'authorization_url' to 'paymentUrl' and used openLink ---
                     Telegram.WebApp.openLink(result.paymentUrl);
                     Telegram.WebApp.close();
                 } else {
