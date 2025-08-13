@@ -81,8 +81,8 @@ document.addEventListener('DOMContentLoaded', () => {
             nameStatus.className = 'status-message';
             
             try {
-                // --- CRITICAL FIX: Add the security header ---
-                const response = await fetch(`/api/check-app-name/${appName}`, {
+                // --- MODIFIED: Added /miniapp to the URL ---
+                const response = await fetch(`/miniapp/api/check-app-name/${appName}`, {
                      headers: { 'X-Telegram-Init-Data': window.Telegram.WebApp.initData }
                 });
                 const data = await response.json();
@@ -156,8 +156,8 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             try {
-                // --- CRITICAL FIX: Add the security header ---
-                const response = await fetch('/api/deploy', {
+                // --- MODIFIED: Added /miniapp to the URL ---
+                const response = await fetch('/miniapp/api/deploy', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -221,9 +221,8 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             try {
-                // --- CRITICAL FIX: Match the backend API endpoint (/api/pay) ---
-                // --- CRITICAL FIX: Add the security header ---
-                const response = await fetch('/api/pay', {
+                // --- MODIFIED: Added /miniapp to the URL ---
+                const response = await fetch('/miniapp/api/pay', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -237,7 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 401) {
                     displayMessage('error', 'Authentication failed. Please reload the Mini App.');
                 } else if (result.success) {
-                    // --- CRITICAL FIX: The backend returns 'paymentUrl' not 'authorization_url' ---
+                    // --- MODIFIED: Corrected property name from 'authorization_url' to 'paymentUrl' ---
                     Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
                     window.location.href = result.paymentUrl;
                 } else {
