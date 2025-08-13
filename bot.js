@@ -3138,67 +3138,72 @@ if (usesLeft === null) {
 
 
 
- // bot.js
+if (text === 'Deploy' || text === 'Free Trial') {
+    const isFreeTrial = (text === 'Free Trial');
 
-// ... existing code ...
-
-// The core issue is that there are two separate pieces of code that
-// should be a single, cohesive state handler. We need to consolidate them.
-
-// First, find and remove this entire block, as it is incomplete and causes the bug:
-// if (st && st.step === 'AWAITING_APP_NAME') { ... }
-
-// Now, replace it with this single, comprehensive handler.
-if (st && st.step === 'AWAITING_APP_NAME') {
-    const appName = text.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-
-    // Validate app name format. Heroku app names can only contain lowercase letters, numbers, and dashes.
-    if (!/^[a-z0-9-]{3,30}$/.test(appName)) {
-        // Send a new message asking for the name again, possibly with a hint.
-        await bot.sendMessage(cid, 'Invalid app name. It must be between 3 and 30 characters and only contain lowercase letters, numbers, and dashes.');
-        // Don't change the state, just wait for a new valid input.
-        return;
-    }
-
-    try {
-        // Check if the app name is already taken on Heroku.
-        await axios.get(`https://api.heroku.com/apps/${appName}`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        // If the request succeeds, the app exists.
-        await bot.sendMessage(cid, 'That app name is already taken. Please try another one:');
-        return;
-    } catch (e) {
-        // A 404 error is expected and means the app name is available.
-        if (e.response?.status !== 404) {
-            console.error(`[Heroku Check] Error checking app name existence for ${appName}:`, e.message);
-            await bot.sendMessage(cid, 'An error occurred while checking the app name. Please try again later.');
-            return;
+    if (isFreeTrial) {
+        const check = await dbServices.canDeployFreeTrial(cid);
+        if (!check.can) {
+            // This part is now updated
+            const formattedDate = check.cooldown.toLocaleString('en-US', {
+                timeZone: 'Africa/Lagos', // Set for Nigeria
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
+            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    ]
+                }
+            });
         }
+
+        try { 
+            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
+            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+            if (isMember) {
+                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
+                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                        ]
+                    }
+                });
+            } else {
+                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
+                        ]
+                    }
+                });
+            }
+        } catch (error) { 
+            console.error("Error in free trial initial check:", error.message);
+            await bot.sendMessage(cid, "An error occurred. Please try again later.");
+        }
+        return;
+
+    } else { // This is the "Deploy" (paid) flow
+        delete userStates[cid];
+        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
+        await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                ]
+            }
+        });
+        return;
     }
-
-    // App name is valid and available. Proceed to the next step.
-    st.data.APP_NAME = appName;
-    st.step = 'AWAITING_AUTO_STATUS_CHOICE';
-
-    const confirmationMessage = `*Next Step:*\n` +
-                                `Enable automatic status view?`;
-    
-    await bot.sendMessage(cid, confirmationMessage, {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
-                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
-            ]
-        },
-        parse_mode: 'Markdown'
-    });
-    return;
 }
-
-// ... existing code ...
-
-
 
 
 
