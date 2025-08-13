@@ -102,7 +102,7 @@ header {
     100% { color: #ff0000; }
 }
 
-/* Form and Button Styles remain the same */
+/* Form Styling */
 .form-group {
     margin-bottom: 20px;
 }
@@ -124,6 +124,8 @@ input[type="text"]:focus, input[type="email"]:focus {
 ::placeholder {
     color: #666;
 }
+
+/* Status Message */
 .input-with-status {
     position: relative;
 }
@@ -143,11 +145,15 @@ input[type="text"]:focus, input[type="email"]:focus {
 .status-message.error {
     color: #ffc107;
 }
+
+/* Radio Buttons */
 .radio-group label {
     display: inline-block;
     margin-right: 20px;
     font-size: 14px;
 }
+
+/* Buttons */
 .action-buttons {
     display: flex;
     flex-direction: column;
@@ -182,6 +188,8 @@ input[type="text"]:focus, input[type="email"]:focus {
     color: #999;
     cursor: not-allowed;
 }
+
+/* Message Area */
 .message-area {
     text-align: center;
     margin-top: 20px;
