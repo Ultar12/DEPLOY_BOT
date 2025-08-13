@@ -999,9 +999,11 @@ const crypto = require('crypto');
 if (process.env.NODE_ENV === 'production') {
     // --- Webhook Mode (for Heroku) ---
     const app = express();
-    app.use(express.json());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
 
-    const APP_URL = process.env.APP_URL;
+const APP_URL = process.env.APP_URL;
+
     if (!APP_URL) {
         console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
         process.exit(1);
