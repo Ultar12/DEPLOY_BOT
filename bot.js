@@ -12,6 +12,7 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 require('dotenv').config();
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
+const miniappApp = require('./miniapp_server');
 const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
@@ -1105,8 +1106,7 @@ const crypto = require('crypto');
         res.sendStatus(200);
     });
 
-
-
+  app.use(miniappApp);
 
     // This GET handler is for users who visit the webhook URL in a browser
     app.get('/paystack/webhook', (req, res) => {
