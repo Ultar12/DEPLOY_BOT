@@ -1106,6 +1106,26 @@ const crypto = require('crypto');
         res.sendStatus(200);
     });
 
+// --- NEW API Endpoint to check if an app name is available ---
+app.get('/api/check-app-name/:appName', async (req, res) => {
+    const appName = req.params.appName;
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        res.json({ available: false });
+    } catch (e) {
+        if (e.response?.status === 404) {
+            res.json({ available: true });
+        } else {
+            res.status(500).json({ available: false, error: 'API Error' });
+        }
+    }
+});
+
+// ... (your other app.get and app.post handlers) ...
+
+
   app.use(miniappApp);
 
     // This GET handler is for users who visit the webhook URL in a browser
