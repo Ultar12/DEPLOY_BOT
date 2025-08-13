@@ -1,0 +1,157 @@
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('deploy-form');
+    const appNameInput = document.getElementById('appName');
+    const nameStatus = document.getElementById('name-status');
+    const additionalFields = document.getElementById('additional-fields');
+    const submitButton = document.getElementById('submit-button');
+    const paystackButton = document.getElementById('paystack-button'); // Get the Paystack button
+    const errorMessage = document.getElementById('error-message');
+    const successMessage = document.getElementById('success-message');
+    const container = document.querySelector('.container'); // Select the container for background
+
+    let botType = 'levanter'; // Default value
+    let userId = '';
+    const appNameRegex = /^[a-z0-9-]+$/; // Regex for valid Heroku app names
+    const backgroundImageURL = 'https://files.catbox.moe/k1n5p2.jpeg';
+
+    // Set the background image
+    container.style.backgroundImage = `url('${backgroundImageURL}')`;
+    container.style.backgroundSize = 'cover';
+    container.style.backgroundPosition = 'center';
+    container.style.color = '#f8f9fa'; // Adjust text color for better visibility on the background
+
+    // Read initial data from URL parameters
+    const params = new URLSearchParams(window.location.search);
+    userId = params.get('user_id');
+    botType = params.get('bot_type') || botType;
+
+    // Function to display messages
+    const displayMessage = (type, text) => {
+        errorMessage.textContent = '';
+        successMessage.textContent = '';
+        if (type === 'error') {
+            errorMessage.textContent = text;
+        } else if (type === 'success') {
+            successMessage.textContent = text;
+        }
+    };
+
+    // Function to toggle visibility of additional fields
+    const toggleAdditionalFields = (visible) => {
+        additionalFields.style.display = visible ? 'block' : 'none';
+    };
+
+    // Debounce function to limit API calls during typing
+    const debounce = (func, delay) => {
+        let timeoutId;
+        return (...args) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => func.apply(this, args), delay);
+        };
+    };
+
+    const checkAppNameAvailability = async (appName) => {
+        if (!appNameRegex.test(appName)) {
+            nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
+            nameStatus.className = 'status-message taken';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+            return;
+        }
+
+        nameStatus.textContent = 'Checking...';
+        nameStatus.className = 'status-message';
+        toggleAdditionalFields(false);
+        submitButton.disabled = true;
+
+        try {
+            const response = await fetch(`/api/check-app-name/${appName}`);
+            const data = await response.json();
+
+            if (data.available) {
+                nameStatus.textContent = 'Available!';
+                nameStatus.className = 'status-message available';
+                toggleAdditionalFields(true);
+                submitButton.disabled = false;
+            } else {
+                nameStatus.textContent = 'Not Available';
+                nameStatus.className = 'status-message taken';
+                toggleAdditionalFields(false);
+                submitButton.disabled = true;
+            }
+        } catch (error) {
+            console.error('Error checking app name:', error);
+            nameStatus.textContent = 'Error checking name';
+            nameStatus.className = 'status-message error';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+        }
+    };
+
+    const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
+
+    // Event listener for app name input
+    appNameInput.addEventListener('input', () => {
+        const appName = appNameInput.value.trim();
+        nameStatus.textContent = ''; // Clear previous status
+        toggleAdditionalFields(false);
+        submitButton.disabled = true;
+        if (appName.length >= 3) {
+            debouncedCheckAppName(appName);
+        } else if (appName.length > 0) {
+            nameStatus.textContent = 'Enter at least 3 characters.';
+            nameStatus.className = 'status-message';
+        }
+    });
+
+    // Form submission logic
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        displayMessage(null, ''); // Clear previous messages
+        submitButton.disabled = true;
+        submitButton.textContent = 'Deploying...';
+
+        const formData = new FormData(form);
+        const data = {
+            userId: userId,
+            botType: botType,
+            appName: formData.get('appName'),
+            sessionId: formData.get('sessionId'),
+            autoStatusView: formData.get('autoStatusView')
+            // TODO: Add deploy key and payment logic here
+        };
+
+        try {
+            const response = await fetch('/api/deploy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                displayMessage('success', result.message);
+                Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
+                Telegram.WebApp.close(); // Close the Mini App
+            } else {
+                displayMessage('error', result.message);
+                submitButton.disabled = false;
+                submitButton.textContent = 'Deploy Bot';
+            }
+        } catch (error) {
+            console.error('Error submitting deployment:', error);
+            displayMessage('error', 'Failed to connect to server.');
+            submitButton.disabled = false;
+            submitButton.textContent = 'Deploy Bot';
+        }
+    });
+
+    // Example Paystack button action (you'll need to integrate the Paystack API)
+    paystackButton.addEventListener('click', () => {
+        Telegram.WebApp.showAlert('Paystack integration is not yet fully implemented in this example.');
+        // In a real implementation, you would trigger the Paystack payment flow here.
+    });
+});
