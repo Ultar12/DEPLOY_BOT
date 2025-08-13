@@ -1,33 +1,19 @@
-// server.js
+// miniapp_server.js
 
-require('dotenv').config();
 const express = require('express');
-const bodyParser = require('body-parser');
 const axios = require('axios');
 const path = require('path');
-const { Pool } = require('pg');
 const { init: servicesInit, buildWithProgress } = require('./bot_services');
+const { Pool } = require('pg');
 const TelegramBot = require('node-telegram-bot-api');
 
-// --- Environment Variables & Dependencies ---
-const {
-    TELEGRAM_BOT_TOKEN,
-    HEROKU_API_KEY,
-    ADMIN_ID,
-    DATABASE_URL,
-    DATABASE_URL2,
-    GITHUB_LEVANTER_REPO_URL,
-    GITHUB_RAGANORK_REPO_URL,
-    PAYSTACK_SECRET_KEY,
-    INTER_BOT_API_KEY
-} = process.env;
+// IMPORTANT: This file needs access to your global variables and dependencies
+// We will mock them for demonstration purposes. In bot.js, you will pass the real ones.
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const backupPool = new Pool({ connectionString: process.env.DATABASE_URL2, ssl: { rejectUnauthorized: false } });
 
-const PORT = process.env.PORT || 3000;
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
-const backupPool = new Pool({ connectionString: DATABASE_URL2, ssl: { rejectUnauthorized: false } });
-
-// --- Mocking functions needed by bot_services.js ---
+// You would need to add these global variables to your bot.js file for them to be passed
 const appDeploymentPromises = new Map();
 function getAnimatedEmoji() { return '🚀'; }
 async function animateMessage(chatId, messageId, baseText) { return null; }
@@ -36,15 +22,14 @@ function monitorSendTelegramAlert(message, chatId) { console.log(`[ALERT to ${ch
 function escapeMarkdown(text) { return text.replace(/([_*`>])/g, '\\$1'); }
 const defaultEnvVars = { levanter: {}, raganork: {} };
 
-// Initialize bot_services with dependencies
 servicesInit({
     mainPool: pool,
     backupPool: backupPool,
     bot: bot,
-    HEROKU_API_KEY: HEROKU_API_KEY,
-    GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
-    GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
-    ADMIN_ID: ADMIN_ID,
+    HEROKU_API_KEY: process.env.HEROKU_API_KEY,
+    GITHUB_LEVANTER_REPO_URL: process.env.GITHUB_LEVANTER_REPO_URL,
+    GITHUB_RAGANORK_REPO_URL: process.env.GITHUB_RAGANORK_REPO_URL,
+    ADMIN_ID: process.env.ADMIN_ID,
     defaultEnvVars: defaultEnvVars,
     appDeploymentPromises: appDeploymentPromises,
     RESTART_DELAY_MINUTES: 1,
@@ -56,10 +41,9 @@ servicesInit({
 });
 
 const app = express();
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-// --- API Endpoints for the Mini App ---
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
 
 // Endpoint to serve the Mini App's HTML
 app.get('/deploy', (req, res) => {
@@ -71,7 +55,7 @@ app.get('/api/check-app-name/:appName', async (req, res) => {
     const appName = req.params.appName;
     try {
         await axios.get(`https://api.heroku.com/apps/${appName}`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            headers: { Authorization: `Bearer ${process.env.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         res.json({ available: false });
     } catch (e) {
@@ -87,7 +71,6 @@ app.get('/api/check-app-name/:appName', async (req, res) => {
 app.post('/api/deploy', async (req, res) => {
     const { userId, botType, appName, sessionId, autoStatusView, deployKey } = req.body;
     
-    // You must add real validation and security checks here
     if (!userId || !botType || !appName || !sessionId) {
         return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
@@ -101,7 +84,8 @@ app.post('/api/deploy', async (req, res) => {
     };
 
     try {
-        // Use your existing `buildWithProgress` function
+        await bot.sendMessage(userId, `Deployment of app *${escapeMarkdown(appName)}* has been initiated via the Mini App. You will be notified when it's live!`, { parse_mode: 'Markdown' });
+        
         await buildWithProgress(userId, deployVars, false, false, botType);
         res.json({ success: true, message: 'Deployment initiated. Check bot for updates.' });
     } catch (e) {
@@ -109,6 +93,4 @@ app.post('/api/deploy', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Mini App backend running on port ${PORT}`);
-});
+module.exports = app;
