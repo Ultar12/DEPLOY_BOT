@@ -709,23 +709,22 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// --- FINAL FIXED FUNCTION: BACKS UP ALL APPS ON HEROKU ---
 // bot_services.js
 
 // ... other code ...
 
-// --- FIXED FUNCTION: BACKS UP ALL APPS WITH ROBUST ERROR HANDLING ---
+// --- FIXED FUNCTION: NOW RETURNS A LIST OF APPS IN EACH CATEGORY ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
-    let failedCount = 0; // <-- RE-INTRODUCED FAILED COUNTER
+    let failedCount = 0;
     let notFoundCount = 0;
     const herokuAppList = [];
 
     const typeStats = {
-        levanter: { backedUp: 0, failed: 0 },
-        raganork: { backedUp: 0, failed: 0 },
-        unknown: { backedUp: 0, failed: 0 }
+        levanter: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
+        raganork: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
+        unknown: { backedUp: [], failed: [] }   // <-- NOW ARRAYS
     };
     
     try {
@@ -753,7 +752,6 @@ async function backupAllPaidBots() {
         let botType = 'unknown';
 
         try {
-            // Check for owner in the local database
             const localBotRecord = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1', [appName]);
             if (localBotRecord.rows.length > 0) {
                 userId = localBotRecord.rows[0].user_id;
@@ -763,7 +761,6 @@ async function backupAllPaidBots() {
                 notFoundCount++;
             }
 
-            // Fetch app config vars from Heroku
             const response = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
                 headers: {
                     Authorization: `Bearer ${HEROKU_API_KEY}`,
@@ -773,25 +770,23 @@ async function backupAllPaidBots() {
             const configVars = response.data;
             const sessionId = configVars.SESSION_ID || 'N/A';
 
-            // Save to the database
             await saveUserDeployment(userId, appName, sessionId, configVars, botType);
             console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId})`);
             
             backedUpCount++;
             if (typeStats[botType]) {
-                typeStats[botType].backedUp++;
+                typeStats[botType].backedUp.push(appName); // <-- PUSH NAME
             } else {
-                typeStats.unknown.backedUp++;
+                typeStats.unknown.backedUp.push(appName); // <-- PUSH NAME
             }
             
         } catch (error) {
-            // A 404 means the app was likely deleted, but other errors will also be caught.
             console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
-            failedCount++; // <-- INCREMENT THE FAILED COUNTER
+            failedCount++;
             if (typeStats[botType]) {
-                typeStats[botType].failed++;
+                typeStats[botType].failed.push(appName); // <-- PUSH NAME
             } else {
-                typeStats.unknown.failed++;
+                typeStats.unknown.failed.push(appName); // <-- PUSH NAME
             }
         }
     }
@@ -807,11 +802,12 @@ async function backupAllPaidBots() {
             totalRelevantApps: herokuAppList.length,
             appsBackedUp: backedUpCount,
             appsNotFoundLocally: notFoundCount,
-            appsFailed: failedCount, // <-- ADD THE FAILED COUNT TO THE REPORT
+            appsFailed: failedCount,
             appsSkipped: 0
         }
     };
 }
+
 
 
 
