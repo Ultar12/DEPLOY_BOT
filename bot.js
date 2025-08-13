@@ -1117,84 +1117,158 @@ const crypto = require('crypto');
         }
         res.sendStatus(200);
     });
+// bot.js
 
-// --- NEW API Endpoint to check if an app name is available ---
-app.get('/api/check-app-name/:appName', async (req, res) => {
-    const appName = req.params.appName;
-    try {
-        await axios.get(`https://api.heroku.com/apps/${appName}`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        res.json({ available: false });
-    } catch (e) {
-        if (e.response?.status === 404) {
-            res.json({ available: true });
-        } else {
-            res.status(500).json({ available: false, error: 'API Error' });
-        }
+// ... (your code above this block) ...
+
+if (process.env.NODE_ENV === 'production') {
+    // We assume 'app' is already declared in the global scope.
+    
+    const APP_URL = process.env.APP_URL;
+    if (!APP_URL) {
+        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
+        process.exit(1);
     }
-});
+    const PORT = process.env.PORT || 3000;
+    
+    const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
 
-  app.get('/deploy', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+    const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
+    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-// ... (your other app.get and app.post handlers) ...
+    (async () => {
+        try {
+            await bot.setWebHook(fullWebhookUrl);
+            console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
+        } catch (err) {
+            console.error(`[Webhook] Failed to set webhook:`, err.message);
+            process.exit(1);
+        }
+    })();
 
+    if (process.env.APP_URL && process.env.RENDER === 'true') {
+      const PING_INTERVAL_MS = 10 * 60 * 1000;
+      
+      setInterval(async () => {
+        try {
+          await axios.get(APP_URL);
+          console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
+        } catch (error) {
+          console.error(`[Pinger] Render self-ping failed: ${error.message}`);
+        }
+      }, PING_INTERVAL_MS);
+      
+      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
+    } else {
+      console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
+    }
 
-  app.use(miniappApp);
+    // --- All API Endpoints are consolidated here ---
+    
+    app.post(webhookPath, (req, res) => {
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
+    });
 
-    // This GET handler is for users who visit the webhook URL in a browser
+    app.get('/', (req, res) => {
+        res.send('Bot is running (webhook mode)!');
+    });
+
+    app.get('/deploy', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
+
+    app.get('/api/check-app-name/:appName', async (req, res) => {
+        const appName = req.params.appName;
+        try {
+            await axios.get(`https://api.heroku.com/apps/${appName}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            res.json({ available: false });
+        } catch (e) {
+            if (e.response?.status === 404) {
+                res.json({ available: true });
+            } else {
+                res.status(500).json({ available: false, error: 'API Error' });
+            }
+        }
+    });
+
+    app.post('/api/deploy', async (req, res) => {
+        const { userId, botType, appName, sessionId, autoStatusView, deployKey } = req.body;
+        if (!userId || !botType || !appName || !sessionId) { return res.status(400).json({ success: false, message: 'Missing required fields' }); }
+        if (deployKey) {
+            const usesLeft = await dbServices.useDeployKey(deployKey, userId);
+            if (usesLeft === null) { return res.status(400).json({ success: false, message: 'Invalid or used deploy key.' }); }
+            await bot.sendMessage(ADMIN_ID, `Key Used: \`${deployKey}\` by user \`${userId}\`. Uses left: ${usesLeft}`, { parse_mode: 'Markdown' });
+        } else {
+            return res.status(400).json({ success: false, message: 'No key provided. Use Pay with Paystack.' });
+        }
+        try {
+            const deployVars = { SESSION_ID: sessionId, APP_NAME: appName, AUTO_STATUS_VIEW: autoStatusView };
+            await bot.sendMessage(userId, `Deployment of app *${escapeMarkdown(appName)}* has been initiated. You will be notified when it's live!`, { parse_mode: 'Markdown' });
+            await dbServices.buildWithProgress(userId, deployVars, false, false, botType);
+            res.json({ success: true, message: 'Deployment initiated.' });
+        } catch (e) {
+            res.status(500).json({ success: false, message: e.message });
+        }
+    });
+
+    app.post('/api/paystack-init', async (req, res) => {
+        const { userId, botType, appName, sessionId, autoStatusView, email } = req.body;
+        if (!userId || !botType || !appName || !sessionId || !email) { return res.status(400).json({ success: false, message: 'Missing required fields.' }); }
+        try {
+            const reference = crypto.randomBytes(16).toString('hex');
+            const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
+            await pool.query('INSERT INTO pending_payments (reference, user_id, bot_type, app_name, session_id, email) VALUES ($1, $2, $3, $4, $5, $6)', [reference, userId, botType, appName, sessionId, email]);
+            const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', { email: email, amount: priceInKobo, reference: reference }, { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' } });
+            res.json({ success: true, authorization_url: paystackResponse.data.data.authorization_url });
+        } catch (error) { console.error('Paystack initiation error:', error.response?.data || error.message); res.status(500).json({ success: false, message: 'Failed to initiate payment. Please try again.' }); }
+    });
+
+    app.post('/paystack/webhook', express.json(), async (req, res) => {
+        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET_KEY).update(JSON.stringify(req.body)).digest('hex');
+        if (hash !== req.headers['x-paystack-signature']) { console.warn('Invalid Paystack signature received.'); return res.sendStatus(401); }
+        const event = req.body;
+        if (event.event === 'charge.success') {
+            const { reference, amount, currency, customer } = event.data;
+            try {
+                const result = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+                if (result.rows.length === 0) return res.sendStatus(200);
+                const { user_id, bot_type, app_name, session_id } = result.rows[0];
+                if (!app_name || !session_id) { await bot.sendMessage(user_id, `Payment confirmed, but deployment failed due to missing app details.`, { parse_mode: 'Markdown' }); return res.sendStatus(500); }
+                await pool.query(`INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`, [reference, user_id, customer.email, amount, currency, event.data.paid_at]);
+                await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
+                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name };
+                dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
+            } catch (dbError) { console.error(`Webhook DB Error for reference ${reference}:`, dbError); return res.sendStatus(500); }
+        }
+        res.sendStatus(200);
+    });
+
     app.get('/paystack/webhook', (req, res) => {
         res.status(200).send('<h1>Webhook URL</h1><p>Please return to the Telegram bot.</p>');
     });
 
-    // This is your separate API endpoint for getting a key
     app.get('/api/get-key', async (req, res) => {
         const providedApiKey = req.headers['x-api-key'];
         const secretApiKey = process.env.INTER_BOT_API_KEY;
-
-        if (!secretApiKey || providedApiKey !== secretApiKey) {
-            console.warn('[API] Unauthorized attempt to get a key.');
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
-        }
-
+        if (!secretApiKey || providedApiKey !== secretApiKey) { console.warn('[API] Unauthorized attempt to get a key.'); return res.status(401).json({ success: false, message: 'Unauthorized' }); }
         try {
-            const result = await pool.query(
-    'SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1'
-);
-
-if (result.rows.length > 0) {
-    const key = result.rows[0].key;
-                console.log(`[API] Provided existing key ${key} to authorized request.`);
-                return res.json({ success: true, key: key });
-            } else {
-                console.log('[API] No active key found. Creating a new one...');
-                const newKey = generateKey(); // Using your existing key generator
-                const newKeyResult = await pool.query(
-                    'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
-                    [newKey]
-                );
-                const createdKey = newKeyResult.rows[0].key;
-                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
-                return res.json({ success: true, key: createdKey });
-            }
-        } catch (error) {
-            console.error('[API] Database error while fetching/creating key:', error);
-            return res.status(500).json({ success: false, message: 'Internal server error.' });
-        }
+            const result = await pool.query('SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1');
+            if (result.rows.length > 0) { const key = result.rows[0].key; console.log(`[API] Provided existing key ${key} to authorized request.`); return res.json({ success: true, key: key }); }
+            else { const newKey = generateKey(); const newKeyResult = await pool.query('INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key', [newKey]); const createdKey = newKeyResult.rows[0].key; console.log(`[API] Provided newly created key ${createdKey} to authorized request.`); return res.json({ success: true, key: createdKey }); }
+        } catch (error) { console.error('[API] Database error while fetching/creating key:', error); return res.status(500).json({ success: false, message: 'Internal server error.' }); }
     });
 
-    // The command to start the server listening for requests
-    app.listen(PORT, () => {
-        console.log(`[Web Server] Server running on port ${PORT}`);
-    });
-
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => { console.log(`[Web Server] Server running on port ${PORT}`); });
 } else {
-    // --- Polling Mode (for local development) ---
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
 }
+
 }) ();
 
 // 8) Polling error handler
