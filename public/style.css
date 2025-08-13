@@ -1,4 +1,3 @@
-/* Custom Fonts and Global Styles */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
 
 body {
@@ -29,6 +28,53 @@ body {
     overflow: hidden;
 }
 
+/* Modal Styles */
+.modal {
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    visibility: hidden;
+    opacity: 0;
+    transition: visibility 0s, opacity 0.5s ease-in-out;
+}
+.modal.show {
+    visibility: visible;
+    opacity: 1;
+}
+.modal-content {
+    background-color: #1a1a1a;
+    padding: 25px;
+    border-radius: 10px;
+    position: relative;
+    width: 90%;
+    max-width: 350px;
+    text-align: center;
+}
+.close-button {
+    color: #aaa;
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.modal-content label {
+    display: block;
+    margin-bottom: 10px;
+    text-align: left;
+}
+#modal-pay-button {
+    margin-top: 20px;
+}
+
 /* Header and Logo Styles */
 header {
     text-align: center;
@@ -38,7 +84,6 @@ header {
     font-size: 24px;
     font-weight: 600;
     margin: 0;
-    /* Color switching animation */
     animation: color-switch 5s infinite linear;
 }
 .tagline {
@@ -47,7 +92,6 @@ header {
     margin-top: 5px;
 }
 
-/* Keyframe animation for color switching */
 @keyframes color-switch {
     0%   { color: #ff0000; }
     16%  { color: #ffff00; }
@@ -58,15 +102,9 @@ header {
     100% { color: #ff0000; }
 }
 
-/* Form Styling */
+/* Form and Button Styles remain the same */
 .form-group {
     margin-bottom: 20px;
-}
-.form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 400;
-    color: #e0e0e0;
 }
 input[type="text"], input[type="email"] {
     width: 100%;
@@ -86,8 +124,6 @@ input[type="text"]:focus, input[type="email"]:focus {
 ::placeholder {
     color: #666;
 }
-
-/* Status Message */
 .input-with-status {
     position: relative;
 }
@@ -107,15 +143,11 @@ input[type="text"]:focus, input[type="email"]:focus {
 .status-message.error {
     color: #ffc107;
 }
-
-/* Radio Buttons */
 .radio-group label {
     display: inline-block;
     margin-right: 20px;
     font-size: 14px;
 }
-
-/* Buttons */
 .action-buttons {
     display: flex;
     flex-direction: column;
@@ -150,8 +182,6 @@ input[type="text"]:focus, input[type="email"]:focus {
     color: #999;
     cursor: not-allowed;
 }
-
-/* Message Area */
 .message-area {
     text-align: center;
     margin-top: 20px;
