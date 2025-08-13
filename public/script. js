@@ -1,224 +1,232 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const form = document.getElementById('deploy-form');
-    const appNameInput = document.getElementById('appName');
-    const sessionIdInput = document.getElementById('sessionId');
-    const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
-    const deployKeyInput = document.getElementById('deployKey');
-    const nameStatus = document.getElementById('name-status');
-    const submitButton = document.getElementById('submit-button');
-    const paystackButton = document.getElementById('paystack-button');
-    const errorMessage = document.getElementById('error-message');
-    const successMessage = document.getElementById('success-message');
+    try {
+        const form = document.getElementById('deploy-form');
+        const appNameInput = document.getElementById('appName');
+        const sessionIdInput = document.getElementById('sessionId');
+        const emailInput = document.getElementById('email');
+        const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
+        const deployKeyInput = document.getElementById('deployKey');
+        const nameStatus = document.getElementById('name-status');
+        const submitButton = document.getElementById('submit-button');
+        const paystackButton = document.getElementById('paystack-button');
+        const errorMessage = document.getElementById('error-message');
+        const successMessage = document.getElementById('success-message');
+        const emailModal = document.getElementById('email-modal');
+        const closeButton = document.querySelector('.close-button');
+        const modalPayButton = document.getElementById('modal-pay-button');
+        const paymentEmailInput = document.getElementById('paymentEmail');
 
-    // New modal elements
-    const emailModal = document.getElementById('email-modal');
-    const closeButton = document.querySelector('.close-button');
-    const modalPayButton = document.getElementById('modal-pay-button');
-    const paymentEmailInput = document.getElementById('paymentEmail');
+        let botType = 'levanter';
+        let userId = '';
+        const appNameRegex = /^[a-z0-9-]+$/;
+        let isAppNameAvailable = false;
 
-    let botType = 'levanter';
-    let userId = '';
-    const appNameRegex = /^[a-z0-9-]+$/;
-    let isAppNameAvailable = false;
+        const params = new URLSearchParams(window.location.search);
+        userId = params.get('user_id');
+        botType = params.get('bot_type') || botType;
 
-    const params = new URLSearchParams(window.location.search);
-    userId = params.get('user_id');
-    botType = params.get('bot_type') || botType;
-
-    const displayMessage = (type, text) => {
-        errorMessage.textContent = '';
-        successMessage.textContent = '';
-        if (type === 'error') {
-            errorMessage.textContent = text;
-        } else if (type === 'success') {
-            successMessage.textContent = text;
-        }
-    };
-
-    const toggleButtons = () => {
-        const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
-        const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
-        const isDeployKeyFilled = deployKeyInput.value.trim().length > 0;
-        
-        const canProceed = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
-        
-        submitButton.disabled = !(canProceed && isDeployKeyFilled);
-        paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
-        paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500'; // Dynamic button text
-    };
-
-    const debounce = (func, delay) => {
-        let timeoutId;
-        return (...args) => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => func.apply(this, args), delay);
-        };
-    };
-
-    const checkAppNameAvailability = async (appName) => {
-        isAppNameAvailable = false;
-        toggleButtons();
-
-        if (appName.length > 30) {
-            nameStatus.textContent = 'Name is too long (max 30 chars).';
-            nameStatus.className = 'status-message taken';
-            return;
-        }
-        if (!appNameRegex.test(appName)) {
-            nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
-            nameStatus.className = 'status-message taken';
-            return;
-        }
-
-        nameStatus.textContent = 'Checking...';
-        nameStatus.className = 'status-message';
-        
-        try {
-            const response = await fetch(`/api/check-app-name/${appName}`);
-            const data = await response.json();
-
-            if (data.available) {
-                nameStatus.textContent = 'Available!';
-                nameStatus.className = 'status-message available';
-                isAppNameAvailable = true;
-            } else {
-                nameStatus.textContent = 'Not Available';
-                nameStatus.className = 'status-message taken';
-                isAppNameAvailable = false;
+        const displayMessage = (type, text) => {
+            errorMessage.textContent = '';
+            successMessage.textContent = '';
+            if (type === 'error') {
+                errorMessage.textContent = text;
+            } else if (type === 'success') {
+                successMessage.textContent = text;
             }
-        } catch (error) {
-            console.error('Error checking app name:', error);
-            nameStatus.textContent = 'Error: API not reachable.';
-            nameStatus.className = 'status-message error';
-            isAppNameAvailable = false;
-        } finally {
-            toggleButtons();
-        }
-    };
-
-    const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
-
-    appNameInput.addEventListener('input', () => {
-        const appName = appNameInput.value.trim();
-        nameStatus.textContent = '';
-        if (appName.length >= 3) {
-            debouncedCheckAppName(appName);
-        } else if (appName.length > 0) {
-            nameStatus.textContent = 'Enter at least 3 characters.';
-            nameStatus.className = 'status-message';
-        }
-        isAppNameAvailable = false;
-        toggleButtons();
-    });
-    
-    sessionIdInput.addEventListener('input', toggleButtons);
-    autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
-    deployKeyInput.addEventListener('input', toggleButtons);
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        displayMessage(null, '');
-        submitButton.disabled = true;
-        submitButton.textContent = 'Deploying...';
-
-        const formData = new FormData(form);
-        const data = {
-            userId: userId,
-            botType: botType,
-            appName: formData.get('appName'),
-            sessionId: formData.get('sessionId'),
-            autoStatusView: formData.get('autoStatusView'),
-            deployKey: formData.get('deployKey')
         };
 
-        try {
-            const response = await fetch('/api/deploy', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
-            });
+        const toggleButtons = () => {
+            const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
+            const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
+            const isDeployKeyFilled = deployKeyInput.value.trim().length > 0;
+            
+            const canProceed = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
+            
+            submitButton.disabled = !(canProceed && isDeployKeyFilled);
+            paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
+            paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500';
+        };
 
-            const result = await response.json();
-            if (result.success) {
-                displayMessage('success', result.message);
-                Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
-                Telegram.WebApp.close();
-            } else {
-                displayMessage('error', result.message);
+        const debounce = (func, delay) => {
+            let timeoutId;
+            return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => func.apply(this, args), delay);
+            };
+        };
+
+        const checkAppNameAvailability = async (appName) => {
+            isAppNameAvailable = false;
+            toggleButtons();
+
+            if (appName.length > 30) {
+                nameStatus.textContent = 'Name is too long (max 30 chars).';
+                nameStatus.className = 'status-message taken';
+                return;
+            }
+            if (!appNameRegex.test(appName)) {
+                nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
+                nameStatus.className = 'status-message taken';
+                return;
+            }
+
+            nameStatus.textContent = 'Checking...';
+            nameStatus.className = 'status-message';
+            
+            try {
+                const response = await fetch(`/api/check-app-name/${appName}`);
+                const data = await response.json();
+
+                if (data.available) {
+                    nameStatus.textContent = 'Available!';
+                    nameStatus.className = 'status-message available';
+                    isAppNameAvailable = true;
+                } else {
+                    nameStatus.textContent = 'Not Available';
+                    nameStatus.className = 'status-message taken';
+                    isAppNameAvailable = false;
+                }
+            } catch (error) {
+                console.error('Error checking app name:', error);
+                nameStatus.textContent = 'Error: API not reachable.';
+                nameStatus.className = 'status-message error';
+                isAppNameAvailable = false;
+            } finally {
+                toggleButtons();
+            }
+        };
+
+        const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
+
+        appNameInput.addEventListener('input', () => {
+            const appName = appNameInput.value.trim();
+            nameStatus.textContent = '';
+            if (appName.length >= 3) {
+                debouncedCheckAppName(appName);
+            } else if (appName.length > 0) {
+                nameStatus.textContent = 'Enter at least 3 characters.';
+                nameStatus.className = 'status-message';
+            }
+            isAppNameAvailable = false;
+            toggleButtons();
+        });
+        
+        sessionIdInput.addEventListener('input', toggleButtons);
+        emailInput.addEventListener('input', toggleButtons);
+        autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
+        deployKeyInput.addEventListener('input', toggleButtons);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            displayMessage(null, '');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Deploying...';
+
+            const formData = new FormData(form);
+            const data = {
+                userId: userId,
+                botType: botType,
+                appName: formData.get('appName'),
+                sessionId: formData.get('sessionId'),
+                autoStatusView: formData.get('autoStatusView'),
+                deployKey: formData.get('deployKey')
+            };
+
+            try {
+                const response = await fetch('/api/deploy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    displayMessage('success', result.message);
+                    Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
+                    Telegram.WebApp.close();
+                } else {
+                    displayMessage('error', result.message);
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Deploy Bot 🚀';
+                }
+            } catch (error) {
+                console.error('Error submitting deployment:', error);
+                displayMessage('error', 'Failed to connect to server.');
                 submitButton.disabled = false;
                 submitButton.textContent = 'Deploy Bot 🚀';
             }
-        } catch (error) {
-            console.error('Error submitting deployment:', error);
-            displayMessage('error', 'Failed to connect to server.');
-            submitButton.disabled = false;
-            submitButton.textContent = 'Deploy Bot 🚀';
-        }
-    });
+        });
 
-    // --- NEW PAYMENT FLOW LOGIC ---
-    paystackButton.addEventListener('click', () => {
-        emailModal.classList.add('show');
-    });
+        paystackButton.addEventListener('click', async () => {
+            emailModal.classList.add('show');
+        });
 
-    closeButton.addEventListener('click', () => {
-        emailModal.classList.remove('show');
-    });
-
-    window.addEventListener('click', (e) => {
-        if (e.target === emailModal) {
+        closeButton.addEventListener('click', () => {
             emailModal.classList.remove('show');
-        }
-    });
+        });
 
-    modalPayButton.addEventListener('click', async () => {
-        const paymentEmail = paymentEmailInput.value.trim();
-        if (!paymentEmail || !paymentEmail.includes('@')) {
-            alert('Please enter a valid email.');
-            return;
-        }
+        window.addEventListener('click', (e) => {
+            if (e.target === emailModal) {
+                emailModal.classList.remove('show');
+            }
+        });
 
-        displayMessage(null, '');
-        modalPayButton.disabled = true;
-        modalPayButton.textContent = 'Processing...';
+        modalPayButton.addEventListener('click', async () => {
+            const paymentEmail = paymentEmailInput.value.trim();
+            if (!paymentEmail || !paymentEmail.includes('@')) {
+                alert('Please enter a valid email.');
+                return;
+            }
 
-        const formData = new FormData(form);
-        const data = {
-            userId: userId,
-            botType: botType,
-            appName: formData.get('appName'),
-            sessionId: formData.get('sessionId'),
-            email: paymentEmail,
-            autoStatusView: formData.get('autoStatusView')
-        };
+            displayMessage(null, '');
+            modalPayButton.disabled = true;
+            modalPayButton.textContent = 'Processing...';
 
-        try {
-            const response = await fetch('/api/paystack-init', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
-            });
+            const formData = new FormData(form);
+            const data = {
+                userId: userId,
+                botType: botType,
+                appName: formData.get('appName'),
+                sessionId: formData.get('sessionId'),
+                email: paymentEmail,
+                autoStatusView: formData.get('autoStatusView')
+            };
 
-            const result = await response.json();
+            try {
+                const response = await fetch('/api/paystack-init', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
 
-            if (result.success) {
-                Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
-                window.location.href = result.authorization_url;
-            } else {
-                displayMessage('error', result.message);
+                const result = await response.json();
+
+                if (result.success) {
+                    Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
+                    window.location.href = result.authorization_url;
+                } else {
+                    displayMessage('error', result.message);
+                    modalPayButton.disabled = false;
+                    modalPayButton.textContent = 'Pay Now';
+                }
+            } catch (error) {
+                console.error('Paystack initiation error:', error);
+                displayMessage('error', 'Failed to connect to server for payment.');
                 modalPayButton.disabled = false;
                 modalPayButton.textContent = 'Pay Now';
             }
-        } catch (error) {
-            console.error('Paystack initiation error:', error);
-            displayMessage('error', 'Failed to connect to server for payment.');
-            modalPayButton.disabled = false;
-            modalPayButton.textContent = 'Pay Now';
+        });
+    } catch (error) {
+        console.error('An unhandled error occurred in the Mini App script:', error);
+        alert('An internal error occurred. Please check the developer console for details.');
+        const mainContent = document.getElementById('main-content');
+        if (mainContent) {
+            mainContent.style.display = 'block';
         }
-    });
+    }
 });
