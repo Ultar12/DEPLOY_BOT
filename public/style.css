@@ -195,7 +195,6 @@ input[type="text"]:focus, input[type="email"]:focus {
     cursor: pointer;
     transition: background-color 0.3s;
 }
-/* Default button color from your image */
 .btn.primary, .btn.secondary {
     background-color: #6c757d; 
     color: white;
