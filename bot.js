@@ -1063,13 +1063,104 @@ const crypto = require('crypto');
 
             if (event.event === 'charge.success') {
             const { reference, amount, currency, customer } = event.data;
+// bot.js
+
+// ... (your code above this line) ...
+
+if (process.env.NODE_ENV === 'production') {
+    // --- Webhook Mode (for Heroku) ---
+    // The `app` instance is initialized elsewhere in your code, so we don't
+    // need to declare it again here. We will simply use it.
+    // The following lines were the bug and have been removed:
+    // const app = express();
+    // app.use(express.json());
+
+    const APP_URL = process.env.APP_URL;
+    if (!APP_URL) {
+        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
+        process.exit(1);
+    }
+    const PORT = process.env.PORT || 3000;
+    
+    const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
+
+    const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
+    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
+
+    // --- CRITICAL FIX: The `await` calls are now wrapped in an async function ---
+    (async () => {
+        await bot.setWebHook(fullWebhookUrl);
+        console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
+    })();
+
+    // --- START: Auto-Ping Logic (Render ONLY) ---
+    if (process.env.APP_URL && process.env.RENDER === 'true') {
+      const PING_INTERVAL_MS = 10 * 60 * 1000;
+      
+      setInterval(async () => {
+        try {
+          await axios.get(APP_URL);
+          console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
+        } catch (error) {
+          console.error(`[Pinger] Render self-ping failed: ${error.message}`);
+        }
+      }, PING_INTERVAL_MS);
+      
+      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
+    } else {
+      console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
+    }
+    // --- END: Auto-Ping Logic ---
+
+    app.post(webhookPath, (req, res) => {
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
+    });
+
+    app.get('/', (req, res) => {
+        res.send('Bot is running (webhook mode)!');
+    });
+
+    // --- NEW API Endpoint to check if an app name is available ---
+    app.get('/api/check-app-name/:appName', async (req, res) => {
+        const appName = req.params.appName;
+        try {
+            await axios.get(`https://api.heroku.com/apps/${appName}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            res.json({ available: false });
+        } catch (e) {
+            if (e.response?.status === 404) {
+                res.json({ available: true });
+            } else {
+                res.status(500).json({ available: false, error: 'API Error' });
+            }
+        }
+    });
+    // --- End of new API Endpoint ---
+
+
+    // --- Paystack webhook handler (already correct) ---
+    app.post('/paystack/webhook', express.json(), async (req, res) => {
+        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+            .update(JSON.stringify(req.body))
+            .digest('hex');
+        if (hash !== req.headers['x-paystack-signature']) {
+            console.warn('Invalid Paystack signature received.');
+            return res.sendStatus(401);
+        }
+
+        const event = req.body;
+
+        if (event.event === 'charge.success') {
+            const { reference, amount, currency, customer } = event.data;
             try {
                 const result = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
                 if (result.rows.length === 0) return res.sendStatus(200);
 
                 const { user_id, bot_type, app_name, session_id } = result.rows[0];
 
-                if (!app_name || !session_id) { // FIX: Check for missing app_name or session_id
+                if (!app_name || !session_id) {
                     await bot.sendMessage(user_id, `Payment confirmed, but deployment failed due to missing app details. Please contact the admin.`, { parse_mode: 'Markdown' });
                     await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: Paystack webhook for reference ${reference} received, but app_name or session_id was missing from pending_payments table.`, { parse_mode: 'Markdown' });
                     return res.sendStatus(500);
@@ -1105,35 +1196,15 @@ const crypto = require('crypto');
         }
         res.sendStatus(200);
     });
+    // --- End of Paystack webhook handler ---
+    
+    // --- This line is now redundant and can be removed ---
+    // app.use(miniappApp);
 
-// --- NEW API Endpoint to check if an app name is available ---
-app.get('/api/check-app-name/:appName', async (req, res) => {
-    const appName = req.params.appName;
-    try {
-        await axios.get(`https://api.heroku.com/apps/${appName}`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        res.json({ available: false });
-    } catch (e) {
-        if (e.response?.status === 404) {
-            res.json({ available: true });
-        } else {
-            res.status(500).json({ available: false, error: 'API Error' });
-        }
-    }
-});
-
-// ... (your other app.get and app.post handlers) ...
-
-
-  app.use(miniappApp);
-
-    // This GET handler is for users who visit the webhook URL in a browser
     app.get('/paystack/webhook', (req, res) => {
         res.status(200).send('<h1>Webhook URL</h1><p>Please return to the Telegram bot.</p>');
     });
 
-    // This is your separate API endpoint for getting a key
     app.get('/api/get-key', async (req, res) => {
         const providedApiKey = req.headers['x-api-key'];
         const secretApiKey = process.env.INTER_BOT_API_KEY;
@@ -1169,16 +1240,15 @@ if (result.rows.length > 0) {
         }
     });
 
-    // The command to start the server listening for requests
     app.listen(PORT, () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
     });
 
 } else {
-    // --- Polling Mode (for local development) ---
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
 }
+
 }) ();
 
 // 8) Polling error handler
