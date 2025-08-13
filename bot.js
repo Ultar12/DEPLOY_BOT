@@ -508,7 +508,7 @@ async function sendMiniAppDeployMessage(chatId, text, miniAppUrl) {
     const inlineKeyboard = {
         inline_keyboard: [
             [{
-                text: 'Deploy,
+                text: 'Deploy',
                 web_app: {
                     url: miniAppUrl
                 }
