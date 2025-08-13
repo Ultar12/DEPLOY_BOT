@@ -17,6 +17,12 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const crypto = require('crypto');
+
+const { URLSearchParams } = require('url');
+
+// --- NEW GLOBAL CONSTANT FOR MINI APP ---
+const MINI_APP_URL = 'https://deploy-bot-gd97.onrender.com/miniapp';
+// --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
 const KEYBOARD_VERSION = 1; // Increment this number for every new keyboard update
 // --- END OF NEW GLOBAL CONSTANT ---
@@ -78,7 +84,9 @@ const {
   ADMIN_ID,
   DATABASE_URL,
   DATABASE_URL2,
+  PAYSTACK_SECRET_KEY, // <-- ADD THIS LINE
 } = process.env;
+
 
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7730944193:AAG1RKwymeGG1HlYZRvHcOZZy_St9c77Rg';
 const TELEGRAM_USER_ID = '7302005705';
@@ -1045,6 +1053,175 @@ if (process.env.NODE_ENV === 'production') {
     app.get('/', (req, res) => {
         res.send('Bot is running (webhook mode)!');
     });
+
+   // === WebApp Data Validation Middleware ===
+    const validateWebAppInitData = (req, res, next) => {
+        const initData = req.header('X-Telegram-Init-Data');
+        if (!initData) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: No init data provided' });
+        }
+
+        try {
+            const urlParams = new URLSearchParams(initData);
+            const hash = urlParams.get('hash');
+            urlParams.delete('hash');
+            urlParams.sort();
+
+            const dataCheckString = urlParams.toString().replace(/%25/g, '%');
+            const secretKey = crypto.createHmac('sha256', 'WebAppData').update(TELEGRAM_BOT_TOKEN).digest();
+            const checkHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+            if (checkHash !== hash) {
+                console.warn('[MiniApp Server] Invalid WebApp data hash received.');
+                return res.status(401).json({ success: false, message: 'Unauthorized: Invalid data signature' });
+            }
+            
+            req.telegramData = JSON.parse(urlParams.get('user'));
+            next();
+        } catch (e) {
+            console.error('[MiniApp Server] Error validating WebApp data:', e);
+            res.status(401).json({ success: false, message: 'Unauthorized: Data validation failed' });
+        }
+    };
+    // === END Validation Middleware ===
+
+    // --- MINI APP ROUTES START HERE ---
+
+    // Endpoint to serve the Mini App's HTML
+    app.get('/miniapp', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
+
+    // Endpoint to check if an app name is available
+    app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
+        const appName = req.params.appName;
+        try {
+            await axios.get(`https://api.heroku.com/apps/${appName}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            res.json({ available: false });
+        } catch (e) {
+            if (e.response?.status === 404) {
+                res.json({ available: true });
+            } else {
+                res.status(500).json({ available: false, error: 'API Error' });
+            }
+        }
+    });
+
+    // Endpoint to handle the final deployment submission
+    app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
+        const { botType, appName, sessionId, autoStatusView, deployKey, isFreeTrial } = req.body;
+        const userId = req.telegramData.id;
+        const userName = req.telegramData.username;
+        
+        if (!userId || !botType || !appName || !sessionId) {
+            return res.status(400).json({ success: false, message: 'Missing required fields.' });
+        }
+    
+        const pendingPaymentResult = await pool.query(
+            'SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2',
+            [userId, appName]
+        );
+        if (pendingPaymentResult.rows.length > 0) {
+            return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it or cancel via the main bot.' });
+        }
+
+        const isSessionIdValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX) && sessionId.length >= 10) ||
+                                 (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX) && sessionId.length >= 10);
+        
+        if (!isSessionIdValid) {
+            return res.status(400).json({ success: false, message: `Invalid session ID format for bot type "${botType}".` });
+        }
+        
+        const deployVars = {
+            SESSION_ID: sessionId,
+            APP_NAME: appName,
+            AUTO_STATUS_VIEW: autoStatusView
+        };
+
+        let deploymentSuccess = false;
+        let deploymentMessage = 'Deployment failed.';
+
+        try {
+            if (isFreeTrial) {
+                const check = await dbServices.canDeployFreeTrial(userId);
+                if (!check.can) {
+                    return res.status(400).json({ success: false, message: `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString()}.` });
+                }
+                await dbServices.buildWithProgress(userId, deployVars, true, false, botType);
+                deploymentSuccess = true;
+                deploymentMessage = 'Free Trial deployment initiated. Check the bot chat for updates!';
+            } else if (deployKey) {
+                const usesLeft = await dbServices.useDeployKey(deployKey, userId);
+                if (usesLeft === null) {
+                    return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
+                }
+                await dbServices.buildWithProgress(userId, deployVars, false, false, botType);
+                deploymentSuccess = true;
+                deploymentMessage = 'Deployment initiated with key. Check the bot chat for updates!';
+                
+                await bot.sendMessage(ADMIN_ID,
+                    `*New App Deployed (Mini App)*\n` +
+                    `*User:* @${escapeMarkdown(userName || 'N/A')} (\`${userId}\`)\n` +
+                    `*App Name:* \`${appName}\`\n` +
+                    `*Key Used:* \`${deployKey}\`\n` +
+                    `*Uses Left:* ${usesLeft}`,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                return res.status(400).json({ success: false, message: 'A deploy key is required for paid deployments. Please provide one or use the "Pay" option.' });
+            }
+
+            await bot.sendMessage(userId, 
+                `Deployment of your *${escapeMarkdown(appName)}* bot has started via the Mini App.\n\n` +
+                `You will receive a notification here when the bot is ready.`, 
+                { parse_mode: 'Markdown' });
+
+            res.json({ success: deploymentSuccess, message: deploymentMessage });
+
+        } catch (e) {
+            console.error('[MiniApp Server] Deployment error:', e);
+            res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
+        }
+    });
+
+    // Endpoint to handle the payment flow
+    app.post('/api/pay', validateWebAppInitData, async (req, res) => {
+        const { botType, appName, sessionId, autoStatusView, email } = req.body;
+        const userId = req.telegramData.id;
+        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
+        
+        if (!userId || !botType || !appName || !sessionId || !email) {
+            return res.status(400).json({ success: false, message: 'Missing required fields.' });
+        }
+        
+        try {
+            const reference = crypto.randomBytes(16).toString('hex');
+            
+            await pool.query(
+                'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+                [reference, userId, email, botType, appName, sessionId]
+            );
+            
+            const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
+                {
+                    email: email,
+                    amount: priceInKobo,
+                    reference: reference,
+                    callback_url: `https://t.me/${bot.username}`
+                },
+                { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
+            );
+
+            res.json({ success: true, paymentUrl: paystackResponse.data.data.authorization_url });
+        } catch (e) {
+            console.error('Paystack error:', e.response?.data || e.message);
+            res.status(500).json({ success: false, message: 'Failed to create payment link.' });
+        }
+    });
+
+    // --- END MINI APP ROUTES ---
 
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
