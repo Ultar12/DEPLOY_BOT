@@ -1919,21 +1919,53 @@ bot.onText(/^\/copydb$/, async (msg) => {
 });
 
 
-// --- REPLACE this entire function in bot.js ---
+// bot.js
 
-// --- ADD this new command to bot.js ---
+// ... other code ...
 
 bot.onText(/^\/backupall$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
 
-    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all paid bots... This might take some time.');
+    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
 
     try {
         const result = await dbServices.backupAllPaidBots();
-        await bot.editMessageText(result.message, {
+        
+        let finalMessage;
+        if (result.success && result.stats) {
+            const { levanter, raganork, unknown } = result.stats;
+            const { appsBackedUp, appsFailed } = result.miscStats;
+            
+            finalMessage = `
+*Backup Summary:*
+
+*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
+*Total Success:* ${appsBackedUp}
+*Total Failed:* ${appsFailed}
+
+*Levanter Bots:*
+  - Backed up: ${levanter.backedUp}
+  - Failed: ${levanter.failed}
+
+*Raganork Bots:*
+  - Backed up: ${raganork.backedUp}
+  - Failed: ${raganork.failed}
+
+*Misc. Bots:*
+  - Backed up: ${unknown.backedUp}
+  - Failed: ${unknown.failed}
+
+_Apps that were not found in the local database are now backed up under the admin's ID for safety._
+            `;
+        } else {
+            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
+        }
+        
+        await bot.editMessageText(finalMessage, {
             chat_id: cid,
-            message_id: sentMsg.message_id
+            message_id: sentMsg.message_id,
+            parse_mode: 'Markdown'
         });
     } catch (error) {
         await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
@@ -1942,6 +1974,7 @@ bot.onText(/^\/backupall$/, async (msg) => {
         });
     }
 });
+
 
 
 bot.onText(/^\/revenue$/, async (msg) => {
