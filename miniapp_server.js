@@ -70,7 +70,7 @@ function validateWebAppInitData(req, res, next) {
 
 
 // Endpoint to serve the Mini App's HTML
-app.get('/deploy', (req, res) => {
+app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
