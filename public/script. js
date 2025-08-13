@@ -3,8 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const appNameInput = document.getElementById('appName');
     const sessionIdInput = document.getElementById('sessionId');
     const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
+    const deployKeyInput = document.getElementById('deployKey'); // <-- NEW
     const nameStatus = document.getElementById('name-status');
-    const additionalFields = document.getElementById('additional-fields');
     const submitButton = document.getElementById('submit-button');
     const paystackButton = document.getElementById('paystack-button');
     const errorMessage = document.getElementById('error-message');
@@ -29,15 +29,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const toggleSubmitButton = () => {
+    const toggleButtons = () => {
         const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
         const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
+        const isDeployKeyFilled = deployKeyInput.value.trim().length > 0; // <-- NEW
         
-        if (isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected) {
-            submitButton.disabled = false;
-        } else {
-            submitButton.disabled = true;
-        }
+        const canDeploy = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
+        
+        // Enable Deploy button only if all fields are valid AND a key is provided
+        submitButton.disabled = !(canDeploy && isDeployKeyFilled);
+        
+        // Enable Paystack button only if all fields are valid AND no key is provided
+        paystackButton.disabled = !(canDeploy && !isDeployKeyFilled);
     };
 
     const debounce = (func, delay) => {
@@ -50,7 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const checkAppNameAvailability = async (appName) => {
         isAppNameAvailable = false;
-        toggleSubmitButton();
+        toggleButtons();
 
         if (appName.length > 30) {
             nameStatus.textContent = 'Name is too long (max 30 chars).';
@@ -85,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
             nameStatus.className = 'status-message error';
             isAppNameAvailable = false;
         } finally {
-            toggleSubmitButton();
+            toggleButtons();
         }
     };
 
@@ -101,12 +104,13 @@ document.addEventListener('DOMContentLoaded', () => {
             nameStatus.className = 'status-message';
         }
         isAppNameAvailable = false;
-        toggleSubmitButton();
+        toggleButtons();
     });
     
     // Listen for changes in other fields to enable/disable button
-    sessionIdInput.addEventListener('input', toggleSubmitButton);
-    autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleSubmitButton));
+    sessionIdInput.addEventListener('input', toggleButtons);
+    autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
+    deployKeyInput.addEventListener('input', toggleButtons); // <-- NEW
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -121,7 +125,8 @@ document.addEventListener('DOMContentLoaded', () => {
             botType: botType,
             appName: formData.get('appName'),
             sessionId: formData.get('sessionId'),
-            autoStatusView: formData.get('autoStatusView')
+            autoStatusView: formData.get('autoStatusView'),
+            deployKey: formData.get('deployKey') // <-- NEW
         };
 
         try {
@@ -151,7 +156,45 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    paystackButton.addEventListener('click', () => {
-        Telegram.WebApp.showAlert('Paystack integration is not yet fully implemented in this example.');
+    paystackButton.addEventListener('click', async () => {
+        displayMessage(null, '');
+        submitButton.disabled = true;
+        paystackButton.disabled = true;
+        paystackButton.textContent = 'Processing...';
+
+        const formData = new FormData(form);
+        const data = {
+            userId: userId,
+            botType: botType,
+            appName: formData.get('appName'),
+            sessionId: formData.get('sessionId'),
+            autoStatusView: formData.get('autoStatusView')
+        };
+
+        try {
+            const response = await fetch('/api/paystack-init', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
+                window.location.href = result.authorization_url; // Redirect the user to pay
+            } else {
+                displayMessage('error', result.message);
+                paystackButton.disabled = false;
+                paystackButton.textContent = 'Pay with Paystack';
+            }
+        } catch (error) {
+            console.error('Paystack initiation error:', error);
+            displayMessage('error', 'Failed to connect to server for payment.');
+            paystackButton.disabled = false;
+            paystackButton.textContent = 'Pay with Paystack';
+        }
     });
 });
