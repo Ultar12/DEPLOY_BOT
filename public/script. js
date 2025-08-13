@@ -39,11 +39,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
             const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
             const isDeployKeyFilled = deployKeyInput.value.trim().length > 0;
+            const isEmailFilled = emailInput.value.trim().length > 0;
             
             const canProceed = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
             
             submitButton.disabled = !(canProceed && isDeployKeyFilled);
-            paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
+            paystackButton.disabled = !(canProceed && !isDeployKeyFilled && isEmailFilled);
             paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500';
         };
 
