@@ -1,7 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     try {
-        console.log("Mini App script loaded successfully."); // <-- Add this for debugging
-
+        console.log("--- SCRIPT: DOMContentLoaded event fired. Initializing Mini App. ---");
         const form = document.getElementById('deploy-form');
         const appNameInput = document.getElementById('appName');
         const sessionIdInput = document.getElementById('sessionId');
@@ -10,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const nameStatus = document.getElementById('name-status');
         const submitButton = document.getElementById('submit-button');
         const paystackButton = document.getElementById('paystack-button');
+        const statusButton = document.getElementById('status-button'); // NEW
         const errorMessage = document.getElementById('error-message');
         const successMessage = document.getElementById('success-message');
         const emailModal = document.getElementById('email-modal');
@@ -75,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const checkAppNameAvailability = async (appName) => {
+            console.log(`--- SCRIPT: Checking app name availability for: ${appName} ---`);
             isAppNameAvailable = false;
             toggleButtons();
 
@@ -96,6 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const response = await fetch(`/miniapp/api/check-app-name/${appName}`, {
                      headers: { 'X-Telegram-Init-Data': window.Telegram.WebApp.initData }
                 });
+                console.log(`--- SCRIPT: App name check response status: ${response.status} ---`);
                 const data = await response.json();
 
                 if (response.status === 401) {
@@ -144,6 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+            console.log('--- SCRIPT: Deploy Bot button clicked ---');
 
             if (!deployKeyInput.value.trim()) {
                 return;
@@ -192,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         paystackButton.addEventListener('click', async () => {
+            console.log('--- SCRIPT: Pay button clicked, showing email modal ---');
             emailModal.classList.add('show');
         });
 
@@ -206,6 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         modalPayButton.addEventListener('click', async () => {
+            console.log('--- SCRIPT: Pay Now button clicked ---');
             const paymentEmail = paymentEmailInput.value.trim();
             if (!paymentEmail || !paymentEmail.includes('@')) {
                 alert('Please enter a valid email.');
@@ -254,6 +259,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 modalPayButton.textContent = 'Pay Now';
             }
         });
+
+        statusButton.addEventListener('click', async () => {
+            console.log('--- SCRIPT: Check Server Status button clicked ---');
+            displayMessage(null, '');
+            statusButton.disabled = true;
+            statusButton.textContent = 'Checking...';
+            try {
+                const response = await fetch('/miniapp/health');
+                const result = await response.json();
+                if (response.status === 200) {
+                    displayMessage('success', result.message);
+                } else {
+                    displayMessage('error', 'Server responded with an error.');
+                }
+            } catch (error) {
+                console.error('Server status check error:', error);
+                displayMessage('error', 'Server is not reachable. Check Render logs.');
+            } finally {
+                statusButton.disabled = false;
+                statusButton.textContent = 'Check Server Status';
+            }
+        });
+
+        toggleButtons();
+
     } catch (error) {
         console.error('An unhandled error occurred in the Mini App script:', error);
         alert('An internal error occurred. Please check the developer console for details.');
