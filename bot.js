@@ -2607,38 +2607,33 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
 
+// bot.js
+
+// ... inside bot.on('message', ... )
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            // This part is now updated
-            const formattedDate = check.cooldown.toLocaleString('en-US', {
-                timeZone: 'Africa/Lagos', // Set for Nigeria
-                year: 'numeric', month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: true
-            });
-            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
-                    ]
-                }
-            });
+            // ... (your existing cooldown message) ...
+            return;
         }
 
-        try { 
+        try {
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
             if (isMember) {
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
+                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION_MINIAPP', data: { isFreeTrial: true } };
                 await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                            // --- THIS IS THE CRITICAL CHANGE ---
+                            [{ text: 'Levanter', callback_data: `select_deploy_type_miniapp:levanter` }],
+                            [{ text: 'Raganork MD', callback_data: `select_deploy_type_miniapp:raganork` }]
+                            // --- END CHANGE ---
                         ]
                     }
                 });
@@ -2653,27 +2648,27 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     }
                 });
             }
-        } catch (error) { 
+        } catch (error) {
             console.error("Error in free trial initial check:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
         return;
-
-    } else { // This is the "Deploy" (paid) flow
+    } else {
         delete userStates[cid];
-        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
+        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION_MINIAPP', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
+                    // --- THIS IS THE CRITICAL CHANGE ---
+                    [{ text: 'Levanter', callback_data: `select_deploy_type_miniapp:levanter` }],
+                    [{ text: 'Raganork MD', callback_data: `select_deploy_type_miniapp:raganork` }]
+                    // --- END CHANGE ---
                 ]
             }
         });
         return;
     }
 }
-
 
 
   if (text === 'Apps' && isAdmin) {
