@@ -12,20 +12,24 @@ body {
     min-height: 100vh;
 }
 .container {
-    max-width: none;
-    width: 100%;
-    min-height: 100vh;
-    margin: 0;
+    max-width: 400px; /* Card layout */
+    width: 90%;
+    margin: 20px auto;
     background-color: rgba(30, 30, 30, 0.9);
     padding: 30px;
-    border-radius: 0;
-    box-shadow: none;
-    border: none;
+    border-radius: 12px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     position: relative;
-    background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
+    background-image: url('http://googleusercontent.com/file_content/0');
     background-size: cover;
     background-position: center;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
 }
 
 /* Modal Styles */
@@ -102,9 +106,17 @@ header {
     100% { color: #ff0000; }
 }
 
-/* Form and Button Styles remain the same */
+/* Form Styling */
 .form-group {
     margin-bottom: 20px;
+    width: 100%;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 400;
+    color: #e0e0e0;
+    text-align: left;
 }
 input[type="text"], input[type="email"] {
     width: 100%;
@@ -124,6 +136,8 @@ input[type="text"]:focus, input[type="email"]:focus {
 ::placeholder {
     color: #666;
 }
+
+/* Status Message */
 .input-with-status {
     position: relative;
 }
@@ -143,11 +157,18 @@ input[type="text"]:focus, input[type="email"]:focus {
 .status-message.error {
     color: #ffc107;
 }
-.radio-group label {
-    display: inline-block;
-    margin-right: 20px;
-    font-size: 14px;
+
+/* Radio Buttons */
+.radio-group {
+    display: flex;
+    justify-content: flex-start;
+    gap: 20px;
 }
+.radio-group label {
+    margin-bottom: 0;
+}
+
+/* Buttons */
 .action-buttons {
     display: flex;
     flex-direction: column;
@@ -164,14 +185,14 @@ input[type="text"]:focus, input[type="email"]:focus {
     transition: background-color 0.3s;
 }
 .btn.primary {
-    background-color: #4a90e2;
+    background-color: #6c757d; /* Gray color from image */
     color: white;
 }
 .btn.primary:hover {
-    background-color: #357bd6;
+    background-color: #5a6268;
 }
 .btn.secondary {
-    background-color: #6c757d;
+    background-color: #6c757d; /* Gray color from image */
     color: white;
 }
 .btn.secondary:hover {
@@ -182,6 +203,8 @@ input[type="text"]:focus, input[type="email"]:focus {
     color: #999;
     cursor: not-allowed;
 }
+
+/* Message Area */
 .message-area {
     text-align: center;
     margin-top: 20px;
