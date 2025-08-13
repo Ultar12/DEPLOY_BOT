@@ -3694,13 +3694,22 @@ if (action === 'edit_deployment_start_over') {
     return;
 }
 
+// AROUND LINE 2400 in bot.js
+
 // --- FIX: This block now handles auto status choice and then moves to final confirmation ---
 if (action === 'set_auto_status_choice') {
     const st = userStates[cid];
     const autoStatusChoice = payload;
     if (!st || st.step !== 'AWAITING_AUTO_STATUS_CHOICE') return;
 
-    st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
+    // --- THIS IS THE FIX ---
+    if (st.data.botType === 'levanter') {
+      st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
+    } else if (st.data.botType === 'raganork') {
+      st.data.AUTO_STATUS_VIEW = autoStatusChoice; // Sets to 'true' or 'false'
+    }
+    // --- END OF FIX ---
+
     st.step = 'AWAITING_FINAL_CONFIRMATION'; // <-- NEW STATE ORDER
 
     const confirmationMessage = `*Review Deployment Details:*\n\n` +
@@ -3723,6 +3732,7 @@ if (action === 'set_auto_status_choice') {
     });
     return;
 }
+
 
 
 
@@ -5606,45 +5616,50 @@ if (action === 'sudo_action') {
     }
 
 
+// AROUND LINE 3000 in bot.js
+
 if (action === 'setvarbool') {
-  const [varKeyFromCallback, appName, valStr] = [payload, extra, flag]; // <<< CHANGED: Renamed varKey to varKeyFromCallback
+  const [varKeyFromCallback, appName, valStr] = [payload, extra, flag]; 
   const flagVal = valStr === 'true';
   let newVal;
 
-  // Get the actual bot type to determine the var name for Heroku/DB
-  const currentBotType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter'; // <<< ADDED
+  const currentBotType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter'; 
 
-  // Determine the actual variable name used on Heroku
-  const actualVarNameForHeroku = (currentBotType === 'raganork' && varKeyFromCallback === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' : // <<< CHANGED
-                                 (currentBotType === 'raganork' && varKeyFromCallback === 'PREFIX') ? 'HANDLERS' : varKeyFromCallback; // <<< CHANGED
+  const actualVarNameForHeroku = (currentBotType === 'raganork' && varKeyFromCallback === 'AUTO_STATUS_VIEW') ? 'AUTO_READ_STATUS' :
+                                 (currentBotType === 'raganork' && varKeyFromCallback === 'PREFIX') ? 'HANDLERS' : varKeyFromCallback;
 
-  if (actualVarNameForHeroku === 'AUTO_STATUS_VIEW' || actualVarNameForHeroku === 'AUTO_READ_STATUS') newVal = flagVal ? 'true' : 'false'; // <<< CHANGED: Set to true/false
+  // --- THIS IS THE FIX ---
+  if (actualVarNameForHeroku === 'AUTO_STATUS_VIEW' || actualVarNameForHeroku === 'AUTO_READ_STATUS') {
+      if (currentBotType === 'levanter') {
+          newVal = flagVal ? 'no-dl' : 'false';
+      } else if (currentBotType === 'raganork') {
+          newVal = flagVal ? 'true' : 'false';
+      }
+  }
+  // --- END OF FIX ---
   else if (actualVarNameForHeroku === 'ANTI_DELETE') newVal = flagVal ? 'p' : 'false';
   else newVal = flagVal ? 'true' : 'false';
 
   try {
     await bot.sendChatAction(cid, 'typing');
-    const updateMsg = await bot.sendMessage(cid, `Updating *${actualVarNameForHeroku}* for "*${appName}*"...`, { parse_mode: 'Markdown' }); // <<< CHANGED
+    const updateMsg = await bot.sendMessage(cid, `Updating *${actualVarNameForHeroku}* for "*${appName}*"...`, { parse_mode: 'Markdown' }); 
 
-    console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${actualVarNameForHeroku}: '${newVal}' }`); // <<< CHANGED
+    console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${actualVarNameForHeroku}: '${newVal}' }`); 
     const patchResponse = await axios.patch(
       `https://api.heroku.com/apps/${appName}/config-vars`,
-      { [actualVarNameForHeroku]: newVal }, // <<< CHANGED: Use actualVarNameForHeroku
+      { [actualVarNameForHeroku]: newVal }, 
       { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
     );
     console.log(`[API_CALL_SUCCESS] Heroku config vars (boolean) patched successfully for ${appName}. Status: ${patchResponse.status}`);
-
 
     console.log(`[Flow] setvarbool: Config var updated for "${appName}". Updating bot in user_bots DB.`);
     const herokuConfigVars = (await axios.get(
         `https://api.heroku.com/apps/${appName}/config-vars`,
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
     )).data;
-    // Pass currentBotType, fetched directly, not from pool query here
-    await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, currentBotType); // Use dbServices, pass currentBotType
+    await dbServices.saveUserDeployment(cid, appName, herokuConfigVars.SESSION_ID, herokuConfigVars, currentBotType); 
 
-
-    const baseWaitingText = `Updated *${actualVarNameForHeroku}* for "*${appName}*". Waiting for bot status confirmation...`; // <<< CHANGED
+    const baseWaitingText = `Updated *${actualVarNameForHeroku}* for "*${appName}*". Waiting for bot status confirmation...`; 
     await bot.editMessageText(`${getAnimatedEmoji()} ${baseWaitingText}`, {
         chat_id: cid,
         message_id: updateMsg.message_id,
@@ -5672,7 +5687,7 @@ if (action === 'setvarbool') {
         clearTimeout(timeoutId);
         clearInterval(animateIntervalId);
 
-        await bot.editMessageText(`Variable "*${actualVarNameForHeroku}*" for "*${appName}*" updated successfully and bot is back online!`, { // <<< CHANGED
+        await bot.editMessageText(`Variable "*${actualVarNameForHeroku}*" for "*${appName}*" updated successfully and bot is back online!`, { 
             chat_id: cid,
             message_id: updateMsg.message_id,
             parse_mode: 'Markdown',
@@ -5687,7 +5702,7 @@ if (action === 'setvarbool') {
         clearInterval(animateIntervalId);
         console.error(`App status check failed for ${appName} after variable update:`, err.message);
         await bot.editMessageText(
-            `Bot "${appName}" failed to come online after variable "*${actualVarNameForHeroku}*" update: ${err.message}\n\n` + // <<< CHANGED
+            `Bot "${appName}" failed to come online after variable "*${actualVarNameForHeroku}*" update: ${err.message}\n\n` +
             `The bot is in your "My Bots" list, but you may need to try changing the session ID again.`,
             {
                 chat_id: cid,
@@ -5707,10 +5722,11 @@ if (action === 'setvarbool') {
     delete userStates[cid];
   } catch (e) {
     const errorMsg = e.response?.data?.message || e.message;
-    console.error(`[API_CALL_ERROR] Error updating boolean variable ${actualVarNameForHeroku} for ${appName}:`, errorMsg, e.response?.data); // <<< CHANGED
+    console.error(`[API_CALL_ERROR] Error updating boolean variable ${actualVarNameForHeroku} for ${appName}:`, errorMsg, e.response?.data);
     return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
   }
 }
+
 
   if (action === 'change_session') {
     const appName = payload;
