@@ -1,6 +1,8 @@
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('deploy-form');
     const appNameInput = document.getElementById('appName');
+    const sessionIdInput = document.getElementById('sessionId');
+    const autoStatusViewRadios = document.querySelectorAll('input[name="autoStatusView"]');
     const nameStatus = document.getElementById('name-status');
     const additionalFields = document.getElementById('additional-fields');
     const submitButton = document.getElementById('submit-button');
@@ -11,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let botType = 'levanter';
     let userId = '';
     const appNameRegex = /^[a-z0-9-]+$/;
+    let isAppNameAvailable = false;
 
     const params = new URLSearchParams(window.location.search);
     userId = params.get('user_id');
@@ -26,8 +29,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const toggleAdditionalFields = (visible) => {
-        additionalFields.style.display = visible ? 'block' : 'none';
+    const toggleSubmitButton = () => {
+        const isSessionIdFilled = sessionIdInput.value.trim().length > 0;
+        const isAutoStatusSelected = Array.from(autoStatusViewRadios).some(radio => radio.checked);
+        
+        if (isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected) {
+            submitButton.disabled = false;
+        } else {
+            submitButton.disabled = true;
+        }
     };
 
     const debounce = (func, delay) => {
@@ -39,26 +49,23 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const checkAppNameAvailability = async (appName) => {
+        isAppNameAvailable = false;
+        toggleSubmitButton();
+
         if (appName.length > 30) {
             nameStatus.textContent = 'Name is too long (max 30 chars).';
             nameStatus.className = 'status-message taken';
-            toggleAdditionalFields(false);
-            submitButton.disabled = true;
             return;
         }
         if (!appNameRegex.test(appName)) {
             nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
             nameStatus.className = 'status-message taken';
-            toggleAdditionalFields(false);
-            submitButton.disabled = true;
             return;
         }
 
         nameStatus.textContent = 'Checking...';
         nameStatus.className = 'status-message';
-        toggleAdditionalFields(false);
-        submitButton.disabled = true;
-
+        
         try {
             const response = await fetch(`/api/check-app-name/${appName}`);
             const data = await response.json();
@@ -66,20 +73,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.available) {
                 nameStatus.textContent = 'Available!';
                 nameStatus.className = 'status-message available';
-                toggleAdditionalFields(true);
-                submitButton.disabled = false;
+                isAppNameAvailable = true;
             } else {
                 nameStatus.textContent = 'Not Available';
                 nameStatus.className = 'status-message taken';
-                toggleAdditionalFields(false);
-                submitButton.disabled = true;
+                isAppNameAvailable = false;
             }
         } catch (error) {
             console.error('Error checking app name:', error);
             nameStatus.textContent = 'Error checking name';
             nameStatus.className = 'status-message error';
-            toggleAdditionalFields(false);
-            submitButton.disabled = true;
+            isAppNameAvailable = false;
+        } finally {
+            toggleSubmitButton();
         }
     };
 
@@ -88,15 +94,19 @@ document.addEventListener('DOMContentLoaded', () => {
     appNameInput.addEventListener('input', () => {
         const appName = appNameInput.value.trim();
         nameStatus.textContent = '';
-        toggleAdditionalFields(false);
-        submitButton.disabled = true;
         if (appName.length >= 3) {
             debouncedCheckAppName(appName);
         } else if (appName.length > 0) {
             nameStatus.textContent = 'Enter at least 3 characters.';
             nameStatus.className = 'status-message';
         }
+        isAppNameAvailable = false;
+        toggleSubmitButton();
     });
+    
+    // Listen for changes in other fields to enable/disable button
+    sessionIdInput.addEventListener('input', toggleSubmitButton);
+    autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleSubmitButton));
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -129,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
                 Telegram.WebApp.close();
             } else {
-                errorMessage.textContent = result.message;
+                displayMessage('error', result.message);
                 submitButton.disabled = false;
                 submitButton.textContent = 'Deploy Bot 🚀';
             }
