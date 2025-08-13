@@ -4,28 +4,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const nameStatus = document.getElementById('name-status');
     const additionalFields = document.getElementById('additional-fields');
     const submitButton = document.getElementById('submit-button');
-    const paystackButton = document.getElementById('paystack-button'); // Get the Paystack button
+    const paystackButton = document.getElementById('paystack-button');
     const errorMessage = document.getElementById('error-message');
     const successMessage = document.getElementById('success-message');
-    const container = document.querySelector('.container'); // Select the container for background
 
-    let botType = 'levanter'; // Default value
+    // New variables for the welcome screen
+    const welcomeScreen = document.getElementById('welcome-screen');
+    const mainContent = document.getElementById('main-content');
+
+    let botType = 'levanter';
     let userId = '';
-    const appNameRegex = /^[a-z0-9-]+$/; // Regex for valid Heroku app names
-    const backgroundImageURL = 'https://files.catbox.moe/k1n5p2.jpeg';
+    const appNameRegex = /^[a-z0-9-]+$/;
 
-    // Set the background image
-    container.style.backgroundImage = `url('${backgroundImageURL}')`;
-    container.style.backgroundSize = 'cover';
-    container.style.backgroundPosition = 'center';
-    container.style.color = '#f8f9fa'; // Adjust text color for better visibility on the background
-
-    // Read initial data from URL parameters
     const params = new URLSearchParams(window.location.search);
     userId = params.get('user_id');
     botType = params.get('bot_type') || botType;
 
-    // Function to display messages
     const displayMessage = (type, text) => {
         errorMessage.textContent = '';
         successMessage.textContent = '';
@@ -36,12 +30,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Function to toggle visibility of additional fields
     const toggleAdditionalFields = (visible) => {
         additionalFields.style.display = visible ? 'block' : 'none';
     };
 
-    // Debounce function to limit API calls during typing
     const debounce = (func, delay) => {
         let timeoutId;
         return (...args) => {
@@ -51,6 +43,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const checkAppNameAvailability = async (appName) => {
+        // ... (This function remains unchanged) ...
+        if (appName.length > 30) {
+            nameStatus.textContent = 'Name is too long (max 30 chars).';
+            nameStatus.className = 'status-message taken';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+            return;
+        }
         if (!appNameRegex.test(appName)) {
             nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
             nameStatus.className = 'status-message taken';
@@ -90,10 +90,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
 
-    // Event listener for app name input
     appNameInput.addEventListener('input', () => {
         const appName = appNameInput.value.trim();
-        nameStatus.textContent = ''; // Clear previous status
+        nameStatus.textContent = '';
         toggleAdditionalFields(false);
         submitButton.disabled = true;
         if (appName.length >= 3) {
@@ -104,11 +103,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Form submission logic
     form.addEventListener('submit', async (e) => {
+        // ... (This function remains unchanged) ...
         e.preventDefault();
-
-        displayMessage(null, ''); // Clear previous messages
+        
+        displayMessage(null, '');
         submitButton.disabled = true;
         submitButton.textContent = 'Deploying...';
 
@@ -119,7 +118,6 @@ document.addEventListener('DOMContentLoaded', () => {
             appName: formData.get('appName'),
             sessionId: formData.get('sessionId'),
             autoStatusView: formData.get('autoStatusView')
-            // TODO: Add deploy key and payment logic here
         };
 
         try {
@@ -135,23 +133,36 @@ document.addEventListener('DOMContentLoaded', () => {
             if (result.success) {
                 displayMessage('success', result.message);
                 Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
-                Telegram.WebApp.close(); // Close the Mini App
+                Telegram.WebApp.close();
             } else {
-                displayMessage('error', result.message);
+                errorMessage.textContent = result.message;
                 submitButton.disabled = false;
-                submitButton.textContent = 'Deploy Bot';
+                submitButton.textContent = 'Deploy Bot 🚀';
             }
         } catch (error) {
             console.error('Error submitting deployment:', error);
             displayMessage('error', 'Failed to connect to server.');
             submitButton.disabled = false;
-            submitButton.textContent = 'Deploy Bot';
+            submitButton.textContent = 'Deploy Bot 🚀';
         }
     });
 
-    // Example Paystack button action (you'll need to integrate the Paystack API)
     paystackButton.addEventListener('click', () => {
         Telegram.WebApp.showAlert('Paystack integration is not yet fully implemented in this example.');
-        // In a real implementation, you would trigger the Paystack payment flow here.
     });
+
+    // --- NEW LOGIC FOR WELCOME SCREEN ---
+    // Hide main content on load
+    mainContent.style.display = 'none';
+    
+    // Show welcome screen for a few seconds, then transition
+    setTimeout(() => {
+        welcomeScreen.style.opacity = '0';
+        setTimeout(() => {
+            welcomeScreen.style.display = 'none';
+            mainContent.style.display = 'block';
+            mainContent.classList.add('fade-in');
+        }, 500); // Wait for the fade-out transition to complete
+    }, 2000); // Show welcome screen for 2 seconds
+    // --- END NEW LOGIC ---
 });
