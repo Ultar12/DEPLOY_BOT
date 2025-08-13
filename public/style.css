@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #121212;
+    color: #f8f9fa;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+.container {
+    max-width: 400px;
+    width: 90%;
+    margin: 20px auto;
+    background-color: rgba(30, 30, 30, 0.9);
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
+    background-size: cover;
+    background-position: center;
+    overflow: hidden; /* Hide overflow from welcome screen */
+}
+
+/* Welcome Screen Styles */
+#welcome-screen {
+    text-align: center;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(30, 30, 30, 0.95);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    transition: opacity 0.5s ease-in-out;
+}
+.welcome-text {
+    font-size: 24px;
+    font-weight: 600;
+    color: #4a90e2;
+    margin-bottom: 20px;
+}
+.bot-animation {
+    font-size: 48px;
+    animation: bot-move 1.5s infinite ease-in-out;
+}
+@keyframes bot-move {
+    0% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0); }
+}
+
+/* Fade-in/out classes for transitions */
+.hidden {
+    display: none;
+    opacity: 0;
+}
+.fade-in {
+    animation: fadeIn 0.5s forwards;
+}
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Header and Logo Styles */
+header {
+    text-align: center;
+    margin-bottom: 25px;
+}
+.logo {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 0;
+    /* Color switching animation */
+    animation: color-switch 5s infinite linear;
+}
+.tagline {
+    font-size: 14px;
+    color: #a0a0a0;
+    margin-top: 5px;
+}
+
+/* Keyframe animation for color switching */
+@keyframes color-switch {
+    0%   { color: #ff0000; }
+    16%  { color: #ffff00; }
+    33%  { color: #00ff00; }
+    50%  { color: #00ffff; }
+    66%  { color: #0000ff; }
+    83%  { color: #ff00ff; }
+    100% { color: #ff0000; }
+}
+
+/* Form Styling */
+.form-group {
+    margin-bottom: 20px;
+}
+/* ... (The rest of the CSS from the previous response is here) ... */
