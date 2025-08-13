@@ -1,177 +1,147 @@
 document.addEventListener('DOMContentLoaded', () => {
-    try {
-        const form = document.getElementById('deploy-form');
-        const appNameInput = document.getElementById('appName');
-        const nameStatus = document.getElementById('name-status');
-        const additionalFields = document.getElementById('additional-fields');
-        const submitButton = document.getElementById('submit-button');
-        const paystackButton = document.getElementById('paystack-button');
-        const errorMessage = document.getElementById('error-message');
-        const successMessage = document.getElementById('success-message');
+    const form = document.getElementById('deploy-form');
+    const appNameInput = document.getElementById('appName');
+    const nameStatus = document.getElementById('name-status');
+    const additionalFields = document.getElementById('additional-fields');
+    const submitButton = document.getElementById('submit-button');
+    const paystackButton = document.getElementById('paystack-button');
+    const errorMessage = document.getElementById('error-message');
+    const successMessage = document.getElementById('success-message');
 
-        const welcomeScreen = document.getElementById('welcome-screen');
-        const mainContent = document.getElementById('main-content');
+    let botType = 'levanter';
+    let userId = '';
+    const appNameRegex = /^[a-z0-9-]+$/;
 
-        let botType = 'levanter';
-        let userId = '';
-        const appNameRegex = /^[a-z0-9-]+$/;
+    const params = new URLSearchParams(window.location.search);
+    userId = params.get('user_id');
+    botType = params.get('bot_type') || botType;
 
-        const params = new URLSearchParams(window.location.search);
-        userId = params.get('user_id');
-        botType = params.get('bot_type') || botType;
+    const displayMessage = (type, text) => {
+        errorMessage.textContent = '';
+        successMessage.textContent = '';
+        if (type === 'error') {
+            errorMessage.textContent = text;
+        } else if (type === 'success') {
+            successMessage.textContent = text;
+        }
+    };
 
-        const displayMessage = (type, text) => {
-            errorMessage.textContent = '';
-            successMessage.textContent = '';
-            if (type === 'error') {
-                errorMessage.textContent = text;
-            } else if (type === 'success') {
-                successMessage.textContent = text;
-            }
+    const toggleAdditionalFields = (visible) => {
+        additionalFields.style.display = visible ? 'block' : 'none';
+    };
+
+    const debounce = (func, delay) => {
+        let timeoutId;
+        return (...args) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => func.apply(this, args), delay);
         };
+    };
 
-        const toggleAdditionalFields = (visible) => {
-            additionalFields.style.display = visible ? 'block' : 'none';
-        };
+    const checkAppNameAvailability = async (appName) => {
+        if (appName.length > 30) {
+            nameStatus.textContent = 'Name is too long (max 30 chars).';
+            nameStatus.className = 'status-message taken';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+            return;
+        }
+        if (!appNameRegex.test(appName)) {
+            nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
+            nameStatus.className = 'status-message taken';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+            return;
+        }
 
-        const debounce = (func, delay) => {
-            let timeoutId;
-            return (...args) => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => func.apply(this, args), delay);
-            };
-        };
+        nameStatus.textContent = 'Checking...';
+        nameStatus.className = 'status-message';
+        toggleAdditionalFields(false);
+        submitButton.disabled = true;
 
-        const checkAppNameAvailability = async (appName) => {
-            if (appName.length > 30) {
-                nameStatus.textContent = 'Name is too long (max 30 chars).';
+        try {
+            const response = await fetch(`/api/check-app-name/${appName}`);
+            const data = await response.json();
+
+            if (data.available) {
+                nameStatus.textContent = 'Available!';
+                nameStatus.className = 'status-message available';
+                toggleAdditionalFields(true);
+                submitButton.disabled = false;
+            } else {
+                nameStatus.textContent = 'Not Available';
                 nameStatus.className = 'status-message taken';
                 toggleAdditionalFields(false);
                 submitButton.disabled = true;
-                return;
             }
-            if (!appNameRegex.test(appName)) {
-                nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
-                nameStatus.className = 'status-message taken';
-                toggleAdditionalFields(false);
-                submitButton.disabled = true;
-                return;
-            }
+        } catch (error) {
+            console.error('Error checking app name:', error);
+            nameStatus.textContent = 'Error checking name';
+            nameStatus.className = 'status-message error';
+            toggleAdditionalFields(false);
+            submitButton.disabled = true;
+        }
+    };
 
-            nameStatus.textContent = 'Checking...';
+    const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
+
+    appNameInput.addEventListener('input', () => {
+        const appName = appNameInput.value.trim();
+        nameStatus.textContent = '';
+        toggleAdditionalFields(false);
+        submitButton.disabled = true;
+        if (appName.length >= 3) {
+            debouncedCheckAppName(appName);
+        } else if (appName.length > 0) {
+            nameStatus.textContent = 'Enter at least 3 characters.';
             nameStatus.className = 'status-message';
-            toggleAdditionalFields(false);
-            submitButton.disabled = true;
+        }
+    });
 
-            try {
-                const response = await fetch(`/api/check-app-name/${appName}`);
-                const data = await response.json();
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        displayMessage(null, '');
+        submitButton.disabled = true;
+        submitButton.textContent = 'Deploying...';
 
-                if (data.available) {
-                    nameStatus.textContent = 'Available!';
-                    nameStatus.className = 'status-message available';
-                    toggleAdditionalFields(true);
-                    submitButton.disabled = false;
-                } else {
-                    nameStatus.textContent = 'Not Available';
-                    nameStatus.className = 'status-message taken';
-                    toggleAdditionalFields(false);
-                    submitButton.disabled = true;
-                }
-            } catch (error) {
-                console.error('Error checking app name:', error);
-                nameStatus.textContent = 'Error checking name';
-                nameStatus.className = 'status-message error';
-                toggleAdditionalFields(false);
-                submitButton.disabled = true;
-            }
+        const formData = new FormData(form);
+        const data = {
+            userId: userId,
+            botType: botType,
+            appName: formData.get('appName'),
+            sessionId: formData.get('sessionId'),
+            autoStatusView: formData.get('autoStatusView')
         };
 
-        const debouncedCheckAppName = debounce(checkAppNameAvailability, 500);
+        try {
+            const response = await fetch('/api/deploy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
 
-        appNameInput.addEventListener('input', () => {
-            const appName = appNameInput.value.trim();
-            nameStatus.textContent = '';
-            toggleAdditionalFields(false);
-            submitButton.disabled = true;
-            if (appName.length >= 3) {
-                debouncedCheckAppName(appName);
-            } else if (appName.length > 0) {
-                nameStatus.textContent = 'Enter at least 3 characters.';
-                nameStatus.className = 'status-message';
-            }
-        });
-
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            displayMessage(null, '');
-            submitButton.disabled = true;
-            submitButton.textContent = 'Deploying...';
-
-            const formData = new FormData(form);
-            const data = {
-                userId: userId,
-                botType: botType,
-                appName: formData.get('appName'),
-                sessionId: formData.get('sessionId'),
-                autoStatusView: formData.get('autoStatusView')
-            };
-
-            try {
-                const response = await fetch('/api/deploy', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(data)
-                });
-
-                const result = await response.json();
-                if (result.success) {
-                    displayMessage('success', result.message);
-                    Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
-                    Telegram.WebApp.close();
-                } else {
-                    errorMessage.textContent = result.message;
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Deploy Bot 🚀';
-                }
-            } catch (error) {
-                console.error('Error submitting deployment:', error);
-                displayMessage('error', 'Failed to connect to server.');
+            const result = await response.json();
+            if (result.success) {
+                displayMessage('success', result.message);
+                Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
+                Telegram.WebApp.close();
+            } else {
+                errorMessage.textContent = result.message;
                 submitButton.disabled = false;
                 submitButton.textContent = 'Deploy Bot 🚀';
             }
-        });
-
-        paystackButton.addEventListener('click', () => {
-            Telegram.WebApp.showAlert('Paystack integration is not yet fully implemented in this example.');
-        });
-        
-        // This is the welcome screen logic that is likely crashing
-        setTimeout(() => {
-            welcomeScreen.style.opacity = '0';
-            setTimeout(() => {
-                welcomeScreen.style.display = 'none';
-                mainContent.style.display = 'block';
-                mainContent.classList.add('fade-in');
-            }, 500);
-        }, 2000);
-        
-    } catch (error) {
-        // If an error happens before the form is even shown, display it here
-        console.error('An unhandled error occurred in the Mini App script:', error);
-        alert('An internal error occurred. Please check the developer console for details.');
-        // This will prevent the Mini App from getting stuck on a black screen
-        mainContent.style.display = 'block';
-        if (welcomeScreen) welcomeScreen.style.display = 'none';
-        
-    } finally {
-        // This ensures the main content is at least visible to the user
-        if (mainContent && mainContent.style.display === 'none') {
-            mainContent.style.display = 'block';
-            if (welcomeScreen) welcomeScreen.style.display = 'none';
+        } catch (error) {
+            console.error('Error submitting deployment:', error);
+            displayMessage('error', 'Failed to connect to server.');
+            submitButton.disabled = false;
+            submitButton.textContent = 'Deploy Bot 🚀';
         }
-    }
+    });
+
+    paystackButton.addEventListener('click', () => {
+        Telegram.WebApp.showAlert('Paystack integration is not yet fully implemented in this example.');
+    });
 });
