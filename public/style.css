@@ -21,7 +21,8 @@ body {
     height: 100%;
     padding: 20px;
     margin: 0;
-    background-color: rgba(30, 30, 30, 0.9);
+    /* --- SEMI-TRANSPARENT BACKGROUND --- */
+    background-color: rgba(30, 30, 30, 0.7);
     border-radius: 0;
     box-shadow: none;
     border: none;
@@ -37,6 +38,9 @@ body {
     max-width: 400px;
     width: 90%;
     margin: 20px auto;
+    background-color: rgba(0, 0, 0, 0.4);
+    padding: 30px;
+    border-radius: 12px;
 }
 
 /* Modal Styles */
