@@ -1056,6 +1056,13 @@ const APP_URL = process.env.APP_URL;
         res.send('Bot is running (webhook mode)!');
     });
 
+// NEW: Health check endpoint for the Mini App
+app.get('/miniapp/health', (req, res) => {
+    console.log('[Health Check] Mini App server is responsive.');
+    res.status(200).json({ status: 'ok', message: 'Server is running.' });
+});
+
+
    // === WebApp Data Validation Middleware ===
     const validateWebAppInitData = (req, res, next) => {
         const initData = req.header('X-Telegram-Init-Data');
