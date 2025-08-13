@@ -15,15 +15,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const modalPayButton = document.getElementById('modal-pay-button');
         const paymentEmailInput = document.getElementById('paymentEmail');
 
-        // --- NEW: Read botType securely from initData or fallback ---
-        let botType = 'levanter'; // Default
+        let botType = 'levanter';
         const params = new URLSearchParams(window.location.search);
         botType = params.get('bot_type') || botType;
 
         const appNameRegex = /^[a-z0-9-]+$/;
         let isAppNameAvailable = false;
 
-        // --- NEW: Check if WebApp is available and ready ---
         if (typeof window.Telegram === 'undefined' || typeof window.Telegram.WebApp === 'undefined') {
             console.error('Telegram WebApp object not found. This script must run inside a Telegram Mini App.');
             displayMessage('error', 'Mini App is not running in a valid environment.');
@@ -52,6 +50,19 @@ document.addEventListener('DOMContentLoaded', () => {
             submitButton.disabled = !(canProceed && isDeployKeyFilled);
             paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
             paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500';
+            
+            // --- NEW: Add color logic based on app name availability ---
+            if (isAppNameAvailable) {
+                submitButton.classList.add('green');
+                submitButton.classList.remove('red');
+                paystackButton.classList.add('green');
+                paystackButton.classList.remove('red');
+            } else {
+                submitButton.classList.add('red');
+                submitButton.classList.remove('green');
+                paystackButton.classList.add('red');
+                paystackButton.classList.remove('green');
+            }
         };
 
         const debounce = (func, delay) => {
@@ -131,14 +142,11 @@ document.addEventListener('DOMContentLoaded', () => {
         autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
         deployKeyInput.addEventListener('input', toggleButtons);
 
-        // --- NEW: Event listener for the "Deploy Bot" (key-based) button ---
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            // Your form is set to submit with this button, so we use this handler for key-based deployment.
-            // Check if the key field is filled to confirm this flow.
             if (!deployKeyInput.value.trim()) {
-                return; // Let the other button handle the payment flow
+                return;
             }
 
             displayMessage(null, '');
@@ -152,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 sessionId: formData.get('sessionId'),
                 autoStatusView: formData.get('autoStatusView'),
                 deployKey: formData.get('deployKey'),
-                isFreeTrial: false // This flow is never a free trial
+                isFreeTrial: false
             };
 
             try {
@@ -185,7 +193,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         paystackButton.addEventListener('click', async () => {
-            // This button is for payment, so we open the email modal
             emailModal.classList.add('show');
         });
 
@@ -217,7 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 sessionId: formData.get('sessionId'),
                 email: paymentEmail,
                 autoStatusView: formData.get('autoStatusView'),
-                isFreeTrial: false // This flow is for a paid deployment
+                isFreeTrial: false
             };
 
             try {
@@ -236,9 +243,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 401) {
                     displayMessage('error', 'Authentication failed. Please reload the Mini App.');
                 } else if (result.success) {
-                    // --- MODIFIED: Corrected property name from 'authorization_url' to 'paymentUrl' ---
-                    Telegram.WebApp.showAlert('Redirecting to Paystack for payment...');
-                    window.location.href = result.paymentUrl;
+                    // --- MODIFIED: Corrected property name from 'authorization_url' to 'paymentUrl' and used openLink ---
+                    Telegram.WebApp.openLink(result.paymentUrl);
+                    Telegram.WebApp.close();
                 } else {
                     displayMessage('error', result.message);
                 }
@@ -246,7 +253,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Paystack initiation error:', error);
                 displayMessage('error', 'Failed to connect to server for payment.');
             } finally {
-                // Restore button state
                 modalPayButton.disabled = false;
                 modalPayButton.textContent = 'Pay Now';
             }
