@@ -1,3 +1,4 @@
+/* Custom Fonts and Global Styles */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
 
 body {
@@ -12,14 +13,15 @@ body {
     min-height: 100vh;
 }
 .container {
-    max-width: 400px;
-    width: 90%;
-    margin: 20px auto;
+    max-width: none;
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
     background-color: rgba(30, 30, 30, 0.9);
     padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
     position: relative;
     background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
     background-size: cover;
@@ -60,7 +62,13 @@ header {
 .form-group {
     margin-bottom: 20px;
 }
-input[type="text"] {
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 400;
+    color: #e0e0e0;
+}
+input[type="text"], input[type="email"] {
     width: 100%;
     padding: 12px;
     border: 1px solid #444;
@@ -71,7 +79,7 @@ input[type="text"] {
     font-size: 16px;
     transition: border-color 0.3s;
 }
-input[type="text"]:focus {
+input[type="text"]:focus, input[type="email"]:focus {
     outline: none;
     border-color: #4a90e2;
 }
