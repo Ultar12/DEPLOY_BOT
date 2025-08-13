@@ -6,30 +6,34 @@ body {
     color: #f8f9fa;
     padding: 0;
     margin: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    /* This sets the background image to cover the entire page */
+    background-image: url('https://raw.githubusercontent.com/ultar1/Deployments/main/public/background.jpeg'); /* REPLACE WITH YOUR OWN IMAGE URL */
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed; /* Keeps the background from scrolling */
     min-height: 100vh;
 }
 .container {
-    max-width: 400px; /* Card layout */
-    width: 90%;
-    margin: 20px auto;
-    background-color: rgba(30, 30, 30, 0.9);
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    position: relative;
-    background-image: url('http://googleusercontent.com/file_content/0');
-    background-size: cover;
-    background-position: center;
-    overflow: hidden;
+    width: 100%; /* Take full width of the body */
+    height: 100vh; /* Take full viewport height */
+    padding: 0;
+    margin: 0;
+    background-color: rgba(30, 30, 30, 0.9); /* Opaque overlay for content readability */
+    border-radius: 0; /* Remove rounded corners for full screen */
+    box-shadow: none;
+    border: none;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
+    position: relative;
+    overflow-y: auto; /* Allow scrolling if content is too long */
+}
+#main-content {
+    max-width: 400px; /* Constrain content width within the full page */
+    width: 90%;
+    margin: 20px auto;
 }
 
 /* Modal Styles */
@@ -184,19 +188,27 @@ input[type="text"]:focus, input[type="email"]:focus {
     cursor: pointer;
     transition: background-color 0.3s;
 }
-.btn.primary {
-    background-color: #6c757d; /* Gray color from image */
+/* Default button color from your image */
+.btn.primary, .btn.secondary {
+    background-color: #6c757d; 
     color: white;
 }
-.btn.primary:hover {
+.btn.primary:hover, .btn.secondary:hover {
     background-color: #5a6268;
 }
-.btn.secondary {
-    background-color: #6c757d; /* Gray color from image */
-    color: white;
+
+/* New button colors for status feedback */
+.btn.green {
+    background-color: #28a745;
 }
-.btn.secondary:hover {
-    background-color: #5a6268;
+.btn.red {
+    background-color: #dc3545;
+}
+.btn.green:hover {
+    background-color: #218838;
+}
+.btn.red:hover {
+    background-color: #c82333;
 }
 .btn:disabled {
     background-color: #444;
