@@ -12,7 +12,6 @@ process.on('uncaughtException', err => console.error('Uncaught Exception:', err)
 require('dotenv').config();
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
-const miniappApp = require('./miniapp_server');
 const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
@@ -976,18 +975,6 @@ async function notifyAdminUserOnline(msg) {
      getAllUserBots: dbServices.getAllUserBots, 
     escapeMarkdown: escapeMarkdown, // <-- Ensure this is passed
    });
-
-  // --- ADD THIS CRITICAL BLOCK ---
-miniappApp.init({
-    bot: bot,
-    HEROKU_API_KEY: HEROKU_API_KEY,
-    pool: pool,
-    ADMIN_ID: ADMIN_ID,
-    dbServices: dbServices,
-    buildWithProgress: dbServices.buildWithProgress,
-    escapeMarkdown: escapeMarkdown
-});
-
     // Initialize bot_faq.js
     faqInit({
         bot: bot,
@@ -1117,158 +1104,61 @@ const crypto = require('crypto');
         }
         res.sendStatus(200);
     });
-// bot.js
 
-// ... (your code above this block) ...
 
-if (process.env.NODE_ENV === 'production') {
-    // We assume 'app' is already declared in the global scope.
-    
-    const APP_URL = process.env.APP_URL;
-    if (!APP_URL) {
-        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
-        process.exit(1);
-    }
-    const PORT = process.env.PORT || 3000;
-    
-    const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
 
-    const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
-    const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-    (async () => {
-        try {
-            await bot.setWebHook(fullWebhookUrl);
-            console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
-        } catch (err) {
-            console.error(`[Webhook] Failed to set webhook:`, err.message);
-            process.exit(1);
-        }
-    })();
-
-    if (process.env.APP_URL && process.env.RENDER === 'true') {
-      const PING_INTERVAL_MS = 10 * 60 * 1000;
-      
-      setInterval(async () => {
-        try {
-          await axios.get(APP_URL);
-          console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
-        } catch (error) {
-          console.error(`[Pinger] Render self-ping failed: ${error.message}`);
-        }
-      }, PING_INTERVAL_MS);
-      
-      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
-    } else {
-      console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
-    }
-
-    // --- All API Endpoints are consolidated here ---
-    
-    app.post(webhookPath, (req, res) => {
-        bot.processUpdate(req.body);
-        res.sendStatus(200);
-    });
-
-    app.get('/', (req, res) => {
-        res.send('Bot is running (webhook mode)!');
-    });
-
-    app.get('/deploy', (req, res) => {
-        res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    });
-
-    app.get('/api/check-app-name/:appName', async (req, res) => {
-        const appName = req.params.appName;
-        try {
-            await axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            res.json({ available: false });
-        } catch (e) {
-            if (e.response?.status === 404) {
-                res.json({ available: true });
-            } else {
-                res.status(500).json({ available: false, error: 'API Error' });
-            }
-        }
-    });
-
-    app.post('/api/deploy', async (req, res) => {
-        const { userId, botType, appName, sessionId, autoStatusView, deployKey } = req.body;
-        if (!userId || !botType || !appName || !sessionId) { return res.status(400).json({ success: false, message: 'Missing required fields' }); }
-        if (deployKey) {
-            const usesLeft = await dbServices.useDeployKey(deployKey, userId);
-            if (usesLeft === null) { return res.status(400).json({ success: false, message: 'Invalid or used deploy key.' }); }
-            await bot.sendMessage(ADMIN_ID, `Key Used: \`${deployKey}\` by user \`${userId}\`. Uses left: ${usesLeft}`, { parse_mode: 'Markdown' });
-        } else {
-            return res.status(400).json({ success: false, message: 'No key provided. Use Pay with Paystack.' });
-        }
-        try {
-            const deployVars = { SESSION_ID: sessionId, APP_NAME: appName, AUTO_STATUS_VIEW: autoStatusView };
-            await bot.sendMessage(userId, `Deployment of app *${escapeMarkdown(appName)}* has been initiated. You will be notified when it's live!`, { parse_mode: 'Markdown' });
-            await dbServices.buildWithProgress(userId, deployVars, false, false, botType);
-            res.json({ success: true, message: 'Deployment initiated.' });
-        } catch (e) {
-            res.status(500).json({ success: false, message: e.message });
-        }
-    });
-
-    app.post('/api/paystack-init', async (req, res) => {
-        const { userId, botType, appName, sessionId, autoStatusView, email } = req.body;
-        if (!userId || !botType || !appName || !sessionId || !email) { return res.status(400).json({ success: false, message: 'Missing required fields.' }); }
-        try {
-            const reference = crypto.randomBytes(16).toString('hex');
-            const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
-            await pool.query('INSERT INTO pending_payments (reference, user_id, bot_type, app_name, session_id, email) VALUES ($1, $2, $3, $4, $5, $6)', [reference, userId, botType, appName, sessionId, email]);
-            const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', { email: email, amount: priceInKobo, reference: reference }, { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' } });
-            res.json({ success: true, authorization_url: paystackResponse.data.data.authorization_url });
-        } catch (error) { console.error('Paystack initiation error:', error.response?.data || error.message); res.status(500).json({ success: false, message: 'Failed to initiate payment. Please try again.' }); }
-    });
-
-    app.post('/paystack/webhook', express.json(), async (req, res) => {
-        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET_KEY).update(JSON.stringify(req.body)).digest('hex');
-        if (hash !== req.headers['x-paystack-signature']) { console.warn('Invalid Paystack signature received.'); return res.sendStatus(401); }
-        const event = req.body;
-        if (event.event === 'charge.success') {
-            const { reference, amount, currency, customer } = event.data;
-            try {
-                const result = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-                if (result.rows.length === 0) return res.sendStatus(200);
-                const { user_id, bot_type, app_name, session_id } = result.rows[0];
-                if (!app_name || !session_id) { await bot.sendMessage(user_id, `Payment confirmed, but deployment failed due to missing app details.`, { parse_mode: 'Markdown' }); return res.sendStatus(500); }
-                await pool.query(`INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`, [reference, user_id, customer.email, amount, currency, event.data.paid_at]);
-                await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
-                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name };
-                dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
-                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
-            } catch (dbError) { console.error(`Webhook DB Error for reference ${reference}:`, dbError); return res.sendStatus(500); }
-        }
-        res.sendStatus(200);
-    });
-
+    // This GET handler is for users who visit the webhook URL in a browser
     app.get('/paystack/webhook', (req, res) => {
         res.status(200).send('<h1>Webhook URL</h1><p>Please return to the Telegram bot.</p>');
     });
 
+    // This is your separate API endpoint for getting a key
     app.get('/api/get-key', async (req, res) => {
         const providedApiKey = req.headers['x-api-key'];
         const secretApiKey = process.env.INTER_BOT_API_KEY;
-        if (!secretApiKey || providedApiKey !== secretApiKey) { console.warn('[API] Unauthorized attempt to get a key.'); return res.status(401).json({ success: false, message: 'Unauthorized' }); }
+
+        if (!secretApiKey || providedApiKey !== secretApiKey) {
+            console.warn('[API] Unauthorized attempt to get a key.');
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
         try {
-            const result = await pool.query('SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1');
-            if (result.rows.length > 0) { const key = result.rows[0].key; console.log(`[API] Provided existing key ${key} to authorized request.`); return res.json({ success: true, key: key }); }
-            else { const newKey = generateKey(); const newKeyResult = await pool.query('INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key', [newKey]); const createdKey = newKeyResult.rows[0].key; console.log(`[API] Provided newly created key ${createdKey} to authorized request.`); return res.json({ success: true, key: createdKey }); }
-        } catch (error) { console.error('[API] Database error while fetching/creating key:', error); return res.status(500).json({ success: false, message: 'Internal server error.' }); }
+            const result = await pool.query(
+    'SELECT key FROM deploy_keys WHERE uses_left > 0 AND user_id IS NULL ORDER BY created_at DESC LIMIT 1'
+);
+
+if (result.rows.length > 0) {
+    const key = result.rows[0].key;
+                console.log(`[API] Provided existing key ${key} to authorized request.`);
+                return res.json({ success: true, key: key });
+            } else {
+                console.log('[API] No active key found. Creating a new one...');
+                const newKey = generateKey(); // Using your existing key generator
+                const newKeyResult = await pool.query(
+                    'INSERT INTO deploy_keys (key, uses_left) VALUES ($1, 1) RETURNING key',
+                    [newKey]
+                );
+                const createdKey = newKeyResult.rows[0].key;
+                console.log(`[API] Provided newly created key ${createdKey} to authorized request.`);
+                return res.json({ success: true, key: createdKey });
+            }
+        } catch (error) {
+            console.error('[API] Database error while fetching/creating key:', error);
+            return res.status(500).json({ success: false, message: 'Internal server error.' });
+        }
     });
 
+    // The command to start the server listening for requests
+    app.listen(PORT, () => {
+        console.log(`[Web Server] Server running on port ${PORT}`);
+    });
 
-    app.listen(PORT, () => { console.log(`[Web Server] Server running on port ${PORT}`); });
 } else {
+    // --- Polling Mode (for local development) ---
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
 }
-
 }) ();
 
 // 8) Polling error handler
@@ -1936,7 +1826,7 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
 
 // ... other code ...
 
-// --- FIXED /sendall command to use direct bot method calls ---
+// --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
@@ -1959,12 +1849,19 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     let failCount = 0;
     let blockedCount = 0;
     
+    // --- THIS IS THE CRITICAL FIX ---
+    // Change the table from 'all_users_backup' to 'user_activity'
     const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
+    // --- END OF FIX ---
+    
     const userIds = allUserIdsResult.rows.map(row => row.user_id);
     
     if (userIds.length === 0) {
         return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
     }
+    
+    const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
+    const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : isVideo ? repliedMsg.video.file_id : null;
 
     for (const userId of userIds) {
         if (userId === adminId) continue;
@@ -1972,19 +1869,13 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
-            // --- THIS IS THE FIX ---
-            // Call the methods directly on the `bot` object inside the loop.
-            if (isPhoto) {
-                await bot.sendPhoto(userId, repliedMsg.photo[repliedMsg.photo.length - 1].file_id, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
-            } else if (isVideo) {
-                await bot.sendVideo(userId, repliedMsg.video.file_id, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+            if (isPhoto || isVideo) {
+                await sendMethod(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await bot.sendMessage(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+                await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
             }
-            // --- END OF FIX ---
             
             successCount++;
-            // The timeout is good practice, keep it to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
             if (error.response?.body?.description.includes("bot was blocked")) {
@@ -2005,6 +1896,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     );
 });
 
+// ... other code ...
 
 
 bot.onText(/^\/copydb$/, async (msg) => {
@@ -2026,53 +1918,22 @@ bot.onText(/^\/copydb$/, async (msg) => {
     });
 });
 
-// ... other code ...
+
+// --- REPLACE this entire function in bot.js ---
+
+// --- ADD this new command to bot.js ---
 
 bot.onText(/^\/backupall$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
 
-    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
+    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all paid bots... This might take some time.');
 
     try {
         const result = await dbServices.backupAllPaidBots();
-        
-        let finalMessage;
-        if (result.success && result.stats) {
-            const { levanter, raganork, unknown } = result.stats;
-            const { appsBackedUp, appsFailed } = result.miscStats;
-
-            // Format the lists of app names
-            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
-            
-            finalMessage = `
-*Backup Summary:*
-
-*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
-*Total Success:* ${appsBackedUp}
-*Total Failed:* ${appsFailed}
-
-*Levanter Bots:*
-  - Success: ${levanter.backedUp.length}
-  - Failed: ${levanter.failed.length}
-
-*Raganork Bots:*
-  - Success: ${raganork.backedUp.length}
-  - Failed: ${raganork.failed.length}
-
-*Misc. Bots:*
-_The following apps were not found in the local database._
-  - **Success:** ${formatList(unknown.backedUp)}
-  - **Failed:** ${formatList(unknown.failed)}
-            `;
-        } else {
-            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
-        }
-        
-        await bot.editMessageText(finalMessage, {
+        await bot.editMessageText(result.message, {
             chat_id: cid,
-            message_id: sentMsg.message_id,
-            parse_mode: 'Markdown'
+            message_id: sentMsg.message_id
         });
     } catch (error) {
         await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
@@ -2081,7 +1942,6 @@ _The following apps were not found in the local database._
         });
     }
 });
-
 
 
 bot.onText(/^\/revenue$/, async (msg) => {
@@ -2717,33 +2577,38 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
 
-// bot.js
-
-// ... inside bot.on('message', ... )
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            // ... (your existing cooldown message) ...
-            return;
+            // This part is now updated
+            const formattedDate = check.cooldown.toLocaleString('en-US', {
+                timeZone: 'Africa/Lagos', // Set for Nigeria
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
+            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                    ]
+                }
+            });
         }
 
-        try {
+        try { 
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
             if (isMember) {
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION_MINIAPP', data: { isFreeTrial: true } };
+                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
                 await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
                     reply_markup: {
                         inline_keyboard: [
-                            // --- THIS IS THE CRITICAL CHANGE ---
-                            [{ text: 'Levanter', callback_data: `select_deploy_type_miniapp:levanter` }],
-                            [{ text: 'Raganork MD', callback_data: `select_deploy_type_miniapp:raganork` }]
-                            // --- END CHANGE ---
+                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
                         ]
                     }
                 });
@@ -2758,27 +2623,27 @@ if (text === 'Deploy' || text === 'Free Trial') {
                     }
                 });
             }
-        } catch (error) {
+        } catch (error) { 
             console.error("Error in free trial initial check:", error.message);
             await bot.sendMessage(cid, "An error occurred. Please try again later.");
         }
         return;
-    } else {
+
+    } else { // This is the "Deploy" (paid) flow
         delete userStates[cid];
-        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION_MINIAPP', data: { isFreeTrial: false } };
+        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
-                    // --- THIS IS THE CRITICAL CHANGE ---
-                    [{ text: 'Levanter', callback_data: `select_deploy_type_miniapp:levanter` }],
-                    [{ text: 'Raganork MD', callback_data: `select_deploy_type_miniapp:raganork` }]
-                    // --- END CHANGE ---
+                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
+                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
                 ]
             }
         });
         return;
     }
 }
+
 
 
   if (text === 'Apps' && isAdmin) {
@@ -3138,72 +3003,67 @@ if (usesLeft === null) {
 
 
 
-if (text === 'Deploy' || text === 'Free Trial') {
-    const isFreeTrial = (text === 'Free Trial');
+ // bot.js
 
-    if (isFreeTrial) {
-        const check = await dbServices.canDeployFreeTrial(cid);
-        if (!check.can) {
-            // This part is now updated
-            const formattedDate = check.cooldown.toLocaleString('en-US', {
-                timeZone: 'Africa/Lagos', // Set for Nigeria
-                year: 'numeric', month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: true
-            });
-            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
-                    ]
-                }
-            });
-        }
+// ... existing code ...
 
-        try { 
-            const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
-            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+// The core issue is that there are two separate pieces of code that
+// should be a single, cohesive state handler. We need to consolidate them.
 
-            if (isMember) {
-                userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
-                await bot.sendMessage(cid, 'Thanks for being a channel member! Which bot type would you like to deploy for your free trial?', {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                            [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
-                        ]
-                    }
-                });
-            } else {
-                await bot.sendMessage(cid, "To access the Free Trial, you must join our channel. This helps us keep you updated!", {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                            [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                        ]
-                    }
-                });
-            }
-        } catch (error) { 
-            console.error("Error in free trial initial check:", error.message);
-            await bot.sendMessage(cid, "An error occurred. Please try again later.");
-        }
-        return;
+// First, find and remove this entire block, as it is incomplete and causes the bug:
+// if (st && st.step === 'AWAITING_APP_NAME') { ... }
 
-    } else { // This is the "Deploy" (paid) flow
-        delete userStates[cid];
-        userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
-        await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
-                    [{ text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }]
-                ]
-            }
-        });
+// Now, replace it with this single, comprehensive handler.
+if (st && st.step === 'AWAITING_APP_NAME') {
+    const appName = text.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+    // Validate app name format. Heroku app names can only contain lowercase letters, numbers, and dashes.
+    if (!/^[a-z0-9-]{3,30}$/.test(appName)) {
+        // Send a new message asking for the name again, possibly with a hint.
+        await bot.sendMessage(cid, 'Invalid app name. It must be between 3 and 30 characters and only contain lowercase letters, numbers, and dashes.');
+        // Don't change the state, just wait for a new valid input.
         return;
     }
+
+    try {
+        // Check if the app name is already taken on Heroku.
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        // If the request succeeds, the app exists.
+        await bot.sendMessage(cid, 'That app name is already taken. Please try another one:');
+        return;
+    } catch (e) {
+        // A 404 error is expected and means the app name is available.
+        if (e.response?.status !== 404) {
+            console.error(`[Heroku Check] Error checking app name existence for ${appName}:`, e.message);
+            await bot.sendMessage(cid, 'An error occurred while checking the app name. Please try again later.');
+            return;
+        }
+    }
+
+    // App name is valid and available. Proceed to the next step.
+    st.data.APP_NAME = appName;
+    st.step = 'AWAITING_AUTO_STATUS_CHOICE';
+
+    const confirmationMessage = `*Next Step:*\n` +
+                                `Enable automatic status view?`;
+    
+    await bot.sendMessage(cid, confirmationMessage, {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Yes', callback_data: `set_auto_status_choice:true` }],
+                [{ text: 'No', callback_data: `set_auto_status_choice:false` }]
+            ]
+        },
+        parse_mode: 'Markdown'
+    });
+    return;
 }
+
+// ... existing code ...
+
+
 
 
 
@@ -5850,38 +5710,6 @@ if (action === 'setvarbool') {
     return;
   }
 
-  /// bot.js
-
-// ... inside bot.on('callback_query', ... )
-
-if (action === 'select_deploy_type_miniapp') {
-    const botType = payload;
-    const st = userStates[cid];
-
-    if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION_MINIAPP') {
-        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: q.message.message_id });
-    }
-      
-    // --- THIS IS THE FIXED URL ---
-    const miniAppUrl = `https://deploy-bot-gd97.onrender.com/deploy?user_id=${cid}&bot_type=${botType}`;
-    // --- END FIX ---
-
-    await bot.editMessageText(`You have selected *${botType.toUpperCase()}*. Tap the button below to launch the Mini App and fill in your deployment details.`, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Launch Deployment App 🚀', web_app: { url: miniAppUrl } }]
-            ]
-        }
-    });
-
-    delete userStates[cid];
-    return;
-}
-
-
 
   if (action === 'back_to_app_list') {
     const isAdmin = cid === ADMIN_ID;
@@ -5920,7 +5748,6 @@ if (action === 'select_deploy_type_miniapp') {
     }
   }
 });
-
 
 // --- FIX: Final, corrected bot.on('channel_post') handler ---
 bot.on('channel_post', async msg => {
