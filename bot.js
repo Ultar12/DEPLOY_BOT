@@ -1101,18 +1101,22 @@ app.get('/miniapp/health', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'index.html'));
     });
 
-    // Endpoint to check if an app name is available
+        // Endpoint to check if an app name is available
     app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
         const appName = req.params.appName;
         try {
             await axios.get(`https://api.heroku.com/apps/${appName}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
+            // If the request succeeds (status 200), the app name is NOT available.
             res.json({ available: false });
         } catch (e) {
+            // A 404 error is expected if the app name is available.
             if (e.response?.status === 404) {
                 res.json({ available: true });
             } else {
+                // For any other error (e.g., API key issue), assume unavailable for safety.
+                console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
                 res.status(500).json({ available: false, error: 'API Error' });
             }
         }
@@ -1121,8 +1125,7 @@ app.get('/miniapp/health', (req, res) => {
     // Endpoint to handle the final deployment submission
     app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         const { botType, appName, sessionId, autoStatusView, deployKey, isFreeTrial } = req.body;
-        const userId = req.telegramData.id;
-        const userName = req.telegramData.username;
+        const userId = req.telegramData.id.toString();
         
         if (!userId || !botType || !appName || !sessionId) {
             return res.status(400).json({ success: false, message: 'Missing required fields.' });
@@ -1133,7 +1136,7 @@ app.get('/miniapp/health', (req, res) => {
             [userId, appName]
         );
         if (pendingPaymentResult.rows.length > 0) {
-            return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it or cancel via the main bot.' });
+            return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it.' });
         }
 
         const isSessionIdValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX) && sessionId.length >= 10) ||
@@ -1149,8 +1152,7 @@ app.get('/miniapp/health', (req, res) => {
             AUTO_STATUS_VIEW: autoStatusView
         };
 
-        let deploymentSuccess = false;
-        let deploymentMessage = 'Deployment failed.';
+        let deploymentMessage = '';
 
         try {
             if (isFreeTrial) {
@@ -1159,7 +1161,6 @@ app.get('/miniapp/health', (req, res) => {
                     return res.status(400).json({ success: false, message: `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString()}.` });
                 }
                 await dbServices.buildWithProgress(userId, deployVars, true, false, botType);
-                deploymentSuccess = true;
                 deploymentMessage = 'Free Trial deployment initiated. Check the bot chat for updates!';
             } else if (deployKey) {
                 const usesLeft = await dbServices.useDeployKey(deployKey, userId);
@@ -1167,12 +1168,14 @@ app.get('/miniapp/health', (req, res) => {
                     return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
                 }
                 await dbServices.buildWithProgress(userId, deployVars, false, false, botType);
-                deploymentSuccess = true;
                 deploymentMessage = 'Deployment initiated with key. Check the bot chat for updates!';
                 
+                // Admin notification logic here
+                const userChat = await bot.getChat(userId);
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
                 await bot.sendMessage(ADMIN_ID,
                     `*New App Deployed (Mini App)*\n` +
-                    `*User:* @${escapeMarkdown(userName || 'N/A')} (\`${userId}\`)\n` +
+                    `*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n` +
                     `*App Name:* \`${appName}\`\n` +
                     `*Key Used:* \`${deployKey}\`\n` +
                     `*Uses Left:* ${usesLeft}`,
@@ -1182,18 +1185,23 @@ app.get('/miniapp/health', (req, res) => {
                 return res.status(400).json({ success: false, message: 'A deploy key is required for paid deployments. Please provide one or use the "Pay" option.' });
             }
 
+            // This is the critical fix to ensure the deployment is saved to the database.
+            // It will save the new app to user_bots and user_deployments so it appears in "My Bots".
+            await dbServices.addUserBot(userId, appName, sessionId, botType);
             await bot.sendMessage(userId, 
                 `Deployment of your *${escapeMarkdown(appName)}* bot has started via the Mini App.\n\n` +
                 `You will receive a notification here when the bot is ready.`, 
                 { parse_mode: 'Markdown' });
 
-            res.json({ success: deploymentSuccess, message: deploymentMessage });
+            res.json({ success: true, message: deploymentMessage });
 
         } catch (e) {
             console.error('[MiniApp Server] Deployment error:', e);
             res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
         }
     });
+
+
 
     // Endpoint to handle the payment flow
     app.post('/api/pay', validateWebAppInitData, async (req, res) => {
