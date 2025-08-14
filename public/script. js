@@ -8,21 +8,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const deployKeyInput = document.getElementById('deployKey');
         const nameStatus = document.getElementById('name-status');
         const submitButton = document.getElementById('submit-button');
-        const paystackButton = document.getElementById('paystack-button');
-        const statusButton = document.getElementById('status-button'); // NEW
+        const payButton = document.getElementById('pay-button');
+        const statusButton = document.getElementById('status-button');
         const errorMessage = document.getElementById('error-message');
         const successMessage = document.getElementById('success-message');
         const emailModal = document.getElementById('email-modal');
         const closeButton = document.querySelector('.close-button');
         const modalPayButton = document.getElementById('modal-pay-button');
         const paymentEmailInput = document.getElementById('paymentEmail');
-
-        let botType = 'levanter';
-        const params = new URLSearchParams(window.location.search);
-        botType = params.get('bot_type') || botType;
-
+        const botTypeButtons = document.querySelectorAll('.bot-type-group .btn');
+        
+        let botType = 'levanter'; // Default bot type
         const appNameRegex = /^[a-z0-9-]+$/;
         let isAppNameAvailable = false;
+        let isCheckingAppName = false;
 
         if (typeof window.Telegram === 'undefined' || typeof window.Telegram.WebApp === 'undefined') {
             console.error('Telegram WebApp object not found. This script must run inside a Telegram Mini App.');
@@ -49,21 +48,37 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const canProceed = isAppNameAvailable && isSessionIdFilled && isAutoStatusSelected;
             
-            submitButton.disabled = !(canProceed && isDeployKeyFilled);
-            paystackButton.disabled = !(canProceed && !isDeployKeyFilled);
-            paystackButton.textContent = paystackButton.disabled ? 'Pay' : 'Pay ₦1500';
+            if (isCheckingAppName) {
+                submitButton.disabled = true;
+                payButton.disabled = true;
+                return;
+            }
             
-            if (isAppNameAvailable) {
+            // Enable/disable and style buttons based on validation
+            if (canProceed && isDeployKeyFilled) {
+                submitButton.disabled = false;
                 submitButton.classList.add('green');
                 submitButton.classList.remove('red');
-                paystackButton.classList.add('green');
-                paystackButton.classList.remove('red');
+                payButton.disabled = true;
+                payButton.classList.remove('green', 'red');
+            } else if (canProceed && !isDeployKeyFilled) {
+                payButton.disabled = false;
+                payButton.classList.add('green');
+                payButton.classList.remove('red');
+                submitButton.disabled = true;
+                submitButton.classList.remove('green', 'red');
             } else {
+                submitButton.disabled = true;
+                payButton.disabled = true;
                 submitButton.classList.add('red');
                 submitButton.classList.remove('green');
-                paystackButton.classList.add('red');
-                paystackButton.classList.remove('green');
+                payButton.classList.add('red');
+                payButton.classList.remove('green');
             }
+
+            // Set button text
+            payButton.textContent = payButton.disabled ? 'Pay' : 'Pay ₦1500';
+            submitButton.textContent = submitButton.disabled ? 'Deploy Bot 🚀' : 'Deploy Bot 🚀';
         };
 
         const debounce = (func, delay) => {
@@ -75,18 +90,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const checkAppNameAvailability = async (appName) => {
-            console.log(`--- SCRIPT: Checking app name availability for: ${appName} ---`);
-            isAppNameAvailable = false;
+            isCheckingAppName = true;
             toggleButtons();
-
+            
             if (appName.length > 30) {
                 nameStatus.textContent = 'Name is too long (max 30 chars).';
                 nameStatus.className = 'status-message taken';
+                isAppNameAvailable = false;
+                isCheckingAppName = false;
+                toggleButtons();
                 return;
             }
             if (!appNameRegex.test(appName)) {
                 nameStatus.textContent = 'Invalid format. Use lowercase letters, numbers, and hyphens.';
                 nameStatus.className = 'status-message taken';
+                isAppNameAvailable = false;
+                isCheckingAppName = false;
+                toggleButtons();
                 return;
             }
 
@@ -97,16 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const response = await fetch(`/miniapp/api/check-app-name/${appName}`, {
                      headers: { 'X-Telegram-Init-Data': window.Telegram.WebApp.initData }
                 });
-                console.log(`--- SCRIPT: App name check response status: ${response.status} ---`);
                 const data = await response.json();
 
                 if (response.status === 401) {
                      nameStatus.textContent = 'Auth error. Reload Mini App.';
                      nameStatus.className = 'status-message error';
-                     return;
-                }
-
-                if (data.available) {
+                } else if (data.available) {
                     nameStatus.textContent = 'Available!';
                     nameStatus.className = 'status-message available';
                     isAppNameAvailable = true;
@@ -121,6 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 nameStatus.className = 'status-message error';
                 isAppNameAvailable = false;
             } finally {
+                isCheckingAppName = false;
                 toggleButtons();
             }
         };
@@ -129,14 +146,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         appNameInput.addEventListener('input', () => {
             const appName = appNameInput.value.trim();
+            isAppNameAvailable = false;
             nameStatus.textContent = '';
             if (appName.length >= 3) {
                 debouncedCheckAppName(appName);
             } else if (appName.length > 0) {
                 nameStatus.textContent = 'Enter at least 3 characters.';
                 nameStatus.className = 'status-message';
+            } else {
+                nameStatus.textContent = '';
             }
-            isAppNameAvailable = false;
             toggleButtons();
         });
         
@@ -144,26 +163,33 @@ document.addEventListener('DOMContentLoaded', () => {
         autoStatusViewRadios.forEach(radio => radio.addEventListener('change', toggleButtons));
         deployKeyInput.addEventListener('input', toggleButtons);
 
+        botTypeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                botTypeButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                botType = button.dataset.botType;
+            });
+        });
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            console.log('--- SCRIPT: Deploy Bot button clicked ---');
 
             if (!deployKeyInput.value.trim()) {
-                return;
+                return; // Prevent form submission if deploy key is empty
             }
 
             displayMessage(null, '');
             submitButton.disabled = true;
             submitButton.textContent = 'Deploying...';
+            submitButton.classList.add('btn-loading');
 
             const formData = new FormData(form);
             const data = {
                 botType: botType,
                 appName: formData.get('appName'),
                 sessionId: formData.get('sessionId'),
-                autoStatusView: formData.get('autoStatusView'),
-                deployKey: formData.get('deployKey'),
-                isFreeTrial: false
+                autoStatusView: formData.get('autoStatusView') === 'true',
+                deployKey: formData.get('deployKey')
             };
 
             try {
@@ -179,22 +205,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 const result = await response.json();
                 if (result.success) {
                     displayMessage('success', result.message);
-                    Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
-                    Telegram.WebApp.close();
+                    window.Telegram.WebApp.showAlert('Deployment started! Check the bot for updates.');
+                    window.Telegram.WebApp.close();
                 } else {
                     displayMessage('error', result.message);
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Deploy Bot 🚀';
                 }
             } catch (error) {
                 console.error('Error submitting deployment:', error);
                 displayMessage('error', 'Failed to connect to server.');
+            } finally {
                 submitButton.disabled = false;
                 submitButton.textContent = 'Deploy Bot 🚀';
+                submitButton.classList.remove('btn-loading');
+                toggleButtons();
             }
         });
 
-        paystackButton.addEventListener('click', async () => {
+        payButton.addEventListener('click', async () => {
             console.log('--- SCRIPT: Pay button clicked, showing email modal ---');
             emailModal.classList.add('show');
         });
@@ -210,16 +237,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         modalPayButton.addEventListener('click', async () => {
-            console.log('--- SCRIPT: Pay Now button clicked ---');
             const paymentEmail = paymentEmailInput.value.trim();
             if (!paymentEmail || !paymentEmail.includes('@')) {
-                alert('Please enter a valid email.');
+                window.Telegram.WebApp.showAlert('Please enter a valid email.');
                 return;
             }
 
             displayMessage(null, '');
             modalPayButton.disabled = true;
             modalPayButton.textContent = 'Processing...';
+            modalPayButton.classList.add('btn-loading');
 
             const formData = new FormData(form);
             const data = {
@@ -227,8 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 appName: formData.get('appName'),
                 sessionId: formData.get('sessionId'),
                 email: paymentEmail,
-                autoStatusView: formData.get('autoStatusView'),
-                isFreeTrial: false
+                autoStatusView: formData.get('autoStatusView') === 'true'
             };
 
             try {
@@ -246,8 +272,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 401) {
                     displayMessage('error', 'Authentication failed. Please reload the Mini App.');
                 } else if (result.success) {
-                    Telegram.WebApp.openLink(result.paymentUrl);
-                    Telegram.WebApp.close();
+                    window.Telegram.WebApp.openLink(result.paymentUrl);
+                    window.Telegram.WebApp.close();
                 } else {
                     displayMessage('error', result.message);
                 }
@@ -257,14 +283,15 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 modalPayButton.disabled = false;
                 modalPayButton.textContent = 'Pay Now';
+                modalPayButton.classList.remove('btn-loading');
             }
         });
 
         statusButton.addEventListener('click', async () => {
-            console.log('--- SCRIPT: Check Server Status button clicked ---');
             displayMessage(null, '');
             statusButton.disabled = true;
             statusButton.textContent = 'Checking...';
+            statusButton.classList.add('btn-loading');
             try {
                 const response = await fetch('/miniapp/health');
                 const result = await response.json();
@@ -279,17 +306,15 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 statusButton.disabled = false;
                 statusButton.textContent = 'Check Server Status';
+                statusButton.classList.remove('btn-loading');
             }
         });
 
+        // Initialize button states
         toggleButtons();
 
     } catch (error) {
         console.error('An unhandled error occurred in the Mini App script:', error);
-        alert('An internal error occurred. Please check the developer console for details.');
-        const mainContent = document.getElementById('main-content');
-        if (mainContent) {
-            mainContent.style.display = 'block';
-        }
+        window.Telegram.WebApp.showAlert('An internal error occurred. Please check the developer console for details.');
     }
 });
