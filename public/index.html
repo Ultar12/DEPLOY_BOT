@@ -16,6 +16,14 @@
 
             <form id="deploy-form">
                 <div class="form-group">
+                    <label>Bot Type</label>
+                    <div class="bot-type-group">
+                        <button type="button" class="btn active" data-bot-type="levanter">Levanter</button>
+                        <button type="button" class="btn" data-bot-type="raganork">Raganork</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
                     <label for="appName">App Name</label>
                     <div class="input-with-status">
                         <input type="text" id="appName" name="appName" placeholder="e.g., my-awesome-bot" required>
@@ -47,8 +55,8 @@
                     </div>
 
                     <div class="form-group action-buttons">
-                        <button type="submit" id="submit-button" class="btn primary" disabled>Deploy Bot 🚀</button>
-                        <button type="button" id="paystack-button" class="btn secondary" disabled>Pay</button>
+                        <button type="submit" id="submit-button" class="btn primary" disabled>Deploy Bot</button>
+                        <button type="button" id="pay-button" class="btn secondary" disabled>Pay</button>
                         <button type="button" id="status-button" class="btn primary" style="background-color: #555; margin-top: 10px;">Check Server Status</button>
                     </div>
                 </div>
