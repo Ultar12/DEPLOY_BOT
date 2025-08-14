@@ -6,7 +6,6 @@ body {
     color: #f8f9fa;
     padding: 0;
     margin: 0;
-    /* --- NEW BACKGROUND IMAGE --- */
     background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
     background-size: cover;
     background-position: center;
@@ -21,7 +20,6 @@ body {
     height: 100%;
     padding: 20px;
     margin: 0;
-    /* --- SEMI-TRANSPARENT BACKGROUND --- */
     background-color: rgba(30, 30, 30, 0.7);
     border-radius: 0;
     box-shadow: none;
@@ -158,6 +156,7 @@ input[type="text"]:focus, input[type="email"]:focus {
     top: 50%;
     transform: translateY(-50%);
     font-size: 12px;
+    pointer-events: none;
 }
 .status-message.available {
     color: #28a745;
@@ -179,12 +178,32 @@ input[type="text"]:focus, input[type="email"]:focus {
     margin-bottom: 0;
 }
 
+/* Bot Type Buttons */
+.bot-type-group {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.bot-type-group .btn {
+    flex: 1;
+    background-color: #333;
+    color: white;
+    transition: background-color 0.3s, box-shadow 0.3s;
+}
+
+.bot-type-group .btn.active {
+    background-color: #4a90e2;
+    box-shadow: 0 0 10px #4a90e2;
+}
+
 /* Buttons */
 .action-buttons {
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
+
 .btn {
     width: 100%;
     padding: 14px;
@@ -193,33 +212,81 @@ input[type="text"]:focus, input[type="email"]:focus {
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 0.3s;
+    transition: background-color 0.3s, box-shadow 0.3s, transform 0.1s;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
 }
-.btn.primary, .btn.secondary {
-    background-color: #6c757d; 
+.btn:active {
+    transform: scale(0.98);
+}
+.btn.primary {
+    background-color: #4a90e2;
     color: white;
 }
-.btn.primary:hover, .btn.secondary:hover {
-    background-color: #5a6268;
+.btn.primary:hover {
+    background-color: #367cbf;
+}
+.btn.secondary {
+    background-color: #e2a04a;
+    color: white;
+}
+.btn.secondary:hover {
+    background-color: #c98835;
 }
 
-/* New button colors for status feedback */
+/* Glowing and animation effects for buttons */
 .btn.green {
     background-color: #28a745;
+    box-shadow: 0 0 10px #28a745, 0 0 20px #28a745;
+    animation: pulse-green 1.5s infinite;
 }
 .btn.red {
     background-color: #dc3545;
+    box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545;
+    animation: pulse-red 1.5s infinite;
 }
-.btn.green:hover {
-    background-color: #218838;
+
+@keyframes pulse-green {
+    0% { box-shadow: 0 0 10px #28a745, 0 0 20px #28a745; }
+    50% { box-shadow: 0 0 20px #28a745, 0 0 40px #28a745; }
+    100% { box-shadow: 0 0 10px #28a745, 0 0 20px #28a745; }
 }
-.btn.red:hover {
-    background-color: #c82333;
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545; }
+    50% { box-shadow: 0 0 20px #dc3545, 0 0 40px #dc3545; }
+    100% { box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545; }
 }
+
 .btn:disabled {
     background-color: #444;
     color: #999;
     cursor: not-allowed;
+    box-shadow: none;
+    animation: none;
+}
+
+.btn-loading {
+    cursor: wait;
+}
+
+.btn-loading::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    transform: translate(-50%, -50%);
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 /* Message Area */
