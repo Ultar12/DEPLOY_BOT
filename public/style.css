@@ -29,7 +29,7 @@ body, html {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5); /* Dark overlay for better text contrast */
+    background-color: rgba(0, 0, 0, 0.5);
 }
 
 .content-container {
@@ -48,7 +48,6 @@ body, html {
     text-shadow: 0 0 10px rgba(255,255,255,0.7);
 }
 
-/* Rainbow effect applied to all words */
 .main-text span {
     display: inline-block;
     background: linear-gradient(120deg, #ff0000, #ff8000, #ffff00, #80ff00, #00ffff, #0080ff, #ff00ff);
@@ -56,25 +55,24 @@ body, html {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     animation: rainbow-animate 10s infinite linear;
-}
-
-/* Individual word landing animations with delays */
-.main-text span {
+    
+    /* NEW: Initial state for landing animation */
     transform: translateY(-200px);
     opacity: 0;
+    visibility: hidden;
     animation-fill-mode: forwards;
 }
 
 .word1 {
-    animation: landing-effect 2s ease-out;
+    animation: landing-effect 2s ease-out 0s forwards;
 }
 
 .word2 {
-    animation: landing-effect 2s ease-out 0.5s;
+    animation: landing-effect 2s ease-out 0.5s forwards;
 }
 
 .word3 {
-    animation: landing-effect 2s ease-out 1s;
+    animation: landing-effect 2s ease-out 1s forwards;
 }
 
 .sub-text {
@@ -87,28 +85,25 @@ body, html {
     animation: fade-in-effect 1.5s ease-in-out 3s forwards;
 }
 
-/* Animations */
 @keyframes rainbow-animate {
-    0% {
-        background-position: 0% 50%;
-    }
-    100% {
-        background-position: 100% 50%;
-    }
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
 }
 
 @keyframes landing-effect {
-    0% {
-        transform: translateY(-200px) scale(0.5);
-        opacity: 0;
+    0% { 
+        transform: translateY(-200px) scale(0.5); 
+        opacity: 0; 
+        visibility: visible;
     }
-    60% {
-        transform: translateY(20px) scale(1.1);
-        opacity: 1;
+    60% { 
+        transform: translateY(20px) scale(1.1); 
+        opacity: 1; 
     }
-    100% {
-        transform: translateY(0) scale(1);
+    100% { 
+        transform: translateY(0) scale(1); 
         opacity: 1;
+        visibility: visible;
     }
 }
 
