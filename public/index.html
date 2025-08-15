@@ -3,82 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Deployment</title>
+    <title>Under Development</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <div id="main-content">
-            <header>
-                <h1 class="logo">Bot Deployment</h1>
-                <p class="tagline">Launch your Heroku bot instantly.</p>
-            </header>
-
-            <form id="deploy-form">
-                <div class="form-group">
-                    <label>Bot Type</label>
-                    <div class="bot-type-group">
-                        <button type="button" class="btn active" data-bot-type="levanter">Levanter</button>
-                        <button type="button" class="btn" data-bot-type="raganork">Raganork</button>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="appName">App Name</label>
-                    <div class="input-with-status">
-                        <input type="text" id="appName" name="appName" placeholder="e.g., my-awesome-bot" required>
-                        <span id="name-status" class="status-message"></span>
-                    </div>
-                </div>
-                
-                <div id="additional-fields">
-                    <div class="form-group">
-                        <label for="sessionId">Session ID</label>
-                        <input type="text" id="sessionId" name="sessionId" placeholder="Paste your session ID here" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Auto Status View</label>
-                        <div class="radio-group">
-                            <label>
-                                <input type="radio" name="autoStatusView" value="true" required> Yes
-                            </label>
-                            <label>
-                                <input type="radio" name="autoStatusView" value="false" required> No
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="deployKey">Deploy Key (Optional)</label>
-                        <input type="text" id="deployKey" name="deployKey" placeholder="Enter deploy key if you have one">
-                    </div>
-
-                    <div class="form-group action-buttons">
-                        <button type="submit" id="submit-button" class="btn primary" disabled>Deploy Bot</button>
-                        <button type="button" id="pay-button" class="btn secondary" disabled>Pay</button>
-                        <button type="button" id="status-button" class="btn primary" style="background-color: #555; margin-top: 10px;">Check Server Status</button>
-                    </div>
-                </div>
-            </form>
-            <div class="message-area">
-                <p id="error-message" class="error"></p>
-                <p id="success-message" class="success"></p>
-            </div>
+    <div class="background-container">
+        <div class="content-container">
+            <h1 class="main-text">Still on development</h1>
+            <p class="sub-text">We'll be back online soon.</p>
         </div>
     </div>
-
-    <div id="email-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-button">&times;</span>
-            <div class="form-group">
-                <label for="paymentEmail">Email</label>
-                <input type="email" id="paymentEmail" name="paymentEmail" placeholder="Your email for payment receipt" required>
-            </div>
-            <button id="modal-pay-button" class="btn primary">Pay Now</button>
-        </div>
-    </div>
-
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="script.js"></script>
 </body>
