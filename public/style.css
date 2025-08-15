@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Poppins:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;800&display=swap');
 
 body, html {
     margin: 0;
@@ -16,14 +16,12 @@ body, html {
     display: flex;
     justify-content: center;
     align-items: center;
-    background-image: url('https://googleusercontent.com/image_generation_content/0');
+    background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
-    animation: background-pan 60s infinite alternate linear;
 }
 
-/* Add a semi-transparent overlay to enhance text readability */
 .background-container::before {
     content: '';
     position: absolute;
@@ -31,9 +29,7 @@ body, html {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(2px);
-    animation: overlay-glow 10s infinite alternate;
+    background-color: rgba(0, 0, 0, 0.5); /* Dark overlay for better text contrast */
 }
 
 .content-container {
@@ -45,57 +41,56 @@ body, html {
 }
 
 .main-text {
-    font-family: 'Orbitron', sans-serif;
     font-size: 3rem;
-    font-weight: 700;
-    text-shadow: 0 0 10px #00aaff, 0 0 20px #00aaff, 0 0 30px #00aaff, 0 0 40px #00aaff;
-    animation: text-glow 2s infinite alternate;
+    font-weight: 800;
+    text-transform: uppercase;
+    
+    /* Rainbow effect */
+    background: linear-gradient(120deg, #ff0000, #ff8000, #ffff00, #80ff00, #00ffff, #0080ff, #ff00ff);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: rainbow-animate 2s infinite linear, landing-effect 1s ease-out;
 }
 
 .sub-text {
-    font-size: 1.2rem;
-    color: #ccc;
-    margin-top: -20px;
-    animation: fade-in 3s ease-out;
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-top: 10px;
+    color: #fff;
+    opacity: 0;
+    text-shadow: 0 0 10px #fff;
+    animation: fade-in-effect 1s ease-in-out 1.2s forwards;
 }
 
 /* Animations */
-@keyframes text-glow {
+@keyframes rainbow-animate {
     0% {
-        text-shadow: 0 0 5px #00aaff, 0 0 10px #00aaff;
+        background-position: 0% 50%;
     }
     100% {
-        text-shadow: 0 0 10px #00aaff, 0 0 20px #00aaff, 0 0 30px #00aaff;
+        background-position: 100% 50%;
     }
 }
 
-@keyframes overlay-glow {
+@keyframes landing-effect {
     0% {
-        background-color: rgba(0, 0, 0, 0.4);
-        box-shadow: inset 0 0 50px rgba(0, 255, 255, 0.2);
-    }
-    100% {
-        background-color: rgba(0, 0, 0, 0.5);
-        box-shadow: inset 0 0 80px rgba(0, 255, 255, 0.3);
-    }
-}
-
-@keyframes background-pan {
-    0% {
-        background-position: 0% 0%;
-    }
-    100% {
-        background-position: 100% 100%;
-    }
-}
-
-@keyframes fade-in {
-    0% {
+        transform: translateY(-200px) scale(0.5);
         opacity: 0;
-        transform: translateY(20px);
+    }
+    60% {
+        transform: translateY(20px) scale(1.1);
+        opacity: 1;
     }
     100% {
+        transform: translateY(0) scale(1);
         opacity: 1;
-        transform: translateY(0);
+    }
+}
+
+@keyframes fade-in-effect {
+    to {
+        opacity: 1;
+        text-shadow: 0 0 15px #fff, 0 0 25px #fff;
     }
 }
