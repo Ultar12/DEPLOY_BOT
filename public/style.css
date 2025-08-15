@@ -1,304 +1,101 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Poppins:wght@400;600&display=swap');
 
-body {
-    font-family: 'Poppins', sans-serif;
-    background-color: #121212;
-    color: #f8f9fa;
-    padding: 0;
+body, html {
     margin: 0;
-    background-image: url('https://files.catbox.moe/k1n5p2.jpeg');
+    padding: 0;
+    height: 100%;
+    font-family: 'Poppins', sans-serif;
+    overflow: hidden;
+    background-color: #000;
+}
+
+.background-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-image: url('https://googleusercontent.com/image_generation_content/0');
     background-size: cover;
     background-position: center;
-    background-attachment: fixed;
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-.container {
-    width: 100%;
-    height: 100%;
-    padding: 20px;
-    margin: 0;
-    background-color: rgba(30, 30, 30, 0.7);
-    border-radius: 0;
-    box-shadow: none;
-    border: none;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    position: relative;
-    overflow-y: auto;
-}
-#main-content {
-    max-width: 400px;
-    width: 90%;
-    margin: 20px auto;
-    background-color: rgba(0, 0, 0, 0.4);
-    padding: 30px;
-    border-radius: 12px;
+    background-repeat: no-repeat;
+    animation: background-pan 60s infinite alternate linear;
 }
 
-/* Modal Styles */
-.modal {
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.8);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    visibility: hidden;
-    opacity: 0;
-    transition: visibility 0s, opacity 0.5s ease-in-out;
-}
-.modal.show {
-    visibility: visible;
-    opacity: 1;
-}
-.modal-content {
-    background-color: #1a1a1a;
-    padding: 25px;
-    border-radius: 10px;
-    position: relative;
-    width: 90%;
-    max-width: 350px;
-    text-align: center;
-}
-.close-button {
-    color: #aaa;
-    position: absolute;
-    top: 10px;
-    right: 15px;
-    font-size: 28px;
-    font-weight: bold;
-    cursor: pointer;
-}
-.modal-content label {
-    display: block;
-    margin-bottom: 10px;
-    text-align: left;
-}
-#modal-pay-button {
-    margin-top: 20px;
-}
-
-/* Header and Logo Styles */
-header {
-    text-align: center;
-    margin-bottom: 25px;
-}
-.logo {
-    font-size: 24px;
-    font-weight: 600;
-    margin: 0;
-    animation: color-switch 5s infinite linear;
-}
-.tagline {
-    font-size: 14px;
-    color: #a0a0a0;
-    margin-top: 5px;
-}
-
-@keyframes color-switch {
-    0%   { color: #ff0000; }
-    16%  { color: #ffff00; }
-    33%  { color: #00ff00; }
-    50%  { color: #00ffff; }
-    66%  { color: #0000ff; }
-    83%  { color: #ff00ff; }
-    100% { color: #ff0000; }
-}
-
-/* Form Styling */
-.form-group {
-    margin-bottom: 20px;
-    width: 100%;
-}
-.form-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 400;
-    color: #e0e0e0;
-    text-align: left;
-}
-input[type="text"], input[type="email"] {
-    width: 100%;
-    padding: 12px;
-    border: 1px solid #444;
-    background-color: #2c2c2c;
-    color: #f8f9fa;
-    border-radius: 6px;
-    box-sizing: border-box;
-    font-size: 16px;
-    transition: border-color 0.3s;
-}
-input[type="text"]:focus, input[type="email"]:focus {
-    outline: none;
-    border-color: #4a90e2;
-}
-::placeholder {
-    color: #666;
-}
-
-/* Status Message */
-.input-with-status {
-    position: relative;
-}
-.status-message {
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 12px;
-    pointer-events: none;
-}
-.status-message.available {
-    color: #28a745;
-}
-.status-message.taken {
-    color: #dc3545;
-}
-.status-message.error {
-    color: #ffc107;
-}
-
-/* Radio Buttons */
-.radio-group {
-    display: flex;
-    justify-content: flex-start;
-    gap: 20px;
-}
-.radio-group label {
-    margin-bottom: 0;
-}
-
-/* Bot Type Buttons */
-.bot-type-group {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.bot-type-group .btn {
-    flex: 1;
-    background-color: #333;
-    color: white;
-    transition: background-color 0.3s, box-shadow 0.3s;
-}
-
-.bot-type-group .btn.active {
-    background-color: #4a90e2;
-    box-shadow: 0 0 10px #4a90e2;
-}
-
-/* Buttons */
-.action-buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.btn {
-    width: 100%;
-    padding: 14px;
-    border: none;
-    border-radius: 6px;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.3s, box-shadow 0.3s, transform 0.1s;
-    text-align: center;
-    position: relative;
-    overflow: hidden;
-}
-.btn:active {
-    transform: scale(0.98);
-}
-.btn.primary {
-    background-color: #4a90e2;
-    color: white;
-}
-.btn.primary:hover {
-    background-color: #367cbf;
-}
-.btn.secondary {
-    background-color: #e2a04a;
-    color: white;
-}
-.btn.secondary:hover {
-    background-color: #c98835;
-}
-
-/* Glowing and animation effects for buttons */
-.btn.green {
-    background-color: #28a745;
-    box-shadow: 0 0 10px #28a745, 0 0 20px #28a745;
-    animation: pulse-green 1.5s infinite;
-}
-.btn.red {
-    background-color: #dc3545;
-    box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545;
-    animation: pulse-red 1.5s infinite;
-}
-
-@keyframes pulse-green {
-    0% { box-shadow: 0 0 10px #28a745, 0 0 20px #28a745; }
-    50% { box-shadow: 0 0 20px #28a745, 0 0 40px #28a745; }
-    100% { box-shadow: 0 0 10px #28a745, 0 0 20px #28a745; }
-}
-@keyframes pulse-red {
-    0% { box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545; }
-    50% { box-shadow: 0 0 20px #dc3545, 0 0 40px #dc3545; }
-    100% { box-shadow: 0 0 10px #dc3545, 0 0 20px #dc3545; }
-}
-
-.btn:disabled {
-    background-color: #444;
-    color: #999;
-    cursor: not-allowed;
-    box-shadow: none;
-    animation: none;
-}
-
-.btn-loading {
-    cursor: wait;
-}
-
-.btn-loading::before {
+/* Add a semi-transparent overlay to enhance text readability */
+.background-container::before {
     content: '';
     position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 20px;
-    height: 20px;
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #3498db;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    transform: translate(-50%, -50%);
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    animation: overlay-glow 10s infinite alternate;
 }
 
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* Message Area */
-.message-area {
+.content-container {
+    position: relative;
     text-align: center;
-    margin-top: 20px;
+    z-index: 10;
+    color: #fff;
+    padding: 20px;
 }
-.success {
-    color: #28a745;
-    font-weight: 600;
+
+.main-text {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 3rem;
+    font-weight: 700;
+    text-shadow: 0 0 10px #00aaff, 0 0 20px #00aaff, 0 0 30px #00aaff, 0 0 40px #00aaff;
+    animation: text-glow 2s infinite alternate;
 }
-.error {
-    color: #dc3545;
-    font-weight: 600;
+
+.sub-text {
+    font-size: 1.2rem;
+    color: #ccc;
+    margin-top: -20px;
+    animation: fade-in 3s ease-out;
+}
+
+/* Animations */
+@keyframes text-glow {
+    0% {
+        text-shadow: 0 0 5px #00aaff, 0 0 10px #00aaff;
+    }
+    100% {
+        text-shadow: 0 0 10px #00aaff, 0 0 20px #00aaff, 0 0 30px #00aaff;
+    }
+}
+
+@keyframes overlay-glow {
+    0% {
+        background-color: rgba(0, 0, 0, 0.4);
+        box-shadow: inset 0 0 50px rgba(0, 255, 255, 0.2);
+    }
+    100% {
+        background-color: rgba(0, 0, 0, 0.5);
+        box-shadow: inset 0 0 80px rgba(0, 255, 255, 0.3);
+    }
+}
+
+@keyframes background-pan {
+    0% {
+        background-position: 0% 0%;
+    }
+    100% {
+        background-position: 100% 100%;
+    }
+}
+
+@keyframes fade-in {
+    0% {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
