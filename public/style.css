@@ -44,13 +44,37 @@ body, html {
     font-size: 3rem;
     font-weight: 800;
     text-transform: uppercase;
-    
-    /* Rainbow effect */
+    line-height: 1.2;
+    text-shadow: 0 0 10px rgba(255,255,255,0.7);
+}
+
+/* Rainbow effect applied to all words */
+.main-text span {
+    display: inline-block;
     background: linear-gradient(120deg, #ff0000, #ff8000, #ffff00, #80ff00, #00ffff, #0080ff, #ff00ff);
     background-size: 200% 100%;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    animation: rainbow-animate 2s infinite linear, landing-effect 1s ease-out;
+    animation: rainbow-animate 10s infinite linear;
+}
+
+/* Individual word landing animations with delays */
+.main-text span {
+    transform: translateY(-200px);
+    opacity: 0;
+    animation-fill-mode: forwards;
+}
+
+.word1 {
+    animation: landing-effect 2s ease-out;
+}
+
+.word2 {
+    animation: landing-effect 2s ease-out 0.5s;
+}
+
+.word3 {
+    animation: landing-effect 2s ease-out 1s;
 }
 
 .sub-text {
@@ -60,7 +84,7 @@ body, html {
     color: #fff;
     opacity: 0;
     text-shadow: 0 0 10px #fff;
-    animation: fade-in-effect 1s ease-in-out 1.2s forwards;
+    animation: fade-in-effect 1.5s ease-in-out 3s forwards;
 }
 
 /* Animations */
