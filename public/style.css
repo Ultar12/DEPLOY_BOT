@@ -53,14 +53,14 @@ body, html {
 
 /* Rainbow effect applied to all words */
 .main-text span {
-    display: block; /* New: Each word on a new line */
+    display: block; /* Each word on a new line */
     background: linear-gradient(120deg, #ff0000, #ff8000, #ffff00, #80ff00, #00ffff, #0080ff, #ff00ff);
     background-size: 200% 100%;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     animation: rainbow-animate 10s infinite linear;
-    
-    /* New: Initial state for landing animation */
+
+    /* Initial state for landing animation */
     opacity: 0;
     transform: translateY(20px);
     animation-fill-mode: forwards;
