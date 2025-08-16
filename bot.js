@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const { URLSearchParams } = require('url');
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
-const MINI_APP_URL = 'https://deploy-bot-gd97.onrender.com/miniapp';
+const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
 const KEYBOARD_VERSION = 1; // Increment this number for every new keyboard update
