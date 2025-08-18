@@ -6331,7 +6331,6 @@ setInterval(checkAndSendExpirationReminders, ONE_DAY_IN_MS);
 console.log('[Expiration] Scheduled daily check for expiring bots.');
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
-const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 async function checkAndSendLoggedOutReminders() {
     console.log('[Email] Running daily logged-out bot email check...');
     const botsToEmail = await dbServices.getLoggedOutBotsForEmail();
