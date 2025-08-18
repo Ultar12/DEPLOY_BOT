@@ -567,7 +567,7 @@ async function unbanUser(userId) {
     }
 }
 
-async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null) {
+async function saveUserDeployment(userId, appName, sessionId, configVars, botType, isFreeTrial = false, expirationDateToUse = null, email = null) {
     try {
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
@@ -575,20 +575,22 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         // Use a provided expiration date if it exists, otherwise calculate a new one.
         const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 3 : 45) * 24 * 60 * 60 * 1000);
 
-        const query = `
-            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial)
-            VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8)
+                const query = `
+            INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email)
+            VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9)
             ON CONFLICT (user_id, app_name) DO UPDATE SET
                session_id = EXCLUDED.session_id,
                config_vars = EXCLUDED.config_vars,
                bot_type = EXCLUDED.bot_type,
                deleted_from_heroku_at = NULL,
                is_free_trial = EXCLUDED.is_free_trial,
+               email = EXCLUDED.email,
                -- Keep the original deploy_date and expiration_date on update
                deploy_date = user_deployments.deploy_date,
                expiration_date = user_deployments.expiration_date;
         `;
-        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial]);
+        await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial, email]);
+
         console.log(`[DB-Main] Saved/Updated deployment for app ${appName}. Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
     } catch (error) {
         console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message);
@@ -1402,7 +1404,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial);
+            await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, null, vars.email);
+
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
       }
