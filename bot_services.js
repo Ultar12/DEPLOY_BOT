@@ -160,6 +160,23 @@ async function syncDatabaseWithHeroku() {
     return { success: true, message: finalMessage, stats: syncStats };
 }
 
+async function getLoggedOutBotsForEmail() {
+    try {
+        const result = await pool.query(`
+            SELECT ub.user_id, ub.bot_name, ud.email
+            FROM user_bots ub
+            JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+            WHERE ub.status = 'logged_out' 
+              AND ud.is_free_trial = FALSE 
+              AND ud.email IS NOT NULL;
+        `);
+        console.log(`[DB] Found ${result.rows.length} logged-out paid bots with registered emails.`);
+        return result.rows;
+    } catch (error) {
+        console.error(`[DB] Failed to get logged-out bots for email:`, error.message);
+        return [];
+    }
+}
 
 
 // --- NEW FUNCTIONS FOR REWARDS AND STATS ---
@@ -1564,6 +1581,7 @@ module.exports = {
     sendAppList,
     permanentlyDeleteBotRecord,
     deleteUserBot,
+    getLoggedOutBotsForEmail,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
