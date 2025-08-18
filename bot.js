@@ -16,6 +16,8 @@ const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const { sendPaymentConfirmation } = require('./email_service');
+
 const crypto = require('crypto');
 
 const { URLSearchParams } = require('url');
@@ -1282,13 +1284,20 @@ const crypto = require('crypto');
                     // ... (Renewal logic is the same) ...
                 } else {
                     await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
-                    const deployVars = {
-                        SESSION_ID: session_id,
-                        APP_NAME: app_name,
-                    };
+                    
                                       // CRITICAL FIX: Save the user's email to the user_deployments table for future reference.
                     // The email is available from event.data.customer.email.
                     await pool.query('UPDATE user_deployments SET email = $1 WHERE user_id = $2 AND app_name = $3', [customer.email, user_id, app_name]);
+
+                  // --- ADD THIS BLOCK ---
+                    // Send the payment confirmation email
+                    await sendPaymentConfirmation(customer.email, customer.first_name, reference, app_name, bot_type, session_id);
+                    // --- END OF ADDITION ---
+
+                  const deployVars = {
+                        SESSION_ID: session_id,
+                        APP_NAME: app_name,
+                    };
 
                     dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
                     const adminMessage = `*New App Deployed (Paid via Paystack)*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``;
