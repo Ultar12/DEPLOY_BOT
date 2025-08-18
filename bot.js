@@ -6329,3 +6329,21 @@ async function checkAndSendExpirationReminders() {
 
 setInterval(checkAndSendExpirationReminders, ONE_DAY_IN_MS);
 console.log('[Expiration] Scheduled daily check for expiring bots.');
+
+// --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+async function checkAndSendLoggedOutReminders() {
+    console.log('[Email] Running daily logged-out bot email check...');
+    const botsToEmail = await dbServices.getLoggedOutBotsForEmail();
+
+    for (const botInfo of botsToEmail) {
+        const { bot_name, email } = botInfo;
+        // The bot's username is stored in bot.username
+        await sendLoggedOutReminder(email, bot_name, bot.username);
+    }
+}
+
+// Run the check every 24 hours
+setInterval(checkAndSendLoggedOutReminders, ONE_DAY_IN_MS);
+console.log('[Email] Scheduled daily logged-out bot email reminders.');
+
