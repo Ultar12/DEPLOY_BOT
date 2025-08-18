@@ -1281,7 +1281,16 @@ const crypto = require('crypto');
                 const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
                 if (bot_type && bot_type.startsWith('renewal_')) {
-                    // ... (Renewal logic is the same) ...
+                   const appNameToRenew = bot_type.split('_')[1];
+                await pool.query(
+                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`,
+                    [user_id, appNameToRenew]
+                );
+
+                await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameToRenew)}* has been successfully renewed for another 45 days.`, { parse_mode: 'Markdown' });
+
+                const adminMessage = `*Bot Renewed!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameToRenew}\``;
+                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
                 } else {
                     await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
                     
