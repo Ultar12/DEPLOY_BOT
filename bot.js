@@ -193,6 +193,8 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+  await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS email TEXT;`);
+
   await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
     
     await dbPool.query(`
@@ -1284,6 +1286,10 @@ const crypto = require('crypto');
                         SESSION_ID: session_id,
                         APP_NAME: app_name,
                     };
+                                      // CRITICAL FIX: Save the user's email to the user_deployments table for future reference.
+                    // The email is available from event.data.customer.email.
+                    await pool.query('UPDATE user_deployments SET email = $1 WHERE user_id = $2 AND app_name = $3', [customer.email, user_id, app_name]);
+
                     dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
                     const adminMessage = `*New App Deployed (Paid via Paystack)*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``;
                     await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
