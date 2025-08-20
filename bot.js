@@ -1134,16 +1134,15 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
     }
 });
 
-// bot.js
+/// bot.js
 
-// ... existing code ...
+// ... [rest of your code] ...
 
 // GET /api/bots - Get a list of the user's bots
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
-        // ✅ CORRECTED QUERY: Get all bots from the 'user_bots' table first.
-        // We now get all bots that have not been marked as deleted on Heroku.
+        // Corrected Query: Get all bots that have not been explicitly deleted from Heroku.
         const botsResult = await pool.query(
             `SELECT 
                 ub.bot_name, 
@@ -1151,14 +1150,14 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 ud.expiration_date
             FROM user_bots ub
             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-            WHERE ub.user_id = $1 AND ud.deleted_from_heroku_at IS NULL;`, // This condition is now correct.
+            WHERE ub.user_id = $1 AND (ud.deleted_from_heroku_at IS NULL OR ub.status = 'online');`, // This condition is now correct.
             [userId]
         );
 
         const bots = botsResult.rows;
 
         // Log the number of bots found for debugging
-        console.log(`[MiniApp V2] Found ${bots.length} bots for user ${userId}.`);
+        console.log(`[MiniApp V2] Found ${bots.length} bots in the database for user ${userId}.`);
 
         // Verify the status of each bot with the Heroku API
         const verifiedBots = await Promise.all(bots.map(async (bot) => {
@@ -1188,7 +1187,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         const filteredBots = verifiedBots.filter(b => b.status !== 'Deleted');
         
         // Final log to see how many bots are actually displayed
-        console.log(`[MiniApp V2] Displaying ${filteredBots.length} active bots.`);
+        console.log(`[MiniApp V2] Displaying ${filteredBots.length} active bots for user ${userId}.`);
 
         res.json({ success: true, bots: filteredBots });
     } catch (e) {
@@ -1196,8 +1195,6 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
     }
 });
-
-// ... rest of the code ...
 
 
 
