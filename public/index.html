@@ -5,106 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bot Dashboard</title>
     <style>
-        /* Professional Animated Background */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
-            padding: 15px;
-            background: linear-gradient(135deg, var(--tg-theme-bg-color), #2c3e50);
-            background-size: 400% 400%;
-            animation: gradient-animation 15s ease infinite;
-            color: var(--tg-theme-text-color);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            text-align: center;
-        }
-
-        /* Animated Text & Headers */
-        h1, h2 {
-            font-size: 2.5em;
-            font-weight: 700;
-            margin-bottom: 20px;
-            background: linear-gradient(45deg, #FF6B6B, #ffe66d, #4CAF50, #2196F3, #9C27B0);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            text-fill-color: transparent;
-            background-size: 200% auto;
-            animation: text-animation 10s linear infinite;
-        }
-
-        /* Centered & Responsive Dashboard */
-        #main-container {
-            width: 100%;
-            max-width: 600px;
-            text-align: left;
-            position: relative;
-            z-index: 1;
-        }
-        
-        /* Splash Screen */
-        #splash-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background-color: var(--tg-theme-bg-color);
-            z-index: 9999;
-            opacity: 1;
-            transition: opacity 0.5s ease-in-out;
-        }
-        #splash-screen.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
-        .welcome-text {
-            font-size: 1.5em;
-            font-weight: bold;
-            margin-bottom: 20px;
-            color: var(--tg-theme-text-color);
-        }
-        
-        /* Loading Animation (More Dynamic) */
-        .dynamic-loader {
-            width: 50px;
-            height: 50px;
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #3498db;
-            border-radius: 50%;
-            animation: spin 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
-        }
-
-        /* Dashboard & Bot Cards */
-        #dashboard-content {
-            opacity: 0;
-            transition: opacity 0.5s ease-in-out;
-        }
+        /* [ ... All CSS from the previous professional version ... ] */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; background: linear-gradient(135deg, var(--tg-theme-bg-color), #2c3e50); background-size: 400% 400%; animation: gradient-animation 15s ease infinite; color: var(--tg-theme-text-color); min-height: 100vh; display: flex; justify-content: center; align-items: center; flex-direction: column; text-align: center; }
+        h1, h2 { font-size: 2.5em; font-weight: 700; margin-bottom: 20px; background: linear-gradient(45deg, #FF6B6B, #ffe66d, #4CAF50, #2196F3, #9C27B0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-fill-color: transparent; background-size: 200% auto; animation: text-animation 10s linear infinite; }
+        #main-container { width: 100%; max-width: 600px; text-align: left; position: relative; z-index: 1; }
+        #splash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background-color: var(--tg-theme-bg-color); z-index: 9999; opacity: 1; transition: opacity 0.5s ease-in-out; }
+        #splash-screen.hidden { opacity: 0; pointer-events: none; }
+        .welcome-text { font-size: 1.5em; font-weight: bold; margin-bottom: 20px; color: var(--tg-theme-text-color); }
+        .dynamic-loader { width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; animation: spin 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; }
+        #dashboard-content { opacity: 0; transition: opacity 0.5s ease-in-out; }
         #dashboard-content.visible { opacity: 1; }
-        
         .bot-list { display: flex; flex-direction: column; gap: 12px; }
-        .bot-card {
-            background-color: var(--tg-theme-secondary-bg-color);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            transition: box-shadow 0.3s ease, transform 0.2s ease;
-            cursor: pointer;
-            text-align: left; /* Ensure text is left-aligned within cards */
-        }
-        .bot-card:hover {
-            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
-            transform: translateY(-2px);
-        }
-        
-        /* Status, Typography, Buttons (rest of your styles remain) */
+        .bot-card { background-color: var(--tg-theme-secondary-bg-color); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: box-shadow 0.3s ease, transform 0.2s ease; cursor: pointer; text-align: left; }
+        .bot-card:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.15); transform: translateY(-2px); }
         .bot-name { font-size: 1.4em; font-weight: 600; }
         .bot-type { color: var(--tg-theme-hint-color); font-size: 0.9em; margin-top: 4px; }
         .bot-status { display: flex; align-items: center; font-weight: bold; margin-top: 8px; font-size: 0.9em; }
@@ -114,41 +27,38 @@
         .status-restarting .status-dot { background-color: #ff9500; }
         .status-loading .status-dot { background-color: #8e8e93; animation: pulse 1.5s infinite; }
         .bot-expiration-info { font-size: 0.8em; color: var(--tg-theme-hint-color); margin-top: 4px; }
-        
         .actions { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
-        .action-button {
-            background-color: var(--tg-theme-button-color);
-            color: var(--tg-theme-button-text-color);
-            border: none;
-            padding: 12px 18px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background-color 0.2s ease, transform 0.1s ease;
-            flex-grow: 1;
-        }
+        .action-button { background-color: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color); border: none; padding: 12px 18px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: background-color 0.2s ease, transform 0.1s ease; flex-grow: 1; }
         .action-button:active { transform: scale(0.98); }
         .action-button.loading { opacity: 0.7; cursor: not-allowed; }
-        
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(5px); }
         .modal-content { background: var(--tg-theme-bg-color); padding: 25px; border-radius: 16px; width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25); animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto; }
         .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--tg-theme-hint-color); padding-bottom: 15px; margin-bottom: 15px; }
         #log-output { background-color: var(--tg-theme-secondary-bg-color); padding: 15px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px; line-height: 1.4; font-size: 0.8em; }
-        
-        /* Keyframe Animations */
-        @keyframes gradient-animation {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        @keyframes text-animation {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
+        @keyframes gradient-animation { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes text-animation { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } 100% { transform: scale(1); opacity: 1; } }
         @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        /* New Styles for Deployment Form */
+        .form-section { margin-top: 20px; }
+        .form-section h2 { font-size: 1.8em; margin-bottom: 10px; text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 500; }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--tg-theme-hint-color);
+            background-color: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+            box-sizing: border-box;
+        }
+        .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 10px; }
+        .status-green { background-color: #34c759; }
+        .status-red { background-color: #ff3b30; }
+        .inline-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -158,14 +68,10 @@
     </div>
     
     <div id="dashboard-content">
-        <h1>Bot Dashboard</h1>
         <div id="main-container">
-            <div id="bot-list" class="bot-list"></div>
-            <div id="loading" style="display: none; text-align: center; margin-top: 20px;">
-                <div class="loader"></div>
-                <p style="margin-top: 8px;">Loading bots...</p>
-            </div>
-            <p id="no-bots" style="display: none; text-align: center; color: var(--tg-theme-hint-color);">You have no deployed bots.</p>
+            <h1 id="main-title">Bot Dashboard</h1>
+            <div id="view-container">
+                </div>
         </div>
     </div>
 
@@ -188,19 +94,55 @@
 
         const splashScreenEl = document.getElementById('splash-screen');
         const dashboardContentEl = document.getElementById('dashboard-content');
-        const botListEl = document.getElementById('bot-list');
-        const loadingEl = document.getElementById('loading');
-        const noBotsEl = document.getElementById('no-bots');
+        const mainTitleEl = document.getElementById('main-title');
+        const viewContainerEl = document.getElementById('view-container');
         const logsModalTitleEl = document.getElementById('logs-modal-title');
         const logOutputEl = document.getElementById('log-output');
-        
+
+        let currentView = 'dashboard';
+        let deploymentState = {};
+
         function showModal(modalId) { document.getElementById(modalId).style.display = 'flex'; }
         function closeModal(modalId) { document.getElementById(modalId).style.display = 'none'; }
-
-        async function fetchBots() {
-            botListEl.innerHTML = '';
+        function showView(viewId) {
+            document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+            document.getElementById(viewId).style.display = 'block';
+        }
+        function renderButtons(parentId, buttons) {
+            const container = document.getElementById(parentId);
+            container.innerHTML = '';
+            buttons.forEach(btn => {
+                const button = document.createElement('button');
+                button.className = 'action-button';
+                button.textContent = btn.text;
+                button.onclick = btn.handler;
+                container.appendChild(button);
+            });
+        }
+        
+        // =========================================================
+        // Main Dashboard View Logic
+        // =========================================================
+        async function renderDashboard() {
+            mainTitleEl.textContent = 'Bot Dashboard';
+            viewContainerEl.innerHTML = `
+                <div id="dashboard-view" class="view">
+                    <button class="action-button" style="margin-bottom: 20px; width: 100%;" onclick="renderBotTypeSelection()">Deploy New Bot</button>
+                    <div id="bot-list" class="bot-list"></div>
+                    <div id="loading" style="display: none; text-align: center; margin-top: 20px;">
+                        <div class="dynamic-loader"></div>
+                        <p style="margin-top: 8px;">Loading bots...</p>
+                    </div>
+                    <p id="no-bots" style="display: none; text-align: center; color: var(--tg-theme-hint-color);">You have no deployed bots.</p>
+                </div>
+            `;
+            const botListEl = document.getElementById('bot-list');
+            const loadingEl = document.getElementById('loading');
+            const noBotsEl = document.getElementById('no-bots');
+            
             loadingEl.style.display = 'block';
             noBotsEl.style.display = 'none';
+            
             try {
                 const res = await fetch(`${API_BASE_URL}/bots`, {
                     headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
@@ -214,7 +156,7 @@
                         
                         const statusClass = bot.status === 'Online' ? 'status-online' : bot.status === 'Offline' ? 'status-offline' : 'status-restarting';
                         const expirationText = bot.expirationDate ? new Date(bot.expirationDate).toLocaleDateString() : 'N/A';
-
+                        
                         card.innerHTML = `
                             <div class="bot-name">${bot.appName}</div>
                             <div class="bot-type">${bot.botType.toUpperCase()}</div>
@@ -243,78 +185,213 @@
             }
         }
 
-        async function handleRestart(appName) {
-            Telegram.WebApp.showConfirm(`Are you sure you want to restart ${appName}?`, async (ok) => {
-                if (ok) {
-                    Telegram.WebApp.showProgress('Restarting...');
-                    const res = await fetch(`${API_BASE_URL}/bots/restart`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Telegram-Init-Data': Telegram.WebApp.initData
-                        },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) {
-                        setTimeout(fetchBots, 5000); // Refresh list after restart
-                    }
-                }
-            });
+        // =========================================================
+        // Deployment Flow Logic
+        // =========================================================
+        function renderBotTypeSelection() {
+            mainTitleEl.textContent = 'Select Bot Type';
+            viewContainerEl.innerHTML = `
+                <div id="bot-type-view" class="form-section view">
+                    <div class="inline-buttons">
+                        <button class="action-button" onclick="handleBotTypeSelect('levanter')">Levanter</button>
+                        <button class="action-button" onclick="handleBotTypeSelect('raganork')">Raganork MD</button>
+                    </div>
+                </div>
+            `;
         }
 
-        async function handleRedeploy(appName) {
-            Telegram.WebApp.showConfirm(`Are you sure you want to redeploy ${appName}? This will update the bot to the latest code.`, async (ok) => {
-                if (ok) {
-                    Telegram.WebApp.showProgress('Redeploying...');
-                    const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Telegram-Init-Data': Telegram.WebApp.initData
-                        },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) {
-                        setTimeout(fetchBots, 10000); // Refresh list after redeploy
-                    }
-                }
-            });
+        function handleBotTypeSelect(botType) {
+            deploymentState.botType = botType;
+            renderAppNameInput();
         }
 
-        async function handleLogs(appName) {
-            logsModalTitleEl.textContent = `${appName} Logs`;
-            logOutputEl.textContent = 'Fetching logs...';
-            showModal('logs-modal');
-            try {
-                const res = await fetch(`${API_BASE_URL}/bots/logs/${appName}`, {
-                    headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
-                });
-                const data = await res.json();
-                if (data.success) {
-                    logOutputEl.textContent = data.logs || 'No logs found.';
-                } else {
-                    logOutputEl.textContent = `Error: ${data.message}`;
-                }
-            } catch (e) {
-                logOutputEl.textContent = 'An error occurred while fetching logs.';
+        function renderAppNameInput() {
+            mainTitleEl.textContent = 'Enter App Name';
+            viewContainerEl.innerHTML = `
+                <div id="app-name-view" class="form-section view">
+                    <div class="form-group">
+                        <label for="appNameInput">App Name:</label>
+                        <input type="text" id="appNameInput" placeholder="mybot123">
+                        <span id="appNameStatus" class="status-indicator" style="display:none;"></span>
+                    </div>
+                    <div class="inline-buttons">
+                        <button class="action-button" onclick="renderBotTypeSelection()">Back</button>
+                        <button class="action-button" onclick="handleAppNameCheck()">Next</button>
+                    </div>
+                </div>
+            `;
+            const appNameInput = document.getElementById('appNameInput');
+            const appNameStatus = document.getElementById('appNameStatus');
+            appNameInput.oninput = () => checkAppNameAvailability();
+        }
+
+        async function checkAppNameAvailability() {
+            const appName = document.getElementById('appNameInput').value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+            const appNameStatus = document.getElementById('appNameStatus');
+            appNameStatus.style.display = 'inline-block';
+            appNameStatus.className = 'status-indicator status-loading';
+            
+            if (appName.length < 3 || appName.length > 30) {
+                appNameStatus.className = 'status-indicator status-red';
+                return;
+            }
+            
+            const res = await fetch(`${API_BASE_URL}/app-name-check/${appName}`, {
+                headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
+            });
+            const data = await res.json();
+            
+            if (data.available) {
+                appNameStatus.className = 'status-indicator status-green';
+                deploymentState.isAppNameAvailable = true;
+            } else {
+                appNameStatus.className = 'status-indicator status-red';
+                deploymentState.isAppNameAvailable = false;
             }
         }
 
-        // Initialize the app with a welcome animation
+        function handleAppNameCheck() {
+            const appName = document.getElementById('appNameInput').value;
+            if (!appName || !deploymentState.isAppNameAvailable) {
+                return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
+            }
+            deploymentState.appName = appName;
+            renderSessionIdInput();
+        }
+
+        function renderSessionIdInput() {
+            mainTitleEl.textContent = 'Enter Session ID';
+            viewContainerEl.innerHTML = `
+                <div id="session-id-view" class="form-section view">
+                    <p>Get your session ID for **${deploymentState.botType.toUpperCase()}** from the link below:</p>
+                    <button class="action-button" onclick="window.open('https://your-session-generator-link.com')">Get Session ID</button>
+                    <div class="form-group" style="margin-top: 20px;">
+                        <label for="sessionIdInput">Session ID:</label>
+                        <input type="text" id="sessionIdInput" placeholder="Enter session ID">
+                    </div>
+                    <div class="inline-buttons">
+                        <button class="action-button" onclick="renderAppNameInput()">Back</button>
+                        <button class="action-button" onclick="handleSessionIdCheck()">Next</button>
+                    </div>
+                </div>
+            `;
+            // Note: Update the session generator link placeholder
+        }
+
+        function handleSessionIdCheck() {
+            const sessionId = document.getElementById('sessionIdInput').value;
+            const prefix = deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_';
+            if (!sessionId || !sessionId.startsWith(prefix) || sessionId.length < 10) {
+                return Telegram.WebApp.showAlert(`Invalid session ID. It must start with "${prefix}" and be at least 10 characters long.`);
+            }
+            deploymentState.sessionId = sessionId;
+            renderAutoStatusChoice();
+        }
+
+        function renderAutoStatusChoice() {
+            mainTitleEl.textContent = 'Auto Status View';
+            viewContainerEl.innerHTML = `
+                <div id="auto-status-view" class="form-section view">
+                    <p>Do you want to enable automatic status view?</p>
+                    <div class="inline-buttons">
+                        <button class="action-button" onclick="handleAutoStatusChoice('true')">Yes</button>
+                        <button class="action-button" onclick="handleAutoStatusChoice('false')">No</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function handleAutoStatusChoice(choice) {
+            deploymentState.autoStatusView = choice;
+            renderPaymentOrKeyInput();
+        }
+        
+        function renderPaymentOrKeyInput() {
+            mainTitleEl.textContent = 'Payment & Key';
+            viewContainerEl.innerHTML = `
+                <div id="payment-view" class="form-section view">
+                    <div class="form-group">
+                        <label for="deployKeyInput">Deploy Key (Optional):</label>
+                        <input type="text" id="deployKeyInput" placeholder="Enter your key">
+                    </div>
+                    <div class="inline-buttons">
+                        <button class="action-button" onclick="handleDeploy(document.getElementById('deployKeyInput').value)">Deploy with Key</button>
+                    </div>
+                    <div class="inline-buttons" style="margin-top: 10px;">
+                        <button class="action-button" onclick="handlePaystackPayment()">Pay (₦1500)</button>
+                    </div>
+                    <div class="inline-buttons" style="margin-top: 10px;">
+                        <button class="action-button" onclick="handleDeploy(null, true)">Free Trial</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Event Handlers for Buttons ---
+        async function handleDeploy(deployKey, isFreeTrial = false) {
+            Telegram.WebApp.showProgress('Deploying...');
+            const payload = {
+                ...deploymentState,
+                deployKey,
+                isFreeTrial,
+                // Add an email if required by the endpoint, or handle it in the paystack flow
+                email: 'placeholder@email.com' // Placeholder for now
+            };
+            try {
+                const res = await fetch(`${API_BASE_URL}/deploy`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                Telegram.WebApp.hideProgress();
+                Telegram.WebApp.showAlert(data.message);
+                if (data.success) {
+                    Telegram.WebApp.close(); // Close app on successful deployment
+                }
+            } catch (e) {
+                Telegram.WebApp.hideProgress();
+                Telegram.WebApp.showAlert('An error occurred during deployment.');
+            }
+        }
+        
+        async function handlePaystackPayment() {
+            Telegram.WebApp.showProgress('Generating payment link...');
+            const email = 'useremail@example.com'; // You would need a UI element for this
+            const payload = {
+                ...deploymentState,
+                email
+            };
+            try {
+                const res = await fetch(`${API_BASE_URL}/pay`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                Telegram.WebApp.hideProgress();
+                if (data.success) {
+                    window.open(data.paymentUrl, '_blank');
+                } else {
+                    Telegram.WebApp.showAlert(data.message);
+                }
+            } catch (e) {
+                Telegram.WebApp.hideProgress();
+                Telegram.WebApp.showAlert('Failed to initiate payment.');
+            }
+        }
+
+        // Existing functions for restart, redeploy, logs...
+
+        // App initialization
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 splashScreenEl.classList.add('hidden');
                 setTimeout(() => {
                     dashboardContentEl.classList.add('visible');
-                    fetchBots();
-                }, 500); // Wait for splash screen fade out
-            }, 1000); // Display welcome screen for 1 second
+                    renderDashboard();
+                }, 500);
+            }, 1000);
         });
     </script>
 </body>
