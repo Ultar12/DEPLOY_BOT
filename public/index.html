@@ -105,6 +105,27 @@
         }
         .action-button:active { transform: scale(0.98); }
         .action-button.loading { opacity: 0.7; cursor: not-allowed; }
+        .modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); display: none; justify-content: center;
+            align-items: center; z-index: 1000; backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            background: #1a1a1a; padding: 25px; border-radius: 16px;
+            width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+            animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto;
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid #333; padding-bottom: 15px;
+            margin-bottom: 15px;
+        }
+        #log-output {
+            background-color: #121212; padding: 15px;
+            border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;
+            font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px;
+            line-height: 1.4; font-size: 0.8em; color: #fff;
+        }
         
         /* Deployment Form Styles */
         #deploy-form-view { padding: 20px; background-color: #1a1a1a; border-radius: 12px; margin-top: 20px; }
@@ -294,6 +315,10 @@
                             <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', false)">No</button>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label for="deployKeyInput">Deploy Key (Optional):</label>
+                        <input type="text" id="deployKeyInput" placeholder="Enter your key">
+                    </div>
                     <div id="payment-fields" style="display:none;">
                         <div class="form-group">
                             <label for="emailInput">Email for Payment:</label>
@@ -378,18 +403,21 @@
                     headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
                 });
                 
-                const data = await res.json();
-                
-                if (data.available) {
-                    appNameStatus.textContent = 'Available!';
-                    appNameStatus.classList.add('status-green-text');
-                    appNameInput.classList.add('input-green');
-                    deploymentState.isAppNameAvailable = true;
+                if (res.status === 200) {
+                    const data = await res.json();
+                    if (data.available) {
+                        appNameStatus.textContent = 'Available!';
+                        appNameStatus.classList.add('status-green-text');
+                        appNameInput.classList.add('input-green');
+                        deploymentState.isAppNameAvailable = true;
+                    } else {
+                        appNameStatus.textContent = 'Taken!';
+                        appNameStatus.classList.add('status-red-text');
+                        appNameInput.classList.add('input-red');
+                        deploymentState.isAppNameAvailable = false;
+                    }
                 } else {
-                    appNameStatus.textContent = 'Taken!';
-                    appNameStatus.classList.add('status-red-text');
-                    appNameInput.classList.add('input-red');
-                    deploymentState.isAppNameAvailable = false;
+                    throw new Error('API request failed');
                 }
             } catch (e) {
                 console.error("Error checking app name:", e);
