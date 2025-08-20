@@ -5,39 +5,96 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bot Dashboard</title>
     <style>
-        /* General Styles - Minimalist Theme */
+        /* General Styles */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0; padding: 15px; background-color: #000; color: #f1f1f1;
-            min-height: 100vh; display: flex; flex-direction: column; text-align: center;
+            margin: 0;
+            padding: 15px;
+            background-color: #000;
+            color: #f1f1f1;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            text-align: center;
         }
-        #header { display: flex; justify-content: space-between; align-items: center; width: 100%; position: sticky; top: 0; z-index: 1000; background-color: #000; padding: 10px 0; }
+
+        /* Headers and Layout */
+        #header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background-color: #000;
+            padding: 10px 0;
+        }
         #menu-icon { cursor: pointer; font-size: 2em; padding: 5px; color: #fff; }
         #main-title { font-size: 1.8em; font-weight: 700; color: #fff; }
         
-        #menu-drawer { position: fixed; top: 0; left: -250px; width: 250px; height: 100%; background-color: #121212; box-shadow: 2px 0 5px rgba(0,0,0,0.5); transition: left 0.3s ease; z-index: 2000; padding-top: 60px; }
+        #menu-drawer {
+            position: fixed;
+            top: 0;
+            left: -250px;
+            width: 250px;
+            height: 100%;
+            background-color: #121212;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+            transition: left 0.3s ease;
+            z-index: 2000;
+            padding-top: 60px;
+        }
         #menu-drawer.open { left: 0; }
-        .menu-item { padding: 15px 20px; font-size: 1.2em; font-weight: 500; cursor: pointer; transition: background-color 0.2s ease; border-bottom: 1px solid #333; color: #f1f1f1; }
+        .menu-item {
+            padding: 15px 20px;
+            font-size: 1.2em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            border-bottom: 1px solid #333;
+            color: #f1f1f1;
+        }
         .menu-item:hover { background-color: #222; }
 
         /* Splash Screen */
-        #splash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background-color: #000; z-index: 9999; opacity: 1; transition: opacity 0.5s ease-in-out; }
+        #splash-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; background-color: #000;
+            z-index: 9999; opacity: 1; transition: opacity 0.5s ease-in-out;
+        }
         #splash-screen.hidden { opacity: 0; pointer-events: none; }
         .welcome-text { font-size: 1.5em; font-weight: bold; margin-bottom: 20px; color: #f1f1f1; }
         
         /* Loading & Dashboard */
-        .dynamic-loader { width: 50px; height: 50px; border: 5px solid #333; border-top: 5px solid #fff; border-radius: 50%; animation: spin 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; }
-        #dashboard-content { opacity: 0; transition: opacity 0.5s ease-in-out; flex-grow: 1; display: flex; flex-direction: column; }
+        .dynamic-loader {
+            width: 50px; height: 50px; border: 5px solid #333;
+            border-top: 5px solid #fff; border-radius: 50%;
+            animation: spin 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+        }
+        #dashboard-content {
+            opacity: 0; transition: opacity 0.5s ease-in-out; flex-grow: 1;
+            display: flex; flex-direction: column;
+        }
         #dashboard-content.visible { opacity: 1; }
         #main-container { width: 100%; max-width: 600px; text-align: left; position: relative; z-index: 1; margin: 0 auto; }
         
-        /* Bot Cards & Actions */
+        /* Simple Heroku-style Bot Cards */
         .bot-list { display: flex; flex-direction: column; gap: 12px; }
-        .bot-card { background-color: #1a1a1a; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: transform 0.2s ease; text-align: left; position: relative; }
+        .bot-card {
+            background-color: #1a1a1a; border-radius: 8px; padding: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: transform 0.2s ease;
+            text-align: left;
+            position: relative;
+        }
         .bot-card:hover { transform: translateY(-2px); }
         .bot-header { display: flex; justify-content: space-between; align-items: center; }
         .bot-name { font-size: 1.2em; font-weight: 600; color: #fff; }
-        .bot-status-tag { background-color: #333; color: #fff; font-size: 0.8em; padding: 4px 8px; border-radius: 5px; font-weight: normal; }
+        .bot-status-tag {
+            background-color: #333; color: #fff; font-size: 0.8em;
+            padding: 4px 8px; border-radius: 5px; font-weight: normal;
+        }
         .status-online .bot-status-tag { background-color: #34c759; }
         .status-offline .bot-status-tag { background-color: #ff3b30; }
         .status-restarting .bot-status-tag { background-color: #ff9500; }
@@ -63,13 +120,12 @@
         .inline-buttons button { flex-grow: 1; }
         .inline-buttons button.active { border: 2px solid #34c759; transform: scale(1.05); }
 
-        /* Variable Set Form Styles */
-        #set-var-view { padding: 20px; background-color: #1a1a1a; border-radius: 12px; margin-top: 20px; }
-        #var-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
-        .var-item { background-color: #121212; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
-        .var-key { font-weight: bold; }
-        .var-value { color: #888; font-size: 0.9em; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
-
+        /* Log Viewer */
+        .log-container { background-color: #121212; border-radius: 8px; margin-top: 15px; padding: 10px; }
+        .log-header { display: flex; justify-content: space-between; align-items: center; font-size: 1em; font-weight: bold; border-bottom: 1px solid #333; padding-bottom: 5px; margin-bottom: 10px; }
+        .log-content { white-space: pre-wrap; word-wrap: break-word; font-family: monospace; max-height: 200px; overflow-y: scroll; font-size: 0.8em; color: #ccc; }
+        .log-content.loading-logs::before { content: 'Fetching logs...'; color: #888; }
+        
         /* Keyframe Animations */
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -193,7 +249,7 @@
                 loadingEl.style.display = 'none';
             }
         }
-
+        
         async function renderSetVarForm(appName) {
             mainTitleEl.textContent = `Set Variables for ${appName}`;
             viewContainerEl.innerHTML = `
