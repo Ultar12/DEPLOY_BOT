@@ -6,20 +6,83 @@
     <title>Bot Dashboard</title>
     <style>
         /* General Styles */
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; background: linear-gradient(135deg, var(--tg-theme-bg-color), #2c3e50); background-size: 400% 400%; animation: gradient-animation 15s ease infinite; color: var(--tg-theme-text-color); min-height: 100vh; display: flex; flex-direction: column; text-align: center; }
-        h1, h2 { font-size: 2.5em; font-weight: 700; margin: 0; background: linear-gradient(45deg, #FF6B6B, #ffe66d, #4CAF50, #2196F3, #9C27B0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-fill-color: transparent; background-size: 200% auto; animation: text-animation 10s linear infinite; }
-        #main-container { width: 100%; max-width: 600px; text-align: left; position: relative; z-index: 1; margin: auto; }
-        
-        /* Layout and Menu */
-        #header { display: flex; justify-content: space-between; align-items: center; width: 100%; position: sticky; top: 0; z-index: 1000; background-color: var(--tg-theme-bg-color); padding: 10px 0; }
-        #menu-icon { cursor: pointer; font-size: 2em; padding: 5px; }
-        #menu-drawer { position: fixed; top: 0; left: -250px; width: 250px; height: 100%; background-color: var(--tg-theme-secondary-bg-color); box-shadow: 2px 0 5px rgba(0,0,0,0.5); transition: left 0.3s ease; z-index: 2000; padding-top: 60px; }
-        #menu-drawer.open { left: 0; }
-        .menu-item { padding: 15px 20px; font-size: 1.2em; font-weight: 500; cursor: pointer; transition: background-color 0.2s ease; border-bottom: 1px solid var(--tg-theme-hint-color); }
-        .menu-item:hover { background-color: var(--tg-theme-bg-color); }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 15px;
+            background: linear-gradient(135deg, var(--tg-theme-bg-color), #2c3e50);
+            background-size: 400% 400%;
+            animation: gradient-animation 15s ease infinite;
+            color: var(--tg-theme-text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            text-align: center;
+        }
 
+        /* Headers and Layout */
+        h1, h2 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin: 0;
+            background: linear-gradient(45deg, #FF6B6B, #ffe66d, #4CAF50, #2196F3, #9C27B0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-fill-color: transparent;
+            background-size: 200% auto;
+            animation: text-animation 10s linear infinite;
+        }
+        #main-container {
+            width: 100%;
+            max-width: 600px;
+            text-align: left;
+            position: relative;
+            z-index: 1;
+            margin: auto;
+        }
+        #header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background-color: var(--tg-theme-bg-color);
+            padding: 10px 0;
+        }
+        #menu-icon { cursor: pointer; font-size: 2em; padding: 5px; }
+        #menu-drawer {
+            position: fixed;
+            top: 0;
+            left: -250px;
+            width: 250px;
+            height: 100%;
+            background-color: var(--tg-theme-secondary-bg-color);
+            box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+            transition: left 0.3s ease;
+            z-index: 2000;
+            padding-top: 60px;
+        }
+        #menu-drawer.open { left: 0; }
+        .menu-item {
+            padding: 15px 20px;
+            font-size: 1.2em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            border-bottom: 1px solid var(--tg-theme-hint-color);
+        }
+        .menu-item:hover { background-color: var(--tg-theme-bg-color); }
+        
         /* Splash Screen */
-        #splash-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background-color: var(--tg-theme-bg-color); z-index: 9999; opacity: 1; transition: opacity 0.5s ease-in-out; }
+        #splash-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; background-color: var(--tg-theme-bg-color);
+            z-index: 9999; opacity: 1; transition: opacity 0.5s ease-in-out;
+        }
         #splash-screen.hidden { opacity: 0; pointer-events: none; }
         .welcome-text { font-size: 1.5em; font-weight: bold; margin-bottom: 20px; color: var(--tg-theme-text-color); }
         
@@ -28,7 +91,11 @@
         #dashboard-content { opacity: 0; transition: opacity 0.5s ease-in-out; flex-grow: 1; display: flex; flex-direction: column; }
         #dashboard-content.visible { opacity: 1; }
         .bot-list { display: flex; flex-direction: column; gap: 12px; }
-        .bot-card { background-color: var(--tg-theme-secondary-bg-color); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: box-shadow 0.3s ease, transform 0.2s ease; cursor: pointer; text-align: left; }
+        .bot-card {
+            background-color: var(--tg-theme-secondary-bg-color); border-radius: 12px;
+            padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: box-shadow 0.3s ease, transform 0.2s ease;
+            cursor: pointer; text-align: left;
+        }
         .bot-card:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.15); transform: translateY(-2px); }
         .bot-name { font-size: 1.4em; font-weight: 600; }
         .bot-type { color: var(--tg-theme-hint-color); font-size: 0.9em; margin-top: 4px; }
@@ -40,19 +107,47 @@
         .status-loading .status-dot { background-color: #8e8e93; animation: pulse 1.5s infinite; }
         .bot-expiration-info { font-size: 0.8em; color: var(--tg-theme-hint-color); margin-top: 4px; }
         .actions { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
-        .action-button { background-color: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color); border: none; padding: 12px 18px; border-radius: 8px; cursor: pointer; font-weight: 500; transition: background-color 0.2s ease, transform 0.1s ease; flex-grow: 1; }
+        .action-button {
+            background-color: var(--tg-theme-button-color); color: var(--tg-theme-button-text-color);
+            border: none; padding: 12px 18px; border-radius: 8px; cursor: pointer;
+            font-weight: 500; transition: background-color 0.2s ease, transform 0.1s ease;
+            flex-grow: 1;
+        }
         .action-button:active { transform: scale(0.98); }
         .action-button.loading { opacity: 0.7; cursor: not-allowed; }
-        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(5px); }
-        .modal-content { background: var(--tg-theme-bg-color); padding: 25px; border-radius: 16px; width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25); animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--tg-theme-hint-color); padding-bottom: 15px; margin-bottom: 15px; }
-        #log-output { background-color: var(--tg-theme-secondary-bg-color); padding: 15px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px; line-height: 1.4; font-size: 0.8em; }
+        .modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); display: none; justify-content: center;
+            align-items: center; z-index: 1000; backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            background: var(--tg-theme-bg-color); padding: 25px; border-radius: 16px;
+            width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+            animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto;
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--tg-theme-hint-color); padding-bottom: 15px;
+            margin-bottom: 15px;
+        }
+        #log-output {
+            background-color: var(--tg-theme-secondary-bg-color); padding: 15px;
+            border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;
+            font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px;
+            line-height: 1.4; font-size: 0.8em;
+        }
         
         /* Deployment Form Styles */
         #deploy-form-view { padding: 20px; background-color: var(--tg-theme-secondary-bg-color); border-radius: 12px; margin-top: 20px; }
         .form-group { margin-bottom: 15px; text-align: left; }
         label { display: block; margin-bottom: 5px; font-weight: 500; }
-        input, select, textarea { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--tg-theme-hint-color); background-color: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); box-sizing: border-box; transition: border-color 0.3s ease; }
+        input, select, textarea {
+            width: 100%; padding: 12px; border-radius: 8px;
+            border: 1px solid var(--tg-theme-hint-color);
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            box-sizing: border-box; transition: border-color 0.3s ease;
+        }
         input:focus { outline: none; border-color: var(--tg-theme-link-color); }
         .input-status { margin-top: 5px; font-size: 0.9em; }
         .status-green-text { color: #34c759; }
@@ -63,7 +158,7 @@
         .inline-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
         .inline-buttons button { flex-grow: 1; }
         .inline-buttons button.active { border: 2px solid var(--tg-theme-link-color); transform: scale(1.05); }
-        
+
         /* Keyframe Animations */
         @keyframes gradient-animation { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         @keyframes text-animation { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
@@ -118,6 +213,8 @@
         const mainTitleEl = document.getElementById('main-title');
         const viewContainerEl = document.getElementById('view-container');
         const menuDrawerEl = document.getElementById('menu-drawer');
+        const logsModalTitleEl = document.getElementById('logs-modal-title');
+        const logOutputEl = document.getElementById('log-output');
 
         let deploymentState = {
             botType: null,
@@ -248,10 +345,6 @@
 
             document.getElementById('appNameInput').addEventListener('input', checkAppNameAvailability);
             document.getElementById('sessionIdInput').addEventListener('input', checkSessionIdValidity);
-
-            // Resetting and re-rendering buttons for active state
-            updateButtonState('bot-type', deploymentState.botType);
-            updateButtonState('autoview', deploymentState.autoStatusView);
         }
         
         function selectDeploymentOption(group, value) {
@@ -428,11 +521,55 @@
             } catch (e) { Telegram.WebApp.hideProgress(); Telegram.WebApp.showAlert('An error occurred during deployment.'); }
         }
 
-        async function handleRestart(appName) { /* ... same as before ... */ }
-        async function handleRedeploy(appName) { /* ... same as before ... */ }
-        async function handleLogs(appName) { /* ... same as before ... */ }
-        
-        // Initial app rendering logic
+        async function handleRestart(appName) {
+            Telegram.WebApp.showConfirm(`Are you sure you want to restart ${appName}?`, async (ok) => {
+                if (ok) {
+                    Telegram.WebApp.showProgress('Restarting...');
+                    const res = await fetch(`${API_BASE_URL}/bots/restart`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
+                    Telegram.WebApp.hideProgress();
+                    Telegram.WebApp.showAlert(data.message);
+                    if (data.success) { setTimeout(renderDashboard, 5000); }
+                }
+            });
+        }
+
+        async function handleRedeploy(appName) {
+            Telegram.WebApp.showConfirm(`Are you sure you want to redeploy ${appName}?`, async (ok) => {
+                if (ok) {
+                    Telegram.WebApp.showProgress('Redeploying...');
+                    const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
+                    Telegram.WebApp.hideProgress();
+                    Telegram.WebApp.showAlert(data.message);
+                    if (data.success) { setTimeout(renderDashboard, 10000); }
+                }
+            });
+        }
+
+        async function handleLogs(appName) {
+            const logsModalTitleEl = document.getElementById('logs-modal-title');
+            const logOutputEl = document.getElementById('log-output');
+            logsModalTitleEl.textContent = `${appName} Logs`;
+            logOutputEl.textContent = 'Fetching logs...';
+            showModal('logs-modal');
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots/logs/${appName}`, {
+                    headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
+                });
+                const data = await res.json();
+                if (data.success) { logOutputEl.textContent = data.logs || 'No logs found.'; } else { logOutputEl.textContent = `Error: ${data.message}`; }
+            } catch (e) { logOutputEl.textContent = 'An error occurred while fetching logs.'; }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 splashScreenEl.classList.add('hidden');
