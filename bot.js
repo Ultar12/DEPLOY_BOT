@@ -1108,6 +1108,153 @@ app.get('/miniapp/health', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'index.html'));
     });
 
+  // bot.js
+
+// ... existing code ...
+
+// --- MINI APP V2 API ENDPOINTS ---
+
+// GET /api/bots - Get a list of the user's bots
+app.get('/api/bots', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    try {
+        const result = await pool.query('SELECT app_name, bot_type, expiration_date FROM user_deployments WHERE user_id = $1 AND deleted_from_heroku_at IS NULL', [userId]);
+        const bots = result.rows;
+
+        // Verify status with Heroku API
+        const verifiedBots = await Promise.all(bots.map(async (bot) => {
+            let status = 'Offline';
+            try {
+                const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot.app_name}/dynos`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                if (dynoRes.data.length > 0 && ['up', 'starting', 'restarting'].includes(dynoRes.data[0].state)) {
+                    status = 'Online';
+                }
+            } catch (e) {
+                // Heroku app not found, likely deleted
+                if (e.response && e.response.status === 404) {
+                    status = 'Deleted';
+                }
+            }
+            return {
+                appName: bot.app_name,
+                botType: bot.bot_type,
+                expirationDate: bot.expiration_date,
+                status: status,
+            };
+        }));
+
+        res.json({ success: true, bots: verifiedBots.filter(b => b.status !== 'Deleted') });
+    } catch (e) {
+        console.error('[MiniApp V2] Error fetching user bots:', e.message);
+        res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
+    }
+});
+
+// POST /api/bots/restart - Restart a bot
+app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName } = req.body;
+    try {
+        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1', [appName]);
+        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        }
+
+        await axios.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        res.json({ success: true, message: 'Bot restart initiated.' });
+    } catch (e) {
+        console.error(`[MiniApp V2] Error restarting bot ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to restart bot.' });
+    }
+});
+
+// GET /api/bots/logs - Get a bot's logs
+app.get('/api/bots/logs/:appName', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName } = req.params;
+    try {
+        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1', [appName]);
+        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        }
+        
+        const logSessionRes = await axios.post(`https://api.heroku.com/apps/${appName}/log-sessions`, { tail: false, lines: 100 }, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        const logsRes = await axios.get(logSessionRes.data.logplex_url);
+        res.json({ success: true, logs: logsRes.data });
+    } catch (e) {
+        console.error(`[MiniApp V2] Error fetching logs for ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to get logs.' });
+    }
+});
+
+// POST /api/bots/redeploy - Redeploy a bot
+app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName } = req.body;
+    try {
+        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1', [appName]);
+        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        }
+
+        const botType = ownerCheck.rows[0].bot_type;
+        const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+        
+        await axios.post(
+            `https://api.heroku.com/apps/${appName}/builds`,
+            { source_blob: { url: `${repoUrl}/tarball/main` } },
+            {
+                headers: {
+                    Authorization: `Bearer ${HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        res.json({ success: true, message: 'Redeployment initiated.' });
+    } catch (e) {
+        console.error(`[MiniApp V2] Error redeploying bot ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to redeploy.' });
+    }
+});
+
+// POST /api/bots/set-session - Set a new session ID
+app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName, sessionId } = req.body;
+    try {
+        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1', [appName]);
+        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        }
+        
+        const botType = ownerCheck.rows[0].bot_type;
+        const isValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX)) ||
+                        (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX));
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: `Invalid session ID format for ${botType}.` });
+        }
+
+        await axios.patch(
+            `https://api.heroku.com/apps/${appName}/config-vars`,
+            { SESSION_ID: sessionId },
+            {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' }
+            }
+        );
+        res.json({ success: true, message: 'Session ID updated successfully.' });
+    } catch (e) {
+        console.error(`[MiniApp V2] Error setting session ID for ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to update session ID.' });
+    }
+});
+
         // Endpoint to check if an app name is available
     app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
         const appName = req.params.appName;
