@@ -2002,44 +2002,61 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
-    
+
     const targetUserId = match[1];
     const caption = match[2] ? match[2].trim() : '';
-
     const repliedMsg = msg.reply_to_message;
-    const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
-    const isVideo = repliedMsg && repliedMsg.video;
 
+    if (!repliedMsg) {
+        return bot.sendMessage(adminId, "Please reply to a photo, video, or document to use this command.");
+    }
+
+    const isPhoto = repliedMsg.photo && repliedMsg.photo.length > 0;
+    const isVideo = repliedMsg.video;
+    const isDocument = repliedMsg.document;
+
+    const baseOptions = { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' };
+
+    // === Fallback System: Attempt to send the message in three ways ===
+
+    // Fallback 1: Try to send as a photo or video
     if (isPhoto || isVideo) {
-        const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : repliedMsg.video.file_id;
-        const sendMethod = isPhoto ? bot.sendPhoto : bot.sendVideo;
-        const options = {
-            caption: caption,
-            parse_mode: 'Markdown'
-        };
-        
         try {
-            await sendMethod(targetUserId, fileId, options);
-            await bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+            const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : repliedMsg.video.file_id;
+            const sendMethod = isPhoto ? bot.sendPhoto : bot.sendVideo;
+            
+            await sendMethod(targetUserId, fileId, baseOptions);
+            return bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
         } catch (error) {
-            console.error(`Error sending media to user ${targetUserId}:`, error.message);
-            await bot.sendMessage(adminId, `Failed to send media to user \`${targetUserId}\`. The file format may not be supported.`, { parse_mode: 'Markdown' });
-        }
-    } else {
-        // Fallback to the old text-only behavior if not replying to media
-        if (!caption) {
-             return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to send.");
-        }
-        try {
-            await bot.sendMessage(targetUserId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
-            await bot.sendMessage(adminId, `Message sent to user \`${targetUserId}\`.`);
-        } catch (error) {
-            const escapedError = escapeMarkdown(error.message);
-            console.error(`Error sending message to user ${targetUserId}:`, escapedError);
-            await bot.sendMessage(adminId, `Failed to send message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
+            console.error(`Failed on Fallback 1 (Photo/Video):`, error.message);
+            // Fall through to the next fallback if this one fails
         }
     }
+
+    // Fallback 2: Try to send as a document (for screenshots and other files)
+    if (isDocument) {
+        try {
+            const fileId = repliedMsg.document.file_id;
+            await bot.sendDocument(targetUserId, fileId, baseOptions);
+            return bot.sendMessage(adminId, `✅ Media sent to user \`${targetUserId}\`. (Sent as a document)`, { parse_mode: 'Markdown' });
+        } catch (error) {
+            console.error(`Failed on Fallback 2 (Document):`, error.message);
+            // Fall through to the next fallback if this one fails
+        }
+    }
+
+    // Fallback 3: If all else fails, send a text-only message to the user and notify the admin
+    try {
+        const textFallbackMessage = `*Admin Message:*\n${caption}\n\n_Note: The attached media could not be sent due to an unsupported format or error._`;
+        await bot.sendMessage(targetUserId, textFallbackMessage, { parse_mode: 'Markdown' });
+        await bot.sendMessage(adminId, `⚠️ Could not send media to user \`${targetUserId}\`. The file format may be unsupported. A text-only message was sent instead.`, { parse_mode: 'Markdown' });
+    } catch (error) {
+        const escapedError = escapeMarkdown(error.message);
+        console.error(`Failed on Fallback 3 (Text-only):`, escapedError);
+        await bot.sendMessage(adminId, `❌ A critical error occurred. Failed to send any message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
+    }
 });
+
 
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
