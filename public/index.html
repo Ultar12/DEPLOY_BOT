@@ -247,15 +247,20 @@
             Telegram.WebApp.showConfirm(`Are you sure you want to restart ${appName}?`, async (ok) => {
                 if (ok) {
                     Telegram.WebApp.showProgress('Restarting...');
-                    const res = await fetch(`${API_BASE_URL}/bots/restart`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 5000); }
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/bots/restart`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                            body: JSON.stringify({ appName })
+                        });
+                        const data = await res.json();
+                        Telegram.WebApp.hideProgress();
+                        Telegram.WebApp.showAlert(data.message);
+                        if (data.success) { setTimeout(renderDashboard, 5000); }
+                    } catch (e) {
+                        Telegram.WebApp.hideProgress();
+                        Telegram.WebApp.showAlert('An error occurred while trying to restart the bot.');
+                    }
                 }
             });
         }
@@ -263,15 +268,20 @@
             Telegram.WebApp.showConfirm(`Are you sure you want to redeploy ${appName}?`, async (ok) => {
                 if (ok) {
                     Telegram.WebApp.showProgress('Redeploying...');
-                    const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 10000); }
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                            body: JSON.stringify({ appName })
+                        });
+                        const data = await res.json();
+                        Telegram.WebApp.hideProgress();
+                        Telegram.WebApp.showAlert(data.message);
+                        if (data.success) { setTimeout(renderDashboard, 10000); }
+                    } catch (e) {
+                        Telegram.WebApp.hideProgress();
+                        Telegram.WebApp.showAlert('An error occurred while trying to redeploy the bot.');
+                    }
                 }
             });
         }
@@ -333,8 +343,8 @@
                         </div>
                     </div>
                     <div class="inline-buttons">
-                        <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeployWithKey()">Deploy with Key</button>
-                        <button class="action-button" id="pay-button" onclick="togglePaymentFields()">Pay (₦1500)</button>
+                        <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeploy(document.getElementById('deployKeyInput').value)">Deploy with Key</button>
+                        <button class="action-button" id="pay-button" onclick="handlePaystackPayment()">Pay (₦1500)</button>
                     </div>
                 </div>
             `;
@@ -487,21 +497,6 @@
                 deployKeyInput.classList.add('input-red');
             }
         }
-
-        async function handleDeployWithKey() {
-            const appName = document.getElementById('appNameInput').value.trim();
-            const sessionId = document.getElementById('sessionIdInput').value.trim();
-            const deployKey = document.getElementById('deployKeyInput').value.trim();
-            
-            if (!deploymentState.botType) return Telegram.WebApp.showAlert('Please select a bot type.');
-            if (!appName || !deploymentState.isAppNameAvailable) return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
-            if (!sessionId || !sessionId.startsWith(deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_') || sessionId.length < 10) return Telegram.WebApp.showAlert('Invalid Session ID.');
-            if (!deployKey) return Telegram.WebApp.showAlert('Please enter your deploy key.');
-            
-            deploymentState.appName = appName;
-            deploymentState.sessionId = sessionId;
-            handleDeploy(deployKey, false);
-        }
         
         async function handlePaystackPayment() {
             const appName = document.getElementById('appNameInput').value.trim();
@@ -560,39 +555,6 @@
                 Telegram.WebApp.showAlert(data.message);
                 if (data.success) { Telegram.WebApp.close(); }
             } catch (e) { Telegram.WebApp.hideProgress(); Telegram.WebApp.showAlert('An error occurred during deployment.'); }
-        }
-        
-        async function handleRestart(appName) {
-            Telegram.WebApp.showConfirm(`Are you sure you want to restart ${appName}?`, async (ok) => {
-                if (ok) {
-                    Telegram.WebApp.showProgress('Restarting...');
-                    const res = await fetch(`${API_BASE_URL}/bots/restart`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 5000); }
-                }
-            });
-        }
-        async function handleRedeploy(appName) {
-            Telegram.WebApp.showConfirm(`Are you sure you want to redeploy ${appName}?`, async (ok) => {
-                if (ok) {
-                    Telegram.WebApp.showProgress('Redeploying...');
-                    const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 10000); }
-                }
-            });
         }
         
         document.addEventListener('DOMContentLoaded', () => {
