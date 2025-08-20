@@ -1212,6 +1212,31 @@ app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
     }
 });
 
+  // GET /api/check-deploy-key/:key - Check if a key is valid without consuming its use.
+app.get('/api/check-deploy-key/:key', validateWebAppInitData, async (req, res) => {
+    const { key } = req.params;
+    if (!key) {
+        return res.status(400).json({ valid: false, message: 'No key provided.' });
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT uses_left FROM deploy_keys WHERE key = $1 AND uses_left > 0',
+            [key.toUpperCase()]
+        );
+
+        if (result.rows.length > 0) {
+            res.json({ valid: true, message: 'Key is valid.' });
+        } else {
+            res.json({ valid: false, message: 'Invalid or expired key.' });
+        }
+    } catch (error) {
+        console.error('Error checking deploy key:', error.message);
+        res.status(500).json({ valid: false, message: 'Internal server error.' });
+    }
+});
+
+
 // GET /api/bots/logs - Get a bot's logs
 app.get('/api/bots/logs/:appName', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
