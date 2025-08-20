@@ -5,20 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bot Dashboard</title>
     <style>
-        /* Telegram Theme Colors & Global Styles */
+        /* Professional Animated Background */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
             padding: 15px;
-            background-color: var(--tg-theme-bg-color);
+            background: linear-gradient(135deg, var(--tg-theme-bg-color), #2c3e50);
+            background-size: 400% 400%;
+            animation: gradient-animation 15s ease infinite;
             color: var(--tg-theme-text-color);
-            transition: background-color 0.3s ease;
-            display: flex;
-            flex-direction: column;
             min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            text-align: center;
+        }
+
+        /* Animated Text & Headers */
+        h1, h2 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 20px;
+            background: linear-gradient(45deg, #FF6B6B, #ffe66d, #4CAF50, #2196F3, #9C27B0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-fill-color: transparent;
+            background-size: 200% auto;
+            animation: text-animation 10s linear infinite;
+        }
+
+        /* Centered & Responsive Dashboard */
+        #main-container {
+            width: 100%;
+            max-width: 600px;
+            text-align: left;
+            position: relative;
+            z-index: 1;
         }
         
-        /* Splash Screen Styles */
+        /* Splash Screen */
         #splash-screen {
             position: fixed;
             top: 0;
@@ -45,21 +72,23 @@
             color: var(--tg-theme-text-color);
         }
         
-        /* Dashboard Layout */
+        /* Loading Animation (More Dynamic) */
+        .dynamic-loader {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+        }
+
+        /* Dashboard & Bot Cards */
         #dashboard-content {
-            flex-grow: 1;
-            width: 100%;
             opacity: 0;
             transition: opacity 0.5s ease-in-out;
-            display: flex;
-            flex-direction: column;
-            padding-bottom: 50px;
         }
-        #dashboard-content.visible {
-            opacity: 1;
-        }
+        #dashboard-content.visible { opacity: 1; }
         
-        /* Bot Cards & Effects */
         .bot-list { display: flex; flex-direction: column; gap: 12px; }
         .bot-card {
             background-color: var(--tg-theme-secondary-bg-color);
@@ -68,22 +97,17 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.08);
             transition: box-shadow 0.3s ease, transform 0.2s ease;
             cursor: pointer;
+            text-align: left; /* Ensure text is left-aligned within cards */
         }
         .bot-card:hover {
             box-shadow: 0 6px 16px rgba(0,0,0,0.15);
             transform: translateY(-2px);
         }
         
-        /* Status & Typography */
+        /* Status, Typography, Buttons (rest of your styles remain) */
         .bot-name { font-size: 1.4em; font-weight: 600; }
         .bot-type { color: var(--tg-theme-hint-color); font-size: 0.9em; margin-top: 4px; }
-        .bot-status {
-            display: flex;
-            align-items: center;
-            font-weight: bold;
-            margin-top: 8px;
-            font-size: 0.9em;
-        }
+        .bot-status { display: flex; align-items: center; font-weight: bold; margin-top: 8px; font-size: 0.9em; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
         .status-online .status-dot { background-color: #34c759; }
         .status-offline .status-dot { background-color: #ff3b30; }
@@ -91,7 +115,6 @@
         .status-loading .status-dot { background-color: #8e8e93; animation: pulse 1.5s infinite; }
         .bot-expiration-info { font-size: 0.8em; color: var(--tg-theme-hint-color); margin-top: 4px; }
         
-        /* Action Buttons */
         .actions { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
         .action-button {
             background-color: var(--tg-theme-button-color);
@@ -107,30 +130,22 @@
         .action-button:active { transform: scale(0.98); }
         .action-button.loading { opacity: 0.7; cursor: not-allowed; }
         
-        /* Modals & UI */
-        .modal {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.6); display: none; justify-content: center;
-            align-items: center; z-index: 1000; backdrop-filter: blur(5px);
-        }
-        .modal-content {
-            background: var(--tg-theme-bg-color); padding: 25px; border-radius: 16px;
-            width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25);
-            animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto;
-        }
-        .modal-header {
-            display: flex; justify-content: space-between; align-items: center;
-            border-bottom: 1px solid var(--tg-theme-hint-color); padding-bottom: 15px;
-            margin-bottom: 15px;
-        }
-        #log-output {
-            background-color: var(--tg-theme-secondary-bg-color); padding: 15px;
-            border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;
-            font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px;
-            line-height: 1.4; font-size: 0.8em;
-        }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(5px); }
+        .modal-content { background: var(--tg-theme-bg-color); padding: 25px; border-radius: 16px; width: 90%; max-width: 500px; box-shadow: 0 8px 25px rgba(0,0,0,0.25); animation: slideUp 0.3s ease-out; max-height: 80vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--tg-theme-hint-color); padding-bottom: 15px; margin-bottom: 15px; }
+        #log-output { background-color: var(--tg-theme-secondary-bg-color); padding: 15px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; height: 300px; overflow-y: scroll; margin-top: 10px; line-height: 1.4; font-size: 0.8em; }
         
         /* Keyframe Animations */
+        @keyframes gradient-animation {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        @keyframes text-animation {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } 100% { transform: scale(1); opacity: 1; } }
         @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -139,19 +154,19 @@
 <body>
     <div id="splash-screen">
         <div class="welcome-text">Loading Dashboard...</div>
-        <div class="loader-container">
-            <div class="loader"></div>
-        </div>
+        <div class="dynamic-loader"></div>
     </div>
     
     <div id="dashboard-content">
         <h1>Bot Dashboard</h1>
-        <div id="bot-list" class="bot-list"></div>
-        <div id="loading" style="display: none; text-align: center; margin-top: 20px;">
-            <div class="loader"></div>
-            <p style="margin-top: 8px;">Loading bots...</p>
+        <div id="main-container">
+            <div id="bot-list" class="bot-list"></div>
+            <div id="loading" style="display: none; text-align: center; margin-top: 20px;">
+                <div class="loader"></div>
+                <p style="margin-top: 8px;">Loading bots...</p>
+            </div>
+            <p id="no-bots" style="display: none; text-align: center; color: var(--tg-theme-hint-color);">You have no deployed bots.</p>
         </div>
-        <p id="no-bots" style="display: none; text-align: center; color: var(--tg-theme-hint-color);">You have no deployed bots.</p>
     </div>
 
     <div id="logs-modal" class="modal">
@@ -176,7 +191,6 @@
         const botListEl = document.getElementById('bot-list');
         const loadingEl = document.getElementById('loading');
         const noBotsEl = document.getElementById('no-bots');
-        const logsModalEl = document.getElementById('logs-modal');
         const logsModalTitleEl = document.getElementById('logs-modal-title');
         const logOutputEl = document.getElementById('log-output');
         
