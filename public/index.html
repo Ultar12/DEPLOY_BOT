@@ -604,36 +604,4 @@
                     const data = await res.json();
                     Telegram.WebApp.hideProgress();
                     Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 5000); }
-                }
-            });
-        }
-        async function handleRedeploy(appName) {
-            Telegram.WebApp.showConfirm(`Are you sure you want to redeploy ${appName}?`, async (ok) => {
-                if (ok) {
-                    Telegram.WebApp.showProgress('Redeploying...');
-                    const res = await fetch(`${API_BASE_URL}/bots/redeploy`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
-                    });
-                    const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderDashboard, 10000); }
-                }
-            });
-        }
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(() => {
-                splashScreenEl.classList.add('hidden');
-                setTimeout(() => {
-                    dashboardContentEl.classList.add('visible');
-                    renderDashboard();
-                }, 500);
-            }, 1000);
-        });
-    </script>
-</body>
-</html>
+                    if
