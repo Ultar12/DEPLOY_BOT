@@ -153,8 +153,7 @@ async function checkAndRemindLoggedOutBots() {
         const herokuApp = bot_name;
 
         try {
-            const botStatusResult = await moduleParams.mainPool
-    const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
+            const botStatusResult = await moduleParams.mainPool  const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
             const { status, status_changed_at, bot_type } = botStatusResult.rows[0];
