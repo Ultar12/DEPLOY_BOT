@@ -332,12 +332,9 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="deployKeyInput">Deploy Key (Optional):</label>
+                        <label for="deployKeyInput">Deploy Key:</label>
                         <input type="text" id="deployKeyInput" placeholder="Enter your key">
-                        <div class="inline-buttons">
-                            <button class="action-button" id="check-key-button" onclick="checkDeployKey()">Check Key</button>
-                            <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeployWithKey()">Deploy with Key</button>
-                        </div>
+                        <div id="keyStatus" class="input-status"></div>
                     </div>
                     <div id="payment-fields" style="display:none;">
                         <div class="form-group">
@@ -345,7 +342,8 @@
                             <input type="email" id="emailInput" placeholder="your-email@example.com">
                         </div>
                     </div>
-                    <div class="inline-buttons" style="margin-top: 10px;">
+                    <div class="inline-buttons">
+                        <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeployWithKey()">Deploy with Key</button>
                         <button class="action-button" id="pay-button" onclick="togglePaymentFields()">Pay (₦1500)</button>
                     </div>
                 </div>
@@ -355,22 +353,9 @@
             const deployKeyInput = document.getElementById('deployKeyInput');
             appNameInput.addEventListener('input', checkAppNameAvailability);
             sessionIdInput.addEventListener('input', checkSessionIdValidity);
-            deployKeyInput.addEventListener('input', () => {
-                document.getElementById('deploy-with-key-button').disabled = true; // Disable until checked
-            });
+            deployKeyInput.addEventListener('input', checkDeployKeyAvailability);
             
             updateButtonState('autoview', deploymentState.autoStatusView);
-        }
-
-        function togglePaymentFields() {
-            const paymentFields = document.getElementById('payment-fields');
-            const payButton = document.getElementById('pay-button');
-            const isVisible = paymentFields.style.display === 'block';
-            paymentFields.style.display = isVisible ? 'none' : 'block';
-            payButton.textContent = isVisible ? 'Pay (₦1500)' : 'Submit Payment';
-            if (isVisible) {
-                document.getElementById('emailInput').value = '';
-            }
         }
         
         function selectDeploymentOption(group, value) {
@@ -470,45 +455,49 @@
             }
         }
         
-        async function checkDeployKey() {
+        async function checkDeployKeyAvailability() {
             const deployKeyInput = document.getElementById('deployKeyInput');
             const deployWithKeyButton = document.getElementById('deploy-with-key-button');
+            const keyStatus = document.getElementById('keyStatus');
             const key = deployKeyInput.value.trim();
-            
+
             if (key.length === 0) {
                 deployWithKeyButton.disabled = true;
-                return Telegram.WebApp.showAlert('Please enter a key to check.');
+                keyStatus.textContent = '';
+                deployKeyInput.classList.remove('input-green', 'input-red');
+                return;
             }
-            
-            deployWithKeyButton.textContent = 'Checking...';
-            deployWithKeyButton.classList.add('loading');
+
+            keyStatus.textContent = 'Checking...';
+            deployKeyInput.classList.remove('input-green', 'input-red');
+            keyStatus.classList.remove('status-green-text', 'status-red-text');
+            keyStatus.style.color = '#888';
             deployWithKeyButton.disabled = true;
 
             try {
-                // This assumes you have a new API endpoint for checking keys
                 const res = await fetch(`${API_BASE_URL}/check-deploy-key/${key}`, {
                     headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
                 });
                 const data = await res.json();
                 
                 if (data.valid) {
-                    Telegram.WebApp.showAlert('Key is valid!');
-                    deployWithKeyButton.textContent = 'Deploy with Key';
+                    keyStatus.textContent = 'Valid!';
+                    keyStatus.classList.add('status-green-text');
+                    deployKeyInput.classList.add('input-green');
                     deployWithKeyButton.disabled = false;
                 } else {
-                    Telegram.WebApp.showAlert('Invalid or expired key.');
-                    deployWithKeyButton.textContent = 'Deploy with Key';
-                    deployKeyInput.value = ''; // Clear the input for security
+                    keyStatus.textContent = 'Invalid or expired key.';
+                    keyStatus.classList.add('status-red-text');
+                    deployKeyInput.classList.add('input-red');
                 }
             } catch (e) {
                 console.error('Error checking key:', e);
-                Telegram.WebApp.showAlert('Error checking key. Please try again.');
-                deployWithKeyButton.textContent = 'Deploy with Key';
-            } finally {
-                deployWithKeyButton.classList.remove('loading');
+                keyStatus.textContent = 'Error checking key.';
+                keyStatus.classList.add('status-red-text');
+                deployKeyInput.classList.add('input-red');
             }
         }
-        
+
         async function handleDeployWithKey() {
             const appName = document.getElementById('appNameInput').value.trim();
             const sessionId = document.getElementById('sessionIdInput').value.trim();
