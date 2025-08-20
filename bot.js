@@ -1115,34 +1115,45 @@ app.get('/miniapp/health', (req, res) => {
 // --- MINI APP V2 API ENDPOINTS ---
 
 // GET /api/bots - Get a list of the user's bots
+// GET /api/bots - Get a list of the user's bots
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
-        const result = await pool.query('SELECT app_name, bot_type, expiration_date FROM user_deployments WHERE user_id = $1 AND deleted_from_heroku_at IS NULL', [userId]);
-        const bots = result.rows;
+        // Query both tables to get a comprehensive list of all deployed bots for the user
+        const botsResult = await pool.query(
+            `SELECT 
+                ub.bot_name, 
+                ub.bot_type,
+                ud.expiration_date
+            FROM user_bots ub
+            LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+            WHERE ub.user_id = $1 AND ud.deleted_from_heroku_at IS NULL
+            GROUP BY ub.bot_name, ub.bot_type, ud.expiration_date;`,
+            [userId]
+        );
 
-      // Add this line to see if the database is returning any results
-console.log(`[MiniApp V2] Found ${bots.length} bots for user ${userId}.`);
+        const bots = botsResult.rows;
 
+        // Log the number of bots found for debugging
+        console.log(`[MiniApp V2] Found ${bots.length} bots for user ${userId}.`);
 
-        // Verify status with Heroku API
+        // Verify the status of each bot with the Heroku API
         const verifiedBots = await Promise.all(bots.map(async (bot) => {
             let status = 'Offline';
             try {
-                const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot.app_name}/dynos`, {
+                const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot.bot_name}/dynos`, {
                     headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                 });
                 if (dynoRes.data.length > 0 && ['up', 'starting', 'restarting'].includes(dynoRes.data[0].state)) {
                     status = 'Online';
                 }
             } catch (e) {
-                // Heroku app not found, likely deleted
                 if (e.response && e.response.status === 404) {
                     status = 'Deleted';
                 }
             }
             return {
-                appName: bot.app_name,
+                appName: bot.bot_name,
                 botType: bot.bot_type,
                 expirationDate: bot.expiration_date,
                 status: status,
@@ -1155,6 +1166,8 @@ console.log(`[MiniApp V2] Found ${bots.length} bots for user ${userId}.`);
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
     }
 });
+
+
 
 // POST /api/bots/restart - Restart a bot
 app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
