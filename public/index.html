@@ -146,8 +146,7 @@
         .inline-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
         .inline-buttons button { flex-grow: 1; }
         .inline-buttons button.active {
-            border: 2px solid #007bff;
-            background-color: #0056b3;
+            border: 2px solid #34c759;
             transform: scale(1.05);
         }
         
@@ -161,7 +160,7 @@
 </head>
 <body>
     <div id="splash-screen">
-        <h2 class="welcome-text">Deploy New Bot</h2>
+        <h2 class="welcome-text">Loading Dashboard...</h2>
         <div class="dynamic-loader"></div>
     </div>
     
@@ -174,7 +173,7 @@
         
         <div id="menu-drawer">
             <div class="menu-item" onclick="renderDashboard(); toggleMenu()">My Bots</div>
-            <div class="menu-item" onclick="renderDeploymentForm(); toggleMenu()">Deploy New Bot</div>
+            <div class="menu-item" onclick="renderBotTypeSelection(); toggleMenu()">Deploy New Bot</div>
         </div>
         
         <div id="main-container">
@@ -287,15 +286,32 @@
         // =========================================================
         // New Deployment Form Logic (Single Page)
         // =========================================================
+        function renderBotTypeSelection() {
+            mainTitleEl.textContent = 'Select Bot Type';
+            viewContainerEl.innerHTML = `
+                <div id="bot-type-selection-view" class="form-section view">
+                    <p>Which bot type would you like to deploy?</p>
+                    <div class="inline-buttons" id="bot-type-buttons">
+                        <button class="action-button" data-value="levanter" onclick="selectBotType('levanter')">Levanter</button>
+                        <button class="action-button" data-value="raganork" onclick="selectBotType('raganork')">Raganork MD</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function selectBotType(botType) {
+            deploymentState.botType = botType;
+            renderDeploymentForm();
+        }
+
         function renderDeploymentForm() {
             mainTitleEl.textContent = 'Deploy New Bot';
             viewContainerEl.innerHTML = `
                 <div id="deploy-form-view" class="form-section view">
                     <div class="form-group">
                         <label>Bot Type:</label>
-                        <div class="inline-buttons" id="bot-type-buttons">
-                            <button class="action-button" data-value="levanter" onclick="selectDeploymentOption('bot-type', 'levanter')">Levanter</button>
-                            <button class="action-button" data-value="raganork" onclick="selectDeploymentOption('bot-type', 'raganork')">Raganork MD</button>
+                        <div class="inline-buttons">
+                            <button class="action-button active" disabled>${deploymentState.botType.toUpperCase()}</button>
                         </div>
                     </div>
                     <div class="form-group">
@@ -334,27 +350,12 @@
                     </div>
                 </div>
             `;
-            // Re-select elements after rendering the new HTML
             const appNameInput = document.getElementById('appNameInput');
             const sessionIdInput = document.getElementById('sessionIdInput');
             appNameInput.addEventListener('input', checkAppNameAvailability);
             sessionIdInput.addEventListener('input', checkSessionIdValidity);
             
-            // Re-apply state
-            updateButtonState('bot-type', deploymentState.botType);
             updateButtonState('autoview', deploymentState.autoStatusView);
-        }
-
-        function togglePaymentFields() {
-            const paymentFields = document.getElementById('payment-fields');
-            const payButton = document.getElementById('pay-button');
-            const isVisible = paymentFields.style.display === 'block';
-            paymentFields.style.display = isVisible ? 'none' : 'block';
-            payButton.textContent = isVisible ? 'Pay (₦1500)' : 'Submit Payment';
-            if (isVisible) {
-                // If hiding the fields, reset the email input
-                document.getElementById('emailInput').value = '';
-            }
         }
         
         function selectDeploymentOption(group, value) {
