@@ -35,7 +35,7 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
       <div style="background-color: #121212; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
         <img src="https://files.catbox.moe/k1n5p2.jpeg" alt="ULTAR'S WBD" style="max-width: 100%; border-radius: 10px;">
         <h1 style="font-size: 24px; font-weight: bold; margin-top: 20px;">Your Bot Deployment is Confirmed!</h1>
-        <p style="font-size: 16px;">Welcome, ${userName}! Your payment for bot deployment has been successfully received. We're getting your bot ready now.</p>
+        <p style="font-size: 16px;">Welcome, Your payment for bot deployment has been successfully received. We're getting your bot ready now.</p>
         <div style="background-color: #242424; border-radius: 8px; padding: 15px; margin: 20px 0;">
           <h2 style="font-size: 18px; color: #69F0AE; margin-top: 0;">Order Details</h2>
           <ul style="list-style-type: none; padding: 0; text-align: left; font-size: 14px;">
