@@ -1995,7 +1995,6 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-// --- FIX: Full corrected /send command to support text, photos, and videos ---
 bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
@@ -2039,10 +2038,6 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
         }
     }
 });
-
-// bot.js
-
-// ... other code ...
 
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
