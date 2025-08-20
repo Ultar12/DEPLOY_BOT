@@ -139,7 +139,6 @@ async function sendStandardizedAlert(appName, sessionId) {
 
 // --- FIX: checkAndRemindLoggedOutBots now handles the 5-day warning ---
 async function checkAndRemindLoggedOutBots() {
-async function checkAndPruneLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
         originalStdoutWrite.apply(process.stdout, ['Skipping scheduled logout check: HEROKU_API_KEY not set.\n']);
