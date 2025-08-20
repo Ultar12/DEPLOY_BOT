@@ -139,6 +139,7 @@ async function sendStandardizedAlert(appName, sessionId) {
 
 // --- FIX: checkAndRemindLoggedOutBots now handles the 5-day warning ---
 async function checkAndRemindLoggedOutBots() {
+async function checkAndPruneLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
         originalStdoutWrite.apply(process.stdout, ['Skipping scheduled logout check: HEROKU_API_KEY not set.\n']);
@@ -153,7 +154,8 @@ async function checkAndRemindLoggedOutBots() {
         const herokuApp = bot_name;
 
         try {
-            const botStatusResult = await moduleParams.mainPool  const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
+            // FIX: Corrected the duplicated code here.
+            const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
             const { status, status_changed_at, bot_type } = botStatusResult.rows[0];
@@ -205,6 +207,7 @@ async function checkAndRemindLoggedOutBots() {
         }
     }
 }
+
 
 async function checkAndExpireBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for expiring bots...\n']);
