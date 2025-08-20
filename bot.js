@@ -1416,18 +1416,14 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
 app.get('/api/bots/config/:appName', validateWebAppInitData, async (req, res) => {
     const { appName } = req.params;
     const userId = req.telegramData.id.toString();
-
     try {
         const ownerCheck = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
         if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
-
-        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
-            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-        });
-        
-        res.json({ success: true, configVars: configRes.data });
+        const dbResult = await pool.query('SELECT config_vars FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        const configVars = dbResult.rows[0]?.config_vars || {};
+        res.json({ success: true, configVars });
     } catch (e) {
         console.error(`[MiniApp V2] Error fetching config for ${appName}:`, e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch config variables.' });
@@ -1438,25 +1434,18 @@ app.get('/api/bots/config/:appName', validateWebAppInitData, async (req, res) =>
 app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
     const { appName, varName, varValue } = req.body;
     const userId = req.telegramData.id.toString();
-
     try {
         const ownerCheck = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
         if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
-        
-        await axios.patch(
-            `https://api.heroku.com/apps/${appName}/config-vars`,
-            { [varName]: varValue },
-            {
-                headers: {
-                    Authorization: `Bearer ${HEROKU_API_KEY}`,
-                    Accept: 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
+        await axios.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varName]: varValue }, {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3',
+                'Content-Type': 'application/json'
             }
-        );
-        
+        });
         res.json({ success: true, message: `Variable ${varName} updated successfully. Restarting bot...` });
     } catch (e) {
         console.error(`[MiniApp V2] Error setting variable ${varName} for ${appName}:`, e.message);
