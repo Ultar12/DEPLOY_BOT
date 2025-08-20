@@ -958,7 +958,9 @@ async function notifyAdminUserOnline(msg) {
         getUserIdByBotName: dbServices.getUserIdByBotName, // Pass DB service function
         deleteUserBot: dbServices.deleteUserBot,           // Pass DB service function
         deleteUserDeploymentFromBackup: dbServices.deleteUserDeploymentFromBackup, // Pass DB service function
-        backupPool: backupPool,                            // Pass the backup DB pool
+        backupPool: backupPool,  // Pass the backup DB pool
+        getAllUserBots: dbServices.getAllUserBots,
+        getAllUserDeployments: dbServices.getAllUserDeployments,
         ADMIN_ID: ADMIN_ID, // Pass ADMIN_ID for critical errors
        escapeMarkdown: escapeMarkdown,
     });
