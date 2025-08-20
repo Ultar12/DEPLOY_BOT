@@ -1184,7 +1184,6 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
 
 
 
-// POST /api/bots/restart - Restart a bot
 app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.body;
@@ -1193,7 +1192,6 @@ app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
         if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
-
         await axios.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
@@ -1203,6 +1201,7 @@ app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to restart bot.' });
     }
 });
+
 
   // GET /api/check-deploy-key/:key - Check if a key is valid without consuming its use.
 app.get('/api/check-deploy-key/:key', validateWebAppInitData, async (req, res) => {
