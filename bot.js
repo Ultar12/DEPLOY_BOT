@@ -1110,12 +1110,30 @@ app.get('/miniapp/health', (req, res) => {
 
   // bot.js
 
-// ... existing code ...
+// Add this new endpoint to your Express app in bot.js, 
+// within the 'if (process.env.NODE_ENV === 'production')' block.
 
-// --- MINI APP V2 API ENDPOINTS ---
+// GET /api/app-name-check/:appName - Check if an app name is available
+app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res) => {
+    const { appName } = req.params;
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        // If Heroku API call succeeds, the name is taken.
+        res.json({ available: false });
+    } catch (e) {
+        // A 404 error means the app name is available.
+        if (e.response && e.response.status === 404) {
+            res.json({ available: true });
+        } else {
+            // Other errors (e.g., API issues) mean we can't confirm availability.
+            console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
+            res.status(500).json({ success: false, message: 'Could not check app name due to API error.' });
+        }
+    }
+});
 
-// GET /api/bots - Get a list of the user's bots
-// GET /api/bots - Get a list of the user's bots
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
