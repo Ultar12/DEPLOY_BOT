@@ -1134,67 +1134,58 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
     }
 });
 
-/// bot.js
-
-// ... [rest of your code] ...
-
-// GET /api/bots - Get a list of the user's bots
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
-        // Corrected Query: Get all bots that have not been explicitly deleted from Heroku.
-        const botsResult = await pool.query(
-            `SELECT 
-                ub.bot_name, 
-                ub.bot_type,
-                ud.expiration_date
-            FROM user_bots ub
-            LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-            WHERE ub.user_id = $1 AND (ud.deleted_from_heroku_at IS NULL OR ub.status = 'online');`, // This condition is now correct.
+        // Step 1: Get the list of bots the user SHOULD have from the database
+        const dbBotsResult = await pool.query(
+            `SELECT app_name, bot_type, expiration_date FROM user_deployments 
+             WHERE user_id = $1 AND deleted_from_heroku_at IS NULL`,
             [userId]
         );
+        const expectedBots = dbBotsResult.rows;
 
-        const bots = botsResult.rows;
+        if (expectedBots.length === 0) {
+            console.log(`[MiniApp V2] No bots found in DB for user ${userId}.`);
+            return res.json({ success: true, bots: [] });
+        }
 
-        // Log the number of bots found for debugging
-        console.log(`[MiniApp V2] Found ${bots.length} bots in the database for user ${userId}.`);
+        // Step 2: Verify each bot against the Heroku API, just like the 'My Bots' button
+        const verificationPromises = expectedBots.map(bot =>
+            axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            }).then(() => ({ ...bot, exists: true }))
+              .catch(error => ({ ...bot, exists: false, error: error }))
+        );
 
-        // Verify the status of each bot with the Heroku API
-        const verifiedBots = await Promise.all(bots.map(async (bot) => {
-            let status = 'Offline';
-            try {
-                const dynoRes = await axios.get(`https://api.heroku.com/apps/${bot.bot_name}/dynos`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                });
-                if (dynoRes.data.length > 0 && ['up', 'starting', 'restarting'].includes(dynoRes.data[0].state)) {
-                    status = 'Online';
-                }
-            } catch (e) {
-                // Heroku app not found, likely deleted
-                if (e.response && e.response.status === 404) {
-                    status = 'Deleted';
-                }
+        const results = await Promise.all(verificationPromises);
+
+        const activeBots = [];
+        const botsToCleanup = [];
+
+        results.forEach(result => {
+            if (result.exists) {
+                activeBots.push(result);
+            } else if (result.error.response && result.error.response.status === 404) {
+                botsToCleanup.push(result.appName);
             }
-            return {
-                appName: bot.bot_name,
-                botType: bot.bot_type,
-                expirationDate: bot.expiration_date,
-                status: status,
-            };
-        }));
-        
-        // Filter out bots that were deleted from Heroku
-        const filteredBots = verifiedBots.filter(b => b.status !== 'Deleted');
-        
-        // Final log to see how many bots are actually displayed
-        console.log(`[MiniApp V2] Displaying ${filteredBots.length} active bots for user ${userId}.`);
+        });
 
-        res.json({ success: true, bots: filteredBots });
+        // Step 3: Reconcile with the database if any bots were not found on Heroku
+        if (botsToCleanup.length > 0) {
+            console.log(`[MiniApp V2] Found ${botsToCleanup.length} ghost bots for user ${userId}. Marking as inactive.`);
+            await Promise.all(botsToCleanup.map(appName => dbServices.markDeploymentDeletedFromHeroku(userId, appName)));
+        }
+
+        console.log(`[MiniApp V2] Displaying ${activeBots.length} active bots for user ${userId}.`);
+        res.json({ success: true, bots: activeBots });
+
     } catch (e) {
         console.error('[MiniApp V2] Error fetching user bots:', e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
     }
 });
+
 
 
 
