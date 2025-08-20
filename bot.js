@@ -1121,6 +1121,10 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         const result = await pool.query('SELECT app_name, bot_type, expiration_date FROM user_deployments WHERE user_id = $1 AND deleted_from_heroku_at IS NULL', [userId]);
         const bots = result.rows;
 
+      // Add this line to see if the database is returning any results
+console.log(`[MiniApp V2] Found ${bots.length} bots for user ${userId}.`);
+
+
         // Verify status with Heroku API
         const verifiedBots = await Promise.all(bots.map(async (bot) => {
             let status = 'Offline';
