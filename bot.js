@@ -1070,38 +1070,40 @@ app.get('/miniapp/health', (req, res) => {
 });
 
 
-   // === WebApp Data Validation Middleware ===
-    const validateWebAppInitData = (req, res, next) => {
-        const initData = req.header('X-Telegram-Init-Data');
-        if (!initData) {
-            return res.status(401).json({ success: false, message: 'Unauthorized: No init data provided' });
+ const validateWebAppInitData = (req, res, next) => {
+    const initData = req.header('X-Telegram-Init-Data');
+    if (!initData) {
+        console.warn('[MiniApp Server] Unauthorized: No init data provided.');
+        return res.status(401).json({ success: false, message: 'Unauthorized: No init data provided' });
+    }
+
+    try {
+        const urlParams = new URLSearchParams(initData);
+        const hash = urlParams.get('hash');
+        urlParams.delete('hash');
+        urlParams.sort();
+
+        // The correct way to build the data string for validation
+        const dataCheckString = Array.from(urlParams.entries())
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n');
+
+        const secretKey = crypto.createHmac('sha256', 'WebAppData').update(TELEGRAM_BOT_TOKEN).digest();
+        const checkHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+        if (checkHash !== hash) {
+            console.warn('[MiniApp Server] Invalid WebApp data hash received.');
+            return res.status(401).json({ success: false, message: 'Unauthorized: Invalid data signature' });
         }
+        
+        req.telegramData = JSON.parse(urlParams.get('user'));
+        next();
+    } catch (e) {
+        console.error('[MiniApp Server] Error validating WebApp data:', e);
+        res.status(401).json({ success: false, message: 'Unauthorized: Data validation failed' });
+    }
+};
 
-        try {
-            const urlParams = new URLSearchParams(initData);
-            const hash = urlParams.get('hash');
-            urlParams.delete('hash');
-            urlParams.sort();
-
-            const dataCheckString = urlParams.toString().replace(/%25/g, '%');
-            const secretKey = crypto.createHmac('sha256', 'WebAppData').update(TELEGRAM_BOT_TOKEN).digest();
-            const checkHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-
-            if (checkHash !== hash) {
-                console.warn('[MiniApp Server] Invalid WebApp data hash received.');
-                return res.status(401).json({ success: false, message: 'Unauthorized: Invalid data signature' });
-            }
-            
-            req.telegramData = JSON.parse(urlParams.get('user'));
-            next();
-        } catch (e) {
-            console.error('[MiniApp Server] Error validating WebApp data:', e);
-            res.status(401).json({ success: false, message: 'Unauthorized: Data validation failed' });
-        }
-    };
-    // === END Validation Middleware ===
-
-    // --- MINI APP ROUTES START HERE ---
 
     // Endpoint to serve the Mini App's HTML
     app.get('/miniapp', (req, res) => {
