@@ -3150,16 +3150,22 @@ if (text === 'Deploy' || text === 'Free Trial') {
     const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on the server, please wait...');
 
     try {
-        // 1. Get the list of bots the user SHOULD have from the database
+        // 1. Get the list of all bots the user has from the database, not just the active ones
         const dbBotsResult = await pool.query(
-            `SELECT app_name, expiration_date FROM user_deployments 
-             WHERE user_id = $1 AND deleted_from_heroku_at IS NULL`,
+            `SELECT 
+                ub.bot_name, 
+                ub.status, 
+                ud.expiration_date,
+                ud.deleted_from_heroku_at
+             FROM user_bots ub
+             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+             WHERE ub.user_id = $1`,
             [cid]
         );
-        const expectedBots = dbBotsResult.rows;
+        const userBotsFromDb = dbBotsResult.rows;
 
-        if (expectedBots.length === 0) {
-            await bot.editMessageText("You have no active bots deployed.", {
+        if (userBotsFromDb.length === 0) {
+            await bot.editMessageText("You have no bots deployed.", {
                 chat_id: cid,
                 message_id: checkingMsg.message_id,
                 reply_markup: {
@@ -3172,39 +3178,43 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        // 2. Verify each bot against the Heroku API
-        const verificationPromises = expectedBots.map(bot =>
-            axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
+        // 2. Verify each bot's status against the Heroku API
+        const verificationPromises = userBotsFromDb.map(bot =>
+            axios.get(`https://api.heroku.com/apps/${bot.bot_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            }).then(() => ({ ...bot, exists: true }))
-              .catch(error => ({ ...bot, exists: false, error: error }))
+            }).then(() => ({ ...bot, is_active: true }))
+              .catch(error => ({ ...bot, is_active: false, error: error }))
         );
 
         const results = await Promise.all(verificationPromises);
 
         const activeBots = [];
+        const inactiveBots = [];
         const botsToCleanup = [];
 
         results.forEach(result => {
-            if (result.exists) {
+            if (result.is_active) {
                 activeBots.push(result);
-            } else if (result.error.response && result.error.response.status === 404) {
-                botsToCleanup.push(result.app_name);
+            } else if (result.error && result.error.response && result.error.response.status === 404) {
+                // Heroku app not found, mark it for cleanup
+                if (!result.deleted_from_heroku_at) {
+                    botsToCleanup.push(result.bot_name);
+                }
+            } else {
+                // For any other API error, we assume the bot is currently offline but exists
+                inactiveBots.push(result);
             }
         });
 
-        // 3. Flag ghost bots as inactive without deleting their backup record
+        // 3. Mark "ghost" bots as inactive in the database
         if (botsToCleanup.length > 0) {
-            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bots for user ${cid}. Flagging them as inactive.`);
-            botsToCleanup.forEach(appName => {
-                // --- THIS IS THE CHANGE ---
-                // This ONLY flags the bot as deleted, preserving it for future restoration.
-                dbServices.markDeploymentDeletedFromHeroku(cid, appName);
-            });
+            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bots for user ${cid}. Marking as inactive.`);
+            await Promise.all(botsToCleanup.map(appName => dbServices.markDeploymentDeletedFromHeroku(cid, appName)));
         }
 
-        // 4. Display the menu with only the confirmed active bots
-        if (activeBots.length === 0) {
+        const botsToDisplay = activeBots.concat(inactiveBots);
+
+        if (botsToDisplay.length === 0) {
             await bot.editMessageText("It seems your active bots were deleted from Heroku. They have been moved to your restore list.", {
                 chat_id: cid,
                 message_id: checkingMsg.message_id,
@@ -3217,15 +3227,19 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        const now = new Date();
-        const appButtons = activeBots.map(bot => {
-            let buttonText = bot.app_name;
+        // 4. Display the list of bots with their status
+        const appButtons = botsToDisplay.map(bot => {
+            let buttonText = bot.bot_name;
+            let statusIndicator = bot.is_active ? '🟢' : '🔴';
+            
             if (bot.expiration_date) {
                 const expiration = new Date(bot.expiration_date);
+                const now = new Date();
                 const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
                 buttonText += daysLeft > 0 ? ` (${daysLeft} days)` : ` (Expired)`;
             }
-            return { text: buttonText, callback_data: `selectbot:${bot.app_name}` };
+            
+            return { text: `${statusIndicator} ${buttonText}`, callback_data: `selectbot:${bot.bot_name}` };
         });
 
         const rows = chunkArray(appButtons, 3);
@@ -3234,6 +3248,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         await bot.editMessageText('Your deployed bots:', {
             chat_id: cid,
             message_id: checkingMsg.message_id,
+            parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
 
@@ -3245,7 +3260,8 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
     }
     return;
-  }
+}
+
 // --- FIX: Add this new handler for the 'Support' button ---
   if (text === 'Support') {
       await dbServices.updateUserActivity(cid);
