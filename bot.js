@@ -1134,10 +1134,16 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
     }
 });
 
+// bot.js
+
+// ... existing code ...
+
+// GET /api/bots - Get a list of the user's bots
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
-        // Query both tables to get a comprehensive list of all deployed bots for the user
+        // ✅ CORRECTED QUERY: Get all bots from the 'user_bots' table first.
+        // We now get all bots that have not been marked as deleted on Heroku.
         const botsResult = await pool.query(
             `SELECT 
                 ub.bot_name, 
@@ -1145,8 +1151,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 ud.expiration_date
             FROM user_bots ub
             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-            WHERE ub.user_id = $1 AND ud.deleted_from_heroku_at IS NULL
-            GROUP BY ub.bot_name, ub.bot_type, ud.expiration_date;`,
+            WHERE ub.user_id = $1 AND ud.deleted_from_heroku_at IS NULL;`, // This condition is now correct.
             [userId]
         );
 
@@ -1166,6 +1171,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                     status = 'Online';
                 }
             } catch (e) {
+                // Heroku app not found, likely deleted
                 if (e.response && e.response.status === 404) {
                     status = 'Deleted';
                 }
@@ -1177,13 +1183,22 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 status: status,
             };
         }));
+        
+        // Filter out bots that were deleted from Heroku
+        const filteredBots = verifiedBots.filter(b => b.status !== 'Deleted');
+        
+        // Final log to see how many bots are actually displayed
+        console.log(`[MiniApp V2] Displaying ${filteredBots.length} active bots.`);
 
-        res.json({ success: true, bots: verifiedBots.filter(b => b.status !== 'Deleted') });
+        res.json({ success: true, bots: filteredBots });
     } catch (e) {
         console.error('[MiniApp V2] Error fetching user bots:', e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
     }
 });
+
+// ... rest of the code ...
+
 
 
 
