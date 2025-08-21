@@ -130,7 +130,7 @@
 
         /* New RGB Glow effect */
         .glowing-button {
-            animation: glowing 1.5s infinite;
+            animation: glowing 2s infinite; /* Slowed down glow effect */
             border: 2px solid transparent;
         }
         @keyframes glowing {
@@ -358,7 +358,7 @@
                         </div>
                     </div>
                     <div class="inline-buttons" id="deployment-buttons-container">
-                        <button class="action-button" id="pay-button" onclick="handlePayClick()">Pay (₦1500)</button>
+                        <button class="action-button" id="pay-button" onclick="handlePayClick()">Pay & Deploy (₦1500)</button>
                     </div>
                 </div>
             `;
@@ -460,10 +460,12 @@
                 sessionIdStatus.textContent = 'Valid!';
                 sessionIdStatus.classList.add('status-green-text');
                 sessionIdInput.classList.add('input-green');
+                sessionIdInput.classList.remove('input-red');
             } else {
                 sessionIdStatus.textContent = `Must start with '${prefix}' and be >10 chars.`;
                 sessionIdStatus.classList.add('status-red-text');
                 sessionIdInput.classList.add('input-red');
+                sessionIdInput.classList.remove('input-green');
             }
         }
 
@@ -487,18 +489,22 @@
             }
 
             const paymentFieldsDiv = document.getElementById('payment-fields');
-            const deployButtonContainer = document.getElementById('deployment-buttons-container');
+            const payButton = document.getElementById('pay-button');
 
             // Show the email field
             paymentFieldsDiv.style.display = 'block';
 
-            // Replace the Pay button with the glowing Pay & Deploy button
-            deployButtonContainer.innerHTML = `
-                <button class="action-button glowing-button" id="pay-and-deploy-button" onclick="handleDeploy()">Pay & Deploy</button>
-            `;
+            // Hide the initial pay button
+            payButton.style.display = 'none';
 
             const emailInput = document.getElementById('emailInput');
             const emailStatus = document.getElementById('emailStatus');
+
+            // Add new glowing button and attach a listener
+            const deployButtonContainer = document.getElementById('deployment-buttons-container');
+            deployButtonContainer.innerHTML = `
+                <button class="action-button" id="pay-and-deploy-button" onclick="handleDeploy()">Pay & Deploy</button>
+            `;
             const payAndDeployButton = document.getElementById('pay-and-deploy-button');
 
             emailInput.addEventListener('input', () => {
@@ -512,7 +518,6 @@
                     emailInput.classList.add('input-green');
                     emailInput.classList.remove('input-red');
                     payAndDeployButton.classList.add('glowing-button');
-                    payAndDeployButton.disabled = false;
                 } else {
                     emailStatus.textContent = 'Please enter a valid email.';
                     emailStatus.classList.add('status-red-text');
@@ -520,7 +525,6 @@
                     emailInput.classList.add('input-red');
                     emailInput.classList.remove('input-green');
                     payAndDeployButton.classList.remove('glowing-button');
-                    payAndDeployButton.disabled = true;
                 }
             });
         }
