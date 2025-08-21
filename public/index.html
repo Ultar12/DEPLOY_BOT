@@ -518,7 +518,7 @@
             try {
                 const res = await fetch(`${API_BASE_URL}/pay`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    headers: { 'Content-Type': 'application/json', 'Telegram-Init-Data': Telegram.WebApp.initData },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
@@ -547,7 +547,7 @@
             try {
                 const res = await fetch(`${API_BASE_URL}/deploy`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    headers: { 'Content-Type': 'application/json', 'Telegram-Init-Data': Telegram.WebApp.initData },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
