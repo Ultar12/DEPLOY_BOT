@@ -1455,38 +1455,49 @@ app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
 
     // Endpoint to handle the payment flow
     app.post('/api/pay', validateWebAppInitData, async (req, res) => {
-        const { botType, appName, sessionId, autoStatusView, email } = req.body;
-        const userId = req.telegramData.id;
-        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
-        
-        if (!userId || !botType || !appName || !sessionId || !email) {
-            return res.status(400).json({ success: false, message: 'Missing required fields.' });
-        }
-        
-        try {
-            const reference = crypto.randomBytes(16).toString('hex');
-            
-            await pool.query(
-                'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-                [reference, userId, email, botType, appName, sessionId]
-            );
-            
-            const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
-                {
-                    email: email,
-                    amount: priceInKobo,
-                    reference: reference,
-                    callback_url: `https://t.me/${bot.username}`
-                },
-                { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
-            );
+    const { botType, appName, sessionId, autoStatusView, email } = req.body;
+    const userId = req.telegramData.id;
+    const KEY_PRICE_NGN = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
+    const priceInKobo = KEY_PRICE_NGN * 100;
+    const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+    const BOT_USERNAME = process.env.BOT_USERNAME; // add this to your .env
 
-            res.json({ success: true, paymentUrl: paystackResponse.data.data.authorization_url });
-        } catch (e) {
-            console.error('Paystack error:', e.response?.data || e.message);
-            res.status(500).json({ success: false, message: 'Failed to create payment link.' });
-        }
-    });
+    if (!userId || !botType || !appName || !sessionId || !email) {
+        return res.status(400).json({ success: false, message: 'Missing required fields.' });
+    }
+
+    try {
+        const reference = crypto.randomBytes(16).toString('hex');
+
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, userId, email, botType, appName, sessionId]
+        );
+
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email,
+                amount: priceInKobo,
+                reference,
+                callback_url: `https://t.me/${BOT_USERNAME}`
+            },
+            { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
+        );
+
+        return res.json({
+            success: true,
+            paymentUrl: paystackResponse.data.data.authorization_url
+        });
+    } catch (e) {
+        console.error('Paystack error:', e.response?.data || e.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to create payment link.',
+            error: e.response?.data || e.message // helpful in dev
+        });
+    }
+});
 
     // --- END MINI APP ROUTES ---
 
