@@ -1453,7 +1453,7 @@ app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
 });
 
 
-app.post('/api/pay-mini-app', validateWebAppInitData, async (req, res) => {
+app.post('/api/pay', validateWebAppInitData, async (req, res) => {
     const { botType, appName, sessionId, autoStatusView, email } = req.body;
     const userId = req.telegramData.id;
     const KEY_PRICE_NGN = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
