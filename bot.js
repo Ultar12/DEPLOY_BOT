@@ -14,7 +14,6 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path');
-const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
 const fs = require('fs');
 const express = require('express');
 const { sendPaymentConfirmation } = require('./email_service');
