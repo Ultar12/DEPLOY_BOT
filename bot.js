@@ -14,6 +14,7 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path');
+const HEROKU_API_KEY = process.env.HEROKU_API_KEY;
 const fs = require('fs');
 const express = require('express');
 const { sendPaymentConfirmation } = require('./email_service');
@@ -1105,19 +1106,16 @@ app.get('/miniapp/health', (req, res) => {
 };
 
 
-    // Endpoint to serve the Mini App's HTML
-    app.get('/miniapp', (req, res) => {
-        res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    });
-
-  // bot.js
-
-// Add this new endpoint to your Express app in bot.js, 
-// within the 'if (process.env.NODE_ENV === 'production')' block.
-
 // GET /api/app-name-check/:appName - Check if an app name is available
 app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res) => {
     const { appName } = req.params;
+
+    // Check if the key is available before making the request
+    if (!HEROKU_API_KEY) {
+        console.error('[MiniApp] Heroku API key is not set in the environment.');
+        return res.status(500).json({ success: false, message: 'Server configuration error: Heroku API key is missing.' });
+    }
+
     try {
         await axios.get(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -1125,16 +1123,21 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
         // If Heroku API call succeeds, the name is taken.
         res.json({ available: false });
     } catch (e) {
-        // A 404 error means the app name is available.
         if (e.response && e.response.status === 404) {
+            // A 404 error means the app name is available.
             res.json({ available: true });
+        } else if (e.response && e.response.status === 403) {
+            // Handle 403 Forbidden specifically
+            console.error(`[MiniApp] Heroku API error checking app name: Permission denied (403). Check HEROKU_API_KEY.`);
+            res.status(403).json({ success: false, message: 'API permission denied. Please contact support.' });
         } else {
-            // Other errors (e.g., API issues) mean we can't confirm availability.
+            // Other errors (e.g., network issues)
             console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
-            res.status(500).json({ success: false, message: 'Could not check app name due to API error.' });
+            res.status(500).json({ success: false, message: 'Could not check app name due to a server error.' });
         }
     }
 });
+
 
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
@@ -1310,27 +1313,38 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to update session ID.' });
     }
 });
+// GET /api/app-name-check/:appName - Check if an app name is available
+app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
+    const { appName } = req.params;
 
-        // Endpoint to check if an app name is available
-    app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
-        const appName = req.params.appName;
-        try {
-            await axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            // If the request succeeds (status 200), the app name is NOT available.
-            res.json({ available: false });
-        } catch (e) {
-            // A 404 error is expected if the app name is available.
-            if (e.response?.status === 404) {
-                res.json({ available: true });
-            } else {
-                // For any other error (e.g., API key issue), assume unavailable for safety.
-                console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
-                res.status(500).json({ available: false, error: 'API Error' });
-            }
+    // Check if the key is available before making the request
+    if (!HEROKU_API_KEY) {
+        console.error('[MiniApp] Heroku API key is not set in the environment.');
+        return res.status(500).json({ success: false, message: 'Server configuration error: Heroku API key is missing.' });
+    }
+
+    try {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        // If Heroku API call succeeds, the name is taken.
+        res.json({ available: false });
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            // A 404 error means the app name is available.
+            res.json({ available: true });
+        } else if (e.response && e.response.status === 403) {
+            // Handle 403 Forbidden specifically
+            console.error(`[MiniApp] Heroku API error checking app name: Permission denied (403). Check HEROKU_API_KEY.`);
+            res.status(403).json({ success: false, message: 'API permission denied. Please contact support.' });
+        } else {
+            // Other errors (e.g., network issues)
+            console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
+            res.status(500).json({ success: false, message: 'Could not check app name due to a server error.' });
         }
-    });
+    }
+});
+
 
     // Endpoint to handle the final deployment submission
     app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
