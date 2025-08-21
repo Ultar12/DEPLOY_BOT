@@ -128,6 +128,17 @@
             margin-top: 15px;
         }
 
+        /* New RGB Glow effect */
+        .glowing-button {
+            animation: glowing 1.5s infinite;
+            border: 2px solid transparent;
+        }
+        @keyframes glowing {
+            0% { box-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 15px #ff00ff; }
+            50% { box-shadow: 0 0 10px #00ffff, 0 0 15px #00ffff, 0 0 20px #00ffff; }
+            100% { box-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff, 0 0 15px #ff00ff; }
+        }
+
         /* Keyframe Animations */
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -339,29 +350,22 @@
                             <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', false)">No</button>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="deployKeyInput">Deploy Key:</label>
-                        <input type="text" id="deployKeyInput" placeholder="Enter your key">
-                        <div id="keyStatus" class="input-status"></div>
-                    </div>
                     <div id="payment-fields" style="display:none;">
                         <div class="form-group">
                             <label for="emailInput">Email for Payment:</label>
                             <input type="email" id="emailInput" placeholder="your-email@example.com">
+                            <div id="emailStatus" class="input-status"></div>
                         </div>
                     </div>
                     <div class="inline-buttons" id="deployment-buttons-container">
-                        <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeploy(document.getElementById('deployKeyInput').value)">Deploy with Key</button>
-                        <button class="action-button" id="pay-button" onclick="handlePaystackPayment()">Pay (₦1500)</button>
+                        <button class="action-button" id="pay-button" onclick="handlePayClick()">Pay (₦1500)</button>
                     </div>
                 </div>
             `;
             const appNameInput = document.getElementById('appNameInput');
             const sessionIdInput = document.getElementById('sessionIdInput');
-            const deployKeyInput = document.getElementById('deployKeyInput');
             appNameInput.addEventListener('input', checkAppNameAvailability);
             sessionIdInput.addEventListener('input', checkSessionIdValidity);
-            deployKeyInput.addEventListener('input', checkDeployKeyAvailability);
             
             updateButtonState('autoview', deploymentState.autoStatusView);
         }
@@ -462,85 +466,75 @@
                 sessionIdInput.classList.add('input-red');
             }
         }
-        
-        async function checkDeployKeyAvailability() {
-            const deployKeyInput = document.getElementById('deployKeyInput');
-            const deployWithKeyButton = document.getElementById('deploy-with-key-button');
-            const keyStatus = document.getElementById('keyStatus');
-            const key = deployKeyInput.value.trim();
 
-            if (key.length === 0) {
-                deployWithKeyButton.disabled = true;
-                keyStatus.textContent = '';
-                deployKeyInput.classList.remove('input-green', 'input-red');
-                return;
-            }
-
-            keyStatus.textContent = 'Checking...';
-            deployKeyInput.classList.remove('input-green', 'input-red');
-            keyStatus.classList.remove('status-green-text', 'status-red-text');
-            keyStatus.style.color = '#888';
-            deployWithKeyButton.disabled = true;
-
-            try {
-                const res = await fetch(`${API_BASE_URL}/check-deploy-key/${key}`, {
-                    headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
-                });
-                const data = await res.json();
-                
-                if (data.valid) {
-                    keyStatus.textContent = 'Valid!';
-                    keyStatus.classList.add('status-green-text');
-                    deployKeyInput.classList.add('input-green');
-                    deployWithKeyButton.disabled = false;
-                } else {
-                    keyStatus.textContent = 'Invalid or expired key.';
-                    keyStatus.classList.add('status-red-text');
-                    deployKeyInput.classList.add('input-red');
-                }
-            } catch (e) {
-                console.error('Error checking key:', e);
-                keyStatus.textContent = 'Error checking key.';
-                keyStatus.classList.add('status-red-text');
-                deployKeyInput.classList.add('input-red');
-            }
-        }
-        
-        function handlePaystackPayment() {
-            const appName = document.getElementById('appNameInput').value.trim();
-            const sessionId = document.getElementById('sessionIdInput').value.trim();
+        function checkFormValidity() {
+            const appNameInput = document.getElementById('appNameInput');
+            const sessionIdInput = document.getElementById('sessionIdInput');
+            const appName = appNameInput.value.trim();
+            const sessionId = sessionIdInput.value.trim();
+            const botType = deploymentState.botType;
             
-            // Check if all fields are valid before showing the email field
-            if (!deploymentState.botType) {
-                return Telegram.WebApp.showAlert('Please select a bot type.');
-            }
-            if (!appName || !deploymentState.isAppNameAvailable) {
-                return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
-            }
-            if (!sessionId || !sessionId.startsWith(deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_') || sessionId.length < 10) {
-                return Telegram.WebApp.showAlert('Invalid Session ID.');
-            }
-
-            // All checks passed, now show the email input field and change the button
-            const paymentFieldsDiv = document.getElementById('payment-fields');
-            const deploymentButtonsContainer = document.getElementById('deployment-buttons-container');
-
-            paymentFieldsDiv.style.display = 'block';
-            deploymentButtonsContainer.innerHTML = `
-                <button class="action-button" onclick="initiatePayment()">Input Email</button>
-            `;
+            const isAppNameValid = appName.length >= 3 && appName.length <= 30 && deploymentState.isAppNameAvailable;
+            const prefix = botType === 'raganork' ? 'RGNK' : 'levanter_';
+            const isSessionIdValid = sessionId.startsWith(prefix) && sessionId.length >= 10;
+            
+            return isAppNameValid && isSessionIdValid;
         }
 
-        async function initiatePayment() {
+        function handlePayClick() {
+            if (!checkFormValidity()) {
+                return Telegram.WebApp.showAlert('Please ensure App Name and Session ID are valid first.');
+            }
+
+            const paymentFieldsDiv = document.getElementById('payment-fields');
+            const deployButtonContainer = document.getElementById('deployment-buttons-container');
+
+            // Show the email field
+            paymentFieldsDiv.style.display = 'block';
+
+            // Replace the Pay button with the glowing Pay & Deploy button
+            deployButtonContainer.innerHTML = `
+                <button class="action-button glowing-button" id="pay-and-deploy-button" onclick="handleDeploy()">Pay & Deploy</button>
+            `;
+
+            const emailInput = document.getElementById('emailInput');
+            const emailStatus = document.getElementById('emailStatus');
+            const payAndDeployButton = document.getElementById('pay-and-deploy-button');
+
+            emailInput.addEventListener('input', () => {
+                const email = emailInput.value.trim();
+                const isValid = /^\S+@\S+\.\S+$/.test(email);
+
+                if (isValid) {
+                    emailStatus.textContent = 'Valid Email!';
+                    emailStatus.classList.add('status-green-text');
+                    emailStatus.classList.remove('status-red-text');
+                    emailInput.classList.add('input-green');
+                    emailInput.classList.remove('input-red');
+                    payAndDeployButton.classList.add('glowing-button');
+                    payAndDeployButton.disabled = false;
+                } else {
+                    emailStatus.textContent = 'Please enter a valid email.';
+                    emailStatus.classList.add('status-red-text');
+                    emailStatus.classList.remove('status-green-text');
+                    emailInput.classList.add('input-red');
+                    emailInput.classList.remove('input-green');
+                    payAndDeployButton.classList.remove('glowing-button');
+                    payAndDeployButton.disabled = true;
+                }
+            });
+        }
+        
+        async function handleDeploy() {
             const appName = document.getElementById('appNameInput').value.trim();
             const sessionId = document.getElementById('sessionIdInput').value.trim();
             const email = document.getElementById('emailInput').value.trim();
-
-            if (!email || !/@/.test(email)) {
-                return Telegram.WebApp.showAlert('Please enter a valid email address.');
+            
+            if (!checkFormValidity() || !email || !/^\S+@\S+\.\S+$/.test(email)) {
+                return Telegram.WebApp.showAlert('Please fill all fields correctly before deploying.');
             }
 
-            Telegram.WebApp.showProgress('Generating payment link...');
+            Telegram.WebApp.showProgress('Deploying...');
             const payload = {
                 ...deploymentState,
                 appName,
@@ -557,43 +551,14 @@
                 Telegram.WebApp.hideProgress();
                 if (data.success) { 
                     window.open(data.paymentUrl, '_blank'); 
+                    Telegram.WebApp.showAlert('Payment link generated. Please complete payment to finish deployment.');
                 } else { 
                     Telegram.WebApp.showAlert(data.message); 
                 }
             } catch (e) { 
                 Telegram.WebApp.hideProgress(); 
-                Telegram.WebApp.showAlert('Failed to initiate payment.'); 
+                Telegram.WebApp.showAlert('Failed to initiate deployment.'); 
             }
-        }
-        
-        async function handleDeploy(deployKey = null, isFreeTrial = false) {
-            const appName = document.getElementById('appNameInput').value.trim();
-            const sessionId = document.getElementById('sessionIdInput').value.trim();
-            
-            if (!deploymentState.botType) return Telegram.WebApp.showAlert('Please select a bot type.');
-            if (!appName || !deploymentState.isAppNameAvailable) return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
-            if (!sessionId || !sessionId.startsWith(deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_') || sessionId.length < 10) return Telegram.WebApp.showAlert('Invalid Session ID.');
-
-            Telegram.WebApp.showProgress('Deploying...');
-            const payload = {
-                ...deploymentState,
-                appName,
-                sessionId,
-                deployKey,
-                isFreeTrial,
-                email: document.getElementById('emailInput').value || 'placeholder@email.com'
-            };
-            try {
-                const res = await fetch(`${API_BASE_URL}/deploy`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Telegram-Init-Data': Telegram.WebApp.initData },
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                Telegram.WebApp.hideProgress();
-                Telegram.WebApp.showAlert(data.message);
-                if (data.success) { Telegram.WebApp.close(); }
-            } catch (e) { Telegram.WebApp.hideProgress(); Telegram.WebApp.showAlert('An error occurred during deployment.'); }
         }
         
         document.addEventListener('DOMContentLoaded', () => {
