@@ -1453,25 +1453,36 @@ app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
 });
 
 
-    // Endpoint to handle the payment flow
-    app.post('/api/pay', validateWebAppInitData, async (req, res) => {
+app.post('/api/pay-mini-app', validateWebAppInitData, async (req, res) => {
     const { botType, appName, sessionId, autoStatusView, email } = req.body;
     const userId = req.telegramData.id;
     const KEY_PRICE_NGN = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
     const priceInKobo = KEY_PRICE_NGN * 100;
     const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
-    const BOT_USERNAME = process.env.BOT_USERNAME; // add this to your .env
 
     if (!userId || !botType || !appName || !sessionId || !email) {
         return res.status(400).json({ success: false, message: 'Missing required fields.' });
     }
 
+    const client = await pool.connect();
     try {
-        const reference = crypto.randomBytes(16).toString('hex');
+        await client.query('BEGIN');
 
-        await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-            [reference, userId, email, botType, appName, sessionId]
+        const reference = crypto.randomBytes(16).toString('hex');
+        
+        // Use metadata to store key information for the webhook
+        const metaData = {
+            user_id: userId,
+            bot_type: botType,
+            app_name: appName,
+            session_id: sessionId,
+            auto_status_view: autoStatusView
+        };
+
+        // Insert into pending_payments with a 'pending' status
+        await client.query(
+            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [reference, userId, email, botType, appName, sessionId, 'pending']
         );
 
         const paystackResponse = await axios.post(
@@ -1480,24 +1491,35 @@ app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
                 email,
                 amount: priceInKobo,
                 reference,
-                callback_url: `https://t.me/${BOT_USERNAME}`
+                metadata: metaData,
+                // A generic callback URL is fine as the webhook is the source of truth
+                callback_url: `https://t.me/${process.env.BOT_USERNAME}`
             },
             { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
         );
 
+        await client.query('COMMIT');
+
         return res.json({
             success: true,
-            paymentUrl: paystackResponse.data.data.authorization_url
+            paymentUrl: paystackResponse.data.data.authorization_url,
+            reference: reference
         });
+
     } catch (e) {
-        console.error('Paystack error:', e.response?.data || e.message);
+        await client.query('ROLLBACK');
+        console.error('Paystack transaction initialization error:', e.response?.data || e.message);
         return res.status(500).json({
             success: false,
-            message: 'Failed to create payment link.',
-            error: e.response?.data || e.message // helpful in dev
+            message: 'Failed to create payment link. Please try again.',
+            error: e.response?.data || e.message
         });
+    } finally {
+        client.release();
     }
 });
+
+
 
     // --- END MINI APP ROUTES ---
 
