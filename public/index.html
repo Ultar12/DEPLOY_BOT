@@ -119,6 +119,14 @@
         .inline-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
         .inline-buttons button { flex-grow: 1; }
         .inline-buttons button.active { border: 2px solid #34c759; transform: scale(1.05); }
+        
+        /* New styles for email field */
+        #payment-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
 
         /* Keyframe Animations */
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -342,7 +350,7 @@
                             <input type="email" id="emailInput" placeholder="your-email@example.com">
                         </div>
                     </div>
-                    <div class="inline-buttons">
+                    <div class="inline-buttons" id="deployment-buttons-container">
                         <button class="action-button" id="deploy-with-key-button" disabled onclick="handleDeploy(document.getElementById('deployKeyInput').value)">Deploy with Key</button>
                         <button class="action-button" id="pay-button" onclick="handlePaystackPayment()">Pay (₦1500)</button>
                     </div>
@@ -498,15 +506,39 @@
             }
         }
         
-        async function handlePaystackPayment() {
+        function handlePaystackPayment() {
+            const appName = document.getElementById('appNameInput').value.trim();
+            const sessionId = document.getElementById('sessionIdInput').value.trim();
+            
+            // Check if all fields are valid before showing the email field
+            if (!deploymentState.botType) {
+                return Telegram.WebApp.showAlert('Please select a bot type.');
+            }
+            if (!appName || !deploymentState.isAppNameAvailable) {
+                return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
+            }
+            if (!sessionId || !sessionId.startsWith(deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_') || sessionId.length < 10) {
+                return Telegram.WebApp.showAlert('Invalid Session ID.');
+            }
+
+            // All checks passed, now show the email input field and change the button
+            const paymentFieldsDiv = document.getElementById('payment-fields');
+            const deploymentButtonsContainer = document.getElementById('deployment-buttons-container');
+
+            paymentFieldsDiv.style.display = 'block';
+            deploymentButtonsContainer.innerHTML = `
+                <button class="action-button" onclick="initiatePayment()">Input Email</button>
+            `;
+        }
+
+        async function initiatePayment() {
             const appName = document.getElementById('appNameInput').value.trim();
             const sessionId = document.getElementById('sessionIdInput').value.trim();
             const email = document.getElementById('emailInput').value.trim();
-            
-            if (!deploymentState.botType) return Telegram.WebApp.showAlert('Please select a bot type.');
-            if (!appName || !deploymentState.isAppNameAvailable) return Telegram.WebApp.showAlert('Please enter a valid and available app name.');
-            if (!sessionId || !sessionId.startsWith(deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_') || sessionId.length < 10) return Telegram.WebApp.showAlert('Invalid Session ID.');
-            if (!email || !/@/.test(email)) return Telegram.WebApp.showAlert('Please enter a valid email address.');
+
+            if (!email || !/@/.test(email)) {
+                return Telegram.WebApp.showAlert('Please enter a valid email address.');
+            }
 
             Telegram.WebApp.showProgress('Generating payment link...');
             const payload = {
@@ -523,8 +555,15 @@
                 });
                 const data = await res.json();
                 Telegram.WebApp.hideProgress();
-                if (data.success) { window.open(data.paymentUrl, '_blank'); } else { Telegram.WebApp.showAlert(data.message); }
-            } catch (e) { Telegram.WebApp.hideProgress(); Telegram.WebApp.showAlert('Failed to initiate payment.'); }
+                if (data.success) { 
+                    window.open(data.paymentUrl, '_blank'); 
+                } else { 
+                    Telegram.WebApp.showAlert(data.message); 
+                }
+            } catch (e) { 
+                Telegram.WebApp.hideProgress(); 
+                Telegram.WebApp.showAlert('Failed to initiate payment.'); 
+            }
         }
         
         async function handleDeploy(deployKey = null, isFreeTrial = false) {
