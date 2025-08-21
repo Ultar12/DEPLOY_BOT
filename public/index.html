@@ -554,8 +554,7 @@
                 const data = await res.json();
                 Telegram.WebApp.hideProgress();
                 if (data.success) { 
-                    window.open(data.paymentUrl, '_blank'); 
-                    Telegram.WebApp.showAlert('Payment link generated. Please complete payment to finish deployment.');
+                    Telegram.WebApp.openLink(data.paymentUrl); 
                 } else { 
                     Telegram.WebApp.showAlert(data.message); 
                 }
