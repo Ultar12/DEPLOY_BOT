@@ -185,9 +185,7 @@
             appName: null,
             sessionId: null,
             autoStatusView: null,
-            isAppNameAvailable: false,
-            isSessionIdValid: false,
-            isDeployKeyValid: false,
+            isAppNameAvailable: false
         };
 
         function toggleMenu() { menuDrawerEl.classList.toggle('open'); }
@@ -352,36 +350,24 @@
                             <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', false)">No</button>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="deployKeyInput">Deploy Key:</label>
-                        <input type="text" id="deployKeyInput" placeholder="Enter your deploy key">
-                        <div id="deployKeyStatus" class="input-status"></div>
+                    <div id="payment-fields" style="display:none;">
+                        <div class="form-group">
+                            <label for="emailInput">Email for Payment:</label>
+                            <input type="email" id="emailInput" placeholder="your-email@example.com">
+                            <div id="emailStatus" class="input-status"></div>
+                        </div>
                     </div>
                     <div class="inline-buttons" id="deployment-buttons-container">
-                        <button class="action-button" id="deploy-button" onclick="handleDeploy()">Deploy Now</button>
+                        <button class="action-button" id="pay-button" onclick="handlePayClick()">Pay & Deploy (₦1500)</button>
                     </div>
                 </div>
             `;
             const appNameInput = document.getElementById('appNameInput');
             const sessionIdInput = document.getElementById('sessionIdInput');
-            const deployKeyInput = document.getElementById('deployKeyInput');
-
-            // Event listeners to check validity
-            appNameInput.addEventListener('input', () => {
-                checkAppNameAvailability();
-                updateDeployButtonState();
-            });
-            sessionIdInput.addEventListener('input', () => {
-                checkSessionIdValidity();
-                updateDeployButtonState();
-            });
-            deployKeyInput.addEventListener('input', () => {
-                checkDeployKeyValidity();
-                updateDeployButtonState();
-            });
-
+            appNameInput.addEventListener('input', checkAppNameAvailability);
+            sessionIdInput.addEventListener('input', checkSessionIdValidity);
+            
             updateButtonState('autoview', deploymentState.autoStatusView);
-            updateDeployButtonState(); // Initial check
         }
         
         function selectDeploymentOption(group, value) {
@@ -392,7 +378,6 @@
                 deploymentState.autoStatusView = value;
             }
             updateButtonState(group, value);
-            updateDeployButtonState();
         }
 
         function updateButtonState(group, value) {
@@ -418,7 +403,6 @@
                 appNameInput.classList.remove('input-green', 'input-red');
                 appNameStatus.classList.remove('status-green-text', 'status-red-text');
                 deploymentState.isAppNameAvailable = false;
-                updateDeployButtonState();
                 return;
             }
 
@@ -454,8 +438,6 @@
                 appNameStatus.classList.add('status-red-text');
                 appNameInput.classList.add('input-red');
                 deploymentState.isAppNameAvailable = false;
-            } finally {
-                updateDeployButtonState();
             }
         }
         
@@ -464,12 +446,15 @@
             const sessionIdStatus = document.getElementById('sessionIdStatus');
             const sessionId = sessionIdInput.value.trim();
             const botType = deploymentState.botType;
-            let isValid = false;
 
-            if (sessionId && botType) {
-                const prefix = botType === 'raganork' ? 'RGNK' : 'levanter_';
-                isValid = sessionId.startsWith(prefix) && sessionId.length >= 10;
+            if (!sessionId || !botType) {
+                sessionIdStatus.textContent = '';
+                sessionIdInput.classList.remove('input-green', 'input-red');
+                return;
             }
+
+            const prefix = botType === 'raganork' ? 'RGNK' : 'levanter_';
+            const isValid = sessionId.startsWith(prefix) && sessionId.length >= 10;
             
             if (isValid) {
                 sessionIdStatus.textContent = 'Valid!';
@@ -477,141 +462,105 @@
                 sessionIdInput.classList.add('input-green');
                 sessionIdInput.classList.remove('input-red');
             } else {
-                sessionIdStatus.textContent = `Must start with '${botType === 'raganork' ? 'RGNK' : 'levanter_'}' and be >10 chars.`;
+                sessionIdStatus.textContent = `Must start with '${prefix}' and be >10 chars.`;
                 sessionIdStatus.classList.add('status-red-text');
                 sessionIdInput.classList.add('input-red');
                 sessionIdInput.classList.remove('input-green');
             }
-            deploymentState.isSessionIdValid = isValid;
-            updateDeployButtonState();
         }
 
-        async function checkDeployKeyValidity() {
-            const deployKeyInput = document.getElementById('deployKeyInput');
-            const deployKeyStatus = document.getElementById('deployKeyStatus');
-            const deployKey = deployKeyInput.value.trim();
+        function checkFormValidity() {
+            const appNameInput = document.getElementById('appNameInput');
+            const sessionIdInput = document.getElementById('sessionIdInput');
+            const appName = appNameInput.value.trim();
+            const sessionId = sessionIdInput.value.trim();
+            const botType = deploymentState.botType;
+            
+            const isAppNameValid = appName.length >= 3 && appName.length <= 30 && deploymentState.isAppNameAvailable;
+            const prefix = botType === 'raganork' ? 'RGNK' : 'levanter_';
+            const isSessionIdValid = sessionId.startsWith(prefix) && sessionId.length >= 10;
+            
+            return isAppNameValid && isSessionIdValid;
+        }
 
-            if (deployKey.length < 5) {
-                deployKeyStatus.textContent = 'Enter a valid deploy key.';
-                deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
-                deployKeyInput.classList.remove('input-green', 'input-red');
-                deploymentState.isDeployKeyValid = false;
-                updateDeployButtonState();
-                return;
+        function handlePayClick() {
+            if (!checkFormValidity()) {
+                return Telegram.WebApp.showAlert('Please ensure App Name and Session ID are valid first.');
             }
 
-            deployKeyStatus.textContent = 'Checking...';
-            deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
-            deployKeyInput.classList.remove('input-green', 'input-red');
+            const paymentFieldsDiv = document.getElementById('payment-fields');
+            const payButton = document.getElementById('pay-button');
 
-            try {
-                const res = await fetch(`${API_BASE_URL}/check-deploy-key/${deployKey}`, {
-                    headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
-                });
-                const data = await res.json();
-                
-                if (data.valid) {
-                    deployKeyStatus.textContent = 'Valid Key!';
-                    deployKeyStatus.classList.add('status-green-text');
-                    deployKeyInput.classList.add('input-green');
-                    deployKeyInput.classList.remove('input-red');
-                    deploymentState.isDeployKeyValid = true;
+            // Show the email field
+            paymentFieldsDiv.style.display = 'block';
+
+            // Hide the initial pay button
+            payButton.style.display = 'none';
+
+            const emailInput = document.getElementById('emailInput');
+            const emailStatus = document.getElementById('emailStatus');
+
+            // Add new glowing button and attach a listener
+            const deployButtonContainer = document.getElementById('deployment-buttons-container');
+            deployButtonContainer.innerHTML = `
+                <button class="action-button" id="pay-and-deploy-button" onclick="handleDeploy()">Pay & Deploy</button>
+            `;
+            const payAndDeployButton = document.getElementById('pay-and-deploy-button');
+
+            emailInput.addEventListener('input', () => {
+                const email = emailInput.value.trim();
+                const isValid = /^\S+@\S+\.\S+$/.test(email);
+
+                if (isValid) {
+                    emailStatus.textContent = 'Valid Email!';
+                    emailStatus.classList.add('status-green-text');
+                    emailStatus.classList.remove('status-red-text');
+                    emailInput.classList.add('input-green');
+                    emailInput.classList.remove('input-red');
+                    payAndDeployButton.classList.add('glowing-button');
                 } else {
-                    deployKeyStatus.textContent = data.message || 'Invalid or expired key.';
-                    deployKeyStatus.classList.add('status-red-text');
-                    deployKeyInput.classList.add('input-red');
-                    deployKeyInput.classList.remove('input-green');
-                    deploymentState.isDeployKeyValid = false;
+                    emailStatus.textContent = 'Please enter a valid email.';
+                    emailStatus.classList.add('status-red-text');
+                    emailStatus.classList.remove('status-green-text');
+                    emailInput.classList.add('input-red');
+                    emailInput.classList.remove('input-green');
+                    payAndDeployButton.classList.remove('glowing-button');
                 }
-            } catch (e) {
-                console.error("Error checking deploy key:", e);
-                deployKeyStatus.textContent = 'Error checking key.';
-                deployKeyStatus.classList.add('status-red-text');
-                deployKeyInput.classList.add('input-red');
-                deploymentState.isDeployKeyValid = false;
-            } finally {
-                updateDeployButtonState();
-            }
-        }
-
-        function updateDeployButtonState() {
-            const deployButton = document.getElementById('deploy-button');
-            const isAppNameValid = deploymentState.isAppNameAvailable;
-            const isSessionIdValid = deploymentState.isSessionIdValid;
-            const isDeployKeyValid = deploymentState.isDeployKeyValid;
-
-            if (isAppNameValid && isSessionIdValid && isDeployKeyValid) {
-                deployButton.classList.add('glowing-button');
-                deployButton.disabled = false;
-            } else {
-                deployButton.classList.remove('glowing-button');
-                deployButton.disabled = true;
-            }
+            });
         }
         
         async function handleDeploy() {
             const appName = document.getElementById('appNameInput').value.trim();
             const sessionId = document.getElementById('sessionIdInput').value.trim();
-            const deployKey = document.getElementById('deployKeyInput').value.trim();
-            const deployButton = document.getElementById('deploy-button');
-            const deploymentProgressDiv = document.getElementById('deploymentProgress');
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
+            const email = document.getElementById('emailInput').value.trim();
             
-            if (!deploymentState.isAppNameAvailable || !deploymentState.isSessionIdValid || !deploymentState.isDeployKeyValid) {
-                return Telegram.WebApp.showAlert('Please ensure all fields are valid before deploying.');
+            if (!checkFormValidity() || !email || !/^\S+@\S+\.\S+$/.test(email)) {
+                return Telegram.WebApp.showAlert('Please fill all fields correctly before deploying.');
             }
-            
-            deployButton.disabled = true;
-            deployButton.classList.remove('glowing-button');
-            deploymentProgressDiv.style.display = 'block';
-            
-            let progress = 0;
-            const progressInterval = setInterval(() => {
-                if (progress < 90) {
-                    progress += 5;
-                    progressBar.style.width = `${progress}%`;
-                    progressText.textContent = `${progress}%`;
-                }
-            }, 500);
-            
+
+            Telegram.WebApp.showProgress('Deploying...');
             const payload = {
-                botType: deploymentState.botType,
+                ...deploymentState,
                 appName,
                 sessionId,
-                autoStatusView: deploymentState.autoStatusView,
-                deployKey,
-                isFreeTrial: false
+                email
             };
-            
             try {
-                const res = await fetch(`${API_BASE_URL}/deploy`, {
+                const res = await fetch(`${API_BASE_URL}/pay`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    headers: { 'Content-Type': 'application/json', 'Telegram-Init-Data': Telegram.WebApp.initData },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                
-                clearInterval(progressInterval);
-                
-                if (data.success) {
-                    progressBar.style.width = '100%';
-                    progressText.textContent = '100%';
-                    Telegram.WebApp.showAlert(data.message);
-                    setTimeout(renderDashboard, 1500);
-                } else {
-                    progressBar.style.width = '0%';
-                    progressText.textContent = '0%';
-                    Telegram.WebApp.showAlert(data.message);
+                Telegram.WebApp.hideProgress();
+                if (data.success) { 
+                    Telegram.WebApp.openLink(data.paymentUrl); 
+                } else { 
+                    Telegram.WebApp.showAlert(data.message); 
                 }
-            } catch (e) {
-                clearInterval(progressInterval);
-                progressBar.style.width = '0%';
-                progressText.textContent = '0%';
-                Telegram.WebApp.showAlert('Failed to initiate deployment.');
-            } finally {
-                // Re-enable the button state based on the current form validity
-                updateDeployButtonState();
+            } catch (e) { 
+                Telegram.WebApp.hideProgress(); 
+                Telegram.WebApp.showAlert('Failed to initiate deployment.'); 
             }
         }
         
