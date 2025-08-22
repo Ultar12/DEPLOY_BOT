@@ -711,6 +711,74 @@ async function getMonitoredFreeTrials() {
     }
 }
 
+// In a new or existing helper function that runs after a SUCCESSFUL deployment:
+async function grantReferralRewards(referredUserId, deployedBotName) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Check for a pending referral session
+        const referralSessionResult = await client.query(
+            `SELECT data FROM sessions WHERE id = $1`,
+            [`referral_session:${referredUserId}`]
+        );
+
+        if (referralSessionResult.rows.length > 0) {
+            const inviterId = referralSessionResult.rows[0].data.inviterId;
+
+            // 1. Give the inviter a 20-day reward
+            await client.query(
+                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
+                 WHERE user_id = $1 AND expiration_date IS NOT NULL`,
+                [inviterId]
+            );
+
+            // 2. Add the referral record
+            await client.query(
+                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
+                [referredUserId, inviterId, deployedBotName]
+            );
+
+            // 3. Check if the inviter was also referred by someone (second-level referral)
+            const grandInviterResult = await client.query(
+                `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
+                [inviterId]
+            );
+            if (grandInviterResult.rows.length > 0) {
+                const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
+
+                // Give the grand inviter a 7-day reward
+                await client.query(
+                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
+                     WHERE user_id = $1 AND expiration_date IS NOT NULL`,
+                    [grandInviterId]
+                );
+            }
+
+            await client.query('COMMIT');
+            
+            // Send notifications
+            await bot.sendMessage(inviterId, 
+                `Congratulations! A friend you invited has deployed their first bot. ` +
+                `You've received a *20-day extension* on your bot's service!`,
+                { parse_mode: 'Markdown' }
+            );
+
+            // Clean up the temporary referral session
+            await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
+
+        } else {
+            // The user was not referred, nothing to do here
+        }
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error(`[Referral] Failed to grant rewards for user ${referredUserId}:`, e);
+    } finally {
+        client.release();
+    }
+}
+
+
 async function updateFreeTrialWarning(userId) {
     try {
         await pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
@@ -1582,6 +1650,7 @@ module.exports = {
     permanentlyDeleteBotRecord,
     deleteUserBot,
     getLoggedOutBotsForEmail,
+    grantReferralRewards,
     buildWithProgress,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
