@@ -150,6 +150,16 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS user_referrals (
+    referred_user_id TEXT PRIMARY KEY,
+    inviter_user_id TEXT NOT NULL,
+    bot_name TEXT,
+    referral_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_activity (
         user_id TEXT PRIMARY KEY,
@@ -196,6 +206,10 @@ async function createAllTablesInPool(dbPool, dbName) {
     `);
 
   await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS email TEXT;`);
+
+  //Inside the createAllTablesInPool function
+await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referred_by TEXT;`);
+
 
   await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
     
@@ -660,8 +674,8 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session ID', 'Deploy'],
       ['My Bots', 'Free Trial'],
-      ['FAQ', 'Support'],
-      ['More Features'] 
+      ['FAQ', 'Referrals],
+      ['Support', 'More Features'] 
   ];
   if (isAdmin) {
       return [
@@ -1695,27 +1709,46 @@ if (result.rows.length > 0) {
 bot.on('polling_error', console.error);
 
 // 9) Command handlers
-bot.onText(/^\/start$/, async msg => {
-  const cid = msg.chat.id.toString();
-  await dbServices.updateUserActivity(cid);
-  const isAdmin = cid === ADMIN_ID;
-  delete userStates[cid];
-  const { first_name, last_name, username } = msg.from;
-  console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
+bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const inviterId = match?.[1]; // Capture the inviter's ID if available
 
-  if (isAdmin) {
-    await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
-      reply_markup: { 
-        keyboard: buildKeyboard(isAdmin), 
-        resize_keyboard: true 
-      }
-    });
-  } else {
-    const { first_name: userFirstName } = msg.from;
-    let personalizedGreeting = `Welcome back, ${escapeMarkdown(userFirstName || 'User')} to our Bot Deployment Service!`;
+    await dbServices.updateUserActivity(cid);
+    const isAdmin = cid === ADMIN_ID;
+    delete userStates[cid];
+    const { first_name, last_name, username } = msg.from;
+    console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
 
-    const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg';
-    const welcomeCaption = `
+    // --- NEW: Referral Tracking Logic ---
+    if (inviterId && inviterId !== cid) {
+        try {
+            await bot.getChat(inviterId); // Verify the inviter exists
+            await pool.query(
+                `INSERT INTO sessions (id, user_id, data, expires_at) 
+                 VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+                 ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at`,
+                [`referral_session:${cid}`, cid, { inviterId: inviterId }]
+            );
+            console.log(`[Referral] Stored inviter ID ${inviterId} for new user ${cid}.`);
+        } catch (e) {
+            console.error(`[Referral] Invalid inviter ID ${inviterId} from user ${cid}:`, e.message);
+        }
+    }
+    // --- END NEW: Referral Tracking Logic ---
+
+    if (isAdmin) {
+        await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
+            reply_markup: { 
+                keyboard: buildKeyboard(isAdmin), 
+                resize_keyboard: true 
+            }
+        });
+    } else {
+        const { first_name: userFirstName } = msg.from;
+        let personalizedGreeting = `Welcome back, ${escapeMarkdown(userFirstName || 'User')} to our Bot Deployment Service!`;
+
+        const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg';
+        const welcomeCaption = `
 ${personalizedGreeting}
 
 To get started, please follow these simple steps:
@@ -1729,17 +1762,17 @@ To get started, please follow these simple steps:
 We are here to assist you every step of the way!
 `;
 
-    // ✅ FIX: Send the photo WITH the main reply keyboard attached
-    await bot.sendPhoto(cid, welcomeImageUrl, {
-      caption: welcomeCaption,
-      parse_mode: 'Markdown',
-      reply_markup: {
-        keyboard: buildKeyboard(false), // Use 'false' for non-admins
-        resize_keyboard: true
-      }
-    });
-  }
+        await bot.sendPhoto(cid, welcomeImageUrl, {
+            caption: welcomeCaption,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                keyboard: buildKeyboard(false),
+                resize_keyboard: true
+            }
+        });
+    }
 });
+
 
 
 // Add this with your other admin commands
@@ -3373,6 +3406,35 @@ if (text === 'Deploy' || text === 'Free Trial') {
     return;
 }
 
+  // Add this new handler in section 10 (Message handler for buttons & state machine)
+if (text === 'Referrals') {
+    const userId = msg.chat.id.toString();
+    const botUsername = bot.options.username;
+
+    // Construct the unique referral link
+    const referralLink = `https://t.me/${botUsername}?start=${userId}`;
+
+    await dbServices.updateUserActivity(userId);
+
+    const referralMessage = `
+*Your Referral Dashboard*
+
+Your unique referral link is:
+\`${referralLink}\`
+
+Share this link with your friends. When they deploy a bot using your link, you get rewarded!
+
+*Your Rewards:*
+- You get *20 days* added to your bot's expiration for each new user you invite.
+- You get an extra *7 days* if one of your invited users invites someone new.
+
+_Your referred users will be displayed here once they deploy their first bot._
+    `;
+    
+    await bot.sendMessage(userId, referralMessage, { parse_mode: 'Markdown' });
+}
+
+
 // --- FIX: Add this new handler for the 'Support' button ---
   if (text === 'Support') {
       await dbServices.updateUserActivity(cid);
@@ -3596,17 +3658,6 @@ if (usesLeft === null) {
     return bot.sendMessage(cid, 'Great. Now enter a unique name for your bot (e.g., mybot123):');
 }
 
-
-
- // bot.js
-
-// ... existing code ...
-
-// The core issue is that there are two separate pieces of code that
-// should be a single, cohesive state handler. We need to consolidate them.
-
-// First, find and remove this entire block, as it is incomplete and causes the bug:
-// if (st && st.step === 'AWAITING_APP_NAME') { ... }
 
 // Now, replace it with this single, comprehensive handler.
 if (st && st.step === 'AWAITING_APP_NAME') {
