@@ -126,32 +126,45 @@
             box-shadow: 0 0 8px rgba(52, 199, 89, 0.5); /* Subtle glow on active state */
         }
         
-        /* New vertical button group style */
+        /* New CSS for the circular button group */
         .vertical-buttons {
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
         
-        /* Vertical button customization for Auto Status View */
         .vertical-buttons .action-button {
             position: relative;
+            width: 60px; /* Set a fixed width and height for the circle */
+            height: 60px;
+            border-radius: 50%;
             border: 2px solid #337ab7; /* Blue border for unselected state */
-            color: #fff;
+            background-color: transparent;
+            color: transparent; /* Hide "Yes" and "No" text */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s ease;
         }
 
         .vertical-buttons .action-button.active {
             border-color: #5cb85c; /* Green border for selected state */
+            background-color: transparent;
         }
 
         .vertical-buttons .action-button.active::before {
             content: '\2713'; /* Checkmark character */
-            font-size: 1.5em;
+            font-size: 2em;
             color: #5cb85c; /* Green checkmark color */
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
+        }
+
+        .vertical-buttons .action-button:hover {
+            transform: scale(1.1);
+            background-color: rgba(51, 122, 183, 0.2);
         }
 
         /* New RGB Glow effect */
@@ -383,8 +396,8 @@ window.yaContextCb.push(() => {
                     <div class="form-group">
                         <label>Auto Status View:</label>
                         <div class="vertical-buttons" id="autoview-buttons">
-                            <button class="action-button" data-value="yes" onclick="selectDeploymentOption('autoview', true)">Yes</button>
-                            <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', false)">No</button>
+                            <button class="action-button" data-value="yes" onclick="selectDeploymentOption('autoview', 'yes')">Yes</button>
+                            <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', 'no')">No</button>
                         </div>
                     </div>
                     <div class="form-group">
