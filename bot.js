@@ -1417,8 +1417,6 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
                 `*Uses Left:* ${usesLeft}`,
                 { parse_mode: 'Markdown' }
             );
-        } else {
-            return res.status(400).json({ success: false, message: 'A deploy key is required for paid deployments. Please provide one or use the "Pay" option.' });
         }
         
         // This is a CRITICAL fix. The build process should be awaited.
