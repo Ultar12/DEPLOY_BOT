@@ -1063,6 +1063,11 @@ const APP_URL = process.env.APP_URL;
         res.send('Bot is running (webhook mode)!');
     });
 
+  app.get('/miniapp', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+
 // NEW: Health check endpoint for the Mini App
 app.get('/miniapp/health', (req, res) => {
     console.log('[Health Check] Mini App server is responsive.');
