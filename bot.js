@@ -3433,19 +3433,19 @@ Share this link with your friends. When they deploy a bot using your link, you g
 _Your referred users will be displayed here once they deploy their first bot._
     `;
     
-    // Add the new buttons here
+    // The "Copy to Clipboard" button has been removed for simplicity.
     await bot.sendMessage(userId, referralMessage, { 
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` },
-                    { text: 'Copy to Clipboard', callback_data: `copy_referral_link:${referralLink}` }
+                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
                 ]
             ]
         }
     });
 }
+
 
 
 
