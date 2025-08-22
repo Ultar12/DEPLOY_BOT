@@ -122,7 +122,7 @@
         
         /* New RGB Glow effect */
         .glowing-button {
-            animation: glowing 2s infinite; /* Slowed down glow effect */
+            animation: glowing 4s infinite; /* Slowed down glow effect */
             border: 2px solid transparent;
         }
         @keyframes glowing {
@@ -179,7 +179,7 @@
             autoStatusView: null,
             isAppNameAvailable: false,
             isSessionIdValid: false,
-            isDeployKeyValid: false
+            isDeployKeyValid: false,
         };
 
         function toggleMenu() { menuDrawerEl.classList.toggle('open'); }
@@ -414,10 +414,9 @@
                 return;
             }
 
-            appNameStatus.textContent = 'Checking...';
+            appNameStatus.textContent = ''; // Removed 'Checking...' for cleaner UI
             appNameInput.classList.remove('input-green', 'input-red');
             appNameStatus.classList.remove('status-green-text', 'status-red-text');
-            appNameStatus.style.color = '#888';
             
             try {
                 const res = await fetch(`${API_BASE_URL}/app-name-check/${appName}`, {
@@ -464,13 +463,11 @@
             }
             
             if (isValid) {
-                sessionIdStatus.textContent = 'Valid!';
-                sessionIdStatus.classList.add('status-green-text');
+                sessionIdStatus.textContent = ''; // Removed 'Valid!'
                 sessionIdInput.classList.add('input-green');
                 sessionIdInput.classList.remove('input-red');
             } else {
-                sessionIdStatus.textContent = `Must start with '${botType === 'raganork' ? 'RGNK' : 'levanter_'}' and be >10 chars.`;
-                sessionIdStatus.classList.add('status-red-text');
+                sessionIdStatus.textContent = ``; // Removed text
                 sessionIdInput.classList.add('input-red');
                 sessionIdInput.classList.remove('input-green');
             }
@@ -484,7 +481,7 @@
             const deployKey = deployKeyInput.value.trim();
 
             if (deployKey.length < 5) {
-                deployKeyStatus.textContent = 'Enter a valid deploy key.';
+                deployKeyStatus.textContent = '';
                 deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
                 deployKeyInput.classList.remove('input-green', 'input-red');
                 deploymentState.isDeployKeyValid = false;
@@ -492,7 +489,7 @@
                 return;
             }
 
-            deployKeyStatus.textContent = 'Checking...';
+            deployKeyStatus.textContent = ''; // Removed 'Checking...'
             deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
             deployKeyInput.classList.remove('input-green', 'input-red');
 
@@ -503,13 +500,13 @@
                 const data = await res.json();
                 
                 if (data.valid) {
-                    deployKeyStatus.textContent = 'Valid Key!';
+                    deployKeyStatus.textContent = ''; // Removed 'Valid Key!'
                     deployKeyStatus.classList.add('status-green-text');
                     deployKeyInput.classList.add('input-green');
                     deployKeyInput.classList.remove('input-red');
                     deploymentState.isDeployKeyValid = true;
                 } else {
-                    deployKeyStatus.textContent = data.message || 'Invalid or expired key.';
+                    deployKeyStatus.textContent = ``; // Removed 'Invalid key...'
                     deployKeyStatus.classList.add('status-red-text');
                     deployKeyInput.classList.add('input-red');
                     deployKeyInput.classList.remove('input-green');
@@ -547,6 +544,7 @@
             const deployKey = document.getElementById('deployKeyInput').value.trim();
             
             if (!deploymentState.isAppNameAvailable || !deploymentState.isSessionIdValid || !deploymentState.isDeployKeyValid) {
+                console.error("Deployment failed: Form validation failed.");
                 return Telegram.WebApp.showAlert('Please ensure all fields are valid before deploying.');
             }
 
@@ -559,23 +557,28 @@
                 deployKey,
                 isFreeTrial: false
             };
+            console.log("Sending deployment request with payload:", payload);
             try {
                 const res = await fetch(`${API_BASE_URL}/deploy`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
                     body: JSON.stringify(payload)
                 });
+                
                 const data = await res.json();
                 Telegram.WebApp.hideProgress();
+                
                 if (data.success) { 
                     Telegram.WebApp.showAlert(data.message);
                     renderDashboard(); 
                 } else { 
+                    console.error("Deployment API returned an error:", data.message);
                     Telegram.WebApp.showAlert(data.message); 
                 }
             } catch (e) { 
                 Telegram.WebApp.hideProgress(); 
-                Telegram.WebApp.showAlert('Failed to initiate deployment.'); 
+                console.error("Error during deployment API call:", e);
+                Telegram.WebApp.showAlert(`Failed to initiate deployment. Error: ${e.message}`); 
             }
         }
         
