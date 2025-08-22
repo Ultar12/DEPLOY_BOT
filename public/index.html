@@ -118,7 +118,11 @@
         
         .inline-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
         .inline-buttons button { flex-grow: 1; }
-        .inline-buttons button.active { border: 2px solid #34c759; transform: scale(1.05); }
+        .inline-buttons button.active { 
+            border: 2px solid #34c759; 
+            transform: scale(1.05); 
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.5); /* Subtle glow on active state */
+        }
         
         /* New RGB Glow effect */
         .glowing-button {
@@ -414,7 +418,7 @@
                 return;
             }
 
-            appNameStatus.textContent = ''; // Removed 'Checking...' for cleaner UI
+            appNameStatus.textContent = ''; // Removed 'Checking...'
             appNameInput.classList.remove('input-green', 'input-red');
             appNameStatus.classList.remove('status-green-text', 'status-red-text');
             
@@ -426,13 +430,9 @@
                 if (res.status === 200) {
                     const data = await res.json();
                     if (data.available) {
-                        appNameStatus.textContent = 'Available!';
-                        appNameStatus.classList.add('status-green-text');
                         appNameInput.classList.add('input-green');
                         deploymentState.isAppNameAvailable = true;
                     } else {
-                        appNameStatus.textContent = 'Taken!';
-                        appNameStatus.classList.add('status-red-text');
                         appNameInput.classList.add('input-red');
                         deploymentState.isAppNameAvailable = false;
                     }
@@ -463,11 +463,9 @@
             }
             
             if (isValid) {
-                sessionIdStatus.textContent = ''; // Removed 'Valid!'
                 sessionIdInput.classList.add('input-green');
                 sessionIdInput.classList.remove('input-red');
             } else {
-                sessionIdStatus.textContent = ``; // Removed text
                 sessionIdInput.classList.add('input-red');
                 sessionIdInput.classList.remove('input-green');
             }
@@ -481,16 +479,12 @@
             const deployKey = deployKeyInput.value.trim();
 
             if (deployKey.length < 5) {
-                deployKeyStatus.textContent = '';
-                deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
                 deployKeyInput.classList.remove('input-green', 'input-red');
                 deploymentState.isDeployKeyValid = false;
                 updateDeployButtonState();
                 return;
             }
 
-            deployKeyStatus.textContent = ''; // Removed 'Checking...'
-            deployKeyStatus.classList.remove('status-green-text', 'status-red-text');
             deployKeyInput.classList.remove('input-green', 'input-red');
 
             try {
@@ -500,14 +494,10 @@
                 const data = await res.json();
                 
                 if (data.valid) {
-                    deployKeyStatus.textContent = ''; // Removed 'Valid Key!'
-                    deployKeyStatus.classList.add('status-green-text');
                     deployKeyInput.classList.add('input-green');
                     deployKeyInput.classList.remove('input-red');
                     deploymentState.isDeployKeyValid = true;
                 } else {
-                    deployKeyStatus.textContent = ``; // Removed 'Invalid key...'
-                    deployKeyStatus.classList.add('status-red-text');
                     deployKeyInput.classList.add('input-red');
                     deployKeyInput.classList.remove('input-green');
                     deploymentState.isDeployKeyValid = false;
@@ -578,7 +568,8 @@
             } catch (e) { 
                 Telegram.WebApp.hideProgress(); 
                 console.error("Error during deployment API call:", e);
-                Telegram.WebApp.showAlert(`Failed to initiate deployment. Error: ${e.message}`); 
+                console.error("Error details:", e.response ? e.response.data : e.message);
+                Telegram.WebApp.showAlert(`Failed to initiate deployment. Error: ${e.response?.data?.message || e.message}`); 
             }
         }
         
