@@ -253,7 +253,7 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             user_id TEXT,
-            data JSONB,
+            data JSONB
         );
     `);
 
