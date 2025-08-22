@@ -40,6 +40,7 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 // The bot MUST be an administrator in this channel for verification to work.
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
 
+let botUsername = 'ultarbotdeploybot'; // Add this new global variable
 
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
@@ -305,6 +306,7 @@ let botId; // <-- ADD THIS LINE
 bot.getMe().then(me => {
     if (me && me.id) {
         botId = me.id.toString();
+      botUsername= ultarbotdeploybot
         console.log(`Bot initialized. ID: ${botId}, Username: ${me.username}`);
     }
 }).catch(err => {
@@ -3406,12 +3408,9 @@ if (text === 'Deploy' || text === 'Free Trial') {
     return;
 }
 
-  // Add this new handler in section 10 (Message handler for buttons & state machine)
+// Add this handler in section 10 (Message handler for buttons & state machine)
 if (text === 'Referrals') {
     const userId = msg.chat.id.toString();
-    const botUsername = bot.options.username;
-
-    // Construct the unique referral link
     const referralLink = `https://t.me/${botUsername}?start=${userId}`;
 
     await dbServices.updateUserActivity(userId);
@@ -3431,8 +3430,20 @@ Share this link with your friends. When they deploy a bot using your link, you g
 _Your referred users will be displayed here once they deploy their first bot._
     `;
     
-    await bot.sendMessage(userId, referralMessage, { parse_mode: 'Markdown' });
+    // Add the new buttons here
+    await bot.sendMessage(userId, referralMessage, { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` },
+                    { text: 'Copy to Clipboard', callback_data: `copy_referral_link:${referralLink}` }
+                ]
+            ]
+        }
+    });
 }
+
 
 
 // --- FIX: Add this new handler for the 'Support' button ---
