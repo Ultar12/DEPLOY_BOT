@@ -2523,13 +2523,16 @@ bot.onText(/^\/revenue$/, async (msg) => {
 
     try {
         const now = new Date();
-        const todayStart = new Date(now.setHours(0, 0, 0, 0)).toISOString();
-        const weekStart = new Date(now.setDate(now.getDate() - now.getDay())).toISOString();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).toISOString();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString(); // Added for 3-month total
 
         const todayResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [todayStart]);
         const weekResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [weekStart]);
         const monthResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [monthStart]);
+        const threeMonthsResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments WHERE paid_at >= $1", [threeMonthsAgo]);
+        const allTimeResult = await pool.query("SELECT SUM(amount) as total, COUNT(reference) as count FROM completed_payments");
 
         const formatRevenue = (result) => {
             const total = result.rows[0].total || 0;
@@ -2543,6 +2546,8 @@ bot.onText(/^\/revenue$/, async (msg) => {
 *Today:* ${formatRevenue(todayResult)}
 *This Week:* ${formatRevenue(weekResult)}
 *This Month:* ${formatRevenue(monthResult)}
+*Last 3 Months:* ${formatRevenue(threeMonthsResult)}
+*All Time:* ${formatRevenue(allTimeResult)}
         `;
         
         await bot.sendMessage(cid, revenueMessage, { parse_mode: 'Markdown' });
@@ -2551,6 +2556,7 @@ bot.onText(/^\/revenue$/, async (msg) => {
         await bot.sendMessage(cid, "An error occurred while calculating revenue.");
     }
 });
+
 
 
 
