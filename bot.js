@@ -159,6 +159,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     referral_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 `);
+  await dbPool.query(`ALTER TABLE user_referrals ADD COLUMN IF NOT EXISTS inviter_reward_pending BOOLEAN DEFAULT FALSE;`);
 
 
     await dbPool.query(`
@@ -253,7 +254,6 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
             id TEXT PRIMARY KEY,
             user_id TEXT,
             data JSONB,
-            expires_at TIMESTAMP WITH TIME ZONE
         );
     `);
 
@@ -4772,6 +4772,50 @@ if (action === 'select_get_session_type') {
         return;
     }
 }
+
+  // Add this new handler inside bot.on('callback_query', ...)
+if (action === 'apply_referral_reward') {
+    const inviterId = q.from.id.toString();
+    const botToUpdate = payload;
+    const referredUserId = extra;
+    const isSecondLevel = flag === 'second_level';
+    const rewardDays = isSecondLevel ? 7 : 20;
+
+    await bot.editMessageText(`Applying your *${rewardDays}-day* reward to bot "*${escapeMarkdown(botToUpdate)}*"...`, {
+        chat_id: inviterId,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        await pool.query(
+            `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '${rewardDays} days'
+             WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
+            [inviterId, botToUpdate]
+        );
+
+        // Mark the reward as applied in the user_referrals table
+        await pool.query(
+            `UPDATE user_referrals SET inviter_reward_pending = FALSE WHERE referred_user_id = $1`,
+            [referredUserId]
+        );
+
+        await bot.editMessageText(`Success! A *${rewardDays}-day extension* has been added to your bot "*${escapeMarkdown(botToUpdate)}*".`, {
+            chat_id: inviterId,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+
+    } catch (e) {
+        console.error(`Error applying referral reward to bot ${botToUpdate} for user ${inviterId}:`, e);
+        await bot.editMessageText(`Failed to apply the reward to your bot "*${escapeMarkdown(botToUpdate)}*". Please contact support.`, {
+            chat_id: inviterId,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+}
+
 
   // --- NEW: Handler for using a suggested app name ---
 if (action === 'use_suggested_name') {
