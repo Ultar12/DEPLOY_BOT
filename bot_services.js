@@ -711,13 +711,12 @@ async function getMonitoredFreeTrials() {
     }
 }
 
-// In a new or existing helper function that runs after a SUCCESSFUL deployment:
+// This function replaces the previous grantReferralRewards function
 async function grantReferralRewards(referredUserId, deployedBotName) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // Check for a pending referral session
         const referralSessionResult = await client.query(
             `SELECT data FROM sessions WHERE id = $1`,
             [`referral_session:${referredUserId}`]
@@ -726,43 +725,59 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
         if (referralSessionResult.rows.length > 0) {
             const inviterId = referralSessionResult.rows[0].data.inviterId;
 
-            // 1. Give the inviter a 20-day reward
-            await client.query(
-                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
-                 WHERE user_id = $1 AND expiration_date IS NOT NULL`,
+            const inviterBotsResult = await client.query(
+                `SELECT bot_name FROM user_bots WHERE user_id = $1`,
                 [inviterId]
             );
+            const inviterBots = inviterBotsResult.rows;
 
-            // 2. Add the referral record
-            await client.query(
-                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
-                [referredUserId, inviterId, deployedBotName]
-            );
-
-            // 3. Check if the inviter was also referred by someone (second-level referral)
-            const grandInviterResult = await client.query(
-                `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
-                [inviterId]
-            );
-            if (grandInviterResult.rows.length > 0) {
-                const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
-
-                // Give the grand inviter a 7-day reward
+            if (inviterBots.length <= 2) {
+                // Inviter has two or fewer bots, apply the reward directly
+                const inviterBotName = inviterBots[0].bot_name;
                 await client.query(
-                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
-                     WHERE user_id = $1 AND expiration_date IS NOT NULL`,
-                    [grandInviterId]
+                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
+                     WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
+                    [inviterId, inviterBotName]
+                );
+                await bot.sendMessage(inviterId,
+                    `Congratulations! A friend you invited has deployed their first bot. ` +
+                    `You've received a *20-day extension* on your bot \`${escapeMarkdown(inviterBotName)}\`!`,
+                    { parse_mode: 'Markdown' }
+                );
+
+                // Add referral record and grant second-level reward
+                await addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName);
+
+            } else if (inviterBots.length > 2) { // THIS LINE WAS CHANGED
+                // Inviter has more than two bots, prompt for selection
+                await client.query(
+                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending) VALUES ($1, $2, $3, TRUE)
+                     ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
+                    [referredUserId, inviterId, deployedBotName]
+                );
+                
+                const buttons = inviterBots.map(bot => ([{
+                    text: bot.bot_name,
+                    callback_data: `apply_referral_reward:${bot.bot_name}:${referredUserId}`
+                }]));
+                
+                await bot.sendMessage(inviterId,
+                    `A friend you invited has deployed a bot! Please select one of your bots below to add the *20-day extension* to.`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+                );
+            } else {
+                // Inviter has no bots to extend, just add the referral record
+                await client.query(
+                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
+                    [referredUserId, inviterId, deployedBotName]
+                );
+                await bot.sendMessage(inviterId,
+                    `Congratulations! A friend you invited has deployed their first bot. ` +
+                    `You've earned a *20-day extension* reward, but you have no active bots to apply it to. ` +
+                    `Deploy a bot now to use your reward!`,
+                    { parse_mode: 'Markdown' }
                 );
             }
-
-            await client.query('COMMIT');
-            
-            // Send notifications
-            await bot.sendMessage(inviterId, 
-                `Congratulations! A friend you invited has deployed their first bot. ` +
-                `You've received a *20-day extension* on your bot's service!`,
-                { parse_mode: 'Markdown' }
-            );
 
             // Clean up the temporary referral session
             await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
@@ -770,6 +785,7 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
         } else {
             // The user was not referred, nothing to do here
         }
+        await client.query('COMMIT');
     } catch (e) {
         await client.query('ROLLBACK');
         console.error(`[Referral] Failed to grant rewards for user ${referredUserId}:`, e);
@@ -777,6 +793,59 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
         client.release();
     }
 }
+
+// NEW HELPER FUNCTION to handle second-level rewards
+async function addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName) {
+    await client.query(
+        `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
+        [referredUserId, inviterId, deployedBotName]
+    );
+
+    const grandInviterResult = await client.query(
+        `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
+        [inviterId]
+    );
+    if (grandInviterResult.rows.length > 0) {
+        const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
+
+        const grandInviterBotsResult = await client.query(
+            `SELECT bot_name FROM user_bots WHERE user_id = $1`,
+            [grandInviterId]
+        );
+        const grandInviterBots = grandInviterBotsResult.rows;
+
+        if (grandInviterBots.length <= 2) {
+            const grandInviterBotName = grandInviterBots[0].bot_name;
+            await client.query(
+                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
+                 WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
+                [grandInviterId, grandInviterBotName]
+            );
+            await bot.sendMessage(grandInviterId,
+                `Bonus Reward! A friend of a friend has deployed a bot. ` +
+                `You've received a *7-day extension* on your bot \`${escapeMarkdown(grandInviterBotName)}\`!`,
+                { parse_mode: 'Markdown' }
+            );
+        } else if (grandInviterBots.length > 2) {
+            await client.query(
+                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, inviter_reward_pending) VALUES ($1, $2, TRUE)
+                 ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
+                [inviterId, grandInviterId]
+            );
+
+            const buttons = grandInviterBots.map(bot => ([{
+                text: bot.bot_name,
+                callback_data: `apply_referral_reward:${bot.bot_name}:${inviterId}:second_level`
+            }]));
+            
+            await bot.sendMessage(grandInviterId,
+                `Bonus Reward! A friend of a friend has deployed a bot. Please select one of your bots below to add the *7-day extension* to.`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+            );
+        }
+    }
+}
+
 
 
 async function updateFreeTrialWarning(userId) {
@@ -1639,6 +1708,7 @@ module.exports = {
     getUserLastSeen,
     isUserBanned,
     banUser,
+    addReferralAndSecondLevelReward,
     unbanUser,
     saveUserDeployment,
     getUserDeploymentsForRestore,
