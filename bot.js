@@ -306,13 +306,16 @@ let botId; // <-- ADD THIS LINE
 bot.getMe().then(me => {
     if (me && me.id) {
         botId = me.id.toString();
-      botUsername= ultarbotdeploybot
+        // FIX: The bot's username is already in the 'me' object.
+        // You should use me.username, not a hardcoded, undefined variable.
+        botUsername = me.username; 
         console.log(`Bot initialized. ID: ${botId}, Username: ${me.username}`);
     }
 }).catch(err => {
     console.error("CRITICAL: Could not get bot's own ID. Exiting.", err);
     process.exit(1);
 });
+
 
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
