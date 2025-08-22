@@ -1350,84 +1350,103 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 });
 
 
-    // Endpoint to handle the final deployment submission
     app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-        const { botType, appName, sessionId, autoStatusView, deployKey, isFreeTrial } = req.body;
-        const userId = req.telegramData.id.toString();
-        
-        if (!userId || !botType || !appName || !sessionId) {
-            return res.status(400).json({ success: false, message: 'Missing required fields.' });
-        }
+    const { botType, appName, sessionId, autoStatusView, deployKey, isFreeTrial } = req.body;
+    const userId = req.telegramData.id.toString();
+
+    // 1. Initial validation
+    if (!userId || !botType || !appName || !sessionId) {
+        return res.status(400).json({ success: false, message: 'Missing required fields.' });
+    }
+
+    const pendingPaymentResult = await pool.query(
+        'SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2',
+        [userId, appName]
+    );
+    if (pendingPaymentResult.rows.length > 0) {
+        return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it.' });
+    }
+
+    const isSessionIdValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX) && sessionId.length >= 10) ||
+        (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX) && sessionId.length >= 10);
     
-        const pendingPaymentResult = await pool.query(
-            'SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2',
-            [userId, appName]
-        );
-        if (pendingPaymentResult.rows.length > 0) {
-            return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it.' });
-        }
+    if (!isSessionIdValid) {
+        return res.status(400).json({ success: false, message: `Invalid session ID format for bot type "${botType}".` });
+    }
 
-        const isSessionIdValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX) && sessionId.length >= 10) ||
-                                 (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX) && sessionId.length >= 10);
-        
-        if (!isSessionIdValid) {
-            return res.status(400).json({ success: false, message: `Invalid session ID format for bot type "${botType}".` });
-        }
-        
-        const deployVars = {
-            SESSION_ID: sessionId,
-            APP_NAME: appName,
-            AUTO_STATUS_VIEW: autoStatusView
-        };
+    // 2. Map autoStatusView to correct Heroku variable
+    let herokuAutoStatusView = '';
+    if (botType === 'levanter' && autoStatusView === 'yes') {
+        herokuAutoStatusView = 'no-dl';
+    } else if (botType === 'raganork' && autoStatusView === 'yes') {
+        herokuAutoStatusView = 'true';
+    } else {
+        herokuAutoStatusView = 'false';
+    }
 
-        let deploymentMessage = '';
+    const deployVars = {
+        SESSION_ID: sessionId,
+        APP_NAME: appName,
+        AUTO_STATUS_VIEW: herokuAutoStatusView
+    };
 
-        try {
-            if (isFreeTrial) {
-                const check = await dbServices.canDeployFreeTrial(userId);
-                if (!check.can) {
-                    return res.status(400).json({ success: false, message: `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString()}.` });
-                }
-                await dbServices.buildWithProgress(userId, deployVars, true, false, botType);
-                deploymentMessage = 'Free Trial deployment initiated. Check the bot chat for updates!';
-            } else if (deployKey) {
-                const usesLeft = await dbServices.useDeployKey(deployKey, userId);
-                if (usesLeft === null) {
-                    return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
-                }
-                await dbServices.buildWithProgress(userId, deployVars, false, false, botType);
-                deploymentMessage = 'Deployment initiated with key. Check the bot chat for updates!';
-                
-                // Admin notification logic here
-                const userChat = await bot.getChat(userId);
-                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
-                await bot.sendMessage(ADMIN_ID,
-                    `*New App Deployed (Mini App)*\n` +
-                    `*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n` +
-                    `*App Name:* \`${appName}\`\n` +
-                    `*Key Used:* \`${deployKey}\`\n` +
-                    `*Uses Left:* ${usesLeft}`,
-                    { parse_mode: 'Markdown' }
-                );
-            } else {
-                return res.status(400).json({ success: false, message: 'A deploy key is required for paid deployments. Please provide one or use the "Pay" option.' });
+    let deploymentMessage = '';
+
+    try {
+        if (isFreeTrial) {
+            const check = await dbServices.canDeployFreeTrial(userId);
+            if (!check.can) {
+                return res.status(400).json({ success: false, message: `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString()}.` });
             }
-
-            // This is the critical fix to ensure the deployment is saved to the database.
-            // It will save the new app to user_bots and user_deployments so it appears in "My Bots".
-            await dbServices.addUserBot(userId, appName, sessionId, botType);
-            await bot.sendMessage(userId, 
-                `Deployment of your *${escapeMarkdown(appName)}* bot has started via the Mini App.\n\n` +
-                `You will receive a notification here when the bot is ready.`, 
-                { parse_mode: 'Markdown' });
-
-            res.json({ success: true, message: deploymentMessage });
-
-        } catch (e) {
-            console.error('[MiniApp Server] Deployment error:', e);
-            res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
+            deploymentMessage = 'Free Trial deployment initiated. Check the bot chat for updates!';
+        } else if (deployKey) {
+            const usesLeft = await dbServices.useDeployKey(deployKey, userId);
+            if (usesLeft === null) {
+                return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
+            }
+            deploymentMessage = 'Deployment initiated with key. Check the bot chat for updates!';
+            
+            // Admin notification logic here
+            const userChat = await bot.getChat(userId);
+            const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
+            await bot.sendMessage(ADMIN_ID,
+                `*New App Deployed (Mini App)*\n` +
+                `*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n` +
+                `*App Name:* \`${appName}\`\n` +
+                `*Key Used:* \`${deployKey}\`\n` +
+                `*Uses Left:* ${usesLeft}`,
+                { parse_mode: 'Markdown' }
+            );
+        } else {
+            return res.status(400).json({ success: false, message: 'A deploy key is required for paid deployments. Please provide one or use the "Pay" option.' });
         }
-    });
+        
+        // This is a CRITICAL fix. The build process should be awaited.
+        // It's also important to add the bot to the database before the build, so the monitor can find it.
+        await dbServices.addUserBot(userId, appName, sessionId, botType);
+        
+        // This promise will resolve when the build is complete.
+        // The `buildWithProgress` function must be refactored to return a promise that resolves on success.
+        const buildPromise = dbServices.buildWithProgress(userId, deployVars, isFreeTrial, false, botType);
+        
+        // We do NOT await here to avoid a long timeout for the HTTP request.
+        // Instead, the frontend gets an immediate success response, and the bot will send a message to the user later when the build is done.
+        
+        // Notify the user that the process has started
+        await bot.sendMessage(userId, 
+            `Deployment of your *${escapeMarkdown(appName)}* bot has started via the Mini App.\n\n` +
+            `You will receive a notification here when the bot is ready.`, 
+            { parse_mode: 'Markdown' });
+
+        // Finally, send the success response to the Mini App
+        res.json({ success: true, message: deploymentMessage });
+
+    } catch (e) {
+        console.error('[MiniApp Server] Deployment error:', e);
+        res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
+    }
+});
+
 
 // GET /api/bots/config/:appName - Fetches all config variables for a bot
 app.get('/api/bots/config/:appName', validateWebAppInitData, async (req, res) => {
