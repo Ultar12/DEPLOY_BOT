@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <script>window.yaContextCb=window.yaContextCb||[]</script>
-<script src="https://yandex.ru/ads/system/context.js" async></script>
+    <script src="https://yandex.ru/ads/system/context.js" async></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bot Dashboard</title>
@@ -123,50 +123,60 @@
         .inline-buttons button.active { 
             border: 2px solid #34c759; 
             transform: scale(1.05); 
-            box-shadow: 0 0 8px rgba(52, 199, 89, 0.5); /* Subtle glow on active state */
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.5);
         }
-        
+
         /* New CSS for the circular button group */
-        .vertical-buttons {
+        .autoview-buttons-container {
             display: flex;
-            flex-direction: column;
-            gap: 10px;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 15px;
+            margin-top: 15px;
         }
-        
-        .vertical-buttons .action-button {
+
+        .autoview-buttons-container .action-button {
             position: relative;
-            width: 60px; /* Set a fixed width and height for the circle */
-            height: 60px;
+            width: 30px;
+            height: 30px;
             border-radius: 50%;
-            border: 2px solid #337ab7; /* Blue border for unselected state */
+            border: 2px solid #555;
             background-color: transparent;
-            color: transparent; /* Hide "Yes" and "No" text */
+            color: transparent;
             display: flex;
             justify-content: center;
             align-items: center;
+            padding: 0;
             transition: all 0.2s ease;
         }
 
-        .vertical-buttons .action-button.active {
-            border-color: #5cb85c; /* Green border for selected state */
+        .autoview-buttons-container .action-button.active {
+            border-color: #34c759;
             background-color: transparent;
+            box-shadow: 0 0 8px rgba(52, 199, 89, 0.5);
         }
 
-        .vertical-buttons .action-button.active::before {
-            content: '\2713'; /* Checkmark character */
-            font-size: 2em;
-            color: #5cb85c; /* Green checkmark color */
+        .autoview-buttons-container .action-button.active::before {
+            content: '\2713';
+            font-size: 1.5em;
+            color: #34c759;
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
         }
 
-        .vertical-buttons .action-button:hover {
+        .autoview-buttons-container .action-button:hover {
             transform: scale(1.1);
-            background-color: rgba(51, 122, 183, 0.2);
         }
-
+        
+        .autoview-buttons-container span {
+            font-size: 1em;
+            color: #f1f1f1;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        
         /* New RGB Glow effect */
         .glowing-button {
             animation: glowing 4s infinite; /* Slowed down glow effect */
@@ -184,14 +194,14 @@
 </head>
 <body>
     <div id="yandex_rtb_R-A-16903650-2"></div>
-<script>
-window.yaContextCb.push(() => {
-    Ya.Context.AdvManager.render({
-        "blockId": "R-A-16903650-2",
-        "renderTo": "yandex_rtb_R-A-16903650-2"
+    <script>
+    window.yaContextCb.push(() => {
+        Ya.Context.AdvManager.render({
+            "blockId": "R-A-16903650-2",
+            "renderTo": "yandex_rtb_R-A-16903650-2"
+        })
     })
-})
-</script>
+    </script>
     <div id="splash-screen">
         <h2 class="welcome-text">Loading Dashboard...</h2>
         <div class="dynamic-loader"></div>
@@ -395,9 +405,11 @@ window.yaContextCb.push(() => {
                     </div>
                     <div class="form-group">
                         <label>Auto Status View:</label>
-                        <div class="vertical-buttons" id="autoview-buttons">
-                            <button class="action-button" data-value="yes" onclick="selectDeploymentOption('autoview', 'yes')">Yes</button>
-                            <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', 'no')">No</button>
+                        <div class="autoview-buttons-container" id="autoview-buttons">
+                            <button class="action-button" data-value="yes" onclick="selectDeploymentOption('autoview', 'yes')"></button>
+                            <span>Yes</span>
+                            <button class="action-button" data-value="no" onclick="selectDeploymentOption('autoview', 'no')"></button>
+                            <span>No</span>
                         </div>
                     </div>
                     <div class="form-group">
