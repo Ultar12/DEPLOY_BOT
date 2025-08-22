@@ -553,20 +553,37 @@
             const appName = document.getElementById('appNameInput').value.trim();
             const sessionId = document.getElementById('sessionIdInput').value.trim();
             const deployKey = document.getElementById('deployKeyInput').value.trim();
+            const deployButton = document.getElementById('deploy-button');
+            const deploymentProgressDiv = document.getElementById('deploymentProgress');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
             
             if (!deploymentState.isAppNameAvailable || !deploymentState.isSessionIdValid || !deploymentState.isDeployKeyValid) {
                 return Telegram.WebApp.showAlert('Please ensure all fields are valid before deploying.');
             }
-
-            Telegram.WebApp.showProgress('Deploying...');
+            
+            deployButton.disabled = true;
+            deployButton.classList.remove('glowing-button');
+            deploymentProgressDiv.style.display = 'block';
+            
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                if (progress < 90) {
+                    progress += 5;
+                    progressBar.style.width = `${progress}%`;
+                    progressText.textContent = `${progress}%`;
+                }
+            }, 500);
+            
             const payload = {
                 botType: deploymentState.botType,
                 appName,
                 sessionId,
                 autoStatusView: deploymentState.autoStatusView,
                 deployKey,
-                isFreeTrial: false // Since we're using a deploy key, it's not a free trial
+                isFreeTrial: false
             };
+            
             try {
                 const res = await fetch(`${API_BASE_URL}/deploy`, {
                     method: 'POST',
@@ -574,16 +591,27 @@
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                Telegram.WebApp.hideProgress();
-                if (data.success) { 
+                
+                clearInterval(progressInterval);
+                
+                if (data.success) {
+                    progressBar.style.width = '100%';
+                    progressText.textContent = '100%';
                     Telegram.WebApp.showAlert(data.message);
-                    renderDashboard(); 
-                } else { 
-                    Telegram.WebApp.showAlert(data.message); 
+                    setTimeout(renderDashboard, 1500);
+                } else {
+                    progressBar.style.width = '0%';
+                    progressText.textContent = '0%';
+                    Telegram.WebApp.showAlert(data.message);
                 }
-            } catch (e) { 
-                Telegram.WebApp.hideProgress(); 
-                Telegram.WebApp.showAlert('Failed to initiate deployment.'); 
+            } catch (e) {
+                clearInterval(progressInterval);
+                progressBar.style.width = '0%';
+                progressText.textContent = '0%';
+                Telegram.WebApp.showAlert('Failed to initiate deployment.');
+            } finally {
+                // Re-enable the button state based on the current form validity
+                updateDeployButtonState();
             }
         }
         
