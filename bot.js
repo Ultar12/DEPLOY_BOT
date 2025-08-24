@@ -6502,6 +6502,7 @@ bot.on('channel_post', async msg => {
     let failureReason = 'Bot session has logged out.';
     let match;
 
+    // Check for a standardized status message first
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
     if (match) {
         appName = match[1];
@@ -6523,24 +6524,19 @@ bot.on('channel_post', async msg => {
             }
         }
     }
-
-  const memoryErrorMatch = text.match(/Error R14 \(Memory quota exceeded\)/);
+    
+    // Check for the specific memory error message
+    const memoryErrorMatch = text.match(/R14 memory error detected for \[(.*?)\]/);
     if (memoryErrorMatch) {
-        // This is a memory error message. We need to find the app name.
-        const appLogMatch = text.match(/app\[web\.1\]: (\d+\|levanter)/);
-        if (appLogMatch) {
-            const fullAppName = appLogMatch[1];
-            // Extract just the app name part
-            const appNameFromLog = fullAppName.split('|')[1].trim(); 
-            console.log([Log Monitor] R14 memory error detected for app: ${appNameFromLog});
-            
-            // Trigger the restart immediately
-            await restartBot(appNameFromLog);
-            // Notify yourself as the admin
-            await bot.sendMessage(ADMIN_ID,  R14 Memory error detected for bot \${appNameFromLog}\. Triggering immediate restart., { parse_mode: 'Markdown' });
+        appName = memoryErrorMatch[1];
+        console.log(`[Log Monitor] R14 memory error detected for app: ${appName}`);
+        
+        // Trigger the restart immediately
+        await restartBot(appName);
+        // Notify yourself as the admin
+        await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${appName}\`. Triggering immediate restart.`, { parse_mode: 'Markdown' });
 
-            return; // Exit to prevent further processing
-        }
+        return; // Exit to prevent further processing
     }
 
     if (!appName) {
@@ -6602,7 +6598,6 @@ bot.on('channel_post', async msg => {
         }
     }
 });
-
 
 
 
