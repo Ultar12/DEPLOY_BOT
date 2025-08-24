@@ -379,6 +379,7 @@
         async function handleBotAction(action, appName) {
             const verb = action.charAt(0).toUpperCase() + action.slice(1);
             let endpoint = '';
+            let method = 'POST';
 
             switch(action) {
                 case 'restart':
@@ -391,11 +392,37 @@
                     endpoint = 'bots/delete';
                     break;
                 case 'logs':
-                    endpoint = 'bots/logs';
+                    endpoint = `bots/logs/${appName}`;
+                    method = 'GET';
                     break;
                 default:
                     return;
             }
+
+            if (action === 'logs') {
+                try {
+                    Telegram.WebApp.showProgress(`Fetching logs for ${appName}...`);
+                    const res = await fetch(`${API_BASE_URL}/${endpoint}`, {
+                        method: 'GET',
+                        headers: { 
+                            'X-Telegram-Init-Data': Telegram.WebApp.initData 
+                        }
+                    });
+                    const data = await res.json();
+                    Telegram.WebApp.hideProgress();
+                    if (data.success) {
+                        Telegram.WebApp.showAlert(data.logs);
+                    } else {
+                        Telegram.WebApp.showAlert(data.message);
+                    }
+                } catch (e) {
+                    Telegram.WebApp.hideProgress();
+                    Telegram.WebApp.showAlert(`An error occurred while fetching logs.`);
+                    console.error('Logs fetch failed:', e);
+                }
+                return;
+            }
+
 
             Telegram.WebApp.showConfirm(`Are you sure you want to ${action} ${appName}?`, async (ok) => {
                 if (!ok) return;
@@ -403,7 +430,7 @@
                 Telegram.WebApp.showProgress(`${verb}ing...`);
                 try {
                     const res = await fetch(`${API_BASE_URL}/${endpoint}`, {
-                        method: 'POST',
+                        method: method,
                         headers: { 
                             'Content-Type': 'application/json', 
                             'X-Telegram-Init-Data': Telegram.WebApp.initData 
