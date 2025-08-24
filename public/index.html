@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Dashboard</title>
+    <title>Ultar WBD</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
@@ -96,7 +96,7 @@
             color: #8e8e93;
         }
         
-        #deployment-view {
+        #deployment-view, #management-view {
             padding: 20px 0;
         }
 
@@ -212,6 +212,21 @@
         .back-button .chevron-left {
             font-size: 1.2em;
         }
+
+        .management-option {
+            background-color: #2c2c2e;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            cursor: pointer;
+        }
+
+        .management-option:hover {
+            background-color: #3a3a3c;
+            transform: translateY(-1px);
+        }
         
     </style>
 </head>
@@ -252,7 +267,7 @@
 
         async function renderMyBotsView() {
             document.getElementById('view-container').innerHTML = `
-                <div id="header-title">BotFather</div>
+                <div id="header-title">.ULTAR WBD</div>
                 <div class="bot-list" id="bot-list">
                     <div class="create-bot-card" onclick="renderView('botTypeSelection')">
                         <span class="icon-plus">+</span>
@@ -264,7 +279,6 @@
             `;
             const botListEl = document.getElementById('bot-list');
             
-            // Simulating a loading state
             const loadingEl = document.createElement('div');
             loadingEl.textContent = 'Loading...';
             botListEl.appendChild(loadingEl);
@@ -286,11 +300,17 @@
                         const botInitial = bot.appName.charAt(0).toUpperCase();
                         const statusColor = bot.status === 'Online' ? '#34c759' : '#ff3b30';
 
+                        let expirationText = 'N/A';
+                        if (bot.expirationDate) {
+                            const date = new Date(bot.expirationDate);
+                            expirationText = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                        }
+
                         card.innerHTML = `
                             <div class="bot-icon-circle" style="background-color: ${statusColor};">${botInitial}</div>
                             <div class="bot-details">
                                 <span class="bot-name">${bot.appName}</span>
-                                <span class="bot-username">@${bot.appName}bot</span>
+                                <span class="bot-username">Expires: ${expirationText}</span>
                             </div>
                             <div class="chevron">&gt;</div>
                         `;
@@ -303,10 +323,48 @@
                 Telegram.WebApp.showAlert('Failed to load bots.');
             }
         }
+        
+        async function renderBotManagement(bot) {
+            document.getElementById('view-container').innerHTML = `
+                <div class="back-button" onclick="renderMyBotsView()">
+                    <span class="chevron-left">&lt;</span> Back
+                </div>
+                <div id="header-title">${bot.appName}</div>
+                <div id="management-view">
+                    <div class="management-option" onclick="handleBotAction('restart', '${bot.appName}')">Restart</div>
+                    <div class="management-option" onclick="handleBotAction('redeploy', '${bot.appName}')">Redeploy</div>
+                    <div class="management-option" onclick="handleBotAction('info', '${bot.appName}')">Info</div>
+                    <div class="management-option" onclick="handleBotAction('delete', '${bot.appName}')">Delete</div>
+                    <div class="management-option">Expires: ${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                </div>
+            `;
+        }
+
+        async function handleBotAction(action, appName) {
+            Telegram.WebApp.showConfirm(`Are you sure you want to ${action} ${appName}?`, async (ok) => {
+                if (!ok) return;
+
+                Telegram.WebApp.showProgress(`${action.charAt(0).toUpperCase() + action.slice(1)}ing...`);
+                try {
+                    const res = await fetch(`${API_BASE_URL}/bots/${action}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
+                    Telegram.WebApp.hideProgress();
+                    Telegram.WebApp.showAlert(data.message);
+                    if (data.success) { setTimeout(renderMyBotsView, 5000); }
+                } catch (e) {
+                    Telegram.WebApp.hideProgress();
+                    Telegram.WebApp.showAlert(`An error occurred while trying to ${action} the bot.`);
+                }
+            });
+        }
 
         function renderBotTypeSelectionView() {
             document.getElementById('view-container').innerHTML = `
-                <div class="back-button" onclick="renderView('myBots')">
+                <div class="back-button" onclick="renderMyBotsView()">
                     <span class="chevron-left">&lt;</span> Back
                 </div>
                 <div id="header-title">Select Bot Type</div>
