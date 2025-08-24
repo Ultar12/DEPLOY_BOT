@@ -360,6 +360,10 @@
                         <div class="option-label">Redeploy Bot</div>
                         <div class="option-info">Rebuild the bot from the latest source code.</div>
                     </div>
+                    <div class="management-option" onclick="handleBotAction('logs', '${bot.appName}')">
+                        <div class="option-label">View Logs</div>
+                        <div class="option-info">View the latest server logs.</div>
+                    </div>
                     <div class="management-option" onclick="handleBotAction('delete', '${bot.appName}')">
                         <div class="option-label">Delete Bot</div>
                         <div class="option-info">Permanently delete this bot from the server.</div>
@@ -374,8 +378,25 @@
 
         async function handleBotAction(action, appName) {
             const verb = action.charAt(0).toUpperCase() + action.slice(1);
-            const endpoint = action === 'delete' ? action : action === 'restart' ? 'bots/restart' : 'bots/redeploy';
-            
+            let endpoint = '';
+
+            switch(action) {
+                case 'restart':
+                    endpoint = 'bots/restart';
+                    break;
+                case 'redeploy':
+                    endpoint = 'bots/redeploy';
+                    break;
+                case 'delete':
+                    endpoint = 'bots/delete';
+                    break;
+                case 'logs':
+                    endpoint = 'bots/logs';
+                    break;
+                default:
+                    return;
+            }
+
             Telegram.WebApp.showConfirm(`Are you sure you want to ${action} ${appName}?`, async (ok) => {
                 if (!ok) return;
 
@@ -383,7 +404,10 @@
                 try {
                     const res = await fetch(`${API_BASE_URL}/${endpoint}`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                        headers: { 
+                            'Content-Type': 'application/json', 
+                            'X-Telegram-Init-Data': Telegram.WebApp.initData 
+                        },
                         body: JSON.stringify({ appName })
                     });
                     const data = await res.json();
@@ -393,6 +417,7 @@
                 } catch (e) {
                     Telegram.WebApp.hideProgress();
                     Telegram.WebApp.showAlert(`An error occurred while trying to ${action} the bot.`);
+                    console.error('Action failed:', e);
                 }
             });
         }
@@ -584,7 +609,10 @@
             try {
                 const res = await fetch(`${API_BASE_URL}/deploy`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-Telegram-Init-Data': Telegram.WebApp.initData 
+                    },
                     body: JSON.stringify(payload)
                 });
                 
