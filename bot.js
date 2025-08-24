@@ -885,6 +885,24 @@ async function sendKeyDeletionList(chatId, messageId = null) {
     }
 }
 
+async function restartBot(appName) {
+    console.log(`[Auto-Restart] Memory error detected. Attempting to restart bot: ${appName}`);
+    try {
+        await axios.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
+            headers: { 
+                Authorization: `Bearer ${HEROKU_API_KEY}`, 
+                Accept: 'application/vnd.heroku+json; version=3' 
+            }
+        });
+        console.log(`[Auto-Restart] Successfully initiated restart for ${appName}.`);
+        return true;
+    } catch (e) {
+        console.error(`[Auto-Restart] Failed to restart bot ${appName}: ${e.message}`);
+        return false;
+    }
+}
+
+
 
 // NEW: User online notification logic (uses global maps declared above)
 async function notifyAdminUserOnline(msg) {
@@ -6503,6 +6521,25 @@ bot.on('channel_post', async msg => {
                 status = 'LOGGED OUT';
                 console.log(`[Channel Post] Parsed (Direct Logout): App=${appName}, Status=${status}`);
             }
+        }
+    }
+
+  const memoryErrorMatch = text.match(/Error R14 \(Memory quota exceeded\)/);
+    if (memoryErrorMatch) {
+        // This is a memory error message. We need to find the app name.
+        const appLogMatch = text.match(/app\[web\.1\]: (\d+\|levanter)/);
+        if (appLogMatch) {
+            const fullAppName = appLogMatch[1];
+            // Extract just the app name part
+            const appNameFromLog = fullAppName.split('|')[1].trim(); 
+            console.log([Log Monitor] R14 memory error detected for app: ${appNameFromLog});
+            
+            // Trigger the restart immediately
+            await restartBot(appNameFromLog);
+            // Notify yourself as the admin
+            await bot.sendMessage(ADMIN_ID,  R14 Memory error detected for bot \${appNameFromLog}\. Triggering immediate restart., { parse_mode: 'Markdown' });
+
+            return; // Exit to prevent further processing
         }
     }
 
