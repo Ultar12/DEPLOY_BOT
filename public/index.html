@@ -221,11 +221,23 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
             transition: background-color 0.2s ease, transform 0.1s ease;
             cursor: pointer;
+            text-align: left;
         }
 
         .management-option:hover {
             background-color: #3a3a3c;
             transform: translateY(-1px);
+        }
+
+        .option-label {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .option-info {
+            font-size: 0.9em;
+            color: #8e8e93;
+            margin-top: 5px;
         }
         
     </style>
@@ -252,7 +264,7 @@
             isDeployKeyValid: false
         };
 
-        function renderView(viewName) {
+        function renderView(viewName, data = null) {
             const viewContainer = document.getElementById('view-container');
             viewContainer.innerHTML = '';
             
@@ -262,6 +274,8 @@
                 renderBotTypeSelectionView();
             } else if (viewName === 'deploymentForm') {
                 renderDeploymentFormView();
+            } else if (viewName === 'management') {
+                renderBotManagement(data);
             }
         }
 
@@ -295,22 +309,29 @@
                         const card = document.createElement('div');
                         card.className = 'bot-card';
                         card.setAttribute('data-app-name', bot.appName);
-                        card.onclick = () => renderBotManagement(bot);
+                        card.onclick = () => renderView('management', bot);
 
                         const botInitial = bot.appName.charAt(0).toUpperCase();
                         const statusColor = bot.status === 'Online' ? '#34c759' : '#ff3b30';
 
                         let expirationText = 'N/A';
                         if (bot.expirationDate) {
-                            const date = new Date(bot.expirationDate);
-                            expirationText = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                            const expires = new Date(bot.expirationDate);
+                            const now = new Date();
+                            const diffTime = expires.getTime() - now.getTime();
+                            const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            if (daysLeft > 0) {
+                                expirationText = `Expires in ${daysLeft} days`;
+                            } else {
+                                expirationText = `Expired`;
+                            }
                         }
 
                         card.innerHTML = `
                             <div class="bot-icon-circle" style="background-color: ${statusColor};">${botInitial}</div>
                             <div class="bot-details">
                                 <span class="bot-name">${bot.appName}</span>
-                                <span class="bot-username">Expires: ${expirationText}</span>
+                                <span class="bot-username">Status: ${bot.status} | ${expirationText}</span>
                             </div>
                             <div class="chevron">&gt;</div>
                         `;
@@ -331,22 +352,36 @@
                 </div>
                 <div id="header-title">${bot.appName}</div>
                 <div id="management-view">
-                    <div class="management-option" onclick="handleBotAction('restart', '${bot.appName}')">Restart</div>
-                    <div class="management-option" onclick="handleBotAction('redeploy', '${bot.appName}')">Redeploy</div>
-                    <div class="management-option" onclick="handleBotAction('info', '${bot.appName}')">Info</div>
-                    <div class="management-option" onclick="handleBotAction('delete', '${bot.appName}')">Delete</div>
-                    <div class="management-option">Expires: ${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                    <div class="management-option" onclick="handleBotAction('restart', '${bot.appName}')">
+                        <div class="option-label">Restart Bot</div>
+                        <div class="option-info">Restart the bot's server process.</div>
+                    </div>
+                    <div class="management-option" onclick="handleBotAction('redeploy', '${bot.appName}')">
+                        <div class="option-label">Redeploy Bot</div>
+                        <div class="option-info">Rebuild the bot from the latest source code.</div>
+                    </div>
+                    <div class="management-option" onclick="handleBotAction('delete', '${bot.appName}')">
+                        <div class="option-label">Delete Bot</div>
+                        <div class="option-info">Permanently delete this bot from the server.</div>
+                    </div>
+                    <div class="management-option" style="cursor: default;">
+                        <div class="option-label">Expiration Date</div>
+                        <div class="option-info">${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                    </div>
                 </div>
             `;
         }
 
         async function handleBotAction(action, appName) {
+            const verb = action.charAt(0).toUpperCase() + action.slice(1);
+            const endpoint = action === 'delete' ? action : action === 'restart' ? 'bots/restart' : 'bots/redeploy';
+            
             Telegram.WebApp.showConfirm(`Are you sure you want to ${action} ${appName}?`, async (ok) => {
                 if (!ok) return;
 
-                Telegram.WebApp.showProgress(`${action.charAt(0).toUpperCase() + action.slice(1)}ing...`);
+                Telegram.WebApp.showProgress(`${verb}ing...`);
                 try {
-                    const res = await fetch(`${API_BASE_URL}/bots/${action}`, {
+                    const res = await fetch(`${API_BASE_URL}/${endpoint}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
                         body: JSON.stringify({ appName })
