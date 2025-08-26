@@ -733,8 +733,8 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session ID', 'Deploy'],
       ['My Bots', 'Free Trial'],
-      ['FAQ', 'Support'],
-      ['More Features'] 
+      ['FAQ', 'Referrals],
+      ['Support' 'More Features'] 
   ];
   if (isAdmin) {
       return [
@@ -3804,7 +3804,6 @@ _Your referred users will be displayed here once they deploy their first bot._
     // Add all other standard buttons, including the new Referrals button
     allButtons.push(
         { text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' },
-        { text: "Referrals", callback_data: 'Referrals' }, // <-- ADDED REFERRALS BUTTON
         { text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }
     );
 
