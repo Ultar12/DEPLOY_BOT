@@ -2221,7 +2221,7 @@ bot.onText(/^\/buytemp$/, async msg => {
     }]);
 
     // The message has been updated to include the note
-    const messageText = "Choose a temporary number to purchase.\n\n" +
+    const messageText = "Choose a number to purchase.\n\n" +
                         "**Note:** These numbers are for **one-time use** to receive a single OTP code.";
 
     await bot.sendMessage(cid, messageText, {
