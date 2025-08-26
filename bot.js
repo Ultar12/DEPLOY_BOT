@@ -1674,7 +1674,7 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
 
                 // Notify the user of their purchase
                 await bot.sendMessage(userId, `Payment successful! You have been assigned the number: <code>${number}</code>`, { parse_mode: 'HTML' });
-                await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
+                await bot.sendMessage(userId, 'Register your numberon WhatsApp, I will send OTP if needed.');
 
                 // Notify the admin of the new purchase
                 const userChat = await bot.getChat(userId);
@@ -1969,7 +1969,7 @@ bot.onText(/^\/mynum$/, async (msg) => {
         const numbers = result.rows;
         
         if (numbers.length === 0) {
-            return bot.sendMessage(userId, "You have not been assigned any temporary numbers.");
+            return bot.sendMessage(userId, "You dont have any number,  use /buytemp");
         }
         
         let message = "<b>Your WhatsApp Numbers:</b>\n\n";
