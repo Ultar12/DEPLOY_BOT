@@ -3659,15 +3659,19 @@ _Your referred users will be displayed here once they deploy their first bot._
 
   if (text === 'More Features') {
       await dbServices.updateUserActivity(cid);
-      const moreFeaturesText = "You can explore my other bot!";
+      const moreFeaturesText = "Here are some additional features and services:";
       const moreFeaturesKeyboard = {
           inline_keyboard: [
+              // First row
+              [{ text: "Buy a WhatsApp Account", callback_data: 'buy_whatsapp_account' }],
+              // Second row
               [{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]
           ]
       };
       await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
       return;
   }
+
 
 
   if (text === 'FAQ') {
