@@ -14,6 +14,7 @@ const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Pool } = require('pg');
 const path = require('path');
+const mailListener = require('./mail_listener');
 const fs = require('fs');
 const express = require('express');
 const { sendPaymentConfirmation } = require('./email_service');
@@ -1068,6 +1069,7 @@ async function notifyAdminUserOnline(msg) {
         userStates: userStates, // Pass the central userStates object
         escapeMarkdown: escapeMarkdown,
     });
+  mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
 
     await loadMaintenanceStatus(); // Load initial maintenance status
 
