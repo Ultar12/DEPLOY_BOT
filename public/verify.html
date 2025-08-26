@@ -26,7 +26,7 @@
                 const geoData = await geoResponse.json();
 
                 if (geoData.country_code !== 'NG') {
-                    document.getElementById('status').innerText = 'Not eligible,  Disable your VPN.';
+                    document.getElementById('status').innerText = 'Sorry, the free trial is only available in Nigeria.';
                     return;
                 }
 
@@ -37,15 +37,17 @@
                         'Content-Type': 'application/json',
                         'X-Telegram-Init-Data': tg.initData
                     },
-                    // We don't need to send a captcha token anymore
                     body: JSON.stringify({}) 
                 });
 
                 const serverData = await serverResponse.json();
 
                 if (serverData.success) {
-                    // Signal success to the bot and close the app
+                    // --- THIS IS THE FIX ---
+                    // Signal success to the bot. This is the missing line.
                     tg.sendData(JSON.stringify({ status: 'verified' }));
+                    
+                    // The app will close automatically after sending the data.
                     tg.close();
                 } else {
                     document.getElementById('status').innerText = `Verification Failed: ${serverData.message}`;
