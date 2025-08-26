@@ -1,125 +1,114 @@
-// imap.js
-const Imap = require('imap');
+const Imap = require('node-imap');
 const { simpleParser } = require('mailparser');
-const axios = require('axios');
-const { Pool } = require('pg');
 
-// === DATABASE CONFIGURATION ===
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+let botInstance;
+let dbPool;
 
-// === TELEGRAM BOT CONFIGURATION ===
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID; // Your user ID for admin alerts
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+// Function to initialize the mail listener
+function init(bot, pool) {
+  botInstance = bot;
+  dbPool = pool;
 
-// === GMAIL IMAP CONFIGURATION ===
-const imapConfig = {
-  user: process.env.GMAIL_IMAP_USER,
-  password: process.env.GMAIL_IMAP_PASSWORD,
-  host: 'imap.gmail.com',
-  port: 993,
-  tls: true,
-  tlsOptions: { rejectUnauthorized: false },
-  authTimeout: 30000
-};
+  const imapConfig = {
+    user: process.env.GMAIL_USER,
+    password: process.env.GMAIL_APP_PASSWORD, // Use the App Password here
+    host: 'imap.gmail.com',
+    port: 993,
+    tls: true,
+    tlsOptions: { rejectUnauthorized: false }
+  };
 
-// === UTILITY FUNCTIONS ===
-
-// Sends a message to a Telegram chat
-async function sendTelegramMessage(chatId, text) {
-    if (!TELEGRAM_BOT_TOKEN) return console.error('TELEGRAM_BOT_TOKEN not set.');
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const payload = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
-    try {
-        await axios.post(url, payload);
-    } catch (err) {
-        console.error(`Failed to send message to ${chatId}:`, err.message);
-    }
-}
-
-// === IMAP LISTENER LOGIC ===
-async function startImapListener() {
   const imap = new Imap(imapConfig);
 
-  imap.once('ready', () => {
-    console.log('IMAP listener is ready and connected to Gmail.');
-    imap.openBox('INBOX', false, (err, box) => { // 'false' to allow marking as seen
-      if (err) {
-        console.error('Failed to open INBOX:', err);
-        return;
-      }
-      
-      const checkMail = () => {
-        imap.search(['UNSEEN', 'FROM', 'noreply@whatsapp.com'], (err, results) => {
-          if (err || !results || results.length === 0) {
-            return;
-          }
-
-          const f = imap.fetch(results, { bodies: '' });
-
-          f.on('message', (msg, seqno) => {
-            msg.on('body', (stream) => {
-              simpleParser(stream, async (err, parsed) => {
-                if (err) {
-                  console.error('Failed to parse email:', err);
-                  return;
-                }
-
-                // We are specifically looking for WhatsApp OTPs
-                if (parsed.text.includes('is your WhatsApp code')) {
-                  const otpCode = parsed.text.match(/\d{3}-\d{3}/)?.[0] || 'Code not found.';
-                  
-                  // Find the user who was assigned a temporary number
-                  try {
-                    const assignedNumberResult = await pool.query(
-                      "SELECT user_id, number FROM temp_numbers WHERE status = 'assigned' AND assigned_at > NOW() - INTERVAL '30 minutes' ORDER BY assigned_at DESC LIMIT 1"
-                    );
-                    
-                    if (assignedNumberResult.rows.length > 0) {
-                      const user = assignedNumberResult.rows[0];
-                      await sendTelegramMessage(user.user_id, `Your WhatsApp OTP is: \`${otpCode}\``);
-                      console.log(`Successfully forwarded OTP to user ${user.user_id} for number ${user.number}`);
-                      
-                      // Mark the number as expired
-                      await pool.query("UPDATE temp_numbers SET status = 'expired' WHERE number = $1", [user.number]);
-
-                      // Mark the email as read
-                      imap.addFlags(msg.uid, ['\\Seen'], (err) => {
-                        if (err) console.error('Failed to mark email as read:', err);
-                      });
-                    }
-                  } catch (dbError) {
-                    console.error('Database error during OTP forwarding:', dbError);
-                  }
-                }
-              });
-            });
-          });
-        });
-      };
-
-      // Check for new mail every 10 seconds
-      setInterval(checkMail, 10000);
-    });
+  imap.on('ready', () => {
+    console.log('[Mail Listener] ✅ Connection to Gmail successful. Listening for OTPs...');
+    openInbox(imap);
   });
 
-  imap.once('error', (err) => {
-    console.error('IMAP error:', err);
-    // Attempt to reconnect after a delay
-    setTimeout(startImapListener, 60000); // 1-minute delay
+  imap.on('error', (err) => {
+    console.error('[Mail Listener] ❌ IMAP Connection Error:', err);
   });
 
-  imap.once('end', () => {
-    console.log('IMAP connection ended.');
-    // Attempt to reconnect after a delay
-    setTimeout(startImapListener, 60000);
+  imap.on('end', () => {
+    console.log('[Mail Listener] 🔌 Connection ended. Reconnecting in 30 seconds...');
+    setTimeout(() => imap.connect(), 30000); // Attempt to reconnect after 30 seconds
   });
-  
+
+  // Start the connection
   imap.connect();
 }
 
-// Start the listener
-startImapListener();
+function openInbox(imap) {
+  imap.openBox('INBOX', false, (err, box) => { // Open as not read-only
+    if (err) throw err;
+    console.log(`[Mail Listener] Inbox opened. Waiting for new messages...`);
+    
+    // Listen for new mail events
+    imap.on('mail', () => {
+      console.log('[Mail Listener] 📬 New mail received! Searching for OTP...');
+      searchForOtp(imap);
+    });
+  });
+}
+
+function searchForOtp(imap) {
+  // Search for unseen emails from WhatsApp
+  imap.search(['UNSEEN', ['FROM', 'whatsapp']], (err, results) => {
+    if (err || !results || results.length === 0) {
+      if (err) console.error('[Mail Listener] Search Error:', err);
+      return;
+    }
+
+    const f = imap.fetch(results, { bodies: '', markSeen: true }); // Mark as seen to avoid reprocessing
+
+    f.on('message', (msg, seqno) => {
+      msg.on('body', (stream, info) => {
+        simpleParser(stream, async (err, parsed) => {
+          if (err) {
+            console.error('[Mail Listener] Email parsing error:', err);
+            return;
+          }
+
+          // Extract the OTP code using a regular expression
+          const body = parsed.text || '';
+          const match = body.match(/\b(\d{3}-\d{3})\b/); // Looks for a 123-456 pattern
+          
+          if (match && match[1]) {
+            const otp = match[1];
+            console.log(`[Mail Listener] OTP Found: ${otp}`);
+
+            // Find which user this OTP belongs to
+            const assignedUserResult = await dbPool.query(
+              "SELECT user_id FROM temp_numbers WHERE status = 'assigned'"
+            );
+
+            if (assignedUserResult.rows.length > 0) {
+              const userId = assignedUserResult.rows[0].user_id;
+              
+              // Send the OTP to the user
+              await botInstance.sendMessage(
+                userId,
+                `Your WhatsApp OTP code is: <code>${otp}</code>`,
+                { parse_mode: 'HTML' }
+              );
+
+              // --- IMPLEMENTING IMMEDIATE DELETION ---
+              // After sending the OTP, delete the number from the database.
+              await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
+              console.log(`[Mail Listener] OTP sent to user ${userId} and their temporary number has been deleted.`);
+              
+            } else {
+              console.warn('[Mail Listener] Found an OTP but no user has a number assigned.');
+            }
+          }
+        });
+      });
+    });
+
+    f.once('error', (err) => {
+      console.log('[Mail Listener] Fetch error: ' + err);
+    });
+  });
+}
+
+module.exports = { init };
