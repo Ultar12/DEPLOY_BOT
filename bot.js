@@ -4629,6 +4629,31 @@ if (action === 'dkey_cancel') {
         return;
     }
 
+
+  bot.onText(/^\/mynum$/, async (msg) => {
+    const userId = msg.chat.id.toString();
+    try {
+        const result = await pool.query("SELECT number, status, assigned_at FROM temp_numbers WHERE user_id = $1 ORDER BY assigned_at DESC", [userId]);
+        const numbers = result.rows;
+        
+        if (numbers.length === 0) {
+            return bot.sendMessage(userId, "You have not been assigned any temporary numbers.");
+        }
+        
+        let message = "<b>Your WhatsApp Numbers:</b>\n\n";
+        numbers.forEach(num => {
+            const statusEmoji = num.status === 'assigned' ? '🔵' : '🔴';
+            message += `${statusEmoji} <code>${num.number}</code> | <b>Status:</b> ${num.status}\n`;
+        });
+        
+        await bot.sendMessage(userId, message, { parse_mode: 'HTML' });
+    } catch (e) {
+        console.error(`Error fetching numbers for user ${userId}:`, e);
+        await bot.sendMessage(userId, "An error occurred while fetching your numbers.");
+    }
+});
+
+
   // --- FIX: Refactored confirm_updateall to use an editable progress message ---
 if (action === 'confirm_updateall') {
     const adminId = q.message.chat.id.toString();
