@@ -3670,7 +3670,7 @@ _Your referred users will be displayed here once they deploy their first bot._
   // --- END OF FIX ---
   // Add this block inside bot.on('message', ...)
 
-  ifif (text === 'More Features') 
+  if (text === 'More Features') {
       await dbServices.updateUserActivity(cid);
       const moreFeaturesText = "Here are some additional features and services:";
       const moreFeaturesKeyboard = {
