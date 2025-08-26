@@ -3804,7 +3804,7 @@ _Your referred users will be displayed here once they deploy their first bot._
     // Add all other standard buttons, including the new Referrals button
     allButtons.push(
         { text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' },
-        { text: "Referrals", callback_data: 'referrals' }, // <-- ADDED REFERRALS BUTTON
+        { text: "Referrals", callback_data: 'Referrals' }, // <-- ADDED REFERRALS BUTTON
         { text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }
     );
 
