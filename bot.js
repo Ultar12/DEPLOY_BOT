@@ -3671,20 +3671,34 @@ _Your referred users will be displayed here once they deploy their first bot._
   // Add this block inside bot.on('message', ...)
 
   if (text === 'More Features') {
-      await dbServices.updateUserActivity(cid);
-      const moreFeaturesText = "Here are some additional features and services:";
-      const moreFeaturesKeyboard = {
-          inline_keyboard: [
-              // New row for the free trial button
-              [{ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' }],
-              // Existing buttons
-              [{ text: "Buy a WhatsApp Account", callback_data: 'buy_whatsapp_account' }],
-              [{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]
-          ]
-      };
-      await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
-      return;
-  }
+    await dbServices.updateUserActivity(cid);
+    const moreFeaturesText = "Here are some additional features and services:";
+
+    // Check if the user has already claimed a free trial number
+    const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
+    const hasUsedTrial = trialCheck.rows.length > 0;
+
+    // Start building the keyboard layout
+    const keyboardLayout = [];
+
+    // Conditionally add the free trial button
+    // It will only be added if the user has NOT used their trial yet
+    if (!hasUsedTrial) {
+        keyboardLayout.push([{ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' }]);
+    }
+
+    // Add the other standard buttons
+    keyboardLayout.push([{ text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' }]);
+    keyboardLayout.push([{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]);
+
+    const moreFeaturesKeyboard = {
+        inline_keyboard: keyboardLayout
+    };
+    
+    await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
+    return;
+}
+
 
 
 
