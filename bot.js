@@ -5184,32 +5184,34 @@ if (action === 'levanter_wa_fallback') {
 }
 
 
+if (action === 'free_trial_temp_num') {
+    const cid = q.message.chat.id.toString();
 
-  // Add this inside bot.on('callback_query', async q => { ... })
-
-  if (action === 'free_trial_temp_num') {
     // Check if the user has already claimed a free trial number
     const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
     if (trialCheck.rows.length > 0) {
-      await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
-      return;
+        await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
+        return;
     }
 
-    // If they haven't claimed it, start the channel join verification process
+    // Set the user's state to indicate they are in the verification process
+    userStates[cid] = { step: 'AWAITING_TRIAL_VERIFICATION' };
+
+    // Prompt them to join the channel
     await bot.editMessageText("To get your free trial number, you must join our channel. This helps us keep you updated!", {
-      chat_id: cid,
-      message_id: q.message.message_id,
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-          // We add '_temp_num' to the callback to differentiate it from the deploy trial
-          [{ text: 'I have joined, Verify me!', callback_data: 'verify_join_temp_num' }]
-        ]
-      }
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                [{ text: 'I have joined, Verify me!', callback_data: 'verify_join_temp_num' }]
+            ]
+        }
     });
     return;
-  }
+}
+
 
   
 if (action === 'buy_temp_num') {
