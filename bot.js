@@ -1633,82 +1633,8 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
 
-  app.post('/paystack/webhook', express.json(), async (req, res) => {
-    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
-    if (hash !== req.headers['x-paystack-signature']) {
-        console.warn('Invalid Paystack signature received.');
-        return res.sendStatus(401);
-    }
-
-    const event = req.body;
-
-    if (event.event === 'charge.success') {
-        const { reference, amount, currency, customer } = event.data;
-        try {
-            // FIX: Check if the payment has already been processed to prevent duplicates
-            const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
-            if (checkProcessed.rows.length > 0) {
-                console.log(`Webhook for reference ${reference} already processed. Ignoring.`);
-                return res.sendStatus(200); // Send success to acknowledge the webhook
-            }
-
-            const pendingPayment = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-            if (pendingPayment.rows.length === 0) {
-                console.warn(`Pending payment not found for reference: ${reference}.`);
-                return res.sendStatus(200);
-            }
-            const { user_id, bot_type, app_name, session_id } = pendingPayment.rows[0];
-
-            if (!app_name || !session_id) {
-                await bot.sendMessage(user_id, `Payment confirmed, but deployment failed due to missing app details. Please contact the admin.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: Paystack webhook for reference ${reference} received, but app_name or session_id was missing from pending_payments table.`, { parse_mode: 'Markdown' });
-                return res.sendStatus(500);
-            }
-            
-            await pool.query(
-                `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [reference, user_id, customer.email, amount, currency, event.data.paid_at]
-            );
-
-            const userChat = await bot.getChat(user_id);
-            const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
-
-            if (bot_type && bot_type.startsWith('renewal_')) {
-                const appNameToRenew = bot_type.split('_')[1];
-                await pool.query(
-                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`,
-                    [user_id, appNameToRenew]
-                );
-
-                await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameToRenew)}* has been successfully renewed for another 45 days.`, { parse_mode: 'Markdown' });
-
-                const adminMessage = `*Bot Renewed!*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameToRenew}\``;
-                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
-            } else {
-                await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
-                await pool.query('UPDATE user_deployments SET email = $1 WHERE user_id = $2 AND app_name = $3', [customer.email, user_id, app_name]);
-                await sendPaymentConfirmation(customer.email, customer.first_name, reference, app_name, bot_type, session_id);
-                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name };
-                dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
-                const adminMessage = `*New App Deployed (Paid via Paystack)*\n\n*Amount:* ${amount / 100} ${currency}\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``;
-                await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
-            }
-
-            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
-            console.log(`Successfully processed payment for reference: ${reference}`);
-        } catch (dbError) {
-            console.error(`Webhook DB Error for reference ${reference}:`, dbError);
-            return res.sendStatus(500);
-        }
-    }
-    res.sendStatus(200);
-});
-
-
-// POST /paystack/webhook - Handles payment notifications from Paystack
 app.post('/paystack/webhook', express.json(), async (req, res) => {
+    // 1. Verify the Paystack signature to ensure the request is legitimate
     const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
         .update(JSON.stringify(req.body))
         .digest('hex');
@@ -1719,37 +1645,88 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
 
     const event = req.body;
 
+    // 2. Only process successful payments
     if (event.event === 'charge.success') {
-        const { reference, metadata } = event.data;
-        const userId = metadata.user_id;
-        const number = metadata.phone_number;
+        const { reference, metadata, amount, currency, customer } = event.data;
+        const userId = metadata.user_id; // Get the user ID from the metadata
 
-        if (metadata.product === 'temporary_number') {
-            try {
-                // Update the number status to assigned, link it to the user, and store the timestamp
+        try {
+            // Check if this payment has already been processed to prevent duplicates
+            const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
+            if (checkProcessed.rows.length > 0) {
+                console.log(`Webhook for reference ${reference} already processed. Ignoring.`);
+                return res.sendStatus(200); // Acknowledge the webhook without processing again
+            }
+
+            // 3. Use metadata to determine the payment type and route the logic
+            if (metadata.product === 'temporary_number') {
+                // --- THIS IS THE CORRECT LOGIC FOR TEMPORARY NUMBER PURCHASES ---
+                const number = metadata.phone_number;
+
+                // Mark the number as 'assigned' in the database
                 await pool.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, number]);
-                
-                // Notify the user
+
+                // Also add a record to your main payments table for revenue tracking
+                await pool.query(
+                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [reference, userId, customer?.email || 'temp-num@email.com', amount, currency, event.data.paid_at]
+                );
+
+                // Notify the user of their purchase
                 await bot.sendMessage(userId, `Payment successful! You have been assigned the number: <code>${number}</code>`, { parse_mode: 'HTML' });
                 await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
 
-                // Notify the admin
+                // Notify the admin of the new purchase
                 const userChat = await bot.getChat(userId);
                 const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
                 await bot.sendMessage(ADMIN_ID, `New temporary number purchased!\n\nUser: ${userName} (<code>${userId}</code>)\nNumber: <code>${number}</code>`, { parse_mode: 'HTML' });
+                
+                console.log(`Successfully processed temporary number payment for reference: ${reference}`);
 
-                // Acknowledge Paystack webhook
-                res.sendStatus(200);
+            } else {
+                // --- THIS IS THE EXISTING LOGIC FOR BOT DEPLOYMENTS/RENEWALS ---
+                const pendingPayment = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+                if (pendingPayment.rows.length === 0) {
+                    console.warn(`Pending payment for bot deploy not found for reference: ${reference}.`);
+                    return res.sendStatus(200);
+                }
+                const { user_id, bot_type, app_name, session_id } = pendingPayment.rows[0];
 
-            } catch (dbError) {
-                console.error(`Webhook DB Error for reference ${reference}:`, dbError);
-                await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Failed to assign number ${number} to user ${userId} after successful payment. Manual intervention required.`);
-                res.sendStatus(500); // Internal Server Error
+                await pool.query(
+                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+                );
+
+                const userChat = await bot.getChat(user_id);
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+
+                if (bot_type && bot_type.startsWith('renewal_')) {
+                    // Bot renewal logic...
+                    const appNameToRenew = bot_type.split('_')[1];
+                    await pool.query( `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`, [user_id, appNameToRenew]);
+                    await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameToRenew)}* has been successfully renewed.`, { parse_mode: 'Markdown' });
+                    await bot.sendMessage(ADMIN_ID, `*Bot Renewed!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameToRenew}\``, { parse_mode: 'Markdown' });
+                } else {
+                    // New bot deployment logic...
+                    await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
+                    const deployVars = { SESSION_ID: session_id, APP_NAME: app_name };
+                    dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
+                    await bot.sendMessage(ADMIN_ID, `*New App Deployed (Paid)*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                }
+
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
+                console.log(`Successfully processed bot deployment payment for reference: ${reference}`);
             }
+
+        } catch (dbError) {
+            console.error(`Webhook DB Error for reference ${reference}:`, dbError);
+            await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Webhook processing failed for reference ${reference}. Manual intervention required.`);
+            return res.sendStatus(500); // Internal Server Error
         }
-    } else {
-        res.sendStatus(200); // Acknowledge other events without processing
     }
+
+    // Acknowledge the webhook to Paystack
+    res.sendStatus(200);
 });
 
 
