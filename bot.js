@@ -2235,6 +2235,55 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     }
 });
 
+// Admin command to add a temporary number
+bot.onText(/^\/addnum (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+
+    const number = match[1].trim();
+    // Simple validation for a phone number format
+    if (!/^\+\d{10,15}$/.test(number)) {
+        return bot.sendMessage(adminId, "Invalid number format. Please use the full international format, e.g., `+48699520803`", { parse_mode: 'Markdown' });
+    }
+
+    const maskedNumber = number.slice(0, 6) + '***' + number.slice(-3);
+
+    try {
+        await pool.query("INSERT INTO temp_numbers (number, masked_number) VALUES ($1, $2)", [number, maskedNumber]);
+        await bot.sendMessage(adminId, `Successfully added temporary number \`${number}\` to the database.`, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error(`Error adding number ${number}:`, e);
+        if (e.code === '23505') { // PostgreSQL unique violation error code
+            return bot.sendMessage(adminId, `⚠Number \`${number}\` already exists in the database.`, { parse_mode: 'Markdown' });
+        }
+        await bot.sendMessage(adminId, `Failed to add number. An error occurred.`);
+    }
+});
+
+// Admin command to remove a temporary number
+bot.onText(/^\/removenum (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+    
+    const number = match[1].trim();
+    try {
+        const result = await pool.query("DELETE FROM temp_numbers WHERE number = $1", [number]);
+        if (result.rowCount > 0) {
+            await bot.sendMessage(adminId, `Successfully removed number \`${number}\` from the database.`, { parse_mode: 'Markdown' });
+        } else {
+            await bot.sendMessage(adminId, `⚠Number \`${number}\` not found in the database.`, { parse_mode: 'Markdown' });
+        }
+    } catch (e) {
+        console.error(`Error removing number ${number}:`, e);
+        await bot.sendMessage(adminId, `Failed to remove number. An error occurred.`);
+    }
+});
+
+
 // --- REPLACE this entire function in bot.js ---
 
 bot.onText(/^\/stats$/, async (msg) => {
