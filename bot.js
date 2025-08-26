@@ -5353,8 +5353,7 @@ if (action === 'verify_join_after_miniapp') {
 }
 
 
-// In bot.on('callback_query', ...)
-// Add this inside bot.on('callback_query', async q => { ... })
+// Add this code block with your other "if (action === ...)" handlers
 
 if (action === 'free_trial_temp_num') {
     const userId = q.from.id.toString();
@@ -5378,6 +5377,9 @@ if (action === 'free_trial_temp_num') {
         // If the user is eligible, prepare to launch the Mini App
         const verificationUrl = `${process.env.APP_URL}/verify`;
 
+        // This line sets the state before the Mini App is launched.
+        userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
+
         await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -5394,7 +5396,6 @@ if (action === 'free_trial_temp_num') {
     }
     return;
 }
-
 
 
 
