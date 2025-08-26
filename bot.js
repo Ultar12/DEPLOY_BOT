@@ -5127,63 +5127,62 @@ if (action === 'levanter_wa_fallback') {
 
   if (action === 'verify_join_temp_num') {
     const userId = q.from.id;
-    show_alert: true;
+    // The cid variable was missing, which would cause an error later.
+    const cid = q.message.chat.id.toString();
 
     try {
-      const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-      const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
+        const isMember = ['creator', 'administrator', 'member'].includes(member.status);
 
-      if (isMember) {
-        // Verification successful, find a random available number
-        const numberResult = await pool.query(
-          "SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1"
-        );
+        if (isMember) {
+            // This code runs if the user IS a member
+            const numberResult = await pool.query(
+                "SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1"
+            );
 
-        if (numberResult.rows.length === 0) {
-          await bot.editMessageText("Sorry, no free trial numbers are available right now. Please check back later.", {
-            chat_id: cid,
-            message_id: q.message.message_id
-          });
-          return;
+            if (numberResult.rows.length === 0) {
+                await bot.editMessageText("Sorry, no free trial numbers are available right now. Please check back later.", {
+                    chat_id: cid,
+                    message_id: q.message.message_id
+                });
+                return;
+            }
+
+            const freeNumber = numberResult.rows[0].number;
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
+                await client.query("INSERT INTO free_trial_numbers (user_id, number_used) VALUES ($1, $2)", [userId, freeNumber]);
+                await client.query('COMMIT');
+            } catch (e) {
+                await client.query('ROLLBACK');
+                throw e;
+            } finally {
+                client.release();
+            }
+
+            await bot.editMessageText(`✅ Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'HTML'
+            });
+            await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
+            await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
+
+        } else {
+            // --- THIS IS THE FIX ---
+            // User is not in the channel. Send the alert and immediately stop the function.
+            await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet. Please join and try again.", show_alert: true });
+            return; // <-- This crucial line stops the code from continuing.
         }
-
-        const freeNumber = numberResult.rows[0].number;
-
-        // Use a database transaction to ensure both actions succeed or fail together
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          // 1. Assign the number to the user
-          await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
-          // 2. Record that the user has claimed their trial
-          await client.query("INSERT INTO free_trial_numbers (user_id, number_used) VALUES ($1, $2)", [userId, freeNumber]);
-          await client.query('COMMIT');
-        } catch (e) {
-          await client.query('ROLLBACK');
-          throw e; // Propagate the error to the outer catch block
-        } finally {
-          client.release();
-        }
-
-        // Notify the user and admin
-        await bot.editMessageText(`Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
-          chat_id: cid,
-          message_id: q.message.message_id,
-          parse_mode: 'HTML'
-        });
-        await bot.sendMessage(userId, 'OTP will send automatically if detected.');
-        await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
-
-      } else {
-        // User is not in the channel
-        await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet. Please join and try again.", show_alert: true });
-      }
     } catch (error) {
-      console.error("Error during free trial number verification:", error);
-      await bot.answerCallbackQuery(q.id, { text: "An error occurred during verification. Please try again.", show_alert: true });
+        console.error("Error during free trial number verification:", error);
+        await bot.answerCallbackQuery(q.id, { text: "An error occurred during verification. Please try again.", show_alert: true });
     }
     return;
-  }
+}
+
 
 
   // Add this inside bot.on('callback_query', async q => { ... })
