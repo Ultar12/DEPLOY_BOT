@@ -2285,7 +2285,9 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 
 bot.onText(/^\/buytemp$/, async msg => {
     const cid = msg.chat.id.toString();
-    const availableNumbers = await pool.query("SELECT masked_number, number FROM temp_numbers WHERE status = 'available' LIMIT 5");
+    const availableNumbers = await pool.query(
+        "SELECT masked_number, number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 5"
+    );
 
     if (availableNumbers.rows.length === 0) {
         return bot.sendMessage(cid, "Sorry, no temporary numbers are available at the moment.");
@@ -2296,19 +2298,16 @@ bot.onText(/^\/buytemp$/, async msg => {
         callback_data: `buy_temp_num:${row.number}`
     }]);
 
-    // The message has been updated to include the note
+    // --- The message text has been updated here ---
     const messageText = "Choose a number to purchase.\n\n" +
-                        "**Note:** These numbers are for **one-time use** to receive a single OTP code.";
+                        "**Note:** These are **+48 Poland** numbers and are for **one-time use** to receive a single OTP code.";
 
     await bot.sendMessage(cid, messageText, {
-        parse_mode: 'Markdown', // Added parse_mode to render the bold text
+        parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: buttons }
     });
 });
 
-
-
-// bot.js
 
 // ... other code ...
 
