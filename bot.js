@@ -5014,6 +5014,31 @@ if (action === 'apply_referral_reward') {
     }
 }
 
+// Add this inside bot.on('callback_query', async q => { ... })
+
+  if (action === 'buy_whatsapp_account') {
+    try {
+      // Check if the user already has an assigned number
+      const result = await pool.query(
+        "SELECT number FROM temp_numbers WHERE user_id = $1 AND status = 'assigned'", 
+        [cid]
+      );
+
+      if (result.rows.length > 0) {
+        // If they have a number, inform them
+        const userNumber = result.rows[0].number;
+        await bot.sendMessage(cid, `You already have an active number: <code>${userNumber}</code>\n\nYou can check it anytime with the /mynum command.`, { parse_mode: 'HTML' });
+      } else {
+        // If they don't have a number, tell them how to buy one
+        await bot.sendMessage(cid, "You don't have an active number yet. Please use the /buytemp command to purchase one.");
+      }
+    } catch (error) {
+      console.error("Error checking for user's temp number:", error);
+      await bot.sendMessage(cid, "Sorry, an error occurred. Please try again later.");
+    }
+    return;
+  }
+  
 
   // --- NEW: Handler for using a suggested app name ---
 if (action === 'use_suggested_name') {
