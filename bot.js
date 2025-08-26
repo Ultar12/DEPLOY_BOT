@@ -734,7 +734,7 @@ function buildKeyboard(isAdmin) {
       ['Get Session ID', 'Deploy'],
       ['My Bots', 'Free Trial'],
       ['FAQ', 'Referrals'],
-      ['Support' 'More Features'] 
+      ['Support', 'More Features'] 
   ];
   if (isAdmin) {
       return [
