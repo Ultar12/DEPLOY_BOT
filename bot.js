@@ -5078,8 +5078,15 @@ if (action === 'back_to_bapp_list') {
   
   
   if (action === 'Referrals') {
-    const userId = msg.chat.id.toString();
-    const referralLink = `https://t.me/${botUsername}?start=${userId}`;
+    // FIX 1: Get user and message details from the 'query' object, not 'msg'.
+    // The 'query' object is what you get from a button press.
+    const userId = query.from.id;
+    const chatId = query.message.chat.id;
+    const messageId = query.message.message_id;
+
+    // This creates the referral link using the user's ID.
+    // I've added "ref_" to make your referral links distinct.
+    const referralLink = `https://t.me/${botUsername}?start=ref_${userId}`;
 
     await dbServices.updateUserActivity(userId);
 
@@ -5089,27 +5096,45 @@ if (action === 'back_to_bapp_list') {
 Your unique referral link is:
 \`${referralLink}\`
 
-Share this link with your friends. When they deploy a bot using your link, you get rewarded!
+Share this link with your friends. When they use your link, you get rewarded!
 
 *Your Rewards:*
 - You get *20 days* added to your bot's expiration for each new user you invite.
 - You get an extra *7 days* if one of your invited users invites someone new.
 
-_Your referred users will be displayed here once they deploy their first bot._
+_Your referred users will be displayed here once they join._
     `;
-    
-    // The "Copy to Clipboard" button has been removed for simplicity.
-    await bot.sendMessage(userId, referralMessage, { 
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
+
+    try {
+        // FIX 2: Acknowledge the button press to stop the loading animation.
+        await bot.answerCallbackQuery(query.id);
+
+        // FIX 3: Edit the original message instead of sending a new one.
+        await bot.editMessageText(referralMessage, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        // This share button is well-written, no changes needed here.
+                        { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Check out this bot!')}` }
+                    ],
+                    [
+                        // Add a "Back" button for better navigation
+                        { text: '« Back to More Features', callback_data: 'more_features_menu' }
+                    ]
                 ]
-            ]
-        }
-    });
-  }
+            }
+        });
+
+    } catch (error) {
+        // This catch block prevents the bot from crashing if it can't edit the message
+        // (e.g., if the message is too old).
+        console.error("Error editing message for referrals:", error);
+    }
+}
+
 // --- REPLACE this entire block ---
 
 if (action === 'select_get_session_type') {
