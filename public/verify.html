@@ -5,79 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Free Trial Verification</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
     <style>
         body { font-family: sans-serif; background-color: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); text-align: center; padding: 20px; }
-        #status { margin: 20px 0; font-weight: bold; }
-        .h-captcha { display: inline-block; }
+        #status { margin: 20px 0; font-weight: bold; font-size: 1.2em; }
     </style>
 </head>
 <body>
     <h2>Free Trial Verification</h2>
-    <p>Please complete the security check to proceed.</p>
-    <div id="status">Checking your location...</div>
-
-    <div id="captcha-container" style="display: none;">
-        <div class="h-captcha" data-sitekey="cf56be84-1806-4bd2-894c-984eec8603c2"></div>
-    </div>
+    <div id="status">Verifying your eligibility...</div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        // This function is called by hCaptcha when solved
-        async function onCaptchaVerified(token) {
-            document.getElementById('status').innerText = 'Captcha solved! Sending verification...';
-            
+        // This function runs automatically when the page loads
+        async function runVerification() {
             try {
-                const response = await fetch('/pre-verify-user', {
+                // Get IP and location info
+                const geoResponse = await fetch('https://ipapi.co/json/');
+                const geoData = await geoResponse.json();
+
+                if (geoData.country_code !== 'NG') {
+                    document.getElementById('status').innerText = 'Sorry, the free trial is only available in Nigeria.';
+                    return;
+                }
+
+                // If location is OK, send the data to the bot's server for final checks
+                const serverResponse = await fetch('/pre-verify-user', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Telegram-Init-Data': tg.initData
                     },
-                    body: JSON.stringify({ captchaToken: token })
+                    // We don't need to send a captcha token anymore
+                    body: JSON.stringify({}) 
                 });
-                const data = await response.json();
 
-                if (data.success) {
-                    // This line sends the "verified" signal back to your bot
+                const serverData = await serverResponse.json();
+
+                if (serverData.success) {
+                    // Signal success to the bot and close the app
                     tg.sendData(JSON.stringify({ status: 'verified' }));
-                    // This line then closes the Mini App window
                     tg.close();
                 } else {
-                    document.getElementById('status').innerText = `Verification Failed: ${data.message}`;
+                    document.getElementById('status').innerText = `Verification Failed: ${serverData.message}`;
                 }
-            } catch (err) {
-                 document.getElementById('status').innerText = 'An error occurred. Please try again.';
-            }
-        }
-        
-        // Check location when the page loads
-        async function checkLocationAndInitialize() {
-            try {
-                const response = await fetch('https://ipapi.co/json/');
-                const data = await response.json();
-
-                if (data.country_code !== 'NG') {
-                    document.getElementById('status').innerText = 'Sorry, the free trial is only available in Nigeria.';
-                    return;
-                }
-                
-                // If location is correct, show the captcha
-                document.getElementById('status').innerText = 'Location verified. Please solve the captcha.';
-                document.getElementById('captcha-container').style.display = 'block';
-                window.hcaptcha.render(document.querySelector('.h-captcha'), {
-                    sitekey: 'cf56be84-1806-4bd2-894c-984eec8603c2',
-                    callback: onCaptchaVerified
-                });
 
             } catch (error) {
-                document.getElementById('status').innerText = 'Could not verify location. Please disable VPNs and try again.';
+                document.getElementById('status').innerText = 'Could not complete verification. Please disable any VPNs and try again.';
             }
         }
         
-        window.onload = checkLocationAndInitialize;
+        window.onload = runVerification;
     </script>
 </body>
 </html>
