@@ -3079,18 +3079,10 @@ bot.on('message', async msg => {
       }
   }
 
-  if (!text) return; // Only process text messages
+  // --- THIS IS THE CORRECT ORDER ---
 
-  await dbServices.updateUserActivity(cid); // Update user activity on any message
-  await notifyAdminUserOnline(msg); // Call notifyAdminUserOnline here for all messages
-
-  if (isMaintenanceMode && cid !== ADMIN_ID) {
-      await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
-      return;
-  }
-
-  // Add this inside the main bot.on('message', ...) handler
-if (msg.web_app_data) {
+  // 1. First, check for data from the Mini App.
+  if (msg.web_app_data) {
     const data = JSON.parse(msg.web_app_data.data);
     if (data.status === 'verified') {
         await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click verify below to receive your free number.", {
@@ -3103,8 +3095,26 @@ if (msg.web_app_data) {
             }
         });
     }
-    return;
-}
+    return; // Stop here after handling the web app data
+  }
+
+  // 2. Second, check if it's a regular text message. If not, stop.
+  if (!text) return; 
+
+  // --- END OF FIX ---
+
+
+  // Now the rest of your code for handling text messages will run correctly
+  await dbServices.updateUserActivity(cid); 
+  await notifyAdminUserOnline(msg); 
+
+  if (isMaintenanceMode && cid !== ADMIN_ID) {
+      await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
+      return;
+  }
+
+  // ... the rest of your message handler code (if (text === 'More Features'), etc.)
+
 
  // Automatic Keyboard Update Check
 const userActivity = await pool.query('SELECT keyboard_version FROM user_activity WHERE user_id = $1', [cid]);
