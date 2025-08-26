@@ -3,6 +3,8 @@ const { simpleParser } = require('mailparser');
 
 let botInstance;
 let dbPool;
+// --- ADD THIS LINE ---
+const ADMIN_ID = process.env.ADMIN_ID; // Make sure ADMIN_ID is in your .env file
 
 // Function to initialize the mail listener
 function init(bot, pool) {
@@ -39,11 +41,10 @@ function init(bot, pool) {
 }
 
 function openInbox(imap) {
-  imap.openBox('INBOX', false, (err, box) => { // Open as not read-only
+  imap.openBox('INBOX', false, (err, box) => { 
     if (err) throw err;
     console.log(`[Mail Listener] Inbox opened. Waiting for new messages...`);
     
-    // Listen for new mail events
     imap.on('mail', () => {
       console.log('[Mail Listener] 📬 New mail received! Searching for OTP...');
       searchForOtp(imap);
@@ -52,14 +53,14 @@ function openInbox(imap) {
 }
 
 function searchForOtp(imap) {
-  // Search for unseen emails from WhatsApp
-  imap.search(['UNSEEN', ['FROM', 'whatsapp']], (err, results) => {
+  // Search for unseen emails from WhatsApp, specifically for verification
+  imap.search(['UNSEEN', ['FROM', 'whatsapp'], ['SUBJECT', 'verify']], (err, results) => {
     if (err || !results || results.length === 0) {
       if (err) console.error('[Mail Listener] Search Error:', err);
       return;
     }
 
-    const f = imap.fetch(results, { bodies: '', markSeen: true }); // Mark as seen to avoid reprocessing
+    const f = imap.fetch(results, { bodies: '', markSeen: true }); 
 
     f.on('message', (msg, seqno) => {
       msg.on('body', (stream, info) => {
@@ -69,15 +70,19 @@ function searchForOtp(imap) {
             return;
           }
 
-          // Extract the OTP code using a regular expression
           const body = parsed.text || '';
-          const match = body.match(/\b(\d{3}-\d{3})\b/); // Looks for a 123-456 pattern
+          
+          // --- THIS IS THE UPDATED LOGIC ---
+          // New regex to find the code specifically after "Enter this code:"
+          const match = body.match(/Enter this code:\s*(\d{3}-\d{3})/);
           
           if (match && match[1]) {
             const otp = match[1];
-            console.log(`[Mail Listener] OTP Found: ${otp}`);
+            console.log(`[Mail Listener] WhatsApp Email Verification Code Found: ${otp}`);
 
-            // Find which user this OTP belongs to
+            // --- SEND THE CODE TO THE ADMIN ---
+            await botInstance.sendMessage(ADMIN_ID, `📧 New WhatsApp Email Code Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
+
             const assignedUserResult = await dbPool.query(
               "SELECT user_id FROM temp_numbers WHERE status = 'assigned'"
             );
@@ -85,15 +90,12 @@ function searchForOtp(imap) {
             if (assignedUserResult.rows.length > 0) {
               const userId = assignedUserResult.rows[0].user_id;
               
-              // Send the OTP to the user
               await botInstance.sendMessage(
                 userId,
-                `Your WhatsApp OTP code is: <code>${otp}</code>`,
+                `Your WhatsApp verification code is: <code>${otp}</code>`,
                 { parse_mode: 'HTML' }
               );
 
-              // --- IMPLEMENTING IMMEDIATE DELETION ---
-              // After sending the OTP, delete the number from the database.
               await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
               console.log(`[Mail Listener] OTP sent to user ${userId} and their temporary number has been deleted.`);
               
