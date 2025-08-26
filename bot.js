@@ -2213,10 +2213,16 @@ bot.onText(/^\/buytemp$/, async msg => {
         callback_data: `buy_temp_num:${row.number}`
     }]);
 
-    await bot.sendMessage(cid, "Choose a temporary number to purchase:", {
+    // The message has been updated to include the note
+    const messageText = "Choose a temporary number to purchase.\n\n" +
+                        "**Note:** These numbers are for **one-time use** to receive a single OTP code.";
+
+    await bot.sendMessage(cid, messageText, {
+        parse_mode: 'Markdown', // Added parse_mode to render the bold text
         reply_markup: { inline_keyboard: buttons }
     });
 });
+
 
 
 // bot.js
