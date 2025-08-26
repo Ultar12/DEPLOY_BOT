@@ -5373,21 +5373,47 @@ if (action === 'verify_join_after_miniapp') {
 
 
 // In bot.on('callback_query', ...)
-if (action === 'free_trial_temp_num') {
-    const cid = q.message.chat.id.toString();
-    const verificationUrl = `${process.env.APP_URL}/verify`;
+// Add this inside bot.on('callback_query', async q => { ... })
 
-    await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
-            ]
+if (action === 'free_trial_temp_num') {
+    const userId = q.from.id.toString();
+    const cid = q.message.chat.id.toString();
+
+    // Check if the APP_URL is configured, which is essential for the Mini App
+    if (!process.env.APP_URL) {
+        console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
+        await bot.answerCallbackQuery(q.id, { text: "Error: The verification service is currently unavailable.", show_alert: true });
+        return;
+    }
+    
+    try {
+        // Check if the user has already claimed a trial
+        const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
+        if (trialUserCheck.rows.length > 0) {
+            await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
+            return;
         }
-    });
+
+        // If the user is eligible, prepare to launch the Mini App
+        const verificationUrl = `${process.env.APP_URL}/verify`;
+
+        await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
+                ]
+            }
+        });
+
+    } catch (error) {
+        console.error("Error during free trial eligibility check:", error);
+        await bot.answerCallbackQuery(q.id, { text: "An error occurred. Please try again.", show_alert: true });
+    }
     return;
 }
+
 
 
 
