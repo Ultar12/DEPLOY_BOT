@@ -268,6 +268,13 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
             data JSONB
         );
     `);
+await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS free_trial_numbers (
+    user_id TEXT PRIMARY KEY,
+    number_used TEXT NOT NULL,
+    claimed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+`);
 
       await dbPool.query(`
       CREATE TABLE IF NOT EXISTS pinned_messages (
@@ -3663,7 +3670,7 @@ _Your referred users will be displayed here once they deploy their first bot._
   // --- END OF FIX ---
   // Add this block inside bot.on('message', ...)
 
-  ifif (text === 'More Features') {
+  ifif (text === 'More Features') 
       await dbServices.updateUserActivity(cid);
       const moreFeaturesText = "Here are some additional features and services:";
       const moreFeaturesKeyboard = {
@@ -5101,6 +5108,94 @@ if (action === 'levanter_wa_fallback') {
     
     return;
 }
+
+  // Add this inside bot.on('callback_query', async q => { ... })
+
+  if (action === 'verify_join_temp_num') {
+    const userId = q.from.id;
+
+    try {
+      const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
+      const isMember = ['creator', 'administrator', 'member'].includes(member.status);
+
+      if (isMember) {
+        // Verification successful, find a random available number
+        const numberResult = await pool.query(
+          "SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1"
+        );
+
+        if (numberResult.rows.length === 0) {
+          await bot.editMessageText("Sorry, no free trial numbers are available right now. Please check back later.", {
+            chat_id: cid,
+            message_id: q.message.message_id
+          });
+          return;
+        }
+
+        const freeNumber = numberResult.rows[0].number;
+
+        // Use a database transaction to ensure both actions succeed or fail together
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          // 1. Assign the number to the user
+          await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
+          // 2. Record that the user has claimed their trial
+          await client.query("INSERT INTO free_trial_numbers (user_id, number_used) VALUES ($1, $2)", [userId, freeNumber]);
+          await client.query('COMMIT');
+        } catch (e) {
+          await client.query('ROLLBACK');
+          throw e; // Propagate the error to the outer catch block
+        } finally {
+          client.release();
+        }
+
+        // Notify the user and admin
+        await bot.editMessageText(`Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          parse_mode: 'HTML'
+        });
+        await bot.sendMessage(userId, 'OTP will send automatically if detected.');
+        await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
+
+      } else {
+        // User is not in the channel
+        await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet. Please join and try again.", show_alert: true });
+      }
+    } catch (error) {
+      console.error("Error during free trial number verification:", error);
+      await bot.answerCallbackQuery(q.id, { text: "An error occurred during verification. Please try again.", show_alert: true });
+    }
+    return;
+  }
+
+
+  // Add this inside bot.on('callback_query', async q => { ... })
+
+  if (action === 'free_trial_temp_num') {
+    // Check if the user has already claimed a free trial number
+    const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
+    if (trialCheck.rows.length > 0) {
+      await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
+      return;
+    }
+
+    // If they haven't claimed it, start the channel join verification process
+    await bot.editMessageText("To get your free trial number, you must join our channel. This helps us keep you updated!", {
+      chat_id: cid,
+      message_id: q.message.message_id,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+          // We add '_temp_num' to the callback to differentiate it from the deploy trial
+          [{ text: 'I have joined, Verify me!', callback_data: 'verify_join_temp_num' }]
+        ]
+      }
+    });
+    return;
+  }
 
   
 if (action === 'buy_temp_num') {
