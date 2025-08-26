@@ -5400,6 +5400,8 @@ if (action === 'free_trial_temp_num') {
 
 
   
+// Replace this block inside bot.on('callback_query', ...)
+
 if (action === 'buy_temp_num') {
     const cid = q.message.chat.id.toString();
     const number = payload; // This is the full number
@@ -5414,13 +5416,15 @@ if (action === 'buy_temp_num') {
         return;
     }
     
-    // The message you requested, formatted for Telegram
+    // --- THIS IS THE UPDATED MESSAGE ---
     const message = `
-Important Instructions:
+*Important Instructions:*
 
-1. Do not use this number to start a new chat. Doing so may result in a ban from WhatsApp. It is best used for replying to existing messages or for group chats.
-2. We recommend you change the Gmail when you login.
+1.  This is a Poland (**+48**) number. Ensure you select Poland as the country in WhatsApp.
+2.  Request the verification code **only via Gmail**. Do not request an SMS code.
+3.  Do not use this number to start new chats to avoid bans. It's best for joining groups or replying to messages.
 `;
+    // --- END OF UPDATED MESSAGE ---
 
     // Send the instructions message first
     await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
@@ -5474,7 +5478,6 @@ Important Instructions:
         });
     }
 }
-
 
 
 
