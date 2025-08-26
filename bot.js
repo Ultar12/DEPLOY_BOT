@@ -5162,12 +5162,12 @@ if (action === 'levanter_wa_fallback') {
                 client.release();
             }
 
-            await bot.editMessageText(`✅ Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
+            await bot.editMessageText(`Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
                 chat_id: cid,
                 message_id: q.message.message_id,
                 parse_mode: 'HTML'
             });
-            await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
+            await bot.sendMessage(userId, 'OTP will send automatically if detected.');
             await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
 
         } else {
