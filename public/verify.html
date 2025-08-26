@@ -41,8 +41,9 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    // Tell Telegram that the process is complete and close the app
+                    // This line sends the "verified" signal back to your bot
                     tg.sendData(JSON.stringify({ status: 'verified' }));
+                    // This line then closes the Mini App window
                     tg.close();
                 } else {
                     document.getElementById('status').innerText = `Verification Failed: ${data.message}`;
