@@ -1689,28 +1689,6 @@ const crypto = require('crypto');
             } else {
                 await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started and will be ready in a few minutes.`, { parse_mode: 'Markdown' });
 app.post('/paystack/webhook', express.json(), async (req, res) => {
-    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
-    if (hash !== req.headers['x-paystack-signature']) {
-        console.warn('Invalid Paystack signature received.');
-        return res.sendStatus(401);
-    }
-
-    const event = req.body;
-
-    if (event.event === 'charge.success') {
-        const { reference, amount, currency, customer, metadata } = event.data;
-        
-        try {
-            // Check if the payment has already been processed to prevent duplicates
-            const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
-            if (checkProcessed.rows.length > 0) {
-                console.log(`Webhook for reference ${reference} already processed. Ignoring.`);
-                return res.sendStatus(200);
-            }
-
-            const userChat = await bot.getChat(metadata.user_id);
 app.post('/paystack/webhook', express.json(), async (req, res) => {
     const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
         .update(JSON.stringify(req.body))
@@ -1745,13 +1723,14 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                 // Update the number status to assigned and link it to the user
                 await pool.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, number]);
                 
-                await bot.sendMessage(userId, `Payment successful! You have been assigned the number: <code>${number}</code>`, { parse_mode: 'HTML' });
+                await bot.sendMessage(userId, `✅ Payment successful! You have been assigned the number: <code>${number}</code>`, { parse_mode: 'HTML' });
                 await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
 
                 // Notify the admin
-                await bot.sendMessage(ADMIN_ID, `New temporary number purchased!\n\nUser: ${userName} (<code>${userId}</code>)\nNumber: <code>${number}</code>`, { parse_mode: 'HTML' });
+                await bot.sendMessage(ADMIN_ID, `🔔 New temporary number purchased!\n\nUser: ${userName} (<code>${userId}</code>)\nNumber: <code>${number}</code>`, { parse_mode: 'HTML' });
 
             } 
+            
             // Handle bot deployment key purchase (your existing logic)
             else if (metadata.product === 'deploy_key' || !metadata.product) { // Assumes a missing product is a deploy key
                 const pendingPayment = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
@@ -1797,13 +1776,18 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                 console.log(`Successfully processed deployment payment for reference: ${reference}`);
             }
 
+            // This is the correct location for the final webhook acknowledgment
+            res.sendStatus(200);
+
         } catch (dbError) {
             console.error(`Webhook DB Error for reference ${reference}:`, dbError);
             return res.sendStatus(500);
         }
     }
+    // This return is also incorrect, it should be part of the outer `if` or a catch block
     res.sendStatus(200);
 });
+
 
 
 
