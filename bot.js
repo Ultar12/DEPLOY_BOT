@@ -1729,7 +1729,15 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                 // Update the number status to assigned, link it to the user, and store the timestamp
                 await pool.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, number]);
                 
-                await bot.sendMessage(userId, `Payment successful! You have been assigned the number: \`${number}\``, { parse_mode: 'Markdown' });
+                // Notify the user
+                await bot.sendMessage(userId, `Payment successful! You have been assigned the number: <code>${number}</code>`, { parse_mode: 'HTML' });
+                await bot.sendMessage(userId, 'I am now listening for the WhatsApp OTP. I will send it to you as soon as it arrives.');
+
+                // Notify the admin
+                const userChat = await bot.getChat(userId);
+                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
+                await bot.sendMessage(ADMIN_ID, `New temporary number purchased!\n\nUser: ${userName} (<code>${userId}</code>)\nNumber: <code>${number}</code>`, { parse_mode: 'HTML' });
+
                 // Acknowledge Paystack webhook
                 res.sendStatus(200);
 
