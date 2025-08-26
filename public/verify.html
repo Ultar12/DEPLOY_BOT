@@ -26,7 +26,7 @@
                 const geoData = await geoResponse.json();
 
                 if (geoData.country_code !== 'NG') {
-                    document.getElementById('status').innerText = 'Sorry, the free trial is only available in Nigeria.';
+                    document.getElementById('status').innerText = 'Not eligible,  Disable your VPN.';
                     return;
                 }
 
