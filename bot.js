@@ -499,6 +499,30 @@ async function sendLatestKeyboard(chatId) {
     }
 }
 
+// Function to check for and release timed-out pending numbers
+async function releaseTimedOutNumbers() {
+    console.log('[Scheduler] Checking for timed-out pending payments...');
+    const timeoutThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes ago
+    try {
+        const result = await pool.query(
+            "UPDATE temp_numbers SET status = 'available', user_id = NULL, assigned_at = NULL WHERE status = 'pending_payment' AND assigned_at < $1 RETURNING number",
+            [timeoutThreshold]
+        );
+        if (result.rowCount > 0) {
+            console.log(`[Scheduler] Released ${result.rowCount} number(s) from pending status.`);
+            result.rows.forEach(num => {
+                bot.sendMessage(ADMIN_ID, `⚠️ Number <code>${num.number}</code> was automatically released due to a payment timeout.`, { parse_mode: 'HTML' });
+            });
+        }
+    } catch (e) {
+        console.error('[Scheduler] Error releasing timed-out numbers:', e);
+    }
+}
+
+// Schedule this function to run every minute
+setInterval(releaseTimedOutNumbers, 60 * 1000);
+
+
 
 async function sendBannedUsersList(chatId, messageId = null) {
     if (String(chatId) !== ADMIN_ID) return;
@@ -1950,6 +1974,33 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     catch (error) {
         console.error("Error sending initial /add message or setting state:", error);
         bot.sendMessage(cid, "An error occurred while starting the add process. Please try again.");
+    }
+});
+
+bot.onText(/^\/num$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+    
+    try {
+        const result = await pool.query("SELECT number, status, user_id FROM temp_numbers ORDER BY status DESC");
+        const numbers = result.rows;
+        
+        if (numbers.length === 0) {
+            return bot.sendMessage(adminId, "No temporary numbers found in the database.");
+        }
+        
+        let message = "<b>Temporary Numbers Dashboard:</b>\n\n";
+        numbers.forEach(num => {
+            const statusEmoji = num.status === 'available' ? '🟢' : num.status === 'pending_payment' ? '🟡' : num.status === 'assigned' ? '🔵' : '🔴';
+            message += `${statusEmoji} <code>${num.number}</code> | <b>Status:</b> ${num.status} | <b>User ID:</b> ${num.user_id || 'N/A'}\n`;
+        });
+        
+        await bot.sendMessage(adminId, message, { parse_mode: 'HTML' });
+    } catch (e) {
+        console.error("Error fetching number dashboard:", e);
+        await bot.sendMessage(adminId, "An error occurred while fetching the number dashboard.");
     }
 });
 
@@ -5010,13 +5061,6 @@ if (action === 'buy_temp_num') {
     const cid = q.message.chat.id.toString();
     const number = payload; // This is the full number
 
-    // You need to collect the user's email address first.
-    // Let's assume you've already collected it and stored it in a session or similar.
-    // For this example, we'll ask the user to input their email.
-    
-    // In a real application, you would have a state machine to handle this.
-    // For now, we'll simulate the flow.
-    
     // Check if the number is still available
     const numberCheck = await pool.query("SELECT status FROM temp_numbers WHERE number = $1", [number]);
     if (numberCheck.rows.length === 0 || numberCheck.rows[0].status !== 'available') {
@@ -5026,6 +5070,17 @@ if (action === 'buy_temp_num') {
         });
         return;
     }
+    
+    // The message you requested, formatted for Telegram
+    const message = `
+Important Instructions:
+
+1. Do not use this number to start a new chat. Doing so may result in a ban from WhatsApp. It is best used for replying to existing messages or for group chats.
+2. We recommend you change the Gmail when you login.
+`;
+
+    // Send the instructions message first
+    await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
 
     // Generate a unique payment reference
     const reference = crypto.randomBytes(16).toString('hex');
@@ -5044,15 +5099,17 @@ if (action === 'buy_temp_num') {
                     phone_number: number
                 }
             },
-            { 
-                headers: { 
+            {
+                headers: {
                     Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
                     'Content-Type': 'application/json'
-                } 
+                }
             }
         );
         
         const paymentUrl = paystackResponse.data.data.authorization_url;
+
+        // Edit the original message to show the payment button after the instructions
         await bot.editMessageText('Please click the button below to complete your payment.', {
             chat_id: cid,
             message_id: q.message.message_id,
@@ -5064,7 +5121,7 @@ if (action === 'buy_temp_num') {
         });
         
         // Update the number's status to pending payment
-        await pool.query("UPDATE temp_numbers SET status = 'pending_payment', user_id = $1 WHERE number = $2", [cid, number]);
+        await pool.query("UPDATE temp_numbers SET status = 'pending_payment', user_id = $1, assigned_at = NOW() WHERE number = $2", [cid, number]);
 
     } catch (error) {
         console.error('Paystack transaction failed:', error.response?.data || error.message);
@@ -5074,6 +5131,7 @@ if (action === 'buy_temp_num') {
         });
     }
 }
+
 
 
 
