@@ -225,6 +225,17 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
       );
     `);
 
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS temp_numbers (
+    number TEXT PRIMARY KEY,
+    masked_number TEXT NOT NULL,
+    status TEXT DEFAULT 'available',
+    user_id TEXT,
+    assigned_at TIMESTAMP WITH TIME ZONE
+  );
+`);
+
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS pending_payments (
         reference  TEXT PRIMARY KEY,
@@ -1672,6 +1683,42 @@ const crypto = require('crypto');
 });
 
 
+// POST /paystack/webhook - Handles payment notifications from Paystack
+app.post('/paystack/webhook', express.json(), async (req, res) => {
+    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
+    if (hash !== req.headers['x-paystack-signature']) {
+        console.warn('Invalid Paystack signature received.');
+        return res.sendStatus(401); // Unauthorized
+    }
+
+    const event = req.body;
+
+    if (event.event === 'charge.success') {
+        const { reference, metadata } = event.data;
+        const userId = metadata.user_id;
+        const number = metadata.phone_number;
+
+        if (metadata.product === 'temporary_number') {
+            try {
+                // Update the number status to assigned, link it to the user, and store the timestamp
+                await pool.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, number]);
+                
+                await bot.sendMessage(userId, `Payment successful! You have been assigned the number: \`${number}\``, { parse_mode: 'Markdown' });
+                // Acknowledge Paystack webhook
+                res.sendStatus(200);
+
+            } catch (dbError) {
+                console.error(`Webhook DB Error for reference ${reference}:`, dbError);
+                await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Failed to assign number ${number} to user ${userId} after successful payment. Manual intervention required.`);
+                res.sendStatus(500); // Internal Server Error
+            }
+        }
+    } else {
+        res.sendStatus(200); // Acknowledge other events without processing
+    }
+});
 
 
 
@@ -2091,6 +2138,25 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
         bot.sendMessage(cid, "An error occurred while starting the removal process. Please try again.");
     }
 });
+
+bot.onText(/^\/buytemp$/, async msg => {
+    const cid = msg.chat.id.toString();
+    const availableNumbers = await pool.query("SELECT masked_number, number FROM temp_numbers WHERE status = 'available' LIMIT 5");
+
+    if (availableNumbers.rows.length === 0) {
+        return bot.sendMessage(cid, "Sorry, no temporary numbers are available at the moment.");
+    }
+
+    const buttons = availableNumbers.rows.map(row => [{
+        text: `Buy ${row.masked_number} for N200`,
+        callback_data: `buy_temp_num:${row.number}`
+    }]);
+
+    await bot.sendMessage(cid, "Choose a temporary number to purchase:", {
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
 
 // bot.js
 
@@ -4891,6 +4957,74 @@ if (action === 'levanter_wa_fallback') {
 }
 
   
+if (action === 'buy_temp_num') {
+    const cid = q.message.chat.id.toString();
+    const number = payload; // This is the full number
+
+    // You need to collect the user's email address first.
+    // Let's assume you've already collected it and stored it in a session or similar.
+    // For this example, we'll ask the user to input their email.
+    
+    // In a real application, you would have a state machine to handle this.
+    // For now, we'll simulate the flow.
+    
+    // Check if the number is still available
+    const numberCheck = await pool.query("SELECT status FROM temp_numbers WHERE number = $1", [number]);
+    if (numberCheck.rows.length === 0 || numberCheck.rows[0].status !== 'available') {
+        await bot.editMessageText('Sorry, this number is no longer available.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+        return;
+    }
+
+    // Generate a unique payment reference
+    const reference = crypto.randomBytes(16).toString('hex');
+    const priceInKobo = 200 * 100; // N200 in kobo
+
+    try {
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email: 'customer@email.com', // Replace with the user's actual email
+                amount: priceInKobo,
+                reference: reference,
+                metadata: {
+                    user_id: cid,
+                    product: 'temporary_number',
+                    phone_number: number
+                }
+            },
+            { 
+                headers: { 
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+                    'Content-Type': 'application/json'
+                } 
+            }
+        );
+        
+        const paymentUrl = paystackResponse.data.data.authorization_url;
+        await bot.editMessageText('Please click the button below to complete your payment.', {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Pay Now', url: paymentUrl }]
+                ]
+            }
+        });
+        
+        // Update the number's status to pending payment
+        await pool.query("UPDATE temp_numbers SET status = 'pending_payment', user_id = $1 WHERE number = $2", [cid, number]);
+
+    } catch (error) {
+        console.error('Paystack transaction failed:', error.response?.data || error.message);
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
+}
 
 
 
