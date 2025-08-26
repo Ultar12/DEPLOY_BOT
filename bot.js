@@ -1155,6 +1155,10 @@ const APP_URL = process.env.APP_URL;
         res.send('Bot is running (webhook mode)!');
     });
 
+  app.get('/verify', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'verify.html'));
+    });
+  
   app.get('/miniapp', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
