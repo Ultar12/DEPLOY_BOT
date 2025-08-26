@@ -5075,7 +5075,41 @@ if (action === 'back_to_bapp_list') {
     return; 
 }
 
+  
+  
+  if (action === 'Referrals') {
+    const userId = msg.chat.id.toString();
+    const referralLink = `https://t.me/${botUsername}?start=${userId}`;
 
+    await dbServices.updateUserActivity(userId);
+
+    const referralMessage = `
+*Your Referral Dashboard*
+
+Your unique referral link is:
+\`${referralLink}\`
+
+Share this link with your friends. When they deploy a bot using your link, you get rewarded!
+
+*Your Rewards:*
+- You get *20 days* added to your bot's expiration for each new user you invite.
+- You get an extra *7 days* if one of your invited users invites someone new.
+
+_Your referred users will be displayed here once they deploy their first bot._
+    `;
+    
+    // The "Copy to Clipboard" button has been removed for simplicity.
+    await bot.sendMessage(userId, referralMessage, { 
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
+                ]
+            ]
+        }
+    });
+  }
 // --- REPLACE this entire block ---
 
 if (action === 'select_get_session_type') {
