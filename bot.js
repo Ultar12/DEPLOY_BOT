@@ -1540,54 +1540,30 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
         res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
     }
 });
-
-
-// GET /api/bots/config/:appName - Fetches all config variables for a bot
-app.get('/api/bots/config/:appName', validateWebAppInitData, async (req, res) => {
-    const { appName } = req.params;
-    const userId = req.telegramData.id.toString();
-    try {
-        const ownerCheck = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
-            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
-        }
-        const dbResult = await pool.query('SELECT config_vars FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
-        const configVars = dbResult.rows[0]?.config_vars || {};
-        res.json({ success: true, configVars });
-    } catch (e) {
-        console.error(`[MiniApp V2] Error fetching config for ${appName}:`, e.message);
-        res.status(500).json({ success: false, message: 'Failed to fetch config variables.' });
-    }
-})
   
-  // Add this with your other app.post() handlers in bot.js
+  /// Replace the existing app.post('/pre-verify-user', ...) route in bot.js
+
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
-    const { captchaToken } = req.body;
-    const userIpAddress = req.ip; // Get user IP from the request
+    // Get the user's real IP address from the request headers
+    const userIpAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
     try {
-        // 1. Verify hCaptcha
-        const params = new URLSearchParams();
-        params.append('response', captchaToken);
-        params.append('secret', process.env.HCAPTCHA_SECRET_KEY);
-        const captchaResult = await axios.post('https://hcaptcha.com/siteverify', params);
+        // --- CAPTCHA CHECK REMOVED ---
 
-        if (!captchaResult.data.success) {
-            return res.status(400).json({ success: false, message: 'Invalid CAPTCHA.' });
-        }
-
-        // 2. Check if user ID or IP have already claimed a final trial
+        // Check 1: Has this user ID already claimed a final trial?
         const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
         if (trialUserCheck.rows.length > 0) {
             return res.status(400).json({ success: false, message: 'You have already claimed a free trial.' });
         }
+        
+        // Check 2: Has this IP address already been used for a final trial?
         const trialIpCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE ip_address = $1", [userIpAddress]);
         if (trialIpCheck.rows.length > 0) {
             return res.status(400).json({ success: false, message: 'This network has already been used for a free trial.' });
         }
 
-        // 3. Add user to the pre-verified list
+        // Add user to the pre-verified list
         await pool.query(
             "INSERT INTO pre_verified_users (user_id, ip_address) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET ip_address = EXCLUDED.ip_address, verified_at = NOW()",
             [userId, userIpAddress]
@@ -1596,11 +1572,11 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
         return res.json({ success: true });
 
     } catch (error) {
-        console.error("Error in /pre-verify-user:", error);
+        console.error("Error in /pre-verify-user:", error.message);
         return res.status(500).json({ success: false, message: 'Server error.' });
     }
 });
-;
+
 
 // POST /api/bots/set-var - Updates a single config variable for a bot
 app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
