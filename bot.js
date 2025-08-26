@@ -3663,14 +3663,15 @@ _Your referred users will be displayed here once they deploy their first bot._
   // --- END OF FIX ---
   // Add this block inside bot.on('message', ...)
 
-  if (text === 'More Features') {
+  ifif (text === 'More Features') {
       await dbServices.updateUserActivity(cid);
       const moreFeaturesText = "Here are some additional features and services:";
       const moreFeaturesKeyboard = {
           inline_keyboard: [
-              // First row
+              // New row for the free trial button
+              [{ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' }],
+              // Existing buttons
               [{ text: "Buy a WhatsApp Account", callback_data: 'buy_whatsapp_account' }],
-              // Second row
               [{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]
           ]
       };
