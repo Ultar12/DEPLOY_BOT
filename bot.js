@@ -192,6 +192,17 @@ async function createAllTablesInPool(dbPool, dbName) {
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS pre_verified_users (
+    user_id TEXT PRIMARY KEY,
+    ip_address TEXT NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
+  await dbPool.query(`ALTER TABLE free_trial_numbers ADD COLUMN IF NOT EXISTS ip_address TEXT;`);
+
+
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_deployments (
@@ -1543,7 +1554,49 @@ app.get('/api/bots/config/:appName', validateWebAppInitData, async (req, res) =>
         console.error(`[MiniApp V2] Error fetching config for ${appName}:`, e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch config variables.' });
     }
+})
+  
+  // Add this with your other app.post() handlers in bot.js
+app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { captchaToken } = req.body;
+    const userIpAddress = req.ip; // Get user IP from the request
+
+    try {
+        // 1. Verify hCaptcha
+        const params = new URLSearchParams();
+        params.append('response', captchaToken);
+        params.append('secret', process.env.HCAPTCHA_SECRET_KEY);
+        const captchaResult = await axios.post('https://hcaptcha.com/siteverify', params);
+
+        if (!captchaResult.data.success) {
+            return res.status(400).json({ success: false, message: 'Invalid CAPTCHA.' });
+        }
+
+        // 2. Check if user ID or IP have already claimed a final trial
+        const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
+        if (trialUserCheck.rows.length > 0) {
+            return res.status(400).json({ success: false, message: 'You have already claimed a free trial.' });
+        }
+        const trialIpCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE ip_address = $1", [userIpAddress]);
+        if (trialIpCheck.rows.length > 0) {
+            return res.status(400).json({ success: false, message: 'This network has already been used for a free trial.' });
+        }
+
+        // 3. Add user to the pre-verified list
+        await pool.query(
+            "INSERT INTO pre_verified_users (user_id, ip_address) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET ip_address = EXCLUDED.ip_address, verified_at = NOW()",
+            [userId, userIpAddress]
+        );
+
+        return res.json({ success: true });
+
+    } catch (error) {
+        console.error("Error in /pre-verify-user:", error);
+        return res.status(500).json({ success: false, message: 'Server error.' });
+    }
 });
+;
 
 // POST /api/bots/set-var - Updates a single config variable for a bot
 app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
@@ -3031,6 +3084,24 @@ bot.on('message', async msg => {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
       return;
   }
+
+  // Add this inside the main bot.on('message', ...) handler
+if (msg.web_app_data) {
+    const data = JSON.parse(msg.web_app_data.data);
+    if (data.status === 'verified') {
+        await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click verify below to receive your free number.", {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                    [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                ]
+            }
+        });
+    }
+    return;
+}
+
  // Automatic Keyboard Update Check
 const userActivity = await pool.query('SELECT keyboard_version FROM user_activity WHERE user_id = $1', [cid]);
 if (userActivity.rows.length > 0) {
@@ -5171,6 +5242,61 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
+  // Add this inside bot.on('callback_query', ...)
+if (action === 'verify_join_after_miniapp') {
+    const userId = q.from.id.toString();
+    const cid = q.message.chat.id.toString();
+
+    try {
+        // 1. Check if user is pre-verified
+        const preVerifiedCheck = await pool.query("SELECT ip_address FROM pre_verified_users WHERE user_id = $1", [userId]);
+        if (preVerifiedCheck.rows.length === 0) {
+            await bot.answerCallbackQuery(q.id, { text: "You must complete the security check first.", show_alert: true });
+            return;
+        }
+        const userIpAddress = preVerifiedCheck.rows[0].ip_address;
+
+        // 2. Check if user is in the channel
+        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
+        if (!['creator', 'administrator', 'member'].includes(member.status)) {
+            await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet.", show_alert: true });
+            return;
+        }
+
+        // All checks passed, assign the number
+        const numberResult = await pool.query("SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1");
+        if (numberResult.rows.length === 0) {
+            await bot.editMessageText("Sorry, no free trial numbers are available right now.", { chat_id: cid, message_id: q.message.message_id });
+            return;
+        }
+        const freeNumber = numberResult.rows[0].number;
+
+        // Use a transaction to finalize
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
+            await client.query("INSERT INTO free_trial_numbers (user_id, number_used, ip_address) VALUES ($1, $2, $3)", [userId, freeNumber, userIpAddress]);
+            await client.query("DELETE FROM pre_verified_users WHERE user_id = $1", [userId]); // Clean up
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+
+        await bot.editMessageText(`All steps complete! Your free trial number is: <code>${freeNumber}</code>`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'HTML' });
+        await bot.sendMessage(userId, 'OTP will be send automaticallyif detected.');
+        await bot.sendMessage(ADMIN_ID, `User \`${userId}\` (IP: ${userIpAddress}) has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error("Error during final verification:", error);
+        await bot.answerCallbackQuery(q.id, { text: "An error occurred.", show_alert: true });
+    }
+    return;
+}
+
   // Add this inside bot.on('callback_query', async q => { ... })
 
   if (action === 'verify_join_temp_num') {
@@ -5232,33 +5358,23 @@ if (action === 'levanter_wa_fallback') {
 }
 
 
+// In bot.on('callback_query', ...)
 if (action === 'free_trial_temp_num') {
     const cid = q.message.chat.id.toString();
+    const verificationUrl = `${process.env.APP_URL}/verify`;
 
-    // Check if the user has already claimed a free trial number
-    const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
-    if (trialCheck.rows.length > 0) {
-        await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
-        return;
-    }
-
-    // Set the user's state to indicate they are in the verification process
-    userStates[cid] = { step: 'AWAITING_TRIAL_VERIFICATION' };
-
-    // Prompt them to join the channel
-    await bot.editMessageText("To get your free trial number, you must join our channel. This helps us keep you updated!", {
+    await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
         chat_id: cid,
         message_id: q.message.message_id,
-        parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                [{ text: 'I have joined, Verify me!', callback_data: 'verify_join_temp_num' }]
+                [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
             ]
         }
     });
     return;
 }
+
 
 
   
