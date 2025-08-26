@@ -50,7 +50,7 @@ function openInbox(imap) {
 }
 
 function searchForOtp(imap) {
-  // A general search to catch all relevant emails from WhatsApp
+  // Broadened search to catch any email from WhatsApp
   imap.search(['UNSEEN', ['FROM', 'whatsapp']], (err, results) => {
     if (err || !results || results.length === 0) {
       if (err) console.error('[Mail Listener] Search Error:', err);
@@ -68,28 +68,41 @@ function searchForOtp(imap) {
           }
 
           const body = parsed.text || '';
-          
-          // --- THIS IS THE NEW LOGIC ---
+          const subject = parsed.subject || '';
+          let otp = null;
+          let match = null;
 
           // 1. Check for the ADMIN-ONLY "Email Verification" format
           if (body.includes('Go to Settings > Account > Email address')) {
-            const adminMatch = body.match(/Enter this code:\s*(\d{3}-\d{3})/);
-            if (adminMatch && adminMatch[1]) {
-              const otp = adminMatch[1];
+            match = body.match(/Enter this code:\s*(\d{3}-\d{3})/);
+            if (match && match[1]) {
+              otp = match[1];
               console.log(`[Mail Listener] Admin-only email verification code found: ${otp}`);
               await botInstance.sendMessage(ADMIN_ID, `📧 WhatsApp Email Verification Code Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
-              // Stop processing this email here
-              return; 
+              return; // Stop processing this email
             }
           }
 
-          // 2. If it's not the admin format, process it as a regular USER OTP
-          // This logic is the original one you wanted to keep.
-          const userMatch = body.match(/is your WhatsApp code (\d{3}-\d{3})/);
-          if (userMatch && userMatch[1]) {
-            const otp = userMatch[1];
+          // --- THIS IS THE NEW LOGIC FOR THE SCREENSHOT ---
+          // 2. Check for the new USER OTP format (from your screenshot)
+          else if (subject.includes('WhatsApp Verification Code')) {
+             match = body.match(/Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/);
+             if (match && match[1]) {
+                otp = match[1];
+             }
+          }
+
+          // 3. If not the admin or new format, check for the old USER OTP format
+          else {
+            match = body.match(/is your WhatsApp code (\d{3}-\d{3})/);
+            if (match && match[1]) {
+                otp = match[1];
+            }
+          }
+
+          // If any of the user-facing formats found an OTP, process it
+          if (otp) {
             console.log(`[Mail Listener] User OTP code found: ${otp}`);
-            
             const assignedUserResult = await dbPool.query(
               "SELECT user_id FROM temp_numbers WHERE status = 'assigned'"
             );
