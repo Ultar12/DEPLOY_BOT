@@ -27,7 +27,7 @@ const { URLSearchParams } = require('url');
 const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 3; // Increment this number for every new keyboard update
+const KEYBOARD_VERSION = 4; // Increment this number for every new keyboard update
 // --- END OF NEW GLOBAL CONSTANT ---
 
 
