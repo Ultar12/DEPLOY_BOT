@@ -733,8 +733,8 @@ function buildKeyboard(isAdmin) {
   const baseMenu = [
       ['Get Session ID', 'Deploy'],
       ['My Bots', 'Free Trial'],
-      ['FAQ', 'Referrals'],
-      ['Support', 'More Features'] 
+      ['FAQ', 'Support'],
+      ['More Features'] 
   ];
   if (isAdmin) {
       return [
@@ -3791,18 +3791,34 @@ _Your referred users will be displayed here once they deploy their first bot._
     const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
     const hasUsedTrial = trialCheck.rows.length > 0;
 
-    // Start building the keyboard layout
-    const keyboardLayout = [];
+    // --- New Logic Starts Here ---
+
+    // 1. Create a list of all buttons that should be displayed
+    const allButtons = [];
 
     // Conditionally add the free trial button
-    // It will only be added if the user has NOT used their trial yet
     if (!hasUsedTrial) {
-        keyboardLayout.push([{ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' }]);
+        allButtons.push({ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' });
     }
 
-    // Add the other standard buttons
-    keyboardLayout.push([{ text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' }]);
-    keyboardLayout.push([{ text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }]);
+    // Add all other standard buttons, including the new Referrals button
+    allButtons.push(
+        { text: "Buy a WhatsApp Acc N200", callback_data: 'buy_whatsapp_account' },
+        { text: "Referrals", callback_data: 'referrals' }, // <-- ADDED REFERRALS BUTTON
+        { text: "Test out my downloader Bot", url: 'https://t.me/tagtgbot' }
+    );
+
+    // 2. Arrange the buttons into rows of two
+    const keyboardLayout = [];
+    for (let i = 0; i < allButtons.length; i += 2) {
+        const row = [allButtons[i]]; // Start a new row with the first button
+        if (allButtons[i + 1]) {     // Check if a second button exists for this row
+            row.push(allButtons[i + 1]);
+        }
+        keyboardLayout.push(row); // Add the completed row to the final layout
+    }
+    
+    // --- New Logic Ends Here ---
 
     const moreFeaturesKeyboard = {
         inline_keyboard: keyboardLayout
@@ -3811,6 +3827,7 @@ _Your referred users will be displayed here once they deploy their first bot._
     await bot.sendMessage(cid, moreFeaturesText, { reply_markup: moreFeaturesKeyboard });
     return;
 }
+
 
 
 
