@@ -5127,6 +5127,7 @@ if (action === 'levanter_wa_fallback') {
 
   if (action === 'verify_join_temp_num') {
     const userId = q.from.id;
+    show_alert: true;
 
     try {
       const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
