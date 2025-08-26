@@ -1853,7 +1853,7 @@ if (result.rows.length > 0) {
     app.listen(PORT, () => {
     console.log(`[Web Server] Server running on port ${PORT}`);
 });
-} else {
+ else {
     // --- Polling Mode (for local development) ---
     console.log('Bot is running in development mode (polling)...');
     bot.startPolling();
