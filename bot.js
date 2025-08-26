@@ -3057,8 +3057,12 @@ bot.on('message', async msg => {
 
   // --- THIS IS THE CORRECT ORDER ---
 
-  // 1. First, check for data from the Mini App.
+    // 1. First, check for data from the Mini App.
   if (msg.web_app_data) {
+    // --- THIS IS THE FIX ---
+    // You must define 'cid' here so the bot knows who to send the message to.
+    const cid = msg.chat.id.toString(); 
+    
     const data = JSON.parse(msg.web_app_data.data);
     if (data.status === 'verified') {
         await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click verify below to receive your free number.", {
@@ -3073,6 +3077,7 @@ bot.on('message', async msg => {
     }
     return; // Stop here after handling the web app data
   }
+
 
   // 2. Second, check if it's a regular text message. If not, stop.
   if (!text) return; 
