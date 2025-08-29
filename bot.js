@@ -3738,7 +3738,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
-        await bot.sendMessage(cid, 'Welcome back! Which bot type would you like to deploy?', {
+        await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
