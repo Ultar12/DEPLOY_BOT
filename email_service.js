@@ -58,7 +58,6 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
           </table>
         </div>
         
-        <p style="font-size: 16px;">Hello Dear,</p>
         <p style="font-size: 16px;">We are thrilled to confirm that your payment has been received and your bot deployment has been initiated. You will receive a notification in Telegram once it's ready.</p>
         
         <a href="https://t.me/ultarbotdeploybot" style="display: inline-block; padding: 12px 24px; margin-top: 20px; background-color: #69F0AE; color: #121212; text-decoration: none; border-radius: 50px; font-weight: bold;">GO TO YOUR BOT</a>
@@ -76,7 +75,7 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
   }
 }
 
-// --- NEW FUNCTION ADDED HERE ---
+// --- VERIFICATION EMAIL UPDATED HERE ---
 async function sendVerificationEmail(toEmail, verificationCode) {
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !toEmail) {
     console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
@@ -89,9 +88,6 @@ async function sendVerificationEmail(toEmail, verificationCode) {
     subject: `Your Verification Code`,
     html: `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <img src="https://i.ibb.co/3fd2v00/verification-shield.png" alt="Verification Shield" width="100" style="margin-bottom: 20px;">
-        <h1 style="font-size: 24px; font-weight: bold;">Email Verification</h1>
-        <p style="font-size: 16px;">Hello Dear,</p>
         <p style="font-size: 16px;">Please use the code below to complete your registration. This code is valid for 10 minutes.</p>
         
         <div style="background-color: #121212; border-radius: 8px; padding: 15px; margin: 20px auto; max-width: 200px;">
@@ -129,7 +125,6 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername) {
     html: `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
         <h1 style="font-size: 24px; font-weight: bold;">Your Bot is Offline</h1>
-        <p style="font-size: 16px;">Hello Dear,</p>
         <p style="font-size: 16px;">This is an automated notification to inform you that your bot, <strong>${appName}</strong>, has been logged out and is currently offline. This may be due to an issue with your session ID.</p>
         <a href="https://t.me/${botUsername}" style="display: inline-block; padding: 12px 24px; margin-top: 20px; background-color: #ff3b30; color: #fff; text-decoration: none; border-radius: 50px; font-weight: bold;">GO TO YOUR BOT</a>
         <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you have questions, please reach out to support. Your bot will remain in your 'My Bots' list, but it will not be online until you update the session.</p>
@@ -146,7 +141,6 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername) {
   }
 }
 
-// --- EXPORTS UPDATED TO INCLUDE THE NEW FUNCTION ---
 module.exports = {
   sendPaymentConfirmation,
   sendVerificationEmail,
