@@ -3347,11 +3347,12 @@ if (st && st.step === 'AWAITING_EMAIL') {
 
 
 
-// Handler for when the user submits the OTP
+// REPLACE your existing 'AWAITING_OTP' handler with this one
+
 if (st && st.step === 'AWAITING_OTP') {
     const userOtp = text.trim();
     if (!/^\d{6}$/.test(userOtp)) {
-        return bot.sendMessage(cid, 'Invalid code. Please enter the 6-digit code sent to your email.');
+        return bot.sendMessage(cid, 'Invalid code.');
     }
 
     try {
@@ -3373,18 +3374,29 @@ if (st && st.step === 'AWAITING_OTP') {
         }
 
         if (userOtp === otp) {
-            // SUCCESS!
+            // --- SUCCESS! ---
+            // The code is correct, proceed as normal.
             await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
-            await bot.sendMessage(cid, 'verified successfully! You can now proceed with your deployment.');
+            await bot.sendMessage(cid, 'Verified successfully! You can now proceed with your deployment.');
             delete userStates[cid];
 
-            // Automatically trigger the deployment flow again for the user
             const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
             const fakeMsg = { ...msg, text: deployCommand }; 
             bot.emit('message', fakeMsg);
 
         } else {
-            await bot.sendMessage(cid, 'The code you entered is incorrect. Please check your email and try again.');
+            // --- INCORRECT CODE ---
+            // Initialize or increment the attempt counter in the user's state.
+            st.data.otpAttempts = (st.data.otpAttempts || 0) + 1;
+
+            if (st.data.otpAttempts >= 2) {
+                // This is the second failed attempt. Cancel the process silently.
+                delete userStates[cid]; // Clear the state.
+                // No message is sent, as requested.
+            } else {
+                // This is the first failed attempt. Warn the user.
+                await bot.sendMessage(cid, 'Invalid code. Please check your email and try again.');
+            }
         }
     } catch (dbError) {
         console.error('[DB] Error verifying OTP:', dbError);
@@ -3393,7 +3405,6 @@ if (st && st.step === 'AWAITING_OTP') {
     }
     return;
 }
-
 
   // --- REPLACE this entire block in bot.js ---
 
