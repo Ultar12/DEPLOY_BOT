@@ -3281,44 +3281,61 @@ if (userActivity.rows.length > 0) {
   }
 
 
-  // Handler for when the user submits their email
+// REPLACE your existing 'AWAITING_EMAIL' handler with this one.
+
 if (st && st.step === 'AWAITING_EMAIL') {
     const email = text.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
-    }
+    
+    // Check if the input is a valid email format
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        // --- VALID EMAIL ---
+        // The email format is correct, so we proceed to send the OTP.
+        const otp = generateOtp();
+        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
-    const otp = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+        try {
+            await pool.query(
+                `INSERT INTO email_verification (user_id, email, otp, otp_expires_at, is_verified) 
+                 VALUES ($1, $2, $3, $4, FALSE)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                   email = EXCLUDED.email,
+                   otp = EXCLUDED.otp,
+                   otp_expires_at = EXCLUDED.otp_expires_at,
+                   is_verified = FALSE`,
+                [cid, email, otp, otpExpiresAt]
+            );
 
-    try {
-        await pool.query(
-            `INSERT INTO email_verification (user_id, email, otp, otp_expires_at, is_verified) 
-             VALUES ($1, $2, $3, $4, FALSE)
-             ON CONFLICT (user_id) DO UPDATE SET
-               email = EXCLUDED.email,
-               otp = EXCLUDED.otp,
-               otp_expires_at = EXCLUDED.otp_expires_at,
-               is_verified = FALSE`,
-            [cid, email, otp, otpExpiresAt]
-        );
+            const emailSent = await sendVerificationEmail(email, otp);
 
-        const emailSent = await sendVerificationEmail(email, otp);
-
-        if (emailSent) {
-            st.step = 'AWAITING_OTP';
-            await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
-        } else {
+            if (emailSent) {
+                st.step = 'AWAITING_OTP';
+                await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
+            } else {
+                delete userStates[cid];
+                await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support or try again later.');
+            }
+        } catch (dbError) {
+            console.error('[DB] Error saving OTP:', dbError);
             delete userStates[cid];
-            await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support.');
+            await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
         }
-    } catch (dbError) {
-        console.error('[DB] Error saving OTP:', dbError);
-        delete userStates[cid];
-        await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
+    } else {
+        // --- INVALID EMAIL ATTEMPT ---
+        // Initialize or increment the attempt counter in the user's state
+        st.data.emailAttempts = (st.data.emailAttempts || 0) + 1;
+
+        if (st.data.emailAttempts >= 2) {
+            // The user has failed 2 times. Cancel the registration.
+            await bot.sendMessage(cid, 'Too many invalid attempts. Please tap "Deploy" to try again.');
+            delete userStates[cid]; // This is the crucial step that clears the state and stops the loop.
+        } else {
+            // This is the first failed attempt. Warn the user.
+            await bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again. You have 1 attempt left.");
+        }
     }
     return;
 }
+
 
 // Handler for when the user submits the OTP
 if (st && st.step === 'AWAITING_OTP') {
