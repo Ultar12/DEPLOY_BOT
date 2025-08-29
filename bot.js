@@ -6005,24 +6005,84 @@ if (action === 'deploy_with_key') {
 }
 
 
-// --- FIX: Corrected state check for the buy_key_for_deploy callback ---
+// REPLACE your existing 'buy_key_for_deploy' handler with this one.
+
 if (action === 'buy_key_for_deploy') {
     const st = userStates[cid];
-    // This state check is now corrected to match the AWAITING_KEY state
-    if (!st || st.step !== 'AWAITING_KEY') return;
+    // This state check is crucial to ensure the user has provided all bot details
+    if (!st || st.step !== 'AWAITING_KEY') {
+        // If state is lost, ask the user to start over.
+        await bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start the deployment again.", show_alert: true });
+        return bot.editMessageText('Your session has expired. Please start the deployment process again from the main menu.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
 
-    // Save all collected data into the state
-    st.step = 'AWAITING_EMAIL_FOR_PAYMENT';
-    st.data.emailBotType = st.data.botType;
-    st.data.deploySessionId = st.data.SESSION_ID; // Stored session ID
-    st.data.deployAppName = st.data.APP_NAME; // Stored app name
-    
-    await bot.editMessageText('To proceed with the payment, please enter your email address:', {
+    // Automatically fetch the user's verified email from the database
+    const userEmail = await getUserEmail(cid);
+
+    if (!userEmail) {
+        // This is a fallback in case the user's verified email is not found
+        delete userStates[cid];
+        return bot.editMessageText('Error: Could not find your verified email. Please start the deployment process over to re-verify your email.', {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    }
+
+    // Inform the user that their registered email is being used
+    const sentMsg = await bot.editMessageText(`Using your registered email (${userEmail}) to generate a payment link...`, {
         chat_id: cid,
         message_id: q.message.message_id
     });
+
+    try {
+        const reference = crypto.randomBytes(16).toString('hex');
+        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
+
+        // Save the pending payment details to the database using the fetched email
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
+        );
+        
+        // Store the reference in case the user cancels
+        st.data.reference = reference;
+
+        // Initialize the Paystack transaction using the fetched email
+        const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
+            {
+                email: userEmail,
+                amount: priceInKobo,
+                reference: reference,
+                metadata: { user_id: cid, product: "New Deploy Key" }
+            },
+            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+
+        const paymentUrl = paystackResponse.data.data.authorization_url;
+        await bot.editMessageText(
+            'Click the button below to complete your payment. Your deployment will start automatically after confirmation.',
+            {
+                chat_id: cid, message_id: sentMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Pay Now', url: paymentUrl }],
+                        [{ text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    ]
+                }
+            }
+        );
+    } catch (error) {
+        console.error("Paystack error for new key:", error.response?.data || error.message);
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later.', {
+            chat_id: cid, message_id: sentMsg.message_id
+        });
+    }
     return;
 }
+
 
 // --- NEW: Handler for the 'Cancel' button on the payment screen ---
 if (action === 'cancel_payment_and_deploy') {
