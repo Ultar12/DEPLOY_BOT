@@ -709,6 +709,26 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
     }
 }
 
+/**
+ * Fetches a user's verified email from the database.
+ * @param {string} userId The user's Telegram ID.
+ * @returns {Promise<string|null>} The user's email or null if not found.
+ */
+async function getUserEmail(userId) {
+    try {
+        const result = await pool.query(
+            'SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE',
+            [userId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0].email;
+        }
+        return null; // Return null if not found or not verified
+    } catch (error) {
+        console.error(`[DB] Error fetching email for user ${userId}:`, error);
+        return null;
+    }
+}
 
 // AROUND LINE 520 (inside bot.js)
 
@@ -3096,109 +3116,143 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
 
 // 10) Message handler for buttons & state machine
 bot.on('message', async msg => {
+  // --- FIX: All primary variables are declared at the top ---
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
+  const st = userStates[cid]; // This was the missing line causing the crash
+  const isAdmin = cid === ADMIN_ID;
 
   // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
-      const banned = await dbServices.isUserBanned(cid); // Use dbServices
+      const banned = await dbServices.isUser_Banned(cid); // Use dbServices
       if (banned) {
           console.log(`[Security] Banned user ${cid} attempted to interact with message: "${text}"`);
           return; // Stop processing for banned users
       }
   }
 
-  // --- THIS IS THE CORRECT ORDER ---
-// In bot.js, inside the bot.on('message', async msg => { ... }) handler
+  // --- FIX: Logic is now in the correct order ---
 
-// Handler for when the user submits their email
-if (st && st.step === 'AWAITING_EMAIL') {
-    const email = text.trim().toLowerCase();
-    // Simple email validation
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
+  // 1. First, handle non-text interactions like Mini App data
+  if (msg.web_app_data) {
+    const data = JSON.parse(msg.web_app_data.data);
+    if (data.status === 'verified') {
+        await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click verify below to receive your free number.", {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                    [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                ]
+            }
+        });
     }
+    return; // Stop here after handling the web app data
+  }
 
-    const otp = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+  // 2. Second, exit if the message isn't text (e.g., a sticker or photo)
+  if (!text) return; 
 
-    try {
-        await pool.query(
-            `INSERT INTO email_verification (user_id, email, otp, otp_expires_at, is_verified) 
-             VALUES ($1, $2, $3, $4, FALSE)
-             ON CONFLICT (user_id) DO UPDATE SET
-               email = EXCLUDED.email,
-               otp = EXCLUDED.otp,
-               otp_expires_at = EXCLUDED.otp_expires_at,
-               is_verified = FALSE`,
-            [cid, email, otp, otpExpiresAt]
-        );
+  // --- All your main command handlers (like "Deploy", "My Bots", etc.) would go here ---
+  // For example:
+  // if (text === 'Deploy' || text === 'Free Trial') { ... }
 
-        const emailSent = await sendVerificationEmail(email, otp);
 
-        if (emailSent) {
-            st.step = 'AWAITING_OTP';
-            await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
-        } else {
-            delete userStates[cid];
-            await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support or try again later.');
-        }
-    } catch (dbError) {
-        console.error('[DB] Error saving OTP:', dbError);
-        delete userStates[cid];
-        await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
-    }
-    return;
-}
+  // 3. Finally, handle any multi-step processes (the state machine)
+  
+  // Handler for when the user submits their email
+  if (st && st.step === 'AWAITING_EMAIL') {
+      const email = text.trim().toLowerCase();
+      // Simple email validation
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
+      }
+  
+      const otp = generateOtp();
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+  
+      try {
+          await pool.query(
+              `INSERT INTO email_verification (user_id, email, otp, otp_expires_at, is_verified) 
+               VALUES ($1, $2, $3, $4, FALSE)
+               ON CONFLICT (user_id) DO UPDATE SET
+                 email = EXCLUDED.email,
+                 otp = EXCLUDED.otp,
+                 otp_expires_at = EXCLUDED.otp_expires_at,
+                 is_verified = FALSE`,
+              [cid, email, otp, otpExpiresAt]
+          );
+  
+          const emailSent = await sendVerificationEmail(email, otp);
+  
+          if (emailSent) {
+              st.step = 'AWAITING_OTP';
+              await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
+          } else {
+              delete userStates[cid];
+              await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support or try again later.');
+          }
+      } catch (dbError) {
+          console.error('[DB] Error saving OTP:', dbError);
+          delete userStates[cid];
+          await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
+      }
+      return;
+  }
+  
+  // Handler for when the user submits the OTP
+  if (st && st.step === 'AWAITING_OTP') {
+      const userOtp = text.trim();
+      if (!/^\d{6}$/.test(userOtp)) {
+          return bot.sendMessage(cid, 'Invalid code. Please enter the 6-digit code sent to your email.');
+      }
+  
+      try {
+          const result = await pool.query(
+              'SELECT otp, otp_expires_at FROM email_verification WHERE user_id = $1',
+              [cid]
+          );
+  
+          if (result.rows.length === 0) {
+              delete userStates[cid];
+              return bot.sendMessage(cid, 'Registration session expired. Please tap "Deploy" again.');
+          }
+  
+          const { otp, otp_expires_at } = result.rows[0];
+  
+          if (new Date() > new Date(otp_expires_at)) {
+              delete userStates[cid];
+              return bot.sendMessage(cid, 'Your verification code has expired. Please tap "Deploy" to start over.');
+          }
+  
+          if (userOtp === otp) {
+              // SUCCESS!
+              await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
+              await bot.sendMessage(cid, 'Verified successfully! You can now proceed with your deployment.');
+              delete userStates[cid];
+  
+              // Automatically trigger the deployment flow again for the user
+              const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
+              // We create a "fake" message object to re-run the handler
+              const fakeMsg = { ...msg, text: deployCommand }; 
+              bot.emit('message', fakeMsg);
+  
+          } else {
+              // Incorrect code
+              await bot.sendMessage(cid, 'The code you entered is incorrect. Please check your email and try again.');
+          }
+      } catch (dbError) {
+          console.error('[DB] Error verifying OTP:', dbError);
+          delete userStates[cid];
+          await bot.sendMessage(cid, 'A database error occurred during verification. Please try again.');
+      }
+      return;
+  }
+  
+  // ... Continue with the rest of your 'message' handler logic here ...
 
-// Handler for when the user submits the OTP
-if (st && st.step === 'AWAITING_OTP') {
-    const userOtp = text.trim();
-    if (!/^\d{6}$/.test(userOtp)) {
-        return bot.sendMessage(cid, 'Invalid code. Please enter the 6-digit code sent to your email.');
-    }
+});
 
-    try {
-        const result = await pool.query(
-            'SELECT otp, otp_expires_at FROM email_verification WHERE user_id = $1',
-            [cid]
-        );
-
-        if (result.rows.length === 0) {
-            delete userStates[cid];
-            return bot.sendMessage(cid, 'Registration session expired. Please tap "Deploy" again.');
-        }
-
-        const { otp, otp_expires_at } = result.rows[0];
-
-        if (new Date() > new Date(otp_expires_at)) {
-            delete userStates[cid];
-            return bot.sendMessage(cid, 'Your verification code has expired. Please tap "Deploy" to start over.');
-        }
-
-        if (userOtp === otp) {
-            // SUCCESS!
-            await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
-            await bot.sendMessage(cid, 'Verified successfully! You can now proceed with your deployment.');
-            delete userStates[cid];
-
-            // Automatically trigger the deployment flow again for the user
-            const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
-            // We create a "fake" message object to re-run the handler
-            const fakeMsg = { ...msg, text: deployCommand }; 
-            bot.emit('message', fakeMsg);
-
-        } else {
-            // Incorrect code
-            await bot.sendMessage(cid, 'The code you entered is incorrect. Please check your email and try again.');
-        }
-    } catch (dbError) {
-        console.error('[DB] Error verifying OTP:', dbError);
-        delete userStates[cid];
-        await bot.sendMessage(cid, 'A database error occurred during verification. Please try again.');
-    }
-    return;
-}
 
     // 1. First, check for data from the Mini App.
   if (msg.web_app_data) {
