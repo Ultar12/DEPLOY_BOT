@@ -3568,15 +3568,19 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
 
+// In bot.js, inside the bot.on('message', async msg => { ... }) handler
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
+        // --- THIS IS THE FREE TRIAL FLOW ---
+        // It completely skips the email verification.
+
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            // This part is now updated
             const formattedDate = check.cooldown.toLocaleString('en-US', {
-                timeZone: 'Africa/Lagos', // Set for Nigeria
+                timeZone: 'Africa/Lagos',
                 year: 'numeric', month: 'short', day: 'numeric',
                 hour: '2-digit', minute: '2-digit', hour12: true
             });
@@ -3589,6 +3593,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
             });
         }
 
+        // The rest of your existing Free Trial logic (channel check, etc.) goes here...
         try { 
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
@@ -3620,7 +3625,20 @@ if (text === 'Deploy' || text === 'Free Trial') {
         }
         return;
 
-    } else { // This is the "Deploy" (paid) flow
+    } else {
+        // --- THIS IS THE "DEPLOY" BUTTON FLOW ---
+        // It will now check for email verification first.
+
+        const isVerified = await isUserVerified(cid);
+    
+        if (!isVerified) {
+            // User is NOT verified, start the registration process.
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register your email. Please enter your email address:');
+            return; 
+        }
+    
+        // If we reach here, the user IS verified, so we proceed with deployment.
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
@@ -3634,6 +3652,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
 
