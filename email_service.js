@@ -112,7 +112,9 @@ async function sendVerificationEmail(toEmail, verificationCode) {
   }
 }
 
-async function sendLoggedOutReminder(toEmail, appName, botUsername) {
+// In email_service.js
+
+async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDeletion) {
   if (!toEmail || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
     console.warn(`[Email] Skipping logged-out reminder. Email service not configured or recipient is missing.`);
     return;
@@ -124,10 +126,17 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername) {
     subject: `Action Required: Your Bot (${appName}) is Offline`,
     html: `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <h1 style="font-size: 24px; font-weight: bold;">Your Bot is Offline</h1>
-        <p style="font-size: 16px;">This is an automated notification to inform you that your bot, <strong>${appName}</strong>, has been logged out and is currently offline. This may be due to an issue with your session ID.</p>
-        <a href="https://t.me/${botUsername}" style="display: inline-block; padding: 12px 24px; margin-top: 20px; background-color: #ff3b30; color: #fff; text-decoration: none; border-radius: 50px; font-weight: bold;">GO TO YOUR BOT</a>
-        <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you have questions, please reach out to support. Your bot will remain in your 'My Bots' list, but it will not be online until you update the session.</p>
+        <h1 style="font-size: 24px; font-weight: bold; color: #ff3b30;">Your Bot is Offline</h1>
+        <p style="font-size: 16px;">This is an automated notification to inform you that your bot, <strong>${appName}</strong>, has been logged out and is currently offline, likely due to an invalid session ID.</p>
+        
+        <div style="background-color: #4d2f00; border: 1px solid #ff9500; border-radius: 8px; padding: 15px; margin: 20px auto; max-width: 90%;">
+          <h2 style="font-size: 18px; color: #ff9500; margin-top: 0;">Deletion Warning</h2>
+          <p style="font-size: 16px; margin: 0;">To prevent wasting resources, this bot will be automatically and permanently deleted in <strong>${daysUntilDeletion} days</strong> if it remains offline.</p>
+        </div>
+        
+        <p style="font-size: 16px;">Please update your session ID to bring it back online.</p>
+        <a href="https://t.me/${botUsername}" style="display: inline-block; padding: 12px 24px; margin-top: 10px; background-color: #007aff; color: #fff; text-decoration: none; border-radius: 50px; font-weight: bold;">UPDATE SESSION ID</a>
+        
         <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
       </div>
     `,
@@ -140,6 +149,7 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername) {
     console.error(`Error sending logged-out reminder email to ${toEmail}:`, error);
   }
 }
+
 
 module.exports = {
   sendPaymentConfirmation,
