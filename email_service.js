@@ -76,6 +76,46 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
   }
 }
 
+// --- NEW FUNCTION ADDED HERE ---
+async function sendVerificationEmail(toEmail, verificationCode) {
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !toEmail) {
+    console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
+    return;
+  }
+  
+  const mailOptions = {
+    from: `"ULTAR'S WBD" <${GMAIL_USER}>`,
+    to: toEmail,
+    subject: `Your Verification Code`,
+    html: `
+      <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
+        <img src="https://i.ibb.co/3fd2v00/verification-shield.png" alt="Verification Shield" width="100" style="margin-bottom: 20px;">
+        <h1 style="font-size: 24px; font-weight: bold;">Email Verification</h1>
+        <p style="font-size: 16px;">Hello Dear,</p>
+        <p style="font-size: 16px;">Please use the code below to complete your registration. This code is valid for 10 minutes.</p>
+        
+        <div style="background-color: #121212; border-radius: 8px; padding: 15px; margin: 20px auto; max-width: 200px;">
+            <p style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #69F0AE; margin: 0;">
+                ${verificationCode}
+            </p>
+        </div>
+        
+        <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you did not request this code, you can safely ignore this email.</p>
+        <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Verification email successfully sent to ${toEmail}`);
+    return true;
+  } catch (error) {
+    console.error(`Error sending verification email to ${toEmail}:`, error);
+    return false;
+  }
+}
+
 async function sendLoggedOutReminder(toEmail, appName, botUsername) {
   if (!toEmail || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
     console.warn(`[Email] Skipping logged-out reminder. Email service not configured or recipient is missing.`);
@@ -106,7 +146,9 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername) {
   }
 }
 
+// --- EXPORTS UPDATED TO INCLUDE THE NEW FUNCTION ---
 module.exports = {
   sendPaymentConfirmation,
+  sendVerificationEmail,
   sendLoggedOutReminder,
 };
