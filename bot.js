@@ -3255,10 +3255,8 @@ bot.on('message', async msg => {
 
 
     // 1. First, check for data from the Mini App.
-  if (msg.web_app_data) {
-    // --- THIS IS THE FIX ---
-    // You must define 'cid' here so the bot knows who to send the message to.
-    const cid = msg.chat.id.toString(); 
+if (msg.web_app_data) {
+    // The 'cid' variable is already available from the top of the function.
     
     const data = JSON.parse(msg.web_app_data.data);
     if (data.status === 'verified') {
@@ -3273,7 +3271,8 @@ bot.on('message', async msg => {
         });
     }
     return; // Stop here after handling the web app data
-  }
+}
+
 
 
   // 2. Second, check if it's a regular text message. If not, stop.
