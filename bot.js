@@ -17,11 +17,13 @@ const path = require('path');
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const express = require('express');
-const { sendPaymentConfirmation } = require('./email_service');
+
+// In bot.js (near the top)
+
+const { sendPaymentConfirmation, sendVerificationEmail, sendLoggedOutReminder } = require('./email_service');
+
 
 const crypto = require('crypto');
-
-const { sendVerificationEmail } = require('./email_service');
 
 
 const { URLSearchParams } = require('url');
