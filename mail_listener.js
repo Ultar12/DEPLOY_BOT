@@ -5,7 +5,7 @@ let botInstance;
 let dbPool;
 const ADMIN_ID = process.env.ADMIN_ID;
 
-// A simple delay function to replace setInterval
+// A simple delay function
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function init(bot, pool) {
@@ -31,8 +31,14 @@ async function runListener() {
       }
     } catch (err) {
       console.error('[Mail Listener] ❌ A critical error occurred:', err.message);
-      console.log('[Mail Listener] 🔌 Reconnecting in 30 seconds...');
-      await delay(30000);
+      if (err.message.includes('IMAP connection ended')) {
+          // No need for a long delay if the connection just ended, try to reconnect sooner.
+          console.log('[Mail Listener] 🔌 Reconnecting in 5 seconds...');
+          await delay(5000);
+      } else {
+          console.log('[Mail Listener] 🔌 Reconnecting in 30 seconds...');
+          await delay(30000);
+      }
     }
   }
 }
@@ -52,90 +58,85 @@ function connectToImap() {
   return new Promise((resolve, reject) => {
     imap.once('ready', () => {
       imap.openBox('INBOX', false, (err, box) => {
-        if (err) {
-          return reject(new Error('Error opening inbox: ' + err.message));
-        }
-        resolve(imap); // Connection and inbox are ready
+        if (err) return reject(new Error('Error opening inbox: ' + err.message));
+        resolve(imap);
       });
     });
-
-    imap.once('error', (err) => {
-      reject(new Error('IMAP Connection Error: ' + err.message));
-    });
-
-    imap.once('end', () => {
-      // This will be caught by the outer loop as a closed connection
-      reject(new Error('IMAP connection ended unexpectedly.'));
-    });
-
+    imap.once('error', (err) => reject(new Error('IMAP Connection Error: ' + err.message)));
+    imap.once('end', () => reject(new Error('IMAP connection ended unexpectedly.')));
     imap.connect();
   });
 }
 
 function searchForOtp(imap) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     if (imap.state !== 'authenticated') {
       console.warn('[Mail Listener] Not authenticated. Skipping search.');
-      return resolve(); // Resolve peacefully if not connected
+      return resolve();
     }
 
-    imap.search(['UNSEEN', ['FROM', 'whatsapp']], (err, results) => {
+    // FIX: Search by SUBJECT for better reliability
+    imap.search(['UNSEEN', ['SUBJECT', 'WhatsApp']], (err, results) => {
       if (err) {
-        // Don't reject here, as a search error shouldn't kill the connection
         console.error('[Mail Listener] Search Error:', err);
         return resolve(); 
       }
       if (!results || results.length === 0) {
-        return resolve(); // No new mail, which is normal
+        return resolve();
       }
 
-      console.log(`[Mail Listener] 📬 Found ${results.length} new message(s)!`);
+      console.log(`[Mail Listener] 📬 Found ${results.length} new message(s) with 'WhatsApp' in the subject!`);
       const f = imap.fetch(results, { bodies: '', markSeen: true });
       
-      let processingCompleted = 0;
-
-      f.on('message', (msg, seqno) => {
-        msg.on('body', (stream, info) => {
+      f.on('message', (msg) => {
+        msg.on('body', (stream) => {
           simpleParser(stream, async (err, parsed) => {
-            // NEW: Added try/catch for robust async handling
             try {
-              if (err) {
-                console.error('[Mail Listener] Email parsing error:', err);
-                return;
-              }
+              if (err) return console.error('[Mail Listener] Email parsing error:', err);
 
               const body = parsed.text || '';
-              const subject = parsed.subject || '';
               let otp = null;
               let match = null;
 
+              // Pattern for admin-only email verification
               if (body.includes('Go to Settings > Account > Email address')) {
                 match = body.match(/Enter this code:\s*(\d{3}-\d{3})/);
                 if (match && match[1]) {
                   otp = match[1];
                   console.log(`[Mail Listener] Admin-only code found: ${otp}`);
                   await botInstance.sendMessage(ADMIN_ID, `📧 WhatsApp Email Verification Code Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
-                  return; // Stop processing this message
+                  return; // Stop processing this specific email
                 }
               }
-              else if (subject.includes('WhatsApp Verification Code')) {
-                 match = body.match(/Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/);
-                 if (match && match[1]) otp = match[1];
-              }
-              else {
-                match = body.match(/is your WhatsApp code (\d{3}-\d{3})/);
-                if (match && match[1]) otp = match[1];
+
+              // Array of patterns for standard user OTPs
+              const otpPatterns = [
+                /is your WhatsApp code (\d{3}-\d{3})/,
+                /Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/,
+                /(\d{3}-\d{3}) is your WhatsApp code/,
+              ];
+              
+              for (const pattern of otpPatterns) {
+                  match = body.match(pattern);
+                  if (match && match[1]) {
+                      otp = match[1];
+                      break; // Stop after the first successful match
+                  }
               }
 
               if (otp) {
                 console.log(`[Mail Listener] User OTP code found: ${otp}`);
-                const assignedUserResult = await dbPool.query("SELECT user_id FROM temp_numbers WHERE status = 'assigned'");
+                
+                // FIX: Query specifically for ONE assigned user to be safe
+                const assignedUserResult = await dbPool.query("SELECT user_id FROM temp_numbers WHERE status = 'assigned' LIMIT 1");
                 
                 if (assignedUserResult.rows.length > 0) {
                   const userId = assignedUserResult.rows[0].user_id;
                   await botInstance.sendMessage(userId, `Your WhatsApp verification code is: <code>${otp}</code>`, { parse_mode: 'HTML' });
+                  
+                  // FIX: As requested, permanently DELETE the number after use.
                   await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
-                  console.log(`[Mail Listener] OTP sent to user ${userId} and their number has been deleted.`);
+                  console.log(`[Mail Listener] OTP sent to user ${userId} and their number has been DELETED.`);
                 } else {
                   console.warn('[Mail Listener] Found a user OTP but no user has a number assigned.');
                 }
@@ -149,11 +150,9 @@ function searchForOtp(imap) {
 
       f.once('error', (err) => {
         console.error('[Mail Listener] Fetch error:', err);
-        // Don't reject, just log and continue
       });
 
       f.once('end', () => {
-        // All messages have been fetched
         resolve();
       });
     });
