@@ -137,7 +137,9 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
     await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP;`);
+await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_email_notification_at TIMESTAMP WITH TIME ZONE;`);
 
+  
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS deploy_keys (
         key        TEXT PRIMARY KEY,
@@ -7432,9 +7434,55 @@ bot.on('channel_post', async msg => {
 
     if (!appName) {
         console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
+// REPLACE your entire bot.on('channel_post', ...) handler with this one
+
+bot.on('channel_post', async msg => {
+    if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
+        return;
+    }
+    const text = msg.text.trim();
+    console.log(`[Channel Post] Received: "${text}"`);
+
+    let appName = null;
+    let status = null;
+    let match;
+
+    // Standardized log format check
+    match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \|/);
+    if (match) {
+        appName = match[1];
+        status = match[2];
+    } else {
+        // Fallback for older log formats
+        match = text.match(/\[([^\]]+)\] connected/i);
+        if (match) {
+            appName = match[1];
+            status = 'ONLINE';
+        } else {
+            match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+            if (match) {
+                appName = match[1];
+                status = 'LOGGED OUT';
+            }
+        }
+    }
+    
+    // Memory error check
+    const memoryErrorMatch = text.match(/R14 memory error detected for \[(.*?)\]/);
+    if (memoryErrorMatch) {
+        const erroredAppName = memoryErrorMatch[1];
+        console.log(`[Log Monitor] R14 memory error detected for app: ${erroredAppName}`);
+        await restartBot(erroredAppName);
+        await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${erroredAppName}\`. Triggering immediate restart.`, { parse_mode: 'Markdown' });
+        return;
+    }
+
+    if (!appName) {
+        console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
         return;
     }
     
+    // --- LOGIC FOR ONLINE BOTS ---
     if (status === 'ONLINE') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -7443,53 +7491,82 @@ bot.on('channel_post', async msg => {
             pendingPromise.resolve('connected');
             appDeploymentPromises.delete(appName);
         }
-        await pool.query(`UPDATE user_bots SET status = 'online', status_changed_at = NULL WHERE bot_name = $1`, [appName]);
-        console.log(`[Status Update] Set "${appName}" to 'online'.`);
         
+        // When a bot comes online, reset its status AND the email notification timer
+        await pool.query(
+            `UPDATE user_bots SET status = 'online', status_changed_at = NULL, last_email_notification_at = NULL WHERE bot_name = $1`, 
+            [appName]
+        );
+        console.log(`[Status Update] Set "${appName}" to 'online' and reset notification timer.`);
+        
+    // --- LOGIC FOR LOGGED OUT BOTS (WITH EMAIL NOTIFICATION) ---
     } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
             if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
             if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
-            pendingPromise.reject(new Error(failureReason));
+            pendingPromise.reject(new Error('Bot session has logged out.'));
             appDeploymentPromises.delete(appName);
         }
+        
+        // Update the bot's status to 'logged_out'
         await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
         
-        const userId = await dbServices.getUserIdByBotName(appName);
-        if (userId) {
+        const ownerId = await dbServices.getUserIdByBotName(appName);
+        if (ownerId) {
+            // 1. Send the standard Telegram notification immediately
             const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
-                                   `*Reason:* ${escapeMarkdown(failureReason)}\n` +
                                    `Please update your session ID.\n\n` +
                                    `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
             
-            const sentMessage = await bot.sendMessage(userId, warningMessage, {
+            await bot.sendMessage(ownerId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${ownerId}` }]]
                 }
-            }).catch(e => console.error(`Failed to send failure alert to user ${userId}: ${e.message}`));
-            
-            if (sentMessage) {
-                try {
-                    await bot.pinChatMessage(userId, sentMessage.message_id);
-                    console.log(`[PinChat] Pinned logout warning for app "${appName}" to user ${userId}.`);
-                    
-                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
-                    await pool.query(
-                        'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
-                        [sentMessage.message_id, userId, unpinAt]
-                    );
-                    console.log(`[PinChat] Scheduled unpin for message ${sentMessage.message_id} at ${unpinAt.toISOString()}`);
-                } catch (pinError) {
-                    console.error(`[PinChat] Failed to pin message for user ${userId}:`, pinError.message);
+            }).catch(e => console.error(`Failed to send Telegram failure alert to user ${ownerId}: ${e.message}`));
+
+            // 2. Handle the email notification with the 30-hour cooldown
+            try {
+                // Get owner's email and the last notification time in one query
+                const ownerInfoResult = await pool.query(
+                    `SELECT b.last_email_notification_at, v.email
+                     FROM user_bots b
+                     JOIN email_verification v ON b.user_id = v.user_id
+                     WHERE b.bot_name = $1 AND v.is_verified = TRUE`,
+                    [appName]
+                );
+
+                if (ownerInfoResult.rows.length > 0) {
+                    const { last_email_notification_at, email } = ownerInfoResult.rows[0];
+                    const thirtyHoursAgo = new Date(Date.now() - 30 * 60 * 60 * 1000);
+
+                    // Check if a notification was never sent OR if the last one was over 30 hours ago
+                    if (!last_email_notification_at || new Date(last_email_notification_at) < thirtyHoursAgo) {
+                        console.log(`[Email] Cooldown passed for ${appName}. Sending logged-out reminder to ${email}.`);
+                        
+                        // Send the email
+                        await sendLoggedOutReminder(email, appName, botUsername);
+                        
+                        // Update the timestamp in the database to reset the 30-hour clock
+                        await pool.query(
+                            `UPDATE user_bots SET last_email_notification_at = NOW() WHERE bot_name = $1`,
+                            [appName]
+                        );
+
+                    } else {
+                        console.log(`[Email] Skipping email for ${appName}. Last notification was sent less than 30 hours ago.`);
+                    }
+                } else {
+                    console.log(`[Email] Skipping email for ${appName}. Owner has no verified email.`);
                 }
+            } catch (emailError) {
+                console.error(`[Email] Failed to process email notification for ${appName}:`, emailError);
             }
         }
     }
 });
-
 
 
 
