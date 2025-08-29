@@ -268,6 +268,20 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS email_verification (
+    user_id       TEXT PRIMARY KEY,
+    email         TEXT,
+    otp           TEXT,
+    otp_expires_at TIMESTAMP WITH TIME ZONE,
+    is_verified   BOOLEAN DEFAULT FALSE,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+
+
     // --- THIS IS THE FIX ---
     // This line ensures the 'bot_type' column is added to the existing table
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
