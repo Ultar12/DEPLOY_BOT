@@ -21,6 +21,9 @@ const { sendPaymentConfirmation } = require('./email_service');
 
 const crypto = require('crypto');
 
+const { sendVerificationEmail } = require('./email_service');
+
+
 const { URLSearchParams } = require('url');
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
@@ -588,6 +591,34 @@ async function sendBannedUsersList(chatId, messageId = null) {
     }
 }
 
+
+// bot.js (Utilities section)
+
+/**
+ * Generates a random 6-digit numeric code.
+ * @returns {string} The 6-digit code.
+ */
+function generateOtp() {
+    return crypto.randomInt(100000, 999999).toString();
+}
+
+/**
+ * Checks if a user has already verified their email.
+ * @param {string} userId The user's Telegram ID.
+ * @returns {Promise<boolean>} True if the user is verified, false otherwise.
+ */
+async function isUserVerified(userId) {
+    try {
+        const result = await pool.query(
+            'SELECT is_verified FROM email_verification WHERE user_id = $1',
+            [userId]
+        );
+        return result.rows.length > 0 && result.rows[0].is_verified;
+    } catch (error) {
+        console.error(`[Verification] Error checking verification status for user ${userId}:`, error);
+        return false; // Fail safely
+    }
+}
 
 
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
