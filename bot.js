@@ -7520,7 +7520,7 @@ bot.on('channel_post', async msg => {
                     if (!last_email_notification_at || new Date(last_email_notification_at) < thirtyHoursAgo) {
                         console.log(`[Email] Cooldown passed for ${appName}. Sending logged-out reminder to ${email}.`);
                         
-                        await sendLoggedOutReminder(email, appName, botUsername);
+                        await sendLoggedOutReminder(email, appName, botUsername, 5);
                         
                         // Update the timestamp to reset the 30-hour clock
                         await pool.query(
