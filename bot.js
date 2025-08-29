@@ -3050,7 +3050,7 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
         let expirationInfo = escapeMarkdown("Not Set");
         if (botInfo.is_free_trial) {
             const deployDate = new Date(botInfo.deploy_date);
-            const expirationDate = new Date(deployDate.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days for free trial
+            const expirationDate = new Date(deployDate.getTime() + 1 * 24 * 60 * 60 * 1000); // 3 days for free trial
             const now = new Date();
             const timeLeftMs = expirationDate.getTime() - now.getTime();
             const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
