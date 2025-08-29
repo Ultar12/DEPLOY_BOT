@@ -3385,7 +3385,7 @@ if (st && st.step === 'AWAITING_OTP') {
         if (userOtp === otp) {
             // SUCCESS!
             await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
-            await bot.sendMessage(cid, '✅ Email verified successfully! You can now proceed with your deployment.');
+            await bot.sendMessage(cid, 'verified successfully! You can now proceed with your deployment.');
             delete userStates[cid];
 
             // Automatically trigger the deployment flow again for the user
@@ -3730,7 +3730,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         if (!isVerified) {
             // **Step 1: User is NOT verified, so we start the registration process.**
             userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
-            await bot.sendMessage(cid, 'To deploy a bot, you first need to register your email. Please enter your email address:');
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
             return; // Stop and wait for their email
         }
     
