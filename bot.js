@@ -483,6 +483,29 @@ function escapeMarkdown(text) {
         .replace(/!/g, '\\!');
 }
 
+
+/**
+ * Fetches a user's verified email from the database.
+ * @param {string} userId The user's Telegram ID.
+ * @returns {Promise<string|null>} The user's email or null if not found.
+ */
+async function getUserEmail(userId) {
+    try {
+        const result = await pool.query(
+            'SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE',
+            [userId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows[0].email;
+        }
+        return null;
+    } catch (error) {
+        console.error(`[DB] Error fetching email for user ${userId}:`, error);
+        return null;
+    }
+}
+
+
 // AROUND LINE 490 (inside bot.js)
 
 let emojiIndex = 0;
@@ -3255,68 +3278,6 @@ if (userActivity.rows.length > 0) {
       return;
   }
 
-            // --- FIX: AWAITING_EMAIL_FOR_PAYMENT handler now saves app_name and session_id ---
-if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
-    const email = text.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return bot.sendMessage(cid, "That's not a valid email. Please try again.");
-    }
-
-    const sentMsg = await bot.sendMessage(cid, 'Generating payment link...');
-
-    try {
-        const reference = crypto.randomBytes(16).toString('hex');
-        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
-
-        const isRenewal = st.data.renewal;
-        const botTypeToSave = isRenewal ? `renewal_${st.data.appName}` : st.data.botType;
-
-        // FIX: The INSERT query now includes app_name and session_id
-        await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-            [reference, cid, email, botTypeToSave, st.data.APP_NAME, st.data.SESSION_ID]
-        );
-
-        // Store the reference ID in the state so the cancel button can use it
-        st.data.reference = reference;
-        
-        const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
-            {
-                email: email,
-                amount: priceInKobo,
-                reference: reference,
-                metadata: {
-                    user_id: cid,
-                    product: isRenewal ? `Renewal for ${st.data.appName}` : "New Deploy Key"
-                }
-            },
-            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-        );
-
-        const paymentUrl = paystackResponse.data.data.authorization_url;
-        await bot.editMessageText(
-            'Click the button below to complete your payment. Your purchase will be confirmed automatically.',
-            {
-                chat_id: cid, message_id: sentMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Pay Now', url: paymentUrl }],
-                        [{ text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
-                    ]
-                }
-            }
-        );
-
-    } catch (error) {
-        console.error("Paystack error:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link.', {
-            chat_id: cid, message_id: sentMsg.message_id
-        });
-    } finally {
-      // FIX: The state is no longer deleted here
-    }
-    return;
-}
 
   // Handler for when the user submits their email
 if (st && st.step === 'AWAITING_EMAIL') {
