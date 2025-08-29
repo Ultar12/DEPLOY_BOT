@@ -1725,6 +1725,7 @@ module.exports = {
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
+    backupAllPaidßots,
     removeMonitoredFreeTrial,
     syncDatabases,
     createAllTablesInPool,
