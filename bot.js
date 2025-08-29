@@ -7397,62 +7397,7 @@ if (action === 'setvarbool') {
   }
 });
 
-// --- FIX: Final, corrected bot.on('channel_post') handler ---
-bot.on('channel_post', async msg => {
-    const TELEGRAM_CHANNEL_ID = '-1002892034574';
-    if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
-        return;
-    }
-    const text = msg.text.trim();
-    console.log(`[Channel Post] Received: "${text}"`);
-
-    let appName = null;
-    let status = null;
-    let sessionId = null;
-    let failureReason = 'Bot session has logged out.';
-    let match;
-
-    // Check for a standardized status message first
-    match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \| Session: (.*?) \| Time: (.*)/);
-    if (match) {
-        appName = match[1];
-        status = match[2];
-        sessionId = match[3];
-        console.log(`[Channel Post] Parsed (Standardized): App=${appName}, Status=${status}, Session=${sessionId}`);
-    } else {
-        match = text.match(/\[([^\]]+)\] connected/i);
-        if (match) {
-            appName = match[1];
-            status = 'ONLINE';
-            console.log(`[Channel Post] Parsed (Direct Connect): App=${appName}, Status=${status}`);
-        } else {
-            match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
-            if (match) {
-                appName = match[1];
-                status = 'LOGGED OUT';
-                console.log(`[Channel Post] Parsed (Direct Logout): App=${appName}, Status=${status}`);
-            }
-        }
-    }
-    
-    // Check for the specific memory error message
-    const memoryErrorMatch = text.match(/R14 memory error detected for \[(.*?)\]/);
-    if (memoryErrorMatch) {
-        appName = memoryErrorMatch[1];
-        console.log(`[Log Monitor] R14 memory error detected for app: ${appName}`);
-        
-        // Trigger the restart immediately
-        await restartBot(appName);
-        // Notify yourself as the admin
-        await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${appName}\`. Triggering immediate restart.`, { parse_mode: 'Markdown' });
-
-        return; // Exit to prevent further processing
-    }
-
-    if (!appName) {
-        console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
-// REPLACE your entire bot.on('channel_post', ...) handler with this one
-
+// --- Updated bot.on('channel_post') handler ---
 bot.on('channel_post', async msg => {
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
         return;
@@ -7464,13 +7409,12 @@ bot.on('channel_post', async msg => {
     let status = null;
     let match;
 
-    // Standardized log format check
+    // Check for different log formats
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \|/);
     if (match) {
         appName = match[1];
         status = match[2];
     } else {
-        // Fallback for older log formats
         match = text.match(/\[([^\]]+)\] connected/i);
         if (match) {
             appName = match[1];
@@ -7484,13 +7428,12 @@ bot.on('channel_post', async msg => {
         }
     }
     
-    // Memory error check
     const memoryErrorMatch = text.match(/R14 memory error detected for \[(.*?)\]/);
     if (memoryErrorMatch) {
-        const erroredAppName = memoryErrorMatch[1];
-        console.log(`[Log Monitor] R14 memory error detected for app: ${erroredAppName}`);
-        await restartBot(erroredAppName);
-        await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${erroredAppName}\`. Triggering immediate restart.`, { parse_mode: 'Markdown' });
+        appName = memoryErrorMatch[1];
+        console.log(`[Log Monitor] R14 memory error detected for app: ${appName}`);
+        await restartBot(appName);
+        await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${appName}\`. Triggering immediate restart.`, { parse_mode: 'Markdown' });
         return;
     }
 
@@ -7526,27 +7469,40 @@ bot.on('channel_post', async msg => {
             appDeploymentPromises.delete(appName);
         }
         
-        // Update the bot's status to 'logged_out'
         await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
         console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
         
-        const ownerId = await dbServices.getUserIdByBotName(appName);
-        if (ownerId) {
+        const userId = await dbServices.getUserIdByBotName(appName);
+        if (userId) {
             // 1. Send the standard Telegram notification immediately
             const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
+                                   `*Reason:* Bot session has logged out.\n` +
                                    `Please update your session ID.\n\n` +
                                    `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
             
-            await bot.sendMessage(ownerId, warningMessage, {
+            const sentMessage = await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
                 reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${ownerId}` }]]
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
                 }
-            }).catch(e => console.error(`Failed to send Telegram failure alert to user ${ownerId}: ${e.message}`));
+            }).catch(e => console.error(`Failed to send Telegram failure alert to user ${userId}: ${e.message}`));
+            
+            if (sentMessage) {
+                // Pin the message
+                try {
+                    await bot.pinChatMessage(userId, sentMessage.message_id);
+                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000); // Unpin after 6 hours
+                    await pool.query(
+                        'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
+                        [sentMessage.message_id, userId, unpinAt]
+                    );
+                } catch (pinError) {
+                    console.error(`[PinChat] Failed to pin message for user ${userId}:`, pinError.message);
+                }
+            }
 
             // 2. Handle the email notification with the 30-hour cooldown
             try {
-                // Get owner's email and the last notification time in one query
                 const ownerInfoResult = await pool.query(
                     `SELECT b.last_email_notification_at, v.email
                      FROM user_bots b
@@ -7559,19 +7515,16 @@ bot.on('channel_post', async msg => {
                     const { last_email_notification_at, email } = ownerInfoResult.rows[0];
                     const thirtyHoursAgo = new Date(Date.now() - 30 * 60 * 60 * 1000);
 
-                    // Check if a notification was never sent OR if the last one was over 30 hours ago
                     if (!last_email_notification_at || new Date(last_email_notification_at) < thirtyHoursAgo) {
                         console.log(`[Email] Cooldown passed for ${appName}. Sending logged-out reminder to ${email}.`);
                         
-                        // Send the email
                         await sendLoggedOutReminder(email, appName, botUsername);
                         
-                        // Update the timestamp in the database to reset the 30-hour clock
+                        // Update the timestamp to reset the 30-hour clock
                         await pool.query(
                             `UPDATE user_bots SET last_email_notification_at = NOW() WHERE bot_name = $1`,
                             [appName]
                         );
-
                     } else {
                         console.log(`[Email] Skipping email for ${appName}. Last notification was sent less than 30 hours ago.`);
                     }
@@ -7584,6 +7537,7 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
 
 
 
