@@ -284,7 +284,7 @@ await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referr
   );
 `);
 
-
+await dbPool.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
 
     // --- THIS IS THE FIX ---
     // This line ensures the 'bot_type' column is added to the existing table
@@ -3291,7 +3291,6 @@ if (st && st.step === 'AWAITING_EMAIL') {
     // Check if the input is a valid email format
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         // --- VALID EMAIL ---
-        // The email format is correct, so we proceed to send the OTP.
         const otp = generateOtp();
         const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
@@ -3311,7 +3310,18 @@ if (st && st.step === 'AWAITING_EMAIL') {
 
             if (emailSent) {
                 st.step = 'AWAITING_OTP';
-                await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
+                // --- THIS IS THE UPDATED MESSAGE AND KEYBOARD ---
+                await bot.sendMessage(cid, `Code sent to **${email}**. Please enter the verification code.\n\n_The code expires in 10 minutes._`, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: 'Resend Code', callback_data: 'resend_otp' },
+                                { text: 'Change Email', callback_data: 'change_email' }
+                            ]
+                        ]
+                    }
+                });
             } else {
                 delete userStates[cid];
                 await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support or try again later.');
@@ -3322,21 +3332,19 @@ if (st && st.step === 'AWAITING_EMAIL') {
             await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
         }
     } else {
-        // --- INVALID EMAIL ATTEMPT ---
-        // Initialize or increment the attempt counter in the user's state
+        // --- INVALID EMAIL ATTEMPT LOGIC ---
         st.data.emailAttempts = (st.data.emailAttempts || 0) + 1;
 
         if (st.data.emailAttempts >= 2) {
-            // The user has failed 2 times. Cancel the registration.
-            await bot.sendMessage(cid, 'Too many invalid attempts. Please tap "Deploy" to try again.');
-            delete userStates[cid]; // This is the crucial step that clears the state and stops the loop.
+            await bot.sendMessage(cid, 'Too many invalid attempts. Registration has been cancelled. Please tap "Deploy" to try again.');
+            delete userStates[cid];
         } else {
-            // This is the first failed attempt. Warn the user.
             await bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again. You have 1 attempt left.");
         }
     }
     return;
 }
+
 
 
 // Handler for when the user submits the OTP
@@ -5992,6 +6000,92 @@ if (action === 'confirm_and_pay_step') {
             }
         });
     }
+    return;
+}
+
+// REPLACE your 'resend_otp' handler with this one
+
+if (action === 'resend_otp') {
+    if (!st || st.step !== 'AWAITING_OTP') {
+        return bot.answerCallbackQuery(q.id); 
+    }
+
+    try {
+        // Fetch the user's email and the last time a code was sent
+        const result = await pool.query(
+            'SELECT email, last_otp_sent_at FROM email_verification WHERE user_id = $1', 
+            [cid]
+        );
+        
+        if (result.rows.length === 0) {
+            return bot.answerCallbackQuery(q.id, { text: 'Error: Your session expired.', show_alert: true });
+        }
+
+        const { email, last_otp_sent_at } = result.rows[0];
+        
+        // --- COOLDOWN CHECK ---
+        if (last_otp_sent_at) {
+            const timeSinceLastSend = Date.now() - new Date(last_otp_sent_at).getTime();
+            const oneMinute = 60 * 1000;
+
+            if (timeSinceLastSend < oneMinute) {
+                const secondsLeft = Math.ceil((oneMinute - timeSinceLastSend) / 1000);
+                return bot.answerCallbackQuery(q.id, { 
+                    text: `Please wait ${secondsLeft} more seconds before resending.`, 
+                    show_alert: true 
+                });
+            }
+        }
+
+        // If cooldown passes, proceed to send a new code
+        const newOtp = generateOtp();
+        const newOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+        // Update the database with the new code, expiration, AND the new "last sent" time
+        await pool.query(
+            'UPDATE email_verification SET otp = $1, otp_expires_at = $2, last_otp_sent_at = NOW() WHERE user_id = $3',
+            [newOtp, newOtpExpiresAt, cid]
+        );
+
+        await sendVerificationEmail(email, newOtp);
+
+        await bot.answerCallbackQuery(q.id, { text: `A new code has been sent to ${email}`, show_alert: true });
+
+    } catch (error) {
+        console.error('[Resend OTP] Error:', error);
+        await bot.answerCallbackQuery(q.id, { text: 'Failed to resend code. Please try again.', show_alert: true });
+    }
+    return;
+}
+
+// ADD this new handler inside your bot.on('callback_query', ...) function
+
+// Handler for the "Change Email" button
+if (action === 'change_email') {
+    // First, check if the user is in the correct state to perform this action.
+    if (!st || st.step !== 'AWAITING_OTP') {
+        // Silently ignore if the state is wrong (e.g., from an old message).
+        return bot.answerCallbackQuery(q.id); 
+    }
+    
+    // Acknowledge the button press to stop the loading animation.
+    await bot.answerCallbackQuery(q.id);
+
+    // 1. Change the user's state back to waiting for an email.
+    st.step = 'AWAITING_EMAIL';
+
+    // 2. Reset the invalid email attempt counter so they get fresh tries.
+    if (st.data.emailAttempts) {
+        delete st.data.emailAttempts;
+    }
+
+    // 3. Edit the message to ask for the new email and remove the old buttons.
+    await bot.editMessageText('Please enter the new email address you would like to use:', {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        // No reply_markup is needed, so the old buttons will be removed.
+    });
+    
     return;
 }
 
