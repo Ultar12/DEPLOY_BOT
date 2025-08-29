@@ -3662,11 +3662,12 @@ if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
+        // --- FREE TRIAL LOGIC (NO VERIFICATION) ---
+        // This flow checks cooldown and channel membership but skips email verification.
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
-            // This part is now updated
             const formattedDate = check.cooldown.toLocaleString('en-US', {
-                timeZone: 'Africa/Lagos', // Set for Nigeria
+                timeZone: 'Africa/Lagos',
                 year: 'numeric', month: 'short', day: 'numeric',
                 hour: '2-digit', minute: '2-digit', hour12: true
             });
@@ -3710,7 +3711,18 @@ if (text === 'Deploy' || text === 'Free Trial') {
         }
         return;
 
-    } else { // This is the "Deploy" (paid) flow
+    } else { 
+        // --- STANDARD DEPLOY LOGIC (WITH VERIFICATION) ---
+        const isVerified = await isUserVerified(cid);
+    
+        if (!isVerified) {
+            // User is NOT verified, so we start the registration process.
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register your email. Please enter your email address:');
+            return; 
+        }
+    
+        // If we reach here, the user is already verified. Proceed with standard deployment.
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
@@ -3724,6 +3736,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
 
