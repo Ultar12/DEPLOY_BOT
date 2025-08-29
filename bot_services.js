@@ -494,7 +494,7 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days cooldown
+    const tenDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000); // 10 days cooldown
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
