@@ -179,6 +179,15 @@ async function createAllTablesInPool(dbPool, dbName) {
       );
     `);
 
+ await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key VARCHAR(50) PRIMARY KEY,
+    setting_value VARCHAR(50) NOT NULL
+);
+
+INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;
+`);
+
   await dbPool.query(`
       CREATE TABLE IF NOT EXISTS key_rewards (
           user_id TEXT PRIMARY KEY,
@@ -360,14 +369,6 @@ const userLastSeenNotification = new Map(); // userId -> last timestamp notified
 const adminOnlineMessageIds = new Map(); // userId -> adminMessageId (for editing)
 const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
-// NEW: Store maintenance mode status
-const MAINTENANCE_FILE = path.join(__dirname, 'maintenance_status.json');
-let isMaintenanceMode = false;
-
-// AROUND LINE 470
-// ===================================================================
-// ADD THIS ENTIRE NEW FUNCTION:
-// ===================================================================
 
 const USERS_PER_PAGE = 8; // Define how many users to show per page
 
@@ -684,30 +685,38 @@ function generateKey() {
 }
 
 
+// REPLACE WITH THIS
 async function loadMaintenanceStatus() {
     try {
-        if (fs.existsSync(MAINTENANCE_FILE)) {
-            const data = await fs.promises.readFile(MAINTENANCE_FILE, 'utf8');
-            isMaintenanceMode = JSON.parse(data).isMaintenanceMode || false;
-            console.log(`[Maintenance] Loaded status: ${isMaintenanceMode ? 'ON' : 'OFF'}`);
+        const result = await pool.query("SELECT setting_value FROM app_settings WHERE setting_key = 'maintenance_mode'");
+        if (result.rows.length > 0) {
+            isMaintenanceMode = (result.rows[0].setting_value === 'on');
         } else {
-            await saveMaintenanceStatus(false);
-            console.log('[Maintenance] Status file not found. Created with default OFF.');
+            // If for some reason the row doesn't exist, create it
+            await pool.query("INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off')");
+            isMaintenanceMode = false;
+            console.log('[Maintenance] Status not found in DB. Created with default OFF.');
         }
+        console.log(`[Maintenance] Loaded status from DATABASE: ${isMaintenanceMode ? 'ON' : 'OFF'}`);
     } catch (error) {
-        console.error('[Maintenance] Error loading status:', error.message);
-        isMaintenanceMode = false;
+        console.error('[Maintenance] CRITICAL ERROR loading status from database:', error.message);
+        // Fallback to OFF if the database is unreachable on startup
+        isMaintenanceMode = false; 
     }
 }
 
+
+// REPLACE WITH THIS
 async function saveMaintenanceStatus(status) {
+    const statusValue = status ? 'on' : 'off';
     try {
-        await fs.promises.writeFile(MAINTENANCE_FILE, JSON.stringify({ isMaintenanceMode: status }), 'utf8');
-        console.log(`[Maintenance] Saved status: ${status ? 'ON' : 'OFF'}`);
+        await pool.query("UPDATE app_settings SET setting_value = $1 WHERE setting_key = 'maintenance_mode'", [statusValue]);
+        console.log(`[Maintenance] Saved status to DATABASE: ${statusValue.toUpperCase()}`);
     } catch (error) {
-        console.error('[Maintenance] Error saving status:', error.message);
+        console.error('[Maintenance] CRITICAL ERROR saving status to database:', error.message);
     }
 }
+
 
 function formatExpirationInfo(deployDateStr, expirationDateStr) {
     if (!deployDateStr) return 'N/A';
