@@ -2,62 +2,171 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Free Trial Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Verification</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { font-family: sans-serif; background-color: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); text-align: center; padding: 20px; }
-        #status { margin: 20px 0; font-weight: bold; font-size: 1.2em; }
+        :root {
+            --tg-bg-color: var(--tg-theme-bg-color, #212121);
+            --tg-text-color: var(--tg-theme-text-color, #ffffff);
+            --tg-button-color: var(--tg-theme-button-color, #58a9f4);
+            --tg-button-text-color: var(--tg-theme-button-text-color, #ffffff);
+            --tg-hint-color: var(--tg-theme-hint-color, #aaaaaa);
+            --success-color: #34C759;
+            --error-color: #FF3B30;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-bg-color);
+            color: var(--tg-text-color);
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .container {
+            max-width: 300px;
+        }
+        
+        #status-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        #status-message {
+            margin: 15px 0;
+            font-weight: 500;
+            font-size: 1.1em;
+            min-height: 40px;
+        }
+        
+        #hint-text {
+            color: var(--tg-hint-color);
+            font-size: 0.9em;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid var(--tg-text-color);
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        button {
+            display: none; /* Hidden by default */
+            margin-top: 20px;
+            background-color: var(--tg-button-color);
+            color: var(--tg-button-text-color);
+            border: none;
+            padding: 12px 25px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
-    <h2>Free Trial Verification</h2>
-    <div id="status">Verifying your eligibility...</div>
+    <div class="container">
+        <div id="status-icon"><div class="spinner"></div></div>
+        <h2 id="status-title">Verification</h2>
+        <p id="status-message">Please wait while we verify your eligibility...</p>
+        <p id="hint-text">This should only take a moment.</p>
+        <button id="retryButton">Try Again</button>
+    </div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        // This function runs automatically when the page loads
+        const statusIcon = document.getElementById('status-icon');
+        const statusTitle = document.getElementById('status-title');
+        const statusMessage = document.getElementById('status-message');
+        const hintText = document.getElementById('hint-text');
+        const retryButton = document.getElementById('retryButton');
+        
+        retryButton.addEventListener('click', runVerification);
+
         async function runVerification() {
+            // Reset UI for retry attempts
+            statusIcon.innerHTML = '<div class="spinner"></div>';
+            statusTitle.innerText = 'Verification';
+            statusMessage.innerText = 'Please wait while we verify your eligibility...';
+            hintText.innerText = 'This should only take a moment.';
+            statusMessage.style.color = 'inherit';
+            retryButton.style.display = 'none';
+
             try {
-                // Get IP and location info
+                // Fetch location info
                 const geoResponse = await fetch('https://ipapi.co/json/');
                 const geoData = await geoResponse.json();
 
                 if (geoData.country_code !== 'NG') {
-                    document.getElementById('status').innerText = 'Sorry, the free trial is only available in Nigeria.';
+                    statusIcon.innerText = '🚫';
+                    statusTitle.innerText = 'Access Denied';
+                    statusMessage.innerText = 'Sorry, the free trial is only available in Nigeria.';
+                    hintText.innerText = '';
                     return;
                 }
 
-                // If location is OK, send the data to the bot's server for final checks
+                // Send data to your bot's server for final checks
                 const serverResponse = await fetch('/pre-verify-user', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Telegram-Init-Data': tg.initData
-                    },
-                    body: JSON.stringify({}) 
+                    }
                 });
 
                 const serverData = await serverResponse.json();
 
                 if (serverData.success) {
-                    // --- THIS IS THE FIX ---
-                    // Signal success to the bot. This is the missing line.
+                    statusIcon.innerText = '✅';
+                    statusTitle.innerText = 'Success!';
+                    statusMessage.innerText = 'Verification complete. You can now close this window.';
+                    statusMessage.style.color = 'var(--success-color)';
+                    hintText.innerText = 'Returning to the bot...';
+                    
+                    // Signal success to the bot.
                     tg.sendData(JSON.stringify({ status: 'verified' }));
                     
-                    // The app will close automatically after sending the data.
-                    tg.close();
+                    // Close the app after a short delay
+                    setTimeout(() => tg.close(), 1500);
                 } else {
-                    document.getElementById('status').innerText = `Verification Failed: ${serverData.message}`;
+                    statusIcon.innerText = '⚠️';
+                    statusTitle.innerText = 'Verification Failed';
+                    statusMessage.innerText = serverData.message || 'An unknown error occurred.';
+                    statusMessage.style.color = 'var(--error-color)';
+                    hintText.innerText = 'Please try again or contact support if the issue persists.';
+                    retryButton.style.display = 'block';
                 }
 
             } catch (error) {
-                document.getElementById('status').innerText = 'Could not complete verification. Please disable any VPNs and try again.';
+                statusIcon.innerText = '⚠️';
+                statusTitle.innerText = 'Network Error';
+                statusMessage.innerText = 'Could not complete verification. Please check your connection, disable any VPNs, and try again.';
+                statusMessage.style.color = 'var(--error-color)';
+                hintText.innerText = '';
+                retryButton.style.display = 'block';
             }
         }
         
+        // Run the verification automatically when the page loads
         window.onload = runVerification;
     </script>
 </body>
