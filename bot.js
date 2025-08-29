@@ -616,6 +616,19 @@ function generateOtp() {
     return crypto.randomInt(100000, 999999).toString();
 }
 
+async function isUserVerified(userId) {
+    try {
+        const result = await pool.query(
+            'SELECT is_verified FROM email_verification WHERE user_id = $1',
+            [userId]
+        );
+        return result.rows.length > 0 && result.rows[0].is_verified;
+    } catch (error) {
+        console.error(`[Verification] Error checking verification status for user ${userId}:`, error);
+        return false;
+    }
+}
+
 /**
  * Checks if a user has already verified their email.
  * @param {string} userId The user's Telegram ID.
@@ -3305,7 +3318,92 @@ if (st && st.step === 'AWAITING_EMAIL_FOR_PAYMENT') {
     return;
 }
 
-  
+  // Handler for when the user submits their email
+if (st && st.step === 'AWAITING_EMAIL') {
+    const email = text.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again.");
+    }
+
+    const otp = generateOtp();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+    try {
+        await pool.query(
+            `INSERT INTO email_verification (user_id, email, otp, otp_expires_at, is_verified) 
+             VALUES ($1, $2, $3, $4, FALSE)
+             ON CONFLICT (user_id) DO UPDATE SET
+               email = EXCLUDED.email,
+               otp = EXCLUDED.otp,
+               otp_expires_at = EXCLUDED.otp_expires_at,
+               is_verified = FALSE`,
+            [cid, email, otp, otpExpiresAt]
+        );
+
+        const emailSent = await sendVerificationEmail(email, otp);
+
+        if (emailSent) {
+            st.step = 'AWAITING_OTP';
+            await bot.sendMessage(cid, `A 6-digit verification code has been sent to **${email}**. Please enter the code here to continue.\n\nThe code will expire in 10 minutes.`, { parse_mode: 'Markdown' });
+        } else {
+            delete userStates[cid];
+            await bot.sendMessage(cid, 'Sorry, I couldn\'t send a verification email at this time. Please contact support.');
+        }
+    } catch (dbError) {
+        console.error('[DB] Error saving OTP:', dbError);
+        delete userStates[cid];
+        await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
+    }
+    return;
+}
+
+// Handler for when the user submits the OTP
+if (st && st.step === 'AWAITING_OTP') {
+    const userOtp = text.trim();
+    if (!/^\d{6}$/.test(userOtp)) {
+        return bot.sendMessage(cid, 'Invalid code. Please enter the 6-digit code sent to your email.');
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT otp, otp_expires_at FROM email_verification WHERE user_id = $1',
+            [cid]
+        );
+
+        if (result.rows.length === 0) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, 'Registration session expired. Please tap "Deploy" again.');
+        }
+
+        const { otp, otp_expires_at } = result.rows[0];
+
+        if (new Date() > new Date(otp_expires_at)) {
+            delete userStates[cid];
+            return bot.sendMessage(cid, 'Your verification code has expired. Please tap "Deploy" to start over.');
+        }
+
+        if (userOtp === otp) {
+            // SUCCESS!
+            await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
+            await bot.sendMessage(cid, '✅ Email verified successfully! You can now proceed with your deployment.');
+            delete userStates[cid];
+
+            // Automatically trigger the deployment flow again for the user
+            const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
+            const fakeMsg = { ...msg, text: deployCommand }; 
+            bot.emit('message', fakeMsg);
+
+        } else {
+            await bot.sendMessage(cid, 'The code you entered is incorrect. Please check your email and try again.');
+        }
+    } catch (dbError) {
+        console.error('[DB] Error verifying OTP:', dbError);
+        delete userStates[cid];
+        await bot.sendMessage(cid, 'A database error occurred during verification. Please try again.');
+    }
+    return;
+}
+
 
   // --- REPLACE this entire block in bot.js ---
 
@@ -3570,13 +3668,14 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
 // In bot.js, inside the bot.on('message', async msg => { ... }) handler
 
+// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
     if (isFreeTrial) {
         // --- THIS IS THE FREE TRIAL FLOW ---
-        // It completely skips the email verification.
-
+        // It correctly skips the email verification.
         const check = await dbServices.canDeployFreeTrial(cid);
         if (!check.can) {
             const formattedDate = check.cooldown.toLocaleString('en-US', {
@@ -3593,7 +3692,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
             });
         }
 
-        // The rest of your existing Free Trial logic (channel check, etc.) goes here...
         try { 
             const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, cid);
             const isMember = ['creator', 'administrator', 'member'].includes(member.status);
@@ -3626,22 +3724,20 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
 
     } else {
-        // --- THIS IS THE "DEPLOY" BUTTON FLOW ---
-        // It will now check for email verification first.
-
+        // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
         const isVerified = await isUserVerified(cid);
     
         if (!isVerified) {
-            // User is NOT verified, start the registration process.
+            // **Step 1: User is NOT verified, so we start the registration process.**
             userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
             await bot.sendMessage(cid, 'To deploy a bot, you first need to register your email. Please enter your email address:');
-            return; 
+            return; // Stop and wait for their email
         }
     
-        // If we reach here, the user IS verified, so we proceed with deployment.
+        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
-        await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
+        await bot.sendMessage(cid, 'Welcome back! Which bot type would you like to deploy?', {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'Levanter', callback_data: `select_deploy_type:levanter` }],
@@ -3652,6 +3748,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
 
