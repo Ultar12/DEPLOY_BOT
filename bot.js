@@ -3134,31 +3134,25 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
 
 
 
-// REPLACE your entire bot.on('message', ...) handler in bot.js with this one
-
+// 10) Message handler for buttons & state machine
 bot.on('message', async msg => {
-  // --- 1. SET UP ALL VARIABLES ---
   const cid = msg.chat.id.toString();
   const text = msg.text?.trim();
-  const st = userStates[cid];
-  const isAdmin = cid === ADMIN_ID;
 
-  // --- 2. PERFORM INITIAL CHECKS (like ban status) ---
+  // IMPORTANT: Ban check before any other logic for non-admin users
   if (cid !== ADMIN_ID) {
-      const banned = await dbServices.isUserBanned(cid);
+      const banned = await dbServices.isUserBanned(cid); // Use dbServices
       if (banned) {
-          console.log(`[Security] Banned user ${cid} attempted to interact.`);
-          return;
+          console.log(`[Security] Banned user ${cid} attempted to interact with message: "${text}"`);
+          return; // Stop processing for banned users
       }
   }
 
-  // --- 3. CRITICAL: HANDLE MINI APP DATA FIRST ---
+// --- 3. CHECK FOR MINI APP DATA (BEFORE ANYTHING ELSE) ---
+  // This is the crucial fix. We check for Mini App data first.
   if (msg.web_app_data) {
-    console.log('[DEBUG] Received web_app_data:', msg.web_app_data.data); // This log will confirm if the bot is receiving the data.
-    
     const data = JSON.parse(msg.web_app_data.data);
     if (data.status === 'verified') {
-        // This is the message you are expecting. It will now send correctly.
         await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -3173,10 +3167,11 @@ bot.on('message', async msg => {
   }
 
   // --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
-  // Now that we've checked for Mini App data, we can safely ignore other non-text messages (like stickers, photos, etc.).
+  // Now that we've checked for Mini App data, we can safely ignore other non-text messages.
   if (!text) return; 
 
-  // --- 5. HANDLE ALL TEXT-BASED COMMANDS AND STATES ---
+
+  // Now the rest of your code for handling text messages will run correctly
   await dbServices.updateUserActivity(cid); 
   await notifyAdminUserOnline(msg); 
 
@@ -3184,11 +3179,6 @@ bot.on('message', async msg => {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
       return;
   }
-  
-  // (The rest of your code for handling "Deploy", "My Bots", AWAITING_EMAIL, AWAITING_OTP, etc., continues here)
-  // ...
-});
-
 
   // ... the rest of your message handler code (if (text === 'More Features'), etc.)
 
