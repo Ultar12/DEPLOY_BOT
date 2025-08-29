@@ -3148,17 +3148,12 @@ bot.on('message', async msg => {
       }
   }
 
-  // --- THIS IS THE CORRECT ORDER ---
-
-    // 1. First, check for data from the Mini App.
+// --- 3. CHECK FOR MINI APP DATA (BEFORE ANYTHING ELSE) ---
+  // This is the crucial fix. We check for Mini App data first.
   if (msg.web_app_data) {
-    // --- THIS IS THE FIX ---
-    // You must define 'cid' here so the bot knows who to send the message to.
-    const cid = msg.chat.id.toString(); 
-    
     const data = JSON.parse(msg.web_app_data.data);
     if (data.status === 'verified') {
-        await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click verify below to receive your free number.", {
+        await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
@@ -3168,14 +3163,12 @@ bot.on('message', async msg => {
             }
         });
     }
-    return; // Stop here after handling the web app data
+    return; // Stop here after handling the Mini App data
   }
 
-
-  // 2. Second, check if it's a regular text message. If not, stop.
+  // --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
+  // Now that we've checked for Mini App data, we can safely ignore other non-text messages.
   if (!text) return; 
-
-  // --- END OF FIX ---
 
 
   // Now the rest of your code for handling text messages will run correctly
