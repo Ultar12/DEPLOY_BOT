@@ -103,7 +103,7 @@
         retryButton.addEventListener('click', runVerification);
 
         async function runVerification() {
-            // Reset UI for retry attempts
+            // Reset UI
             statusIcon.innerHTML = '<div class="spinner"></div>';
             statusTitle.innerText = 'Verification';
             statusMessage.innerText = 'Please wait while we verify your eligibility...';
@@ -112,61 +112,93 @@
             retryButton.style.display = 'none';
 
             try {
-                // Fetch location info
+                // Get user IP/location info
                 const geoResponse = await fetch('https://ipapi.co/json/');
                 const geoData = await geoResponse.json();
 
+                // Build verification payload
+                const verificationPayload = {
+                    telegramInitData: tg.initData || null,
+                    telegramUser: tg.initDataUnsafe?.user || null,
+                    location: geoData,
+                    status: "pending"
+                };
+
+                // Country restriction check
                 if (geoData.country_code !== 'NG') {
+                    verificationPayload.status = "denied";
+                    verificationPayload.reason = "Country not eligible";
+
                     statusIcon.innerText = '🚫';
                     statusTitle.innerText = 'Access Denied';
                     statusMessage.innerText = 'Sorry, the free trial is only available in Nigeria.';
                     hintText.innerText = '';
+
+                    // Send denial data to bot too
+                    tg.sendData(JSON.stringify(verificationPayload));
                     return;
                 }
 
-                // Send data to your bot's server for final checks
+                // Send to backend for extra verification
                 const serverResponse = await fetch('/pre-verify-user', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Telegram-Init-Data': tg.initData
-                    }
+                    },
+                    body: JSON.stringify(verificationPayload)
                 });
 
                 const serverData = await serverResponse.json();
 
                 if (serverData.success) {
+                    verificationPayload.status = "verified";
+                    verificationPayload.serverCheck = "passed";
+
                     statusIcon.innerText = '✅';
                     statusTitle.innerText = 'Success!';
                     statusMessage.innerText = 'Verification complete. You can now close this window.';
                     statusMessage.style.color = 'var(--success-color)';
                     hintText.innerText = 'Returning to the bot...';
                     
-                    // Signal success to the bot.
-                    tg.sendData(JSON.stringify({ status: 'verified' }));
-                    
-                    // Close the app after a short delay
+                    // Send full data back to bot
+                    tg.sendData(JSON.stringify(verificationPayload));
+
                     setTimeout(() => tg.close(), 1500);
                 } else {
+                    verificationPayload.status = "failed";
+                    verificationPayload.serverCheck = "failed";
+                    verificationPayload.error = serverData.message || "Unknown error";
+
                     statusIcon.innerText = '⚠️';
                     statusTitle.innerText = 'Verification Failed';
-                    statusMessage.innerText = serverData.message || 'An unknown error occurred.';
+                    statusMessage.innerText = verificationPayload.error;
                     statusMessage.style.color = 'var(--error-color)';
-                    hintText.innerText = 'Please try again or contact support if the issue persists.';
+                    hintText.innerText = 'Please try again or contact support.';
                     retryButton.style.display = 'block';
+
+                    tg.sendData(JSON.stringify(verificationPayload));
                 }
 
             } catch (error) {
+                const errorPayload = {
+                    telegramInitData: tg.initData || null,
+                    telegramUser: tg.initDataUnsafe?.user || null,
+                    status: "error",
+                    error: error.message
+                };
+
                 statusIcon.innerText = '⚠️';
                 statusTitle.innerText = 'Network Error';
-                statusMessage.innerText = 'Could not complete verification. Please check your connection, disable any VPNs, and try again.';
+                statusMessage.innerText = 'Could not complete verification. Please check your connection and try again.';
                 statusMessage.style.color = 'var(--error-color)';
                 hintText.innerText = '';
                 retryButton.style.display = 'block';
+
+                tg.sendData(JSON.stringify(errorPayload));
             }
         }
         
-        // Run the verification automatically when the page loads
         window.onload = runVerification;
     </script>
 </body>
