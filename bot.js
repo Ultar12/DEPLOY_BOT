@@ -7883,6 +7883,61 @@ async function checkAndPruneLoggedOutBots() {
     }
 }
 
+/**
+ * Finds and deletes users who have been inactive for over 30 days
+ * and do not have any bots associated with their account.
+ */
+async function pruneInactiveUsers() {
+    console.log('[Prune] Running daily check for inactive users with no bots...');
+    
+    try {
+        const thirtyDaysAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+
+        // This query finds users seen over 30 days ago who are NOT in the user_bots table.
+        const result = await pool.query(
+            `SELECT ua.user_id FROM user_activity ua
+             LEFT JOIN user_bots ub ON ua.user_id = ub.user_id
+             WHERE ua.last_seen <= $1 AND ub.user_id IS NULL`,
+            [thirtyDaysAgo]
+        );
+
+        const usersToDelete = result.rows;
+        if (usersToDelete.length === 0) {
+            console.log('[Prune] No inactive users found for deletion.');
+            return;
+        }
+
+        console.log(`[Prune] Found ${usersToDelete.length} inactive user(s) to delete.`);
+
+        for (const user of usersToDelete) {
+            const userId = user.user_id;
+            try {
+                // Delete the user from all relevant tables
+                const client = await pool.connect();
+                try {
+                    await client.query('BEGIN');
+                    await client.query('DELETE FROM user_activity WHERE user_id = $1', [userId]);
+                    await client.query('DELETE FROM email_verification WHERE user_id = $1', [userId]);
+                    // Add other tables if necessary (e.g., free_trial_numbers, temp_deploys)
+                    await client.query('DELETE FROM free_trial_numbers WHERE user_id = $1', [userId]);
+                    await client.query('DELETE FROM temp_deploys WHERE user_id = $1', [userId]);
+                    await client.query('COMMIT');
+                    console.log(`[Prune] Successfully deleted all records for inactive user: ${userId}`);
+                } catch (e) {
+                    await client.query('ROLLBACK');
+                    throw e;
+                } finally {
+                    client.release();
+                }
+            } catch (deleteError) {
+                console.error(`[Prune] Failed to delete user ${userId}:`, deleteError);
+            }
+        }
+
+    } catch (dbError) {
+        console.error('[Prune] DB Error while checking for inactive users:', dbError);
+    }
+}
 
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
@@ -7910,6 +7965,8 @@ async function checkAndSendExpirationReminders() {
         }
     }
 }
+
+
 
 // --- SCHEDULE THE REMINDERS ---
 
