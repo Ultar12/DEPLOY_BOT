@@ -1638,35 +1638,48 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
   /// Replace the existing app.post('/pre-verify-user', ...) route in bot.js
 
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
-    const userId = req.telegramData.id.toString();
-    // Get the user's real IP address from the request headers
-    const userIpAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-
     try {
-        // --- CAPTCHA CHECK REMOVED ---
+        // Telegram user ID (guaranteed by middleware)
+        const userId = req.telegramData.id.toString();
 
-        // Check 1: Has this user ID already claimed a final trial?
-        const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
+        // Safely extract IP address (handles proxies / Heroku / Cloudflare)
+        const forwardedFor = req.headers['x-forwarded-for'];
+        const userIpAddress = forwardedFor 
+            ? forwardedFor.split(',')[0].trim() 
+            : req.socket.remoteAddress;
+
+        // --- CHECK 1: Has this user already claimed a final trial? ---
+        const trialUserCheck = await pool.query(
+            "SELECT user_id FROM free_trial_numbers WHERE user_id = $1",
+            [userId]
+        );
         if (trialUserCheck.rows.length > 0) {
-            return res.status(400).json({ success: false, message: 'You have already claimed a free trial.' });
-        }
-        
-        // Check 2: Has this IP address already been used for a final trial?
-        const trialIpCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE ip_address = $1", [userIpAddress]);
-        if (trialIpCheck.rows.length > 0) {
-            return res.status(400).json({ success: false, message: 'This network has already been used for a free trial.' });
+            return res.json({ success: false, message: 'You have already claimed a free trial.' });
         }
 
-        // Add user to the pre-verified list
+        // --- CHECK 2: Has this IP already been used? ---
+        const trialIpCheck = await pool.query(
+            "SELECT user_id FROM free_trial_numbers WHERE ip_address = $1",
+            [userIpAddress]
+        );
+        if (trialIpCheck.rows.length > 0) {
+            return res.json({ success: false, message: 'This network has already been used for a free trial.' });
+        }
+
+        // --- RECORD: Add or update user in pre_verified_users ---
         await pool.query(
-            "INSERT INTO pre_verified_users (user_id, ip_address) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET ip_address = EXCLUDED.ip_address, verified_at = NOW()",
+            `INSERT INTO pre_verified_users (user_id, ip_address, verified_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (user_id) 
+             DO UPDATE SET ip_address = EXCLUDED.ip_address, verified_at = NOW()`,
             [userId, userIpAddress]
         );
 
+        // ✅ Everything passed
         return res.json({ success: true });
 
     } catch (error) {
-        console.error("Error in /pre-verify-user:", error.message);
+        console.error("Error in /pre-verify-user:", error);
         return res.status(500).json({ success: false, message: 'Server error.' });
     }
 });
@@ -3149,26 +3162,38 @@ bot.on('message', async msg => {
   }
 
 // --- 3. CHECK FOR MINI APP DATA (BEFORE ANYTHING ELSE) ---
-  // This is the crucial fix. We check for Mini App data first.
-  if (msg.web_app_data) {
-    const data = JSON.parse(msg.web_app_data.data);
-    if (data.status === 'verified') {
-        await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                    [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
-                ]
-            }
-        });
-    }
-    return; // Stop here after handling the Mini App data
-  }
+if (msg.web_app_data) {
+    try {
+        const data = JSON.parse(msg.web_app_data.data);
 
-  // --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
-  // Now that we've checked for Mini App data, we can safely ignore other non-text messages.
-  if (!text) return; 
+        // 🐞 Debug logs
+        console.log("📩 [MiniApp] Raw data received:", msg.web_app_data.data);
+        console.log("📩 [MiniApp] Parsed data object:", data);
+
+        if (data.status === 'verified') {
+            console.log("✅ [MiniApp] User verified successfully:", data.telegramUser?.id || data);
+
+            await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                        [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                    ]
+                }
+            });
+        } else {
+            console.log("⚠️ [MiniApp] Non-verified status received:", data.status, data);
+        }
+    } catch (err) {
+        console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
+    }
+
+    return; // Stop here after handling the Mini App data
+}
+
+// --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
+if (!text) return;
 
 
   // Now the rest of your code for handling text messages will run correctly
