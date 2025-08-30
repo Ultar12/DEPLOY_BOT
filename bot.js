@@ -807,7 +807,7 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
     if (!deployDateStr) return 'N/A';
 
     const deployDate = new Date(deployDateStr);
-    const fixedExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000); // 45 days from original deploy
+    const fixedExpirationDate = new Date(deployDate.getTime() + 35 * 24 * 60 * 60 * 1000); // 45 days from original deploy
     const now = new Date();
 
     const expirationDisplay = fixedExpirationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -1852,7 +1852,7 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                 if (bot_type && bot_type.startsWith('renewal_')) {
                     // Bot renewal logic...
                     const appNameToRenew = bot_type.split('_')[1];
-                    await pool.query( `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '45 days' WHERE user_id = $1 AND app_name = $2`, [user_id, appNameToRenew]);
+                    await pool.query( `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '35 days' WHERE user_id = $1 AND app_name = $2`, [user_id, appNameToRenew]);
                     await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appNameToRenew)}* has been successfully renewed.`, { parse_mode: 'Markdown' });
                     await bot.sendMessage(ADMIN_ID, `*Bot Renewed!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appNameToRenew}\``, { parse_mode: 'Markdown' });
                 } else {
