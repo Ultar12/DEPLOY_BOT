@@ -7604,6 +7604,91 @@ bot.on('channel_post', async msg => {
                                    `*Reason:* Bot session has logged out.\n` +
                                    `Please update your session ID.\n\n` +
                                    `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
+// In bot.js, replace your entire 'channel_post' handler
+
+bot.on('channel_post', async msg => {
+    if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
+        return;
+    }
+    const text = msg.text.trim();
+    console.log(`[Channel Post] Received: "${text}"`);
+
+    let appName = null;
+    let status = null;
+    let match;
+
+    // --- THIS IS THE NEW LOGIC TO DETECT THE R14 ERROR MESSAGE ---
+    // It looks for the specific format sent by your monitor script.
+    match = text.match(/R14 memory error detected for \[([\w-]+)\]/);
+    if (match) {
+        const erroredAppName = match[1];
+        console.log(`[Auto-Restart] R14 alert received for ${erroredAppName}. Triggering restart.`);
+        
+        await bot.sendMessage(ADMIN_ID, `⚠️ R14 alert for \`${erroredAppName}\` received. Triggering automatic restart now.`, { parse_mode: 'Markdown' });
+        await restartBot(erroredAppName); // This function restarts the bot via Heroku API
+        
+        return; // Stop processing this message further
+    }
+    // --- END OF NEW LOGIC ---
+
+    // This is your existing logic for ONLINE/LOGGED OUT statuses
+    match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \|/);
+    if (match) {
+        appName = match[1];
+        status = match[2];
+    } else {
+        match = text.match(/\[([^\]]+)\] connected/i);
+        if (match) {
+            appName = match[1];
+            status = 'ONLINE';
+        } else {
+            match = text.match(/User\s+\[?([^\]\s]+)\]?\s+has logged out/i);
+            if (match) {
+                appName = match[1];
+                status = 'LOGGED OUT';
+            }
+        }
+    }
+
+    if (!appName) {
+        console.log(`[Channel Post] Message did not match any known format. Ignoring.`);
+        return;
+    }
+    
+    if (status === 'ONLINE') {
+        const pendingPromise = appDeploymentPromises.get(appName);
+        if (pendingPromise) {
+            if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
+            if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
+            pendingPromise.resolve('connected');
+            appDeploymentPromises.delete(appName);
+        }
+        
+        await pool.query(
+            `UPDATE user_bots SET status = 'online', status_changed_at = NULL, last_email_notification_at = NULL WHERE bot_name = $1`, 
+            [appName]
+        );
+        console.log(`[Status Update] Set "${appName}" to 'online' and reset notification timer.`);
+        
+    } else if (status === 'LOGGED OUT') {
+        // ... (your existing code for sending Telegram & Email alerts for logged out bots)
+        const pendingPromise = appDeploymentPromises.get(appName);
+        if (pendingPromise) {
+            if (pendingPromise.animateIntervalId) clearInterval(pendingPromise.animateIntervalId);
+            if (pendingPromise.timeoutId) clearTimeout(pendingPromise.timeoutId);
+            pendingPromise.reject(new Error('Bot session has logged out.'));
+            appDeploymentPromises.delete(appName);
+        }
+        
+        await pool.query(`UPDATE user_bots SET status = 'logged_out', status_changed_at = NOW() WHERE bot_name = $1`, [appName]);
+        console.log(`[Status Update] Set "${appName}" to 'logged_out'.`);
+        
+        const userId = await dbServices.getUserIdByBotName(appName);
+        if (userId) {
+            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
+                                   `*Reason:* Bot session has logged out.\n` +
+                                   `Please update your session ID.\n\n` +
+                                   `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
             
             const sentMessage = await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
@@ -7613,10 +7698,9 @@ bot.on('channel_post', async msg => {
             }).catch(e => console.error(`Failed to send Telegram failure alert to user ${userId}: ${e.message}`));
             
             if (sentMessage) {
-                // Pin the message
                 try {
                     await bot.pinChatMessage(userId, sentMessage.message_id);
-                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000); // Unpin after 6 hours
+                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
                     await pool.query(
                         'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
                         [sentMessage.message_id, userId, unpinAt]
@@ -7626,7 +7710,6 @@ bot.on('channel_post', async msg => {
                 }
             }
 
-            // 2. Handle the email notification with the 30-hour cooldown
             try {
                 const ownerInfoResult = await pool.query(
                     `SELECT b.last_email_notification_at, v.email
@@ -7645,7 +7728,6 @@ bot.on('channel_post', async msg => {
                         
                         await sendLoggedOutReminder(email, appName, botUsername, 5);
                         
-                        // Update the timestamp to reset the 30-hour clock
                         await pool.query(
                             `UPDATE user_bots SET last_email_notification_at = NOW() WHERE bot_name = $1`,
                             [appName]
@@ -7662,6 +7744,7 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
 
 
 
