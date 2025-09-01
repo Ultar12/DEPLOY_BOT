@@ -23,9 +23,8 @@ async function runListener() {
       console.log('[Mail Listener] ✅ Connection successful. Starting mail checks.');
 
       while (imap.state === 'authenticated') {
-        // --- UPDATED: Now checks for both OTPs and other mail ---
         await searchForOtp(imap);
-        await searchForAllMail(imap); // New function call
+        await searchForAllMail(imap);
         console.log('[Mail Listener] 🕒 Check complete. Waiting 15 seconds...');
         await delay(15000);
       }
@@ -112,9 +111,8 @@ function searchForOtp(imap) {
                   await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
                   console.log(`[Mail Listener] OTP sent to user ${userId} and their number has been DELETED.`);
                 } else {
-                  // --- NEW: Forwards unassigned OTPs to the admin ---
                   console.warn('[Mail Listener] Found a WhatsApp OTP but no user has a number assigned. Forwarding to admin.');
-                  await botInstance.sendMessage(ADMIN_ID, `Unassigned WhatsApp OTP Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
+                  await botInstance.sendMessage(ADMIN_ID, `📧 Unassigned WhatsApp OTP Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
                 }
               }
             } catch (asyncError) {
@@ -129,18 +127,17 @@ function searchForOtp(imap) {
   });
 }
 
-// --- NEW FUNCTION TO FORWARD ALL OTHER MAIL ---
+// --- THIS FUNCTION IS NOW FIXED ---
 function searchForAllMail(imap) {
     return new Promise((resolve) => {
         if (imap.state !== 'authenticated') return resolve();
 
-        // Search for all unread mail that is NOT from WhatsApp
-        imap.search(['UNSEEN', ['NOT', ['SUBJECT', 'WhatsApp']]], (err, results) => {
+        // Step 1: Search for ALL unread emails.
+        imap.search(['UNSEEN'], (err, results) => {
             if (err || !results || results.length === 0) {
                 return resolve();
             }
 
-            console.log(`[Mail Listener] Found ${results.length} new non-WhatsApp message(s)!`);
             const f = imap.fetch(results, { bodies: '', markSeen: true });
 
             f.on('message', (msg) => {
@@ -149,12 +146,20 @@ function searchForAllMail(imap) {
                         try {
                             if (err) return console.error('[Mail Listener] General mail parsing error:', err);
 
+                            const subject = parsed.subject || '';
+
+                            // Step 2: In the code, check if the subject is a WhatsApp email and SKIP it.
+                            if (subject.includes('WhatsApp')) {
+                                return; // Ignore WhatsApp emails, as they are handled by the other function.
+                            }
+
+                            // If it's not a WhatsApp email, proceed to forward it.
+                            console.log(`[Mail Listener] 📩 Found new non-WhatsApp message!`);
                             const from = parsed.from.text;
-                            const subject = parsed.subject || '(No Subject)';
                             const snippet = (parsed.text || 'No content').substring(0, 200);
 
                             const messageToAdmin = `
-**New Email Received**
+📧 **New Email Received**
 
 **From:** \`${from}\`
 **Subject:** \`${subject}\`
