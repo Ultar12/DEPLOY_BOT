@@ -31,6 +31,8 @@ function init(params) {
     // Check for logged out and expiring bots every 5 minutes
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
     setInterval(checkAndExpireBots, 5 * 60 * 1000);
+    // Monitor Heroku logs for R14 errors every 3 minutes
+    setInterval(monitorAllAppsForR14, 3 * 60 * 1000);
 }
 
 
@@ -81,6 +83,52 @@ function handleLogLine(line, streamType) {
     }
 }
 
+// --- Monitor all Heroku app logs for R14 errors every 3 minutes ---
+async function monitorAllAppsForR14() {
+    if (!moduleParams.HEROKU_API_KEY) {
+        originalStdoutWrite.apply(process.stdout, ['Skipping R14 monitor: HEROKU_API_KEY not set.\n']);
+        return;
+    }
+
+    try {
+        const allBots = await moduleParams.getAllUserBots();
+        if (!allBots || allBots.length === 0) {
+            originalStdoutWrite.apply(process.stdout, ['[R14 Monitor] No apps found in DB.\n']);
+            return;
+        }
+
+        for (const botEntry of allBots) {
+            const { bot_name } = botEntry;
+            const url = `https://api.heroku.com/apps/${bot_name}/log-sessions`;
+
+            try {
+                const res = await axios.post(
+                    url,
+                    { lines: 150, source: 'app' },
+                    { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
+                );
+
+                const logplexUrl = res.data.logplex_url;
+                const logsRes = await axios.get(logplexUrl);
+                const logs = logsRes.data;
+
+                if (logs.includes('Error R14 (Memory quota exceeded)')) {
+                    const nowStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+                    const message = `[ALERT] R14 memory error detected!\nApp: ${bot_name}\nTime: ${nowStr}`;
+
+                    await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] R14 detected and alert sent for ${bot_name}\n`]);
+                } else {
+                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] No R14 errors found for ${bot_name}\n`]);
+                }
+            } catch (err) {
+                originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Failed to fetch logs for ${bot_name}: ${err.message}\n`]);
+            }
+        }
+    } catch (err) {
+        originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Error during app scan: ${err.message}\n`]);
+    }
+}
 
 async function sendTelegramAlert(text, chatId) {
     if (!moduleParams.TELEGRAM_BOT_TOKEN) {
