@@ -23,8 +23,8 @@ async function runListener() {
       console.log('[Mail Listener] ✅ Connection successful. Starting mail checks.');
 
       while (imap.state === 'authenticated') {
-        await searchForOtp(imap);
-        await searchForAllMail(imap);
+        // --- FIX: Now calls a single, unified function ---
+        await processUnreadMail(imap);
         console.log('[Mail Listener] 🕒 Check complete. Waiting 15 seconds...');
         await delay(15000);
       }
@@ -64,16 +64,18 @@ function connectToImap() {
   });
 }
 
-function searchForOtp(imap) {
+// --- NEW UNIFIED FUNCTION ---
+function processUnreadMail(imap) {
   return new Promise((resolve) => {
     if (imap.state !== 'authenticated') return resolve();
 
-    imap.search(['UNSEEN', ['SUBJECT', 'WhatsApp']], (err, results) => {
+    // Step 1: Fetch ALL unread emails at once
+    imap.search(['UNSEEN'], (err, results) => {
       if (err || !results || results.length === 0) {
         return resolve();
       }
 
-      console.log(`[Mail Listener] 📬 Found ${results.length} new WhatsApp message(s)!`);
+      console.log(`[Mail Listener] 📬 Found ${results.length} new message(s).`);
       const f = imap.fetch(results, { bodies: '', markSeen: true });
       
       f.on('message', (msg) => {
@@ -82,83 +84,48 @@ function searchForOtp(imap) {
             try {
               if (err) return console.error('[Mail Listener] Email parsing error:', err);
 
+              const subject = parsed.subject || '';
+              const from = parsed.from.text;
               const body = parsed.text || '';
-              let otp = null;
-              let match = null;
-              
-              const otpPatterns = [
-                /is your WhatsApp code (\d{3}-\d{3})/,
-                /Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/,
-                /(\d{3}-\d{3}) is your WhatsApp code/,
-                /Enter this code:\s*(\d{3}-\d{3})/
-              ];
-              
-              for (const pattern of otpPatterns) {
-                  match = body.match(pattern);
-                  if (match && match[1]) {
-                      otp = match[1];
-                      break;
-                  }
-              }
 
-              if (otp) {
-                console.log(`[Mail Listener] WhatsApp OTP code found: ${otp}`);
-                const assignedUserResult = await dbPool.query("SELECT user_id FROM temp_numbers WHERE status = 'assigned' LIMIT 1");
+              // Step 2: Decide what to do based on the subject
+              if (subject.includes('WhatsApp')) {
+                // --- This is the OTP logic ---
+                let otp = null;
+                let match = null;
+                const otpPatterns = [
+                  /is your WhatsApp code (\d{3}-\d{3})/,
+                  /Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/,
+                  /(\d{3}-\d{3}) is your WhatsApp code/,
+                  /Enter this code:\s*(\d{3}-\d{3})/
+                ];
                 
-                if (assignedUserResult.rows.length > 0) {
-                  const userId = assignedUserResult.rows[0].user_id;
-                  await botInstance.sendMessage(userId, `Your WhatsApp verification code is: <code>${otp}</code>`, { parse_mode: 'HTML' });
-                  await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
-                  console.log(`[Mail Listener] OTP sent to user ${userId} and their number has been DELETED.`);
-                } else {
-                  console.warn('[Mail Listener] Found a WhatsApp OTP but no user has a number assigned. Forwarding to admin.');
-                  await botInstance.sendMessage(ADMIN_ID, `📧 Unassigned WhatsApp OTP Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
+                for (const pattern of otpPatterns) {
+                    match = body.match(pattern);
+                    if (match && match[1]) {
+                        otp = match[1].replace('-', ''); // Also remove hyphen for user convenience
+                        break;
+                    }
                 }
-              }
-            } catch (asyncError) {
-              console.error('[Mail Listener] Error processing OTP message:', asyncError);
-            }
-          });
-        });
-      });
-      f.once('error', (fetchErr) => console.error('[Mail Listener] Fetch error:', fetchErr));
-      f.once('end', () => resolve());
-    });
-  });
-}
 
-// --- THIS FUNCTION IS NOW FIXED ---
-function searchForAllMail(imap) {
-    return new Promise((resolve) => {
-        if (imap.state !== 'authenticated') return resolve();
-
-        // Step 1: Search for ALL unread emails.
-        imap.search(['UNSEEN'], (err, results) => {
-            if (err || !results || results.length === 0) {
-                return resolve();
-            }
-
-            const f = imap.fetch(results, { bodies: '', markSeen: true });
-
-            f.on('message', (msg) => {
-                msg.on('body', (stream) => {
-                    simpleParser(stream, async (err, parsed) => {
-                        try {
-                            if (err) return console.error('[Mail Listener] General mail parsing error:', err);
-
-                            const subject = parsed.subject || '';
-
-                            // Step 2: In the code, check if the subject is a WhatsApp email and SKIP it.
-                            if (subject.includes('WhatsApp')) {
-                                return; // Ignore WhatsApp emails, as they are handled by the other function.
-                            }
-
-                            // If it's not a WhatsApp email, proceed to forward it.
-                            console.log(`[Mail Listener] 📩 Found new non-WhatsApp message!`);
-                            const from = parsed.from.text;
-                            const snippet = (parsed.text || 'No content').substring(0, 200);
-
-                            const messageToAdmin = `
+                if (otp) {
+                  console.log(`[Mail Listener] WhatsApp OTP found: ${otp}`);
+                  const assignedUserResult = await dbPool.query("SELECT user_id FROM temp_numbers WHERE status = 'assigned' LIMIT 1");
+                  
+                  if (assignedUserResult.rows.length > 0) {
+                    const userId = assignedUserResult.rows[0].user_id;
+                    await botInstance.sendMessage(userId, `Your WhatsApp verification code is: <code>${otp}</code>`, { parse_mode: 'HTML' });
+                    await dbPool.query("DELETE FROM temp_numbers WHERE user_id = $1", [userId]);
+                    console.log(`[Mail Listener] OTP sent to user ${userId} and their number has been DELETED.`);
+                  } else {
+                    await botInstance.sendMessage(ADMIN_ID, `📧 Unassigned WhatsApp OTP Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
+                  }
+                }
+              } else {
+                // --- This is the "forward all other mail" logic ---
+                console.log(`[Mail Listener] 📩 Forwarding non-WhatsApp message from "${from}"`);
+                const snippet = body.substring(0, 200);
+                const messageToAdmin = `
 📧 **New Email Received**
 
 **From:** \`${from}\`
@@ -168,20 +135,19 @@ function searchForAllMail(imap) {
 \`\`\`
 ${snippet}...
 \`\`\`
-                            `;
-
-                            await botInstance.sendMessage(ADMIN_ID, messageToAdmin, { parse_mode: 'Markdown' });
-                            console.log(`[Mail Listener] Forwarded email from "${from}" to admin.`);
-                        } catch (asyncError) {
-                            console.error('[Mail Listener] Error processing general message:', asyncError);
-                        }
-                    });
-                });
-            });
-            f.once('error', (fetchErr) => console.error('[Mail Listener] General fetch error:', fetchErr));
-            f.once('end', () => resolve());
+                `;
+                await botInstance.sendMessage(ADMIN_ID, messageToAdmin, { parse_mode: 'Markdown' });
+              }
+            } catch (asyncError) {
+              console.error('[Mail Listener] Error processing message:', asyncError);
+            }
+          });
         });
+      });
+      f.once('error', (fetchErr) => console.error('[Mail Listener] Fetch error:', fetchErr));
+      f.once('end', () => resolve());
     });
+  });
 }
 
 module.exports = { init };
