@@ -3161,16 +3161,17 @@ bot.on('message', async msg => {
       }
   }
 
-/// In bot.js, inside the bot.on('message', ...) handler
+/// In bot.js, find and replace this entire block inside bot.on('message', ...)
 
-// ✅ FIX: This block is now updated to handle success, failure, and error states.
 if (msg.web_app_data) {
     try {
+        // 1. Parse the data string sent from the Mini App
         const data = JSON.parse(msg.web_app_data.data);
         console.log("📩 [MiniApp] Data received from Mini App:", data);
 
+        // 2. Check the 'status' field inside the data
         if (data.status === 'verified') {
-            // This is your existing success logic, which is correct.
+            // This is the success path, which will now run correctly
             console.log("✅ [MiniApp] User verified successfully:", data.telegramUser?.id);
 
             await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
@@ -3183,7 +3184,7 @@ if (msg.web_app_data) {
                 }
             });
         } else {
-            // This new 'else' block handles all other cases ('denied', 'failed', 'error').
+            // This handles any other status like 'denied', 'failed', or 'error'
             const reason = data.reason || data.error || "An unknown issue occurred.";
             console.log(`⚠️ [MiniApp] Verification failed for user ${cid}. Reason: ${reason}`);
 
@@ -3197,8 +3198,9 @@ if (msg.web_app_data) {
         await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
     }
 
-    return; // Stop here after handling the Mini App data
+    return; // Stop further message processing
 }
+
 
 
 // --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
