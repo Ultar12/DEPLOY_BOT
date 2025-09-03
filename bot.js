@@ -3924,10 +3924,16 @@ if (text === 'Deploy' || text === 'Free Trial') {
 if (text === 'Referrals') {
     const userId = msg.chat.id.toString();
     const referralLink = `https://t.me/${botUsername}?start=${userId}`;
-
     await dbServices.updateUserActivity(userId);
 
-    const referralMessage = `
+    // ✅ FIX: Fetch the list of referred users from the database
+    const referredUsersResult = await pool.query(
+        'SELECT referred_user_id, bot_name FROM user_referrals WHERE inviter_user_id = $1',
+        [userId]
+    );
+    const referredUsers = referredUsersResult.rows;
+
+    let referralMessage = `
 *Your Referral Dashboard*
 
 Your unique referral link is:
@@ -3938,23 +3944,36 @@ Share this link with your friends. When they deploy a bot using your link, you g
 *Your Rewards:*
 - You get *20 days* added to your bot's expiration for each new user you invite.
 - You get an extra *7 days* if one of your invited users invites someone new.
-
-_Your referred users will be displayed here once they deploy their first bot._
     `;
-    
-    // The "Copy to Clipboard" button has been removed for simplicity.
+
+    // ✅ FIX: Dynamically build the list of referred users
+    if (referredUsers.length > 0) {
+        referralMessage += `\n*Users you've successfully referred:*\n`;
+        for (const ref of referredUsers) {
+            try {
+                const user = await bot.getChat(ref.referred_user_id);
+                const userName = user.first_name || `User ${ref.referred_user_id}`;
+                referralMessage += `- *${escapeMarkdown(userName)}* (Deployed: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+            } catch (e) {
+                // Fallback in case user info can't be fetched
+                referralMessage += `- *A user* (Deployed: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
+            }
+        }
+    } else {
+        referralMessage += `\n_You haven't referred any users yet._`;
+    }
+
     await bot.sendMessage(userId, referralMessage, { 
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
+                    { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
                 ]
             ]
         }
     });
 }
-
 
 
 
@@ -4133,31 +4152,27 @@ if (st && st.step === 'AWAITING_KEY') {
     const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
     const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
     
-    // --- FIX: AWAITING_KEY invalid key message updated ---
-if (usesLeft === null) {
-    const price = process.env.KEY_PRICE_NGN || '1500';
-    const invalidKeyMessage = `Invalid key. Please try another key or make payment.`;
-    
-    // Create a new keyboard with the "Make payment" button
-    const invalidKeyKeyboard = {
-        inline_keyboard: [
-            [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-        ]
-    };
+    if (usesLeft === null) {
+        const price = process.env.KEY_PRICE_NGN || '1500';
+        const invalidKeyMessage = `Invalid key. Please try another key or make payment.`;
+        
+        const invalidKeyKeyboard = {
+            inline_keyboard: [
+                [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+            ]
+        };
 
-    await bot.editMessageText(invalidKeyMessage, {
-      chat_id: cid,
-      message_id: verificationMsg.message_id,
-      reply_markup: invalidKeyKeyboard
-    });
-    return;
-}
+        await bot.editMessageText(invalidKeyMessage, {
+            chat_id: cid,
+            message_id: verificationMsg.message_id,
+            reply_markup: invalidKeyKeyboard
+        });
+        return;
+    }
 
-    
-    // Key is valid. Now trigger the deployment with the previously saved data.
     await bot.editMessageText('Key verified! Initiating deployment...', { chat_id: cid, message_id: verificationMsg.message_id });
 
-    // --- START ADMIN NOTIFICATION ---
+    // --- Admin Notification ---
     const { first_name, last_name, username } = msg.from;
     const userFullName = [first_name, last_name].filter(Boolean).join(' ');
     const userNameDisplay = username ? `@${escapeMarkdown(username)}` : 'N/A';
@@ -4170,14 +4185,27 @@ if (usesLeft === null) {
         `*Uses Left:* ${usesLeft}`,
         { parse_mode: 'Markdown' }
     );
-    // --- END ADMIN NOTIFICATION ---
+    // --- End Admin Notification ---
 
     const deploymentData = st.data;
-    delete userStates[cid]; // Clear state before deployment
-    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType);
+    delete userStates[cid];
+
+    // ✅ FIX: Check for a pending referral session before building.
+    let inviterId = null;
+    try {
+        const sessionResult = await pool.query(
+            `SELECT data FROM sessions WHERE id = $1 AND expires_at > NOW()`,
+            [`referral_session:${cid}`]
+        );
+        if (sessionResult.rows.length > 0) {
+            inviterId = sessionResult.rows[0].data.inviterId;
+        }
+    } catch (e) { /* Ignore errors, proceed without inviterId */ }
+
+    // Pass the found inviterId to the build function.
+    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType, inviterId);
     return;
 }
-
 
 
  if (st && st.step === 'SESSION_ID') {
@@ -6009,14 +6037,27 @@ if (action === 'confirm_and_pay_step') {
 
     const price = process.env.KEY_PRICE_NGN || '1500';
     const isFreeTrial = st.data.isFreeTrial;
-    const isAdmin = cid === ADMIN_ID; // <-- CHECK IF USER IS ADMIN
+    const isAdmin = cid === ADMIN_ID;
 
-    // --- New, consolidated logic ---
-    if (isFreeTrial || isAdmin) { // <-- ADDED isAdmin CHECK
+    if (isFreeTrial || isAdmin) {
         await bot.editMessageText('Initiating deployment...', { chat_id: cid, message_id: q.message.message_id });
         delete userStates[cid];
-        // The isAdmin deployment is not a free trial
-        await dbServices.buildWithProgress(cid, st.data, isFreeTrial, false, st.data.botType);
+
+        // ✅ FIX: Check for a pending referral session before building.
+        let inviterId = null;
+        try {
+            const sessionResult = await pool.query(
+                `SELECT data FROM sessions WHERE id = $1 AND expires_at > NOW()`,
+                [`referral_session:${cid}`]
+            );
+            if (sessionResult.rows.length > 0) {
+                inviterId = sessionResult.rows[0].data.inviterId;
+            }
+        } catch (e) { /* Ignore errors, proceed without inviterId */ }
+        
+        // Pass the found inviterId to the build function.
+        await dbServices.buildWithProgress(cid, st.data, isFreeTrial, false, st.data.botType, inviterId);
+
     } else {
         st.step = 'AWAITING_KEY';
         await bot.editMessageText('Enter your Deploy key:', {
