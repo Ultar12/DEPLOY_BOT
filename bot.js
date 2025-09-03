@@ -3161,17 +3161,17 @@ bot.on('message', async msg => {
       }
   }
 
-// --- 3. CHECK FOR MINI APP DATA (BEFORE ANYTHING ELSE) ---
+/// In bot.js, inside the bot.on('message', ...) handler
+
+// ✅ FIX: This block is now updated to handle success, failure, and error states.
 if (msg.web_app_data) {
     try {
         const data = JSON.parse(msg.web_app_data.data);
-
-        // 🐞 Debug logs
-        console.log("📩 [MiniApp] Raw data received:", msg.web_app_data.data);
-        console.log("📩 [MiniApp] Parsed data object:", data);
+        console.log("📩 [MiniApp] Data received from Mini App:", data);
 
         if (data.status === 'verified') {
-            console.log("✅ [MiniApp] User verified successfully:", data.telegramUser?.id || data);
+            // This is your existing success logic, which is correct.
+            console.log("✅ [MiniApp] User verified successfully:", data.telegramUser?.id);
 
             await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
                 parse_mode: 'Markdown',
@@ -3183,14 +3183,23 @@ if (msg.web_app_data) {
                 }
             });
         } else {
-            console.log("⚠️ [MiniApp] Non-verified status received:", data.status, data);
+            // This new 'else' block handles all other cases ('denied', 'failed', 'error').
+            const reason = data.reason || data.error || "An unknown issue occurred.";
+            console.log(`⚠️ [MiniApp] Verification failed for user ${cid}. Reason: ${reason}`);
+
+            await bot.sendMessage(cid, 
+                `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
+                { parse_mode: 'Markdown' }
+            );
         }
     } catch (err) {
         console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
+        await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
     }
 
     return; // Stop here after handling the Mini App data
 }
+
 
 // --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
 if (!text) return;
