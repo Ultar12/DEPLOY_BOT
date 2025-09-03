@@ -1627,54 +1627,71 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           );
           buildResult = true;
 
-                    // ✅ This block saves the referral and notifies the inviter
-          if (inviterId && !isRestore) {
-              console.log(`[Referral] Processing referral for new user ${chatId} by inviter ${inviterId}`);
-              const client = await mainPool.connect();
-              try {
-                  await client.query('BEGIN');
-                  
-                  // 1. Add to the referral tracking table
-                  await client.query(
-                      `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending)
-                       VALUES ($1, $2, $3, TRUE)`,
-                      [chatId, inviterId, name] // Use 'name' which is the appName in this context
-                  );
-                  
-                  // 2. Update the new user's deployment record with the referrer
-                  await client.query(
-                      `UPDATE user_deployments SET referred_by = $1 WHERE user_id = $2 AND app_name = $3`,
-                      [inviterId, chatId, name]
-                  );
-                  
-                  // 3. Delete the temporary referral session
-                  await client.query(`DELETE FROM sessions WHERE id = $1`, [`referral_session:${chatId}`]);
-                  
-                  await client.query('COMMIT');
+                    // ✅ FIX: This block handles the referral reward conditionally.
 
-                  // 4. Notify the inviter about their reward
-                  const inviterBots = await getUserBots(inviterId);
-                  if (inviterBots.length > 0) {
-                      const keyboard = inviterBots.map(botName => ([{
-                          text: `Add reward to: ${botName}`,
-                          callback_data: `apply_referral_reward:${botName}:${chatId}`
-                      }]));
-                      
-                      await bot.sendMessage(inviterId,
-                          `Congratulations! A user you referred just deployed a bot. You've earned a *20-day extension*. Please select which of your bots to apply it to:`,
-                          { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
-                      );
-                  } else {
-                      await bot.sendMessage(inviterId, `Congratulations! A user you referred just deployed a bot. You've earned a reward which will be applied to your next bot.`);
-                  }
+if (inviterId && !isRestore) {
+    console.log(`[Referral] Processing referral for new user ${chatId} by inviter ${inviterId}`);
+    const client = await mainPool.connect();
+    try {
+        await client.query('BEGIN');
 
-              } catch (e) {
-                  await client.query('ROLLBACK');
-                  console.error('[Referral] Failed to save referral data:', e.message);
-              } finally {
-                  client.release();
-              }
-          }
+        // Database operations (these remain the same)
+        await client.query(
+            `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending)
+             VALUES ($1, $2, $3, TRUE)`,
+            [chatId, inviterId, name]
+        );
+        await client.query(
+            `UPDATE user_deployments SET referred_by = $1 WHERE user_id = $2 AND app_name = $3`,
+            [inviterId, chatId, name]
+        );
+        await client.query(`DELETE FROM sessions WHERE id = $1`, [`referral_session:${chatId}`]);
+        await client.query('COMMIT');
+
+        // --- NEW CONDITIONAL NOTIFICATION LOGIC ---
+        const inviterBots = await getUserBots(inviterId);
+        const rewardMessage = `🎉 Congratulations! A user you referred just deployed a bot. You've earned a *20-day extension*.`;
+
+        if (inviterBots.length > 0 && inviterBots.length <= 2) {
+            // If the user has 1 or 2 bots, show the buttons directly.
+            const keyboard = inviterBots.map(botName => ([{
+                text: `Add reward to: ${botName}`,
+                callback_data: `apply_referral_reward:${botName}:${chatId}`
+            }]));
+
+            await bot.sendMessage(inviterId,
+                `${rewardMessage} Please select which of your bots to apply it to:`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+            );
+
+        } else if (inviterBots.length > 2) {
+            // If the user has MORE than 2 bots, show a single "Select" button.
+            await bot.sendMessage(inviterId,
+                `${rewardMessage} You have multiple bots. Please select one to apply your reward.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{
+                            text: 'Select a Bot to Reward',
+                            callback_data: `show_reward_bot_list:${chatId}` // Pass referred user ID for context
+                        }]]
+                    }
+                }
+            );
+
+        } else {
+            // If the user has no bots.
+            await bot.sendMessage(inviterId, `${rewardMessage} The reward will be applied to your next bot.`);
+        }
+
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('[Referral] Failed to save referral data:', e.message);
+    } finally {
+        client.release();
+    }
+}
+
 
 
           if (isFreeTrial) {
