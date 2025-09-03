@@ -32,7 +32,7 @@ function init(params) {
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
     setInterval(checkAndExpireBots, 5 * 60 * 1000);
     // Monitor Heroku logs for R14 errors every 5 minutes
-    setInterval(monitorAllAppsForR14, 5 * 60 * 1000);
+    setInterval(monitorAllAppsForR14, 15 * 60 * 1000);
 }
 
 
