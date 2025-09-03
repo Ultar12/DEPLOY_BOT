@@ -31,7 +31,8 @@ function init(params) {
     // Check for logged out and expiring bots every 5 minutes
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
     setInterval(checkAndExpireBots, 5 * 60 * 1000);
-    // Monitor Heroku logs for R14 errors every 5 minutes
+    
+    // ✅ FIX: Monitor Heroku logs for R14 errors every 15 minutes.
     setInterval(monitorAllAppsForR14, 15 * 60 * 1000);
 }
 
@@ -97,7 +98,7 @@ async function monitorAllAppsForR14() {
             return;
         }
 
-        // ✅ FIX: Create an array to hold the names of bots with errors
+        // ✅ FIX: Create an array to hold the names of bots with errors.
         const botsWithR14Error = [];
 
         for (const botEntry of allBots) {
@@ -107,7 +108,7 @@ async function monitorAllAppsForR14() {
             try {
                 const res = await axios.post(
                     url,
-                    { lines: 150 },
+                    { lines: 5 }, // Reads the last 5 lines of logs
                     { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
 
@@ -116,21 +117,20 @@ async function monitorAllAppsForR14() {
                 const logs = logsRes.data;
 
                 if (logs.includes('Error R14 (Memory quota exceeded)')) {
-                    // ✅ FIX: Instead of alerting immediately, add the bot name to our list
+                    // ✅ FIX: Instead of alerting immediately, add the bot name to our list.
                     botsWithR14Error.push(bot_name);
-                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] R14 detected for ${bot_name}\n`]);
+                    originalStdoutWrite.apply(process.stdout, `[R14 Monitor] R14 detected for ${bot_name}\n`);
                 } else {
-                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] No R14 errors found for ${bot_name}\n`]);
+                    originalStdoutWrite.apply(process.stdout, `[R14 Monitor] No R14 errors found for ${bot_name}\n`);
                 }
             } catch (err) {
-                originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Failed to fetch logs for ${bot_name}: ${err.message}\n`]);
+                originalStderrWrite.apply(process.stderr, `[R14 Monitor] Failed to fetch logs for ${bot_name}: ${err.message}\n`);
             }
         }
 
-        // ✅ FIX: After checking all bots, send one consolidated alert if any errors were found
+        // ✅ FIX: After checking all bots, send one consolidated alert if any errors were found.
         if (botsWithR14Error.length > 0) {
             const nowStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-            // Format the list of bot names for the message
             const botList = botsWithR14Error.map(name => `- \`${name}\``).join('\n');
             const message = `🚨 *R14 Memory Errors Detected* 🚨\n\nThe following bot(s) have exceeded their memory quota:\n\n${botList}\n\n*Time:* ${nowStr}`;
 
@@ -139,7 +139,7 @@ async function monitorAllAppsForR14() {
         }
 
     } catch (err) {
-        originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Error during app scan: ${err.message}\n`]);
+        originalStderrWrite.apply(process.stderr, `[R14 Monitor] Error during app scan: ${err.message}\n`);
     }
 }
 
@@ -161,16 +161,14 @@ async function sendTelegramAlert(text, chatId) {
         originalStdoutWrite.apply(process.stdout, [`Telegram message sent to chat ID ${chatId}: ${text.substring(0, 50)}...\n`]);
         return res.data.result.message_id;
     } catch (err) {
-        // ✅ FIX: Handle the "Too Many Requests" error specifically
         if (err.response && err.response.status === 429) {
-            const retryAfter = err.response.data.parameters.retry_after || 5; // Default to 5s if not specified
-            originalStderrWrite.apply(process.stderr, [`[Telegram] Rate limited. Retrying after ${retryAfter} seconds...\n`]);
-            // Wait for the specified time and try sending the message again
-            await new Promise(resolve => setTimeout(resolve, (retryAfter + 1) * 1000)); // Add 1s buffer
-            return sendTelegramAlert(text, chatId); // Retry the function call
+            const retryAfter = err.response.data.parameters.retry_after || 5;
+            originalStderrWrite.apply(process.stderr, `[Telegram] Rate limited. Retrying after ${retryAfter} seconds...\n`);
+            await new Promise(resolve => setTimeout(resolve, (retryAfter + 1) * 1000));
+            return sendTelegramAlert(text, chatId);
         }
         
-        originalStderrWrite.apply(process.stderr, [`Telegram alert failed for chat ID ${chatId}: ${err.message}\n`]);
+        originalStderrWrite.apply(process.stderr, `Telegram alert failed for chat ID ${chatId}: ${err.message}\n`);
         if (err.response) {
             originalStderrWrite.apply(process.stderr, [`   Telegram API Response: Status ${err.response.status}, Data: ${JSON.stringify(err.response.data)}\n`]);
         }
@@ -233,7 +231,7 @@ async function checkAndRemindLoggedOutBots() {
                 const fiveDays = 5 * twentyFourHours;
 
                 if (timeSinceLogout > fiveDays) {
-                    originalStdoutWrite.apply(process.stdout, [`[Scheduled Task] Bot ${bot_name} for user ${user_id} logged out for >5 days. Auto-deleting now.\n`]);
+                    originalStdoutWrite.apply(process.stdout, `[Scheduled Task] Bot ${bot_name} for user ${user_id} logged out for >5 days. Auto-deleting now.\n`]);
 
                     await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
                         headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -257,20 +255,20 @@ async function checkAndRemindLoggedOutBots() {
                             ]
                         }
                     });
-                    originalStdoutWrite.apply(process.stdout, [`[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}\n`]);
+                    originalStdoutWrite.apply(process.stdout, `[Scheduled Task] Sent 24-hour logout reminder to user ${user_id} for bot ${bot_name}\n`]);
                 }
             }
 
         } catch (error) {
             if (error.response && error.response.status === 404) {
-                originalStdoutWrite.apply(process.stdout, [`[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.\n`]);
+                originalStdoutWrite.apply(process.stdout, `[Scheduled Task] App ${herokuApp} not found during reminder check. Auto-removing from DB.\n`]);
                 const currentOwnerId = await moduleParams.getUserIdByBotName(herokuApp);
                 if (currentOwnerId) {
                     await moduleParams.deleteUserBot(currentOwnerId, herokuApp);
                 }
                 return;
             }
-            originalStderrWrite.apply(process.stderr, [`[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}): ${error.response?.data?.message || error.message}\n`]);
+            originalStderrWrite.apply(process.stderr, `[Scheduled Task] Error checking status for bot ${herokuApp} (user ${user_id}): ${error.response?.data?.message || error.message}\n`]);
         }
     }
 }
@@ -299,33 +297,33 @@ async function checkAndExpireBots() {
             return;
         }
 
-        originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Found ${expiredBots.length} active bots to expire.\n`]);
+        originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] Found ${expiredBots.length} active bots to expire.\n`]);
 
         for (const botEntry of expiredBots) {
             const { user_id, app_name } = botEntry;
-            originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Expiring active bot ${app_name} for user ${user_id}.\n`]);
+            originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] Expiring active bot ${app_name} for user ${user_id}.\n`]);
 
             try {
                 await axios.delete(`https://api.heroku.com/apps/${app_name}`, {
                     headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                 });
-                originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Successfully deleted Heroku app: ${app_name}\n`]);
+                originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] Successfully deleted Heroku app: ${app_name}\n`]);
 
                 await moduleParams.deleteUserBot(user_id, app_name);
-                originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Successfully deleted from user_bots: ${app_name}\n`]);
+                originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] Successfully deleted from user_bots: ${app_name}\n`]);
 
                 await moduleParams.deleteUserDeploymentFromBackup(user_id, app_name);
-                originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] Successfully deleted from user_deployments: ${app_name} (expired)\n`]);
+                originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] Successfully deleted from user_deployments: ${app_name} (expired)\n`]);
 
                 await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(app_name)}*" has reached its 45-day expiration and has been automatically deleted. To deploy a new bot, use the 'Deploy' or 'Restore From Backup' options.`, { parse_mode: 'Markdown' });
             } catch (error) {
                 if (error.response && error.response.status === 404) {
-                    originalStdoutWrite.apply(process.stdout, [`[Scheduled Expiration] App ${app_name} not found on Heroku, but was in DB (likely already deleted). Cleaning up DBs.\n`]);
+                    originalStdoutWrite.apply(process.stdout, `[Scheduled Expiration] App ${app_name} not found on Heroku, but was in DB (likely already deleted). Cleaning up DBs.\n`]);
                     await moduleParams.deleteUserBot(user_id, app_name);
                     await moduleParams.deleteUserDeploymentFromBackup(user_id, app_name);
                     await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(app_name)}*" was not found on Heroku and has been automatically removed from your lists (likely already expired/deleted).`, { parse_mode: 'Markdown' });
                 } else {
-                    originalStderrWrite.apply(process.stderr, [`[Scheduled Expiration] Error expiring bot ${app_name} for user ${user_id}: ${error.message}\n`]);
+                    originalStderrWrite.apply(process.stderr, `[Scheduled Expiration] Error expiring bot ${app_name} for user ${user_id}: ${error.message}\n`]);
                     moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL ERROR during scheduled bot expiration of "*${moduleParams.escapeMarkdown(app_name)}*" for user ${moduleParams.escapeMarkdown(user_id)}: ${moduleParams.escapeMarkdown(error.message)}`, { parse_mode: 'Markdown' });
                 }
             }
@@ -333,7 +331,7 @@ async function checkAndExpireBots() {
         originalStdoutWrite.apply(process.stdout, ['[Scheduled Expiration] All expired bots processed.\n']);
 
     } catch (dbError) {
-        originalStderrWrite.apply(process.stderr, [`[Scheduled Expiration] DB Error fetching expired bots: ${dbError.message}\n`]);
+        originalStderrWrite.apply(process.stderr, `[Scheduled Expiration] DB Error fetching expired bots: ${dbError.message}\n`]);
         moduleParams.bot.sendMessage(moduleParams.ADMIN_ID, `CRITICAL DB ERROR during scheduled bot expiration check: ${moduleParams.escapeMarkdown(dbError.message)}`, { parse_mode: 'Markdown' });
     }
 }
