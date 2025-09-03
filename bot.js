@@ -5404,6 +5404,37 @@ if (action === 'select_get_session_type') {
     }
 }
 
+
+  // In bot.js, inside bot.on('callback_query', ...)
+
+// ✅ FIX: This new handler shows the list of bots for a referral reward.
+if (action === 'show_reward_bot_list') {
+    const inviterId = q.from.id.toString();
+    const referredUserId = payload; // The ID of the user who was referred
+
+    const inviterBots = await dbServices.getUserBots(inviterId);
+
+    if (inviterBots.length === 0) {
+        await bot.editMessageText('You do not have any active bots to apply a reward to.', {
+            chat_id: inviterId,
+            message_id: q.message.message_id
+        });
+        return;
+    }
+
+    const keyboard = inviterBots.map(botName => ([{
+        text: botName,
+        callback_data: `apply_referral_reward:${botName}:${referredUserId}`
+    }]));
+
+    await bot.editMessageText('Please select which of your bots to apply the 20-day reward to:', {
+        chat_id: inviterId,
+        message_id: q.message.message_id,
+        reply_markup: { inline_keyboard: keyboard }
+    });
+    return;
+}
+
   // Add this new handler inside bot.on('callback_query', ...)
 if (action === 'apply_referral_reward') {
     const inviterId = q.from.id.toString();
