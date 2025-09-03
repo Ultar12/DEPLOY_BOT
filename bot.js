@@ -8020,6 +8020,11 @@ async function checkAndSendLoggedOutReminders() {
     }
 }
 
+// Run the check for inactive users every 24 hours
+setInterval(pruneInactiveUsers, ONE_DAY_IN_MS);
+console.log('[Prune] Scheduled daily check for inactive users.');
+
+
 // Run the check every 24 hours
 setInterval(checkAndSendLoggedOutReminders, ONE_DAY_IN_MS);
 console.log('[Email] Scheduled daily logged-out bot email reminders.');
