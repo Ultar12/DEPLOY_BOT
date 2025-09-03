@@ -31,7 +31,7 @@ function init(params) {
     // Check for logged out and expiring bots every 5 minutes
     setInterval(checkAndRemindLoggedOutBots, 5 * 60 * 1000); 
     setInterval(checkAndExpireBots, 5 * 60 * 1000);
-    // Monitor Heroku logs for R14 errors every 3 minutes
+    // Monitor Heroku logs for R14 errors every 5 minutes
     setInterval(monitorAllAppsForR14, 5 * 60 * 1000);
 }
 
@@ -83,7 +83,7 @@ function handleLogLine(line, streamType) {
     }
 }
 
-// --- Monitor all Heroku app logs for R14 errors every 3 minutes ---
+// --- Monitor all Heroku app logs for R14 errors ---
 async function monitorAllAppsForR14() {
     if (!moduleParams.HEROKU_API_KEY) {
         originalStdoutWrite.apply(process.stdout, ['Skipping R14 monitor: HEROKU_API_KEY not set.\n']);
@@ -102,9 +102,11 @@ async function monitorAllAppsForR14() {
             const url = `https://api.heroku.com/apps/${bot_name}/log-sessions`;
 
             try {
+                // ✅ FIX: Removed `source: 'app'` to get logs from ALL sources (app and heroku).
+                // This allows detection of system-level errors like R14.
                 const res = await axios.post(
                     url,
-                    { lines: 150, source: 'app' },
+                    { lines: 150 }, // The 'source' parameter was removed here.
                     { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
 
@@ -185,7 +187,6 @@ async function sendStandardizedAlert(appName, sessionId) {
 }
 
 
-// --- FIX: checkAndRemindLoggedOutBots now handles the 5-day warning ---
 async function checkAndRemindLoggedOutBots() {
     originalStdoutWrite.apply(process.stdout, ['Running scheduled check for logged out bots...\n']);
     if (!moduleParams.HEROKU_API_KEY) {
@@ -201,7 +202,6 @@ async function checkAndRemindLoggedOutBots() {
         const herokuApp = bot_name;
 
         try {
-            // FIX: Corrected the duplicated code here.
             const botStatusResult = await moduleParams.mainPool.query('SELECT status, status_changed_at, bot_type FROM user_bots WHERE bot_name = $1 LIMIT 1', [bot_name]);
             if (botStatusResult.rows.length === 0) continue;
             
