@@ -97,16 +97,17 @@ async function monitorAllAppsForR14() {
             return;
         }
 
+        // ✅ FIX: Create an array to hold the names of bots with errors
+        const botsWithR14Error = [];
+
         for (const botEntry of allBots) {
             const { bot_name } = botEntry;
             const url = `https://api.heroku.com/apps/${bot_name}/log-sessions`;
 
             try {
-                // ✅ FIX: Removed `source: 'app'` to get logs from ALL sources (app and heroku).
-                // This allows detection of system-level errors like R14.
                 const res = await axios.post(
                     url,
-                    { lines: 150 }, // The 'source' parameter was removed here.
+                    { lines: 150 },
                     { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
                 );
 
@@ -115,11 +116,9 @@ async function monitorAllAppsForR14() {
                 const logs = logsRes.data;
 
                 if (logs.includes('Error R14 (Memory quota exceeded)')) {
-                    const nowStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-                    const message = `[ALERT] R14 memory error detected!\nApp: ${bot_name}\nTime: ${nowStr}`;
-
-                    await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] R14 detected and alert sent for ${bot_name}\n`]);
+                    // ✅ FIX: Instead of alerting immediately, add the bot name to our list
+                    botsWithR14Error.push(bot_name);
+                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] R14 detected for ${bot_name}\n`]);
                 } else {
                     originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] No R14 errors found for ${bot_name}\n`]);
                 }
@@ -127,6 +126,18 @@ async function monitorAllAppsForR14() {
                 originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Failed to fetch logs for ${bot_name}: ${err.message}\n`]);
             }
         }
+
+        // ✅ FIX: After checking all bots, send one consolidated alert if any errors were found
+        if (botsWithR14Error.length > 0) {
+            const nowStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+            // Format the list of bot names for the message
+            const botList = botsWithR14Error.map(name => `- \`${name}\``).join('\n');
+            const message = `🚨 *R14 Memory Errors Detected* 🚨\n\nThe following bot(s) have exceeded their memory quota:\n\n${botList}\n\n*Time:* ${nowStr}`;
+
+            await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
+            originalStdoutWrite.apply(process.stdout, `[R14 Monitor] Consolidated R14 alert sent for ${botsWithR14Error.length} bot(s).\n`);
+        }
+
     } catch (err) {
         originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Error during app scan: ${err.message}\n`]);
     }
@@ -150,6 +161,15 @@ async function sendTelegramAlert(text, chatId) {
         originalStdoutWrite.apply(process.stdout, [`Telegram message sent to chat ID ${chatId}: ${text.substring(0, 50)}...\n`]);
         return res.data.result.message_id;
     } catch (err) {
+        // ✅ FIX: Handle the "Too Many Requests" error specifically
+        if (err.response && err.response.status === 429) {
+            const retryAfter = err.response.data.parameters.retry_after || 5; // Default to 5s if not specified
+            originalStderrWrite.apply(process.stderr, [`[Telegram] Rate limited. Retrying after ${retryAfter} seconds...\n`]);
+            // Wait for the specified time and try sending the message again
+            await new Promise(resolve => setTimeout(resolve, (retryAfter + 1) * 1000)); // Add 1s buffer
+            return sendTelegramAlert(text, chatId); // Retry the function call
+        }
+        
         originalStderrWrite.apply(process.stderr, [`Telegram alert failed for chat ID ${chatId}: ${err.message}\n`]);
         if (err.response) {
             originalStderrWrite.apply(process.stderr, [`   Telegram API Response: Status ${err.response.status}, Data: ${JSON.stringify(err.response.data)}\n`]);
