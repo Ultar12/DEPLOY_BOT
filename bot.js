@@ -7635,7 +7635,7 @@ bot.on('channel_post', async msg => {
         console.log('[Auto-Restart] Consolidated R14 alert detected. Parsing bot names...');
         
         // Regex to find all bot names in the format: - `bot-name`
-        const botNameRegex = /- \`([\w-]+)\`/g;
+        const botNameRegex = /- ([\w-]+)/g;
         const matches = text.matchAll(botNameRegex);
         const botsToRestart = Array.from(matches, match => match[1]);
 
