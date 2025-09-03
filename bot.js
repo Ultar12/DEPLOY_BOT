@@ -7522,6 +7522,7 @@ if (action === 'setvarbool') {
   }
 });
 
+
 bot.on('channel_post', async msg => {
     if (String(msg.chat.id) !== TELEGRAM_CHANNEL_ID || !msg.text) {
         return;
@@ -7533,21 +7534,56 @@ bot.on('channel_post', async msg => {
     let status = null;
     let match;
 
-    // --- FIX: High-priority check for the REAL R14 Memory Error log ---
-    // This regex looks for a line containing the app name and "Error R14".
-    // Example: [ultarrag] heroku[web.1]: Error R14 (Memory quota exceeded)
+    // --- High-priority check for a single, raw R14 Memory Error log ---
     const r14Match = text.match(/^\[([\w-]+)\].*Error R14/);
     if (r14Match) {
         const erroredAppName = r14Match[1];
-        console.log(`[Log Monitor] Real R14 Memory Error DETECTED for app: ${erroredAppName}`);
+        console.log(`[Log Monitor] Raw R14 Memory Error DETECTED for app: ${erroredAppName}`);
         
         await bot.sendMessage(ADMIN_ID, `⚠️ R14 Memory error detected for bot \`${erroredAppName}\`. Triggering an automatic restart.`, { parse_mode: 'Markdown' });
-        await restartBot(erroredAppName); // This function calls the Heroku API to restart the dynos
+        await restartBot(erroredAppName);
         
         return; // Stop processing this log further
     }
 
-    // --- This is your existing logic for ONLINE/LOGGED OUT statuses ---
+    // ✅ FIX: This new block handles the consolidated R14 alert message.
+    const consolidatedR14Header = '🚨 R14 Memory Errors Detected 🚨';
+    if (text.startsWith(consolidatedR14Header)) {
+        console.log('[Auto-Restart] Consolidated R14 alert detected. Parsing bot names...');
+        
+        // Regex to find all bot names in the format: - `bot-name`
+        const botNameRegex = /- \`([\w-]+)\`/g;
+        const matches = text.matchAll(botNameRegex);
+        const botsToRestart = Array.from(matches, match => match[1]);
+
+        if (botsToRestart.length > 0) {
+            // Notify the admin that the process is starting
+            await bot.sendMessage(ADMIN_ID, `Detected ${botsToRestart.length} bots with R14 errors. Starting sequential restart process...`);
+
+            for (const [index, appName] of botsToRestart.entries()) {
+                console.log(`[Auto-Restart] Restarting bot ${index + 1}/${botsToRestart.length}: ${appName}`);
+                const success = await restartBot(appName);
+                
+                const statusMessage = success 
+                    ? `Successfully initiated restart for \`${appName}\`.`
+                    : `Failed to restart \`${appName}\`. Please check logs.`;
+                await bot.sendMessage(ADMIN_ID, statusMessage, { parse_mode: 'Markdown' });
+
+                // Wait for 15 seconds before restarting the next bot to avoid API rate limits
+                if (index < botsToRestart.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 15000)); 
+                }
+            }
+            
+            await bot.sendMessage(ADMIN_ID, 'All listed bots have been processed.');
+        } else {
+            console.log('[Auto-Restart] R14 alert detected, but no bot names could be parsed.');
+        }
+        
+        return; // Stop further processing of this message
+    }
+
+    // --- This is the existing logic for ONLINE/LOGGED OUT statuses ---
     match = text.match(/\[LOG\] App: (.*?) \| Status: (.*?) \|/);
     if (match) {
         appName = match[1];
@@ -7659,6 +7695,8 @@ bot.on('channel_post', async msg => {
         }
     }
 });
+
+    
 
 
 
