@@ -186,14 +186,20 @@ await dbPool.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS last_email_no
       );
     `);
 
- await dbPool.query(`
+// This is the new, corrected code
+await dbPool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
-    setting_key VARCHAR(50) PRIMARY KEY,
-    setting_value VARCHAR(50) NOT NULL
-);
-
-INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;
+        setting_key VARCHAR(50) PRIMARY KEY,
+        setting_value VARCHAR(50) NOT NULL
+    );
 `);
+
+await dbPool.query(`
+    INSERT INTO app_settings (setting_key, setting_value) 
+    VALUES ('maintenance_mode', 'off') 
+    ON CONFLICT (setting_key) DO NOTHING;
+`);
+
 
   await dbPool.query(`
       CREATE TABLE IF NOT EXISTS key_rewards (
