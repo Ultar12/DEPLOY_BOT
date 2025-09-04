@@ -543,6 +543,40 @@ async function animateMessage(chatId, messageId, baseText) {
     return intervalId;
 }
 
+// In bot.js, add this new helper function
+
+async function sendPricingTiers(chatId, messageId) {
+    // Check if the user has any existing bots
+    const userBotsResult = await pool.query('SELECT 1 FROM user_bots WHERE user_id = $1 LIMIT 1', [chatId]);
+    const isExistingUser = userBotsResult.rows.length > 0;
+
+    let pricingMessage = "Please select a plan to proceed with your payment.";
+    const pricingKeyboard = [];
+
+    // Basic Plan (New users ONLY)
+    if (!isExistingUser) {
+        pricingKeyboard.push([{ text: 'Basic: ₦500 for 10 Days', callback_data: 'select_plan:500:10' }]);
+    } else {
+        pricingMessage = "As an existing user, you have access to our best value plans. Please select one to proceed:";
+    }
+
+    // Standard & Premium Plans (Available to all)
+    pricingKeyboard.push([{ text: 'Standard: ₦1500 for 30 Days', callback_data: 'select_plan:1500:30' }]);
+    pricingKeyboard.push([{ text: 'Premium: ₦2000 for 50 Days', callback_data: 'select_plan:2000:50' }]);
+    
+    // Add a cancel button
+    pricingKeyboard.push([{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]);
+
+    await bot.editMessageText(pricingMessage, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+            inline_keyboard: pricingKeyboard
+        }
+    });
+}
+
+
 // --- FIX: Corrected sendLatestKeyboard function for reliable database updates ---
 async function sendLatestKeyboard(chatId) {
     const isAdmin = String(chatId) === ADMIN_ID;
@@ -6234,65 +6268,84 @@ if (action === 'deploy_with_key') {
 
 // REPLACE your existing 'buy_key_for_deploy' handler with this one.
 
+// In bot.js, inside the callback_query handler
+
 if (action === 'buy_key_for_deploy') {
     const st = userStates[cid];
-    // This state check is crucial to ensure the user has provided all bot details
+    // This state check is crucial
     if (!st || st.step !== 'AWAITING_KEY') {
-        // If state is lost, ask the user to start over.
-        await bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start the deployment again.", show_alert: true });
-        return bot.editMessageText('Your session has expired. Please start the deployment process again from the main menu.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
+        await bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
+        return;
+    }
+    
+    // Instead of asking for email, now we show the pricing tiers
+    await sendPricingTiers(cid, q.message.message_id);
+    return;
+}
+
+  // In bot.js, add this new handler inside the callback_query function
+
+if (action === 'select_plan') {
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_KEY') {
+        await bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
+        return;
     }
 
-    // Automatically fetch the user's verified email from the database
+    const priceNgn = parseInt(payload, 10); // e.g., 500
+    const days = parseInt(extra, 10);      // e.g., 10
+    const priceInKobo = priceNgn * 100;
+
     const userEmail = await getUserEmail(cid);
 
     if (!userEmail) {
-        // This is a fallback in case the user's verified email is not found
         delete userStates[cid];
-        return bot.editMessageText('Error: Could not find your verified email. Please start the deployment process over to re-verify your email.', {
+        return bot.editMessageText('Error: Could not find your verified email. Please start the deployment process over.', {
             chat_id: cid,
             message_id: q.message.message_id
         });
     }
 
-    // Inform the user that their registered email is being used
-    const sentMsg = await bot.editMessageText(`Using your registered email (${userEmail}) to generate a payment link...`, {
+    const sentMsg = await bot.editMessageText(`Generating payment link for the ₦${priceNgn} plan...`, {
         chat_id: cid,
         message_id: q.message.message_id
     });
 
     try {
         const reference = crypto.randomBytes(16).toString('hex');
-        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
+        
+        // We will pass the days and price in the metadata for the webhook
+        const metadata = {
+            user_id: cid,
+            product: `Deployment Key - ${days} Days`,
+            days: days,
+            price: priceNgn
+        };
 
-        // Save the pending payment details to the database using the fetched email
+        // Note: The pending_payments table now uses the metadata from the webhook
+        // instead of needing its own logic for days/price.
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
             [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
         );
-        
-        // Store the reference in case the user cancels
         st.data.reference = reference;
 
-        // Initialize the Paystack transaction using the fetched email
         const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
             {
                 email: userEmail,
                 amount: priceInKobo,
                 reference: reference,
-                metadata: { user_id: cid, product: "New Deploy Key" }
+                metadata: metadata
             },
             { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
         );
 
         const paymentUrl = paystackResponse.data.data.authorization_url;
         await bot.editMessageText(
-            'Click the button below to complete your payment. Your deployment will start automatically after confirmation.',
-            {
-                chat_id: cid, message_id: sentMsg.message_id,
+            `Click the button below to complete your payment for the **₦${priceNgn} (${days} days)** plan. Your deployment will start automatically.`, {
+                chat_id: cid,
+                message_id: sentMsg.message_id,
+                parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Pay Now', url: paymentUrl }],
@@ -6303,12 +6356,14 @@ if (action === 'buy_key_for_deploy') {
         );
     } catch (error) {
         console.error("Paystack error for new key:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later.', {
-            chat_id: cid, message_id: sentMsg.message_id
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link.', {
+            chat_id: cid,
+            message_id: sentMsg.message_id
         });
     }
     return;
 }
+
 
 
 // --- NEW: Handler for the 'Cancel' button on the payment screen ---
