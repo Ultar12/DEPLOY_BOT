@@ -284,17 +284,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         
         await client.query('COMMIT');
         console.log(`[DB-${dbName}] All tables checked/created successfully.`);
-    } catch (dbError) {
-        await client.query('ROLLBACK');
-        throw dbError; // Re-throw the error to be caught by the main startup logic
-    } finally {
-        client.release();
-    }
-}
 
-
-    console.log(`[DB-${dbName}] All tables checked/created successfully.`);
-}
+        
 
 
 // Main startup logic
