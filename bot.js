@@ -557,7 +557,7 @@ async function sendPricingTiers(chatId, messageId) {
     if (!isExistingUser) {
         pricingKeyboard.push([{ text: 'Basic: ₦500 for 10 Days', callback_data: 'select_plan:500:10' }]);
     } else {
-        pricingMessage = "As an existing user, you have access to our best value plans. Please select one to proceed:";
+        pricingMessage = "Please select one to proceed:";
     }
 
     // Standard & Premium Plans (Available to all)
@@ -4203,7 +4203,7 @@ if (st && st.step === 'AWAITING_KEY') {
         
         const invalidKeyKeyboard = {
             inline_keyboard: [
-                [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+                [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }]
             ]
         };
 
