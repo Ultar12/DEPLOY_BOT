@@ -6118,7 +6118,7 @@ if (action === 'confirm_and_pay_step') {
             message_id: q.message.message_id,
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }, { text: 'Cancel', callback_data: 'cancel_payment_and_deploy' }]
                 ]
             }
         });
