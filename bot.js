@@ -123,9 +123,6 @@ const backupPool = new Pool({
 
 // --- REPLACED DATABASE STARTUP BLOCK ---
 
-
-// In bot.js, replace your entire createAllTablesInPool function
-
 async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] Checking/creating all tables...`);
     
@@ -271,6 +268,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE deploy_keys ADD COLUMN IF NOT EXISTS user_id TEXT;`);
         await client.query(`ALTER TABLE user_referrals ADD COLUMN IF NOT EXISTS inviter_reward_pending BOOLEAN DEFAULT FALSE;`);
         await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS keyboard_version INTEGER DEFAULT 0;`);
+        await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS last_reward_at DATE, ADD COLUMN IF NOT EXISTS reward_streak INTEGER DEFAULT 0;`);
         await client.query(`ALTER TABLE free_trial_numbers ADD COLUMN IF NOT EXISTS ip_address TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS email TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referred_by TEXT;`);
@@ -283,10 +281,17 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;`);
         
         await client.query('COMMIT');
-        console.log(`[DB-${dbName}] All tables checked/created successfully.`);
+    } catch (dbError) {
+        await client.query('ROLLBACK');
+        throw dbError; // Re-throw the error to be caught by the main startup logic
+    } finally {
+        client.release();
+    }
+
+    console.log(`[DB-${dbName}] All tables checked/created successfully.`);
+}
 
         
-
 
 // Main startup logic
 // Main startup logic
