@@ -356,59 +356,44 @@ const ONLINE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 
 const USERS_PER_PAGE = 8; // Define how many users to show per page
-
+// Helper function to display the paginated list of users with names
 async function sendUserListPage(chatId, page = 1, messageId = null) {
-    if (chatId.toString() !== ADMIN_ID) {
-        return; // Just in case
-    }
-
     try {
-        // First, get the total count of all users to calculate pages
-        const totalResult = await pool.query('SELECT COUNT(DISTINCT user_id) AS total FROM user_activity');
-        const totalUsers = parseInt(totalResult.rows[0].total, 10);
+        const allUsersResult = await pool.query('SELECT DISTINCT user_id FROM user_activity ORDER BY user_id;');
+        const allUserIds = allUsersResult.rows.map(row => row.user_id);
 
-        if (totalUsers === 0) {
-            const text = "No users have interacted with the bot yet.";
-            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
-            return bot.sendMessage(chatId, text);
+        if (allUserIds.length === 0) {
+            return bot.sendMessage(chatId, "No users have interacted with the bot yet.");
         }
 
-        const totalPages = Math.ceil(totalUsers / USERS_PER_PAGE);
-        page = Math.max(1, Math.min(page, totalPages)); // Ensure page is within valid range
+        const USERS_PER_PAGE = 8;
+        const totalPages = Math.ceil(allUserIds.length / USERS_PER_PAGE);
+        page = Math.max(1, Math.min(page, totalPages));
 
-        // Get the specific users for the current page
         const offset = (page - 1) * USERS_PER_PAGE;
-        const pageResult = await pool.query(
-            `SELECT DISTINCT user_id FROM user_activity ORDER BY user_id ASC LIMIT $1 OFFSET $2`, 
-            [USERS_PER_PAGE, offset]
-        );
-        const userIds = pageResult.rows.map(row => row.user_id);
+        const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
 
-        // Build the message content
         let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
-        for (const userId of userIds) {
-            const bannedStatus = await dbServices.isUserBanned(userId);
-            responseMessage += `ID: \`${userId}\` ${bannedStatus ? '(Banned)' : ''}\n`;
+        for (const userId of userIdsOnPage) {
+            try {
+                const user = await bot.getChat(userId);
+                const isBanned = await dbServices.isUserBanned(userId);
+                const fullName = escapeMarkdown(`${user.first_name || ''} ${user.last_name || ''}`.trim());
+                responseMessage += `*ID:* \`${userId}\` ${isBanned ? '(Banned)' : ''}\n*Name:* ${fullName || 'N/A'}\n\n`;
+            } catch (e) {
+                responseMessage += `*ID:* \`${userId}\`\n*Name:* _User not accessible_\n\n`;
+            }
         }
-        responseMessage += `\n_Use /info <ID> for full details._`;
+        responseMessage += `_Use /info <ID> for full details._`;
 
-        // Create the navigation buttons
         const navRow = [];
-        if (page > 1) {
-            navRow.push({ text: 'Previous', callback_data: `users_page:${page - 1}` });
-        }
-        navRow.push({ text: `Page ${page}`, callback_data: 'no_action' });
-        if (page < totalPages) {
-            navRow.push({ text: 'Next', callback_data: `users_page:${page + 1}` });
-        }
+        if (page > 1) navRow.push({ text: 'Previous', callback_data: `users_page:${page - 1}` });
+        if (page < totalPages) navRow.push({ text: 'Next', callback_data: `users_page:${page + 1}` });
 
-        // Send or edit the message
         const options = {
             chat_id: chatId,
             parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [navRow]
-            }
+            reply_markup: { inline_keyboard: [navRow] }
         };
 
         if (messageId) {
@@ -421,6 +406,7 @@ async function sendUserListPage(chatId, page = 1, messageId = null) {
         await bot.sendMessage(chatId, "An error occurred while fetching the user list.");
     }
 }
+
 // 6) Utilities (some are passed to other modules)
 
 // Function to escape Markdown V2 special characters
