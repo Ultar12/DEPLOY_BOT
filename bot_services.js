@@ -1109,8 +1109,6 @@ async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
 
-// ... (other functions) ...
-
 // In bot_services.js, replace the entire syncDatabases function
 
 async function syncDatabases(sourcePool, targetPool) {
@@ -1120,7 +1118,6 @@ async function syncDatabases(sourcePool, targetPool) {
     try {
         await clientTarget.query('BEGIN');
 
-        // Step 1: Get all table names from the source database (excluding sessions)
         const sourceTablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
             WHERE schemaname = 'public' AND tablename != 'sessions';
@@ -1131,39 +1128,52 @@ async function syncDatabases(sourcePool, targetPool) {
             return { success: true, message: 'Source database has no tables to copy.' };
         }
         
-        console.log('[Sync] Tables to copy:', sourceTableNames);
+        console.log('[Sync] Tables to clone:', sourceTableNames);
         
-        // Step 2: Drop all existing tables in the target database to ensure a clean slate
+        // Drop old tables in the target to ensure a clean slate
         for (const tableName of sourceTableNames) {
-            console.log(`[Sync] Dropping old table "${tableName}" in target DB if it exists...`);
             await clientTarget.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE;`);
         }
 
-        // Step 3: Recreate each table's schema in the target database
+        // Recreate each table's schema AND primary keys in the target database
         for (const tableName of sourceTableNames) {
-            console.log(`[Sync] Recreating schema for table "${tableName}" in target DB...`);
-            // This command fetches the exact structure of the source table
-            const createTableScriptResult = await clientSource.query(`
-                SELECT 'CREATE TABLE ' || quote_ident('${tableName}') || ' (' || string_agg(column_definition, ', ') || ');' as script
-                FROM (
-                    SELECT 
-                        quote_ident(column_name) || ' ' || data_type || coalesce('(' || character_maximum_length || ')', '') || ' ' || (CASE WHEN is_nullable = 'NO' THEN 'NOT NULL' ELSE '' END) as column_definition
-                    FROM information_schema.columns
-                    WHERE table_name = '${tableName}' AND table_schema = 'public'
-                    ORDER BY ordinal_position
-                ) AS columns;
+            console.log(`[Sync] Cloning schema for table "${tableName}"...`);
+            
+            // Get column definitions
+            const columnsResult = await clientSource.query(`
+                SELECT column_name, data_type, character_maximum_length, is_nullable 
+                FROM information_schema.columns 
+                WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;
+            `, [tableName]);
+            
+            let createTableScript = `CREATE TABLE "${tableName}" (`;
+            createTableScript += columnsResult.rows.map(col => 
+                `"${col.column_name}" ${col.data_type}` +
+                (col.character_maximum_length ? `(${col.character_maximum_length})` : '') +
+                (col.is_nullable === 'NO' ? ' NOT NULL' : '')
+            ).join(', ');
+
+            // --- THIS IS THE FIX: Get and add the Primary Key ---
+            const pkeyResult = await clientSource.query(`
+                SELECT conname AS constraint_name, 
+                       pg_get_constraintdef(c.oid) AS constraint_definition
+                FROM pg_constraint c
+                JOIN pg_namespace n ON n.oid = c.connamespace
+                WHERE contype = 'p' AND conrelid = '${tableName}'::regclass;
             `);
-            const createTableScript = createTableScriptResult.rows[0].script;
-            if (createTableScript) {
-                await clientTarget.query(createTableScript);
+
+            if (pkeyResult.rows.length > 0) {
+                createTableScript += `, CONSTRAINT "${pkeyResult.rows[0].constraint_name}" ${pkeyResult.rows[0].constraint_definition}`;
             }
+            // --- END OF FIX ---
+            
+            createTableScript += ');';
+            await clientTarget.query(createTableScript);
         }
 
-        // Step 4: Copy data from source to target
+        // Copy data from source to target
         for (const tableName of sourceTableNames) {
-            console.log(`[Sync] Copying data for table "${tableName}"...`);
             const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
-
             if (rows.length > 0) {
                 const columns = Object.keys(rows[0]);
                 const colNames = columns.map(c => `"${c}"`).join(', ');
@@ -1174,8 +1184,8 @@ async function syncDatabases(sourcePool, targetPool) {
                     const values = columns.map(col => row[col]);
                     await clientTarget.query(insertQuery, values);
                 }
+                console.log(`[Sync] Copied ${rows.length} rows to "${tableName}".`);
             }
-            console.log(`[Sync] Copied ${rows.length} rows to "${tableName}".`);
         }
 
         await clientTarget.query('COMMIT');
@@ -1190,7 +1200,6 @@ async function syncDatabases(sourcePool, targetPool) {
         clientTarget.release();
     }
 }
-
 
 
 
