@@ -4189,7 +4189,8 @@ Share this link with your friends. When they deploy a bot using your link, you g
 
 
 
-    // --- FIX: AWAITING_KEY handler now triggers deployment upon success ---
+// In bot.js, replace your entire AWAITING_KEY handler with this one
+
 if (st && st.step === 'AWAITING_KEY') {
     const keyAttempt = text.toUpperCase();
     const st = userStates[cid];
@@ -4198,59 +4199,35 @@ if (st && st.step === 'AWAITING_KEY') {
     const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
     
     if (usesLeft === null) {
-        const price = process.env.KEY_PRICE_NGN || '1500';
-        const invalidKeyMessage = `Invalid key. Please try another key or make payment.`;
-        
-        const invalidKeyKeyboard = {
-            inline_keyboard: [
-                [{ text: `Make payment`, callback_data: 'buy_key_for_deploy' }]
-            ]
-        };
-
-        await bot.editMessageText(invalidKeyMessage, {
-            chat_id: cid,
-            message_id: verificationMsg.message_id,
-            reply_markup: invalidKeyKeyboard
-        });
+        // --- THIS IS THE FIX ---
+        // An invalid key was entered. Instead of showing a static button,
+        // we now call the function to display the dynamic pricing tiers.
+        await sendPricingTiers(cid, verificationMsg.message_id);
         return;
     }
+    
+    // Key is valid. Now trigger the deployment.
+    await bot.editMessageText('Key verified! Initiating deployment...', { 
+        chat_id: cid, 
+        message_id: verificationMsg.message_id 
+    });
 
-    await bot.editMessageText('Key verified! Initiating deployment...', { chat_id: cid, message_id: verificationMsg.message_id });
-
-    // --- Admin Notification ---
-    const { first_name, last_name, username } = msg.from;
-    const userFullName = [first_name, last_name].filter(Boolean).join(' ');
-    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : 'N/A';
+    const { first_name, username } = msg.from;
+    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'N/A');
     await bot.sendMessage(ADMIN_ID,
         `*Key Used By:*\n` +
-        `*Name:* ${escapeMarkdown(userFullName || 'N/A')}\n` +
-        `*Username:* ${userNameDisplay}\n` +
-        `*Chat ID:* \`${escapeMarkdown(cid)}\`\n\n` +
-        `*Key Used:* \`${escapeMarkdown(keyAttempt)}\`\n` +
+        `*User:* ${userNameDisplay} (\`${cid}\`)\n` +
+        `*Key Used:* \`${keyAttempt}\`\n` +
         `*Uses Left:* ${usesLeft}`,
         { parse_mode: 'Markdown' }
     );
-    // --- End Admin Notification ---
 
     const deploymentData = st.data;
     delete userStates[cid];
-
-    // ✅ FIX: Check for a pending referral session before building.
-    let inviterId = null;
-    try {
-        const sessionResult = await pool.query(
-            `SELECT data FROM sessions WHERE id = $1 AND expires_at > NOW()`,
-            [`referral_session:${cid}`]
-        );
-        if (sessionResult.rows.length > 0) {
-            inviterId = sessionResult.rows[0].data.inviterId;
-        }
-    } catch (e) { /* Ignore errors, proceed without inviterId */ }
-
-    // Pass the found inviterId to the build function.
-    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType, inviterId);
+    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType);
     return;
 }
+
 
 
  if (st && st.step === 'SESSION_ID') {
