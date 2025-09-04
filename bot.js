@@ -5965,6 +5965,75 @@ if (action === 'renew_bot') {
 }
 
 
+// In bot.js, ADD this new handler inside your callback_query function
+
+if (action === 'select_renewal') {
+    const priceNgn = parseInt(payload, 10);
+    const days = parseInt(extra, 10);
+    const appName = flag;
+    const priceInKobo = priceNgn * 100;
+
+    const userEmail = await getUserEmail(cid);
+
+    if (!userEmail) {
+        return bot.answerCallbackQuery(q.id, { text: 'Error: Could not find your verified email.', show_alert: true });
+    }
+
+    const sentMsg = await bot.editMessageText(`Generating payment link for the ₦${priceNgn} plan...`, {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+
+    try {
+        const reference = crypto.randomBytes(16).toString('hex');
+        
+        // The metadata now includes the days and appName for the webhook
+        const metadata = {
+            user_id: cid,
+            product: 'Bot Renewal',
+            days: days,
+            appName: appName
+        };
+
+        // This is a temporary record; the webhook handles the real logic
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
+            [reference, cid, userEmail, `renewal_${appName}`]
+        );
+        
+        const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
+            {
+                email: userEmail,
+                amount: priceInKobo,
+                reference: reference,
+                metadata: metadata
+            },
+            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+
+        const paymentUrl = paystackResponse.data.data.authorization_url;
+        await bot.editMessageText(
+            `Click the button below to complete your payment for the **₦${priceNgn} (${days} days)** renewal.`, {
+                chat_id: cid,
+                message_id: sentMsg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Pay Now', url: paymentUrl }],
+                        [{ text: 'Cancel', callback_data: `renew_bot:${appName}` }] // Go back to renewal menu
+                    ]
+                }
+            }
+        );
+    } catch (error) {
+        console.error("Paystack error during renewal:", error.response?.data || error.message);
+        await bot.editMessageText('Sorry, an error occurred while creating the payment link.', {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+    }
+    return;
+}
 
 
 
