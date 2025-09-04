@@ -1111,68 +1111,67 @@ async function createAllTablesInPool(dbPool, dbName) {
 
 // ... (other functions) ...
 
+// In bot_services.js, replace the entire syncDatabases function
+
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
     
     try {
-        // Get list of tables from both source and target databases
-        const sourceTablesResult = await clientSource.query(`
-            SELECT tablename FROM pg_catalog.pg_tables 
-            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
-        `);
-        const targetTablesResult = await clientTarget.query(`
-            SELECT tablename FROM pg_catalog.pg_tables 
-            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
-        `);
-        
-        const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
-        const targetTableNames = new Set(targetTablesResult.rows.map(row => row.tablename));
-        
-        // Find tables that exist in both source and target
-        const commonTableNames = sourceTableNames.filter(name => targetTableNames.has(name));
-
-        if (commonTableNames.length === 0) {
-            await clientTarget.query('ROLLBACK');
-            return { success: false, message: 'No common tables found between the two databases. Sync aborted.' };
-        }
-
-        console.log('[Sync] Common tables to sync:', commonTableNames);
-
         await clientTarget.query('BEGIN');
 
-        // Step 1: Truncate tables in the target database in reverse order to respect dependencies
-        for (const tableName of commonTableNames.slice().reverse()) {
-            console.log(`[Sync] Clearing table "${tableName}" in target DB...`);
-            await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
+        // Step 1: Get all table names from the source database (excluding sessions)
+        const sourceTablesResult = await clientSource.query(`
+            SELECT tablename FROM pg_catalog.pg_tables 
+            WHERE schemaname = 'public' AND tablename != 'sessions';
+        `);
+        const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename);
+
+        if (sourceTableNames.length === 0) {
+            return { success: true, message: 'Source database has no tables to copy.' };
+        }
+        
+        console.log('[Sync] Tables to copy:', sourceTableNames);
+        
+        // Step 2: Drop all existing tables in the target database to ensure a clean slate
+        for (const tableName of sourceTableNames) {
+            console.log(`[Sync] Dropping old table "${tableName}" in target DB if it exists...`);
+            await clientTarget.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE;`);
         }
 
-        // Step 2: Copy data, ensuring column names match
-        for (const tableName of commonTableNames) {
-            console.log(`[Sync] Copying data for table "${tableName}"...`);
-            
-            const sourceColumnsResult = await clientSource.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
-            const targetColumnsResult = await clientTarget.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
-
-            const sourceColumns = sourceColumnsResult.rows.map(row => row.column_name);
-            const targetColumns = targetColumnsResult.rows.map(row => row.column_name);
-            
-            const commonColumns = sourceColumns.filter(col => targetColumns.includes(col));
-            
-            if (commonColumns.length === 0) {
-                console.warn(`[Sync] Skipping table "${tableName}" as no common columns were found.`);
-                continue;
+        // Step 3: Recreate each table's schema in the target database
+        for (const tableName of sourceTableNames) {
+            console.log(`[Sync] Recreating schema for table "${tableName}" in target DB...`);
+            // This command fetches the exact structure of the source table
+            const createTableScriptResult = await clientSource.query(`
+                SELECT 'CREATE TABLE ' || quote_ident('${tableName}') || ' (' || string_agg(column_definition, ', ') || ');' as script
+                FROM (
+                    SELECT 
+                        quote_ident(column_name) || ' ' || data_type || coalesce('(' || character_maximum_length || ')', '') || ' ' || (CASE WHEN is_nullable = 'NO' THEN 'NOT NULL' ELSE '' END) as column_definition
+                    FROM information_schema.columns
+                    WHERE table_name = '${tableName}' AND table_schema = 'public'
+                    ORDER BY ordinal_position
+                ) AS columns;
+            `);
+            const createTableScript = createTableScriptResult.rows[0].script;
+            if (createTableScript) {
+                await clientTarget.query(createTableScript);
             }
+        }
 
-            const { rows } = await clientSource.query(`SELECT ${commonColumns.map(c => `"${c}"`).join(', ')} FROM "${tableName}";`);
+        // Step 4: Copy data from source to target
+        for (const tableName of sourceTableNames) {
+            console.log(`[Sync] Copying data for table "${tableName}"...`);
+            const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
 
             if (rows.length > 0) {
-                const colNames = commonColumns.map(c => `"${c}"`).join(', ');
-                const valuePlaceholders = commonColumns.map((_, i) => `$${i + 1}`).join(', ');
+                const columns = Object.keys(rows[0]);
+                const colNames = columns.map(c => `"${c}"`).join(', ');
+                const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+                const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
 
                 for (const row of rows) {
-                    const values = commonColumns.map(col => row[col]);
-                    const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
+                    const values = columns.map(col => row[col]);
                     await clientTarget.query(insertQuery, values);
                 }
             }
@@ -1180,18 +1179,17 @@ async function syncDatabases(sourcePool, targetPool) {
         }
 
         await clientTarget.query('COMMIT');
-        return { success: true, message: `Successfully synced ${commonTableNames.length} tables.` };
+        return { success: true, message: `Successfully cloned ${sourceTableNames.length} tables.` };
 
     } catch (error) {
         await clientTarget.query('ROLLBACK');
         console.error('[Sync] Database sync failed:', error);
-        return { success: false, message: error.message };
+        return { success: false, message: `Sync failed: ${error.message}` };
     } finally {
         clientSource.release();
         clientTarget.release();
     }
 }
-
 
 
 
