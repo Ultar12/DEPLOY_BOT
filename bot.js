@@ -5942,72 +5942,28 @@ if (action === 'buy_temp_num') {
       return;
   }
 
-  if (action === 'renew_bot') {
+  // In bot.js, REPLACE the existing 'renew_bot' handler
+
+if (action === 'renew_bot') {
     const appName = payload;
+    const renewalMessage = `Your bot "*${appName}*" is about to expire. Please select a renewal plan to extend its runtime:`;
     
-    // Step 1: Automatically fetch the user's verified email from the database
-    const userEmail = await getUserEmail(cid);
-
-    if (!userEmail) {
-        // This is a fallback in case the user's verified email is not found
-        return bot.editMessageText('Error: Could not find your verified email. Please complete the initial registration process first.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-    }
-    
-    // Step 2: Proceed directly to generating the payment link
-    const sentMsg = await bot.editMessageText(`Using your registered email (${userEmail}) to generate a renewal link...`, {
+    // Show the available renewal plans (Standard and Premium)
+    await bot.editMessageText(renewalMessage, {
         chat_id: cid,
-        message_id: q.message.message_id
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Standard: ₦1500 for 30 Days', callback_data: `select_renewal:1500:30:${appName}` }],
+                [{ text: 'Premium: ₦2000 for 50 Days', callback_data: `select_renewal:2000:50:${appName}` }],
+                [{ text: 'Back', callback_data: `selectbot:${appName}` }]
+            ]
+        }
     });
-
-    try {
-        const reference = crypto.randomBytes(16).toString('hex');
-        const priceInKobo = (parseInt(process.env.KEY_PRICE_NGN, 10) || 1500) * 100;
-
-        // Save the pending payment details for the webhook to process
-        await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
-            [reference, cid, userEmail, `renewal_${appName}`]
-        );
-        
-        // Initialize the Paystack transaction using the fetched email
-        const paystackResponse = await axios.post('https://api.paystack.co/transaction/initialize', 
-            {
-                email: userEmail,
-                amount: priceInKobo,
-                reference: reference,
-                metadata: { user_id: cid, product: `Renewal for ${appName}` }
-            },
-            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-        );
-
-        const paymentUrl = paystackResponse.data.data.authorization_url;
-
-        // Step 3: Show the final payment button to the user
-        await bot.editMessageText(
-            'Click the button below to complete your payment. Your bot will be renewed automatically.',
-            {
-                chat_id: cid,
-                message_id: sentMsg.message_id,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Pay Now', url: paymentUrl }],
-                        [{ text: 'Back to Manage Menu', callback_data: `selectapp:${appName}` }]
-                    ]
-                }
-            }
-        );
-    } catch (error) {
-        console.error("Paystack error during renewal:", error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link.', {
-            chat_id: cid,
-            message_id: sentMsg.message_id
-        });
-    }
     return;
 }
+
 
 
 
