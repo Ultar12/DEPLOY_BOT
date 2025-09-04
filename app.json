@@ -114,7 +114,7 @@
     "GEMINI_API_KEY": {
       "description": "Gemini API key",
       "required": true,
-      "value": "AIzaSyDsvDWz-lOhuGyQV5rL-uumbtlNamXqfWM"
+      "value": "AIzaSyBds-BuDtWCzQyFCnb9B3JRp8rG2i52soc"
     },
     "YT_COOKIE": {
       "description": "YouTube cookie",
