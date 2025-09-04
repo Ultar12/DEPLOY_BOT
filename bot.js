@@ -7951,7 +7951,7 @@ async function pruneInactiveUsers() {
     console.log('[Prune] Running daily check for inactive users with no bots...');
     
     try {
-        const thirtyDaysAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
         // This query finds users seen over 30 days ago who are NOT in the user_bots table.
         const result = await pool.query(
