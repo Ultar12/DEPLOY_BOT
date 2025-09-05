@@ -84,61 +84,69 @@ function handleLogLine(line, streamType) {
     }
 }
 
-// --- Monitor all Heroku app logs for R14 errors ---
+// In bot_monitor.js, replace the entire monitorAllAppsForR14 function
+
 async function monitorAllAppsForR14() {
-    if (!moduleParams.HEROKU_API_KEY) {
-        originalStdoutWrite.apply(process.stdout, ['Skipping R14 monitor: HEROKU_API_KEY not set.\n']);
-        return;
-    }
+    console.log('[R14 Monitor] Running scheduled check for memory errors...');
+    if (!moduleParams.HEROKU_API_KEY) return;
+
+    // A list to keep track of bots that have memory errors
+    const botsWithErrors = [];
 
     try {
         const allBots = await moduleParams.getAllUserBots();
-        if (!allBots || allBots.length === 0) {
-            originalStdoutWrite.apply(process.stdout, ['[R14 Monitor] No apps found in DB.\n']);
-            return;
-        }
+        if (!allBots || allBots.length === 0) return;
 
-        const botsWithR14Error = [];
-
-        for (const botEntry of allBots) {
-            const { bot_name } = botEntry;
-            const url = `https://api.heroku.com/apps/${bot_name}/log-sessions`;
-
+        for (const bot of allBots) {
             try {
-                const res = await axios.post(
-                    url,
-                    { lines: 5 },
-                    { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-                );
+                const logSessionUrl = `https://api.heroku.com/apps/${bot.bot_name}/log-sessions`;
+                const headers = {
+                    Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
+                    Accept: 'application/vnd.heroku+json; version=3',
+                    'Content-Type': 'application/json'
+                };
 
-                const logplexUrl = res.data.logplex_url;
-                const logsRes = await axios.get(logplexUrl);
-                const logs = logsRes.data;
+                // Fetch the last 50 lines from the 'heroku' source to find platform errors
+                const res = await axios.post(logSessionUrl, { lines: 10, source: 'heroku' }, { headers });
+                const logsRes = await axios.get(res.data.logplex_url);
 
-                if (logs.includes('Error R14 (Memory quota exceeded)')) {
-                    botsWithR14Error.push(bot_name);
-                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] R14 detected for ${bot_name}\n`]);
-                } else {
-                    originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] No R14 errors found for ${bot_name}\n`]);
+                if (logsRes.data && logsRes.data.includes('Error R14 (Memory quota exceeded)')) {
+                    console.log(`[R14 Monitor] R14 detected for ${bot.bot_name}. Triggering restart.`);
+                    
+                    // --- THIS IS THE FIX ---
+                    // Trigger the restart for the bot immediately.
+                    await restartBot(bot.bot_name); 
+                    
+                    // Add the bot's name to our list for the summary report.
+                    botsWithErrors.push(bot.bot_name);
                 }
             } catch (err) {
-                originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Failed to fetch logs for ${bot_name}: ${err.message}\n`]);
+                if (!err.response || err.response.status !== 404) {
+                    console.error(`[R14 Monitor] Failed to fetch logs for ${bot.bot_name}:`, err.message);
+                }
             }
         }
 
-        if (botsWithR14Error.length > 0) {
-            const nowStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
-            const botList = botsWithR14Error.map(name => `- \`${name}\``).join('\n');
-            const message = `🚨 *R14 Memory Errors Detected* 🚨\n\nThe following bot(s) have exceeded their memory quota:\n\n${botList}\n\n*Time:* ${nowStr}`;
+        // After checking all bots, send ONE summary message if any errors were found
+        if (botsWithErrors.length > 0) {
+            const timeStr = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+            let message = `🚨 **R14 Memory Errors Detected & Restarted** 🚨\n\nThe following bot(s) exceeded their memory quota and have been automatically restarted:\n\n`;
+            
+            botsWithErrors.forEach(appName => {
+                message += `- \`${appName}\`\n`;
+            });
 
+            message += `\nTime: ${timeStr}`;
+
+            await sendTelegramAlert(message, moduleParams.ADMIN_ID); // Also send to your direct chat
             await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
-            originalStdoutWrite.apply(process.stdout, [`[R14 Monitor] Consolidated R14 alert sent for ${botsWithR14Error.length} bot(s).\n`]);
         }
 
     } catch (err) {
-        originalStderrWrite.apply(process.stderr, [`[R14 Monitor] Error during app scan: ${err.message}\n`]);
+        console.error('[R14 Monitor] Critical error fetching bot list:', err.message);
     }
 }
+
 
 async function sendTelegramAlert(text, chatId) {
     if (!moduleParams.TELEGRAM_BOT_TOKEN) {
