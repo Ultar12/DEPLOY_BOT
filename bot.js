@@ -7757,7 +7757,7 @@ bot.on('channel_post', async msg => {
             const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
                                    `*Reason:* Bot session has logged out.\n` +
                                    `Please update your session ID.\n\n` +
-                                   `*Warning: This app will be automatically deleted in 5 days if the issue is not resolved.*`;
+                                   `*Warning: This app will be automatically deleted in 7 days if the issue is not resolved.*`;
             
             const sentMessage = await bot.sendMessage(userId, warningMessage, {
                 parse_mode: 'Markdown',
@@ -7795,7 +7795,7 @@ bot.on('channel_post', async msg => {
                     if (!last_email_notification_at || new Date(last_email_notification_at) < thirtyHoursAgo) {
                         console.log(`[Email] Cooldown passed for ${appName}. Sending logged-out reminder to ${email}.`);
                         
-                        await sendLoggedOutReminder(email, appName, botUsername, 5);
+                        await sendLoggedOutReminder(email, appName, botUsername, 7);
                         
                         await pool.query(
                             `UPDATE user_bots SET last_email_notification_at = NOW() WHERE bot_name = $1`,
@@ -7989,7 +7989,7 @@ console.log('[Backup] Scheduled hourly automatic database backup.');
 async function checkAndPruneLoggedOutBots() {
     console.log('[Prune] Running hourly check for long-term logged-out bots...');
     try {
-        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
             [fiveDaysAgo]
@@ -8003,7 +8003,7 @@ async function checkAndPruneLoggedOutBots() {
 
         for (const botInfo of botsToDelete) {
             const { user_id, bot_name } = botInfo;
-            console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 5 days.`);
+            console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 7 days.`);
             
             try {
                 // --- THIS IS THE FIX: The Heroku deletion command was missing ---
@@ -8018,7 +8018,7 @@ async function checkAndPruneLoggedOutBots() {
                 await dbServices.deleteUserBot(user_id, bot_name);
                 await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
 
-                await bot.sendMessage(user_id, `Your bot "*${escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 5 days.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(user_id, `Your bot "*${escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 7 days.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 5 days.`, { parse_mode: 'Markdown' });
 
             } catch (error) {
