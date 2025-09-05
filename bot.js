@@ -6294,10 +6294,9 @@ if (action === 'cancel_payment_and_deploy') {
 
 
 
-     // In bot.js, inside the callback_query handler
+    // In bot.js, replace this entire block inside your callback_query handler
 
 if (action === 'selectapp' || action === 'selectbot') {
-    const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id;
     const appName = payload;
 
@@ -6310,36 +6309,55 @@ if (action === 'selectapp' || action === 'selectbot') {
     const dynoStatus = await dbServices.getDynoStatus(appName);
 
     if (dynoStatus === 'deleted' || dynoStatus === 'error') {
-        await bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
+        return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
             chat_id: cid,
             message_id: messageId,
             parse_mode: 'Markdown'
         });
-        return;
     }
     
-    // The message and keyboard will now change based on the bot's status
     let message = `Manage app "*${appName}*".\n\nStatus: *${dynoStatus.toUpperCase()}*`;
     const keyboard = [];
 
     if (dynoStatus === 'on') {
-        // Bot is ON, show the "Turn Off" button and full management options
-        keyboard.push([{ text: 'Turn Off Bot', callback_data: `toggle_dyno:off:${appName}` }]);
+        const botDetailsResult = await pool.query(
+            `SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2`,
+            [cid, appName]
+        );
+        const botDetails = botDetailsResult.rows[0];
+
+        // --- THIS IS THE CORRECTED KEYBOARD LAYOUT ---
+        const mainRow = [
+            { text: 'Info', callback_data: `info:${appName}` },
+            { text: 'Restart', callback_data: `restart:${appName}` },
+            { text: 'Logs', callback_data: `logs:${appName}` }
+        ];
+
+        // Conditionally add the "Renew" button if the bot is expiring soon
+        if (botDetails && botDetails.expiration_date) {
+            const expirationDate = new Date(botDetails.expiration_date);
+            const now = new Date();
+            const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+
+            if (daysLeft <= 7) {
+                mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
+            }
+        }
+        
+        keyboard.push(mainRow);
         keyboard.push(
-            [
-                { text: 'Info', callback_data: `info:${appName}` },
-                { text: 'Restart', callback_data: `restart:${appName}` },
-                { text: 'Logs', callback_data: `logs:${appName}` }
-            ],
             [
                 { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
                 { text: 'Delete', callback_data: `userdelete:${appName}` },
                 { text: 'Set Variable', callback_data: `setvar:${appName}` }
             ],
-            [{ text: 'Backup', callback_data: `backup_app:${appName}` }]
+            [
+                { text: 'Backup', callback_data: `backup_app:${appName}` },
+                { text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }
+            ]
         );
     } else {
-        // Bot is OFF, show the "Turn On" button
+        // This is the menu for when the bot is off
         message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
         keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
     }
