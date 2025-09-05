@@ -6306,6 +6306,12 @@ if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
 
+    // --- THIS IS THE FIX ---
+    // This line was missing. It saves the user's state, so the bot
+    // remembers which app is being managed for the next button click.
+    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
+    // --- END OF FIX ---
+
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid,
         message_id: messageId,
@@ -6331,15 +6337,13 @@ if (action === 'selectapp' || action === 'selectbot') {
             [cid, appName]
         );
         const botDetails = botDetailsResult.rows[0];
-
-        // --- THIS IS THE CORRECTED KEYBOARD LAYOUT ---
+        
         const mainRow = [
             { text: 'Info', callback_data: `info:${appName}` },
             { text: 'Restart', callback_data: `restart:${appName}` },
             { text: 'Logs', callback_data: `logs:${appName}` }
         ];
 
-        // Conditionally add the "Renew" button if the bot is expiring soon
         if (botDetails && botDetails.expiration_date) {
             const expirationDate = new Date(botDetails.expiration_date);
             const now = new Date();
@@ -6363,7 +6367,6 @@ if (action === 'selectapp' || action === 'selectbot') {
             ]
         );
     } else {
-        // This is the menu for when the bot is off
         message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
         keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
     }
@@ -6379,6 +6382,7 @@ if (action === 'selectapp' || action === 'selectbot') {
       }
     });
 }
+
 
 // In bot.js, add this new handler inside the callback_query function
 
