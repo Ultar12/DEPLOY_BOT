@@ -6278,50 +6278,59 @@ if (action === 'cancel_payment_and_deploy') {
 
 
 
-     if (action === 'selectapp' || action === 'selectbot') {
+     // In bot.js, inside the callback_query handler
+
+if (action === 'selectapp' || action === 'selectbot') {
     const isUserBot = action === 'selectbot';
     const messageId = q.message.message_id;
     const appName = payload;
 
-    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName, messageId: messageId, isUserBot: isUserBot } };
-
-    await bot.sendChatAction(cid, 'typing');
+    await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    });
     
-    // Fetch bot details to check expiration date
-    const botDetails = (await pool.query(
-        `SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2`,
-        [cid, appName]
-    )).rows[0];
+    const dynoStatus = await dbServices.getDynoStatus(appName);
 
-    const keyboard = [
-      [
-        { text: 'Info', callback_data: `info:${appName}` },
-        { text: 'Restart', callback_data: `restart:${appName}` },
-        { text: 'Logs', callback_data: `logs:${appName}` }
-      ],
-      [
-        { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
-        { text: 'Delete', callback_data: `${isUserBot ? 'userdelete' : 'delete'}:${appName}` },
-        { text: 'Set Variable', callback_data: `setvar:${appName}` }
-      ],
-      // --- THIS ROW WAS ADDED BACK ---
-      [{ text: 'Backup', callback_data: `backup_app:${appName}` }],
-    ];
-
-    // Conditionally add the "Renew" button to the first row
-    if (botDetails && botDetails.expiration_date) {
-        const expirationDate = new Date(botDetails.expiration_date);
-        const now = new Date();
-        const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-
-        if (daysLeft <= 7) {
-            keyboard[0].splice(2, 0, { text: 'Renew (45 Days)', callback_data: `renew_bot:${appName}` });
-        }
+    if (dynoStatus === 'deleted' || dynoStatus === 'error') {
+        await bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+        return;
     }
     
-    keyboard.push([{ text: 'Back', callback_data: 'back_to_app_list' }]);
+    // The message and keyboard will now change based on the bot's status
+    let message = `Manage app "*${appName}*".\n\nStatus: *${dynoStatus.toUpperCase()}*`;
+    const keyboard = [];
 
-    return bot.editMessageText(`Manage app "*${appName}*":`, {
+    if (dynoStatus === 'on') {
+        // Bot is ON, show the "Turn Off" button and full management options
+        keyboard.push([{ text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }]);
+        keyboard.push(
+            [
+                { text: 'Info', callback_data: `info:${appName}` },
+                { text: 'Restart', callback_data: `restart:${appName}` },
+                { text: 'Logs', callback_data: `logs:${appName}` }
+            ],
+            [
+                { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
+                { text: 'Delete', callback_data: `userdelete:${appName}` },
+                { text: 'Set Variable', callback_data: `setvar:${appName}` }
+            ],
+            [{ text: 'Backup', callback_data: `backup_app:${appName}` }]
+        );
+    } else {
+        // Bot is OFF, show the "Turn On" button
+        message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
+        keyboard.push([{ text: '🟢 Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
+    }
+    
+    keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
+
+    return bot.editMessageText(message, {
       chat_id: cid,
       message_id: messageId,
       parse_mode: 'Markdown',
@@ -6329,7 +6338,41 @@ if (action === 'cancel_payment_and_deploy') {
         inline_keyboard: keyboard
       }
     });
-  }
+}
+
+// In bot.js, add this new handler inside the callback_query function
+
+if (action === 'toggle_dyno') {
+    const desiredState = payload; // 'on' or 'off'
+    const appName = extra;
+    const quantity = (desiredState === 'on') ? 1 : 0; // 1 to turn on, 0 to turn off
+
+    await bot.answerCallbackQuery(q.id, { text: `Turning bot ${desiredState}...` });
+    
+    try {
+        await axios.patch(`https://api.heroku.com/apps/${appName}/formation/web`, 
+            { quantity: quantity },
+            {
+                headers: { 
+                    Authorization: `Bearer ${HEROKU_API_KEY}`, 
+                    Accept: 'application/vnd.heroku+json; version=3',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        
+        // After the action, refresh the bot menu to show the new status
+        await bot.answerCallbackQuery(q.id, { text: `Bot successfully turned ${desiredState}!` });
+        // We "fake" a new query to re-run the 'selectbot' logic and refresh the menu
+        q.data = `selectbot:${appName}`;
+        bot.emit('callback_query', q);
+
+    } catch (error) {
+        console.error(`[Dyno Toggle] Error toggling dyno for ${appName}:`, error.message);
+        await bot.answerCallbackQuery(q.id, { text: 'An error occurred. Please try again.', show_alert: true });
+    }
+    return;
+}
 
 // ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
