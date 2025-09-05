@@ -7868,8 +7868,22 @@ async function checkAndManageExpirations() {
     for (const botInfo of expiringBots) {
         try {
             const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
-            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* and its backup will expire in *${daysLeft} day(s)*. After it expires, the app will be permanently deleted from our servers. To continue service, please deploy a new bot using a new key.`;
-            await bot.sendMessage(botInfo.user_id, warningMessage, { parse_mode: 'Markdown' });
+            
+            // --- UPDATED MESSAGE AND ADDED BUTTON ---
+            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* will expire in *${daysLeft} day(s)*. Please renew it to prevent permanent deletion.`;
+            
+            await bot.sendMessage(botInfo.user_id, warningMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: `Renew "${botInfo.app_name}" Now`, callback_data: `renew_bot:${botInfo.app_name}` }
+                        ]
+                    ]
+                }
+            });
+            // --- END OF CHANGE ---
+
             await dbServices.setBackupWarningSent(botInfo.user_id, botInfo.app_name);
             console.log(`[Expiration] Sent expiration warning for ${botInfo.app_name} to user ${botInfo.user_id}.`);
         } catch (error) {
@@ -7882,9 +7896,9 @@ async function checkAndManageExpirations() {
     for (const botInfo of expiredBots) {
         try {
             console.log(`[Expiration] Bot ${botInfo.app_name} for user ${botInfo.user_id} has expired. Deleting now.`);
-            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To deploy a new bot, please get a new key from the admin.`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' });
             
-            // Delete from Heroku/Render
+            // Delete from Heroku
             await axios.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
@@ -7900,6 +7914,7 @@ async function checkAndManageExpirations() {
         }
     }
 }
+
 
 // Run the check once every day
 setInterval(checkAndManageExpirations, ONE_DAY_IN_MS);
@@ -8085,36 +8100,6 @@ async function pruneInactiveUsers() {
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
 
-// --- NEW FUNCTION TO CHECK AND SEND REMINDERS ---
-
-async function checkAndSendExpirationReminders() {
-    console.log('[Expiration] Running daily check for expiring bots...');
-
-    const expiringBots = await dbServices.getExpiringBots();
-    
-    for (const botInfo of expiringBots) {
-        try {
-            const warningMessage = `Your paid bot *${escapeMarkdown(botInfo.app_name)}* is about to expire. To continue service, please redeploy with a new key.`;
-            await bot.sendMessage(botInfo.user_id, warningMessage, { parse_mode: 'Markdown' });
-            
-            // Notify the admin as well
-            await bot.sendMessage(ADMIN_ID, `Expiration Warning sent for bot *${escapeMarkdown(botInfo.app_name)}* to user \`${botInfo.user_id}\`.`, { parse_mode: 'Markdown' });
-
-            await dbServices.setExpirationWarningSent(botInfo.user_id, botInfo.app_name);
-            
-            console.log(`[Expiration] Sent expiration warning for ${botInfo.app_name} to user ${botInfo.user_id}.`);
-        } catch (error) {
-            console.error(`[Expiration] Failed to send warning to user ${botInfo.user_id} for app ${botInfo.app_name}:`, error.message);
-        }
-    }
-}
-
-
-
-// --- SCHEDULE THE REMINDERS ---
-
-setInterval(checkAndSendExpirationReminders, ONE_DAY_IN_MS);
-console.log('[Expiration] Scheduled daily check for expiring bots.');
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
 async function checkAndSendLoggedOutReminders() {
