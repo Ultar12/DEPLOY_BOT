@@ -11,7 +11,7 @@ function init(params) {
     console.log('--- bot_monitor.js initialized and active! ---');
 
     // Start all scheduled tasks
-    setInterval(monitorAllAppsForR14, 3 * 60 * 1000);      // Every 3 minutes
+    setInterval(monitorAllAppsForR14, 30 * 60 * 1000);      // Every 3 minutes
     setInterval(checkLoggedOutBots, 5 * 60 * 1000);        // Every 5 minutes
     setInterval(checkExpiredBots, 10 * 60 * 1000);         // Every 10 minutes
 }
@@ -76,7 +76,7 @@ async function monitorAllAppsForR14() {
                     Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`,
                     Accept: 'application/vnd.heroku+json; version=3'
                 };
-                const res = await axios.post(logSessionUrl, { lines: 10, source: 'heroku' }, { headers });
+                const res = await axios.post(logSessionUrl, { lines: 15, source: 'heroku' }, { headers });
                 const logsRes = await axios.get(res.data.logplex_url);
 
                 if (logsRes.data && logsRes.data.includes('Error R14 (Memory quota exceeded)')) {
