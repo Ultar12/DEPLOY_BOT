@@ -23,7 +23,6 @@ async function runListener() {
       console.log('[Mail Listener] ✅ Connection successful. Starting mail checks.');
 
       while (imap.state === 'authenticated') {
-        // --- FIX: Now calls a single, unified function ---
         await processUnreadMail(imap);
         console.log('[Mail Listener] 🕒 Check complete. Waiting 15 seconds...');
         await delay(15000);
@@ -64,12 +63,10 @@ function connectToImap() {
   });
 }
 
-// --- NEW UNIFIED FUNCTION ---
 function processUnreadMail(imap) {
   return new Promise((resolve) => {
     if (imap.state !== 'authenticated') return resolve();
 
-    // Step 1: Fetch ALL unread emails at once
     imap.search(['UNSEEN'], (err, results) => {
       if (err || !results || results.length === 0) {
         return resolve();
@@ -88,22 +85,26 @@ function processUnreadMail(imap) {
               const from = parsed.from.text;
               const body = parsed.text || '';
 
-              // Step 2: Decide what to do based on the subject
-              if (subject.includes('WhatsApp')) {
-                // --- This is the OTP logic ---
+              if (subject.toLowerCase().includes('whatsapp')) {
                 let otp = null;
                 let match = null;
+                
+                // --- THIS IS THE UPDATED PATTERN LIST ---
                 const otpPatterns = [
+                  // New, specific patterns from your screenshots
+                  /Enter this code:\s+(\d{3}-\d{3})/,
+                  /Or copy and paste this code into WhatsApp: (\d{3}-\d{3})/,
+                  /Or copy and paste this code into WhatsApp Business: (\d{3}-\d{3})/,
+                  // Existing patterns
                   /is your WhatsApp code (\d{3}-\d{3})/,
-                  /Or copy and paste this code into WhatsApp:\s*(\d{3}-\d{3})/,
                   /(\d{3}-\d{3}) is your WhatsApp code/,
-                  /Enter this code:\s*(\d{3}-\d{3})/
+                  /your WhatsApp code is (\d{6})/,
                 ];
                 
                 for (const pattern of otpPatterns) {
                     match = body.match(pattern);
                     if (match && match[1]) {
-                        otp = match[1].replace('-', ''); // Also remove hyphen for user convenience
+                        otp = match[1].replace('-', '');
                         break;
                     }
                 }
@@ -120,17 +121,16 @@ function processUnreadMail(imap) {
                   } else {
                     await botInstance.sendMessage(ADMIN_ID, `📧 Unassigned WhatsApp OTP Detected:\n\n<code>${otp}</code>`, { parse_mode: 'HTML' });
                   }
+                } else {
+                    console.warn(`[Mail Listener] Found WhatsApp email from "${from}" but no OTP pattern matched.`);
                 }
               } else {
-                // --- This is the "forward all other mail" logic ---
                 console.log(`[Mail Listener] 📩 Forwarding non-WhatsApp message from "${from}"`);
                 const snippet = body.substring(0, 200);
                 const messageToAdmin = `
 📧 **New Email Received**
-
 **From:** \`${from}\`
 **Subject:** \`${subject}\`
-
 **Content Snippet:**
 \`\`\`
 ${snippet}...
