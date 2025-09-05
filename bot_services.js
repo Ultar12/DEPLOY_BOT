@@ -1432,8 +1432,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
         ...finalConfigVars,
-        APP_NAME: name,
-        HEROKU_API_KEY: HEROKU_API_KEY
+        APP_NAME: name
       },
       {
         headers: {
