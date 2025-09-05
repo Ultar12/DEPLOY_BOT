@@ -6306,33 +6306,39 @@ if (action === 'selectapp' || action === 'selectbot') {
     let message = `Manage app "*${appName}*".\n\nStatus: *${dynoStatus.toUpperCase()}*`;
     const keyboard = [];
 
-    // In bot.js, inside the 'selectapp' / 'selectbot' handler
-
-if (dynoStatus === 'on') {
-    // Bot is ON, show the "Turn Off" button and full management options
-    message = `Manage app "*${appName}*".\n\nStatus: *ON*`;
+    if (dynoStatus === 'on') {
+        // Bot is ON, show the "Turn Off" button and full management options
+        keyboard.push([{ text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }]);
+        keyboard.push(
+            [
+                { text: 'Info', callback_data: `info:${appName}` },
+                { text: 'Restart', callback_data: `restart:${appName}` },
+                { text: 'Logs', callback_data: `logs:${appName}` }
+            ],
+            [
+                { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
+                { text: 'Delete', callback_data: `userdelete:${appName}` },
+                { text: 'Set Variable', callback_data: `setvar:${appName}` }
+            ],
+            [{ text: 'Backup', callback_data: `backup_app:${appName}` }]
+        );
+    } else {
+        // Bot is OFF, show the "Turn On" button
+        message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
+        keyboard.push([{ text: '🟢 Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
+    }
     
-    // --- THIS IS THE UPDATED BUTTON LAYOUT ---
-    keyboard.push(
-        [{ text: 'Set Variable', callback_data: `setvar:${appName}` }], // "Set Variable" moved to the top row
-        [
-            { text: 'Info', callback_data: `info:${appName}` },
-            { text: 'Restart', callback_data: `restart:${appName}` },
-            { text: 'Logs', callback_data: `logs:${appName}` }
-        ],
-        [
-            { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
-            { text: 'Delete', callback_data: `userdelete:${appName}` },
-            { text: '🔴 Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` } // "Turn Bot Off" moved to this row
-        ],
-        [{ text: 'Backup', callback_data: `backup_app:${appName}` }]
-    );
-} else {
-    // (The logic for the 'off' state remains the same)
-    message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
-    keyboard.push([{ text: '🟢 Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
-}
+    keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
 
+    return bot.editMessageText(message, {
+      chat_id: cid,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+}
 
 // In bot.js, add this new handler inside the callback_query function
 
