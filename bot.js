@@ -6308,7 +6308,7 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     if (dynoStatus === 'on') {
         // Bot is ON, show the "Turn Off" button and full management options
-        keyboard.push([{ text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }]);
+        keyboard.push([{ text: 'Turn Off Bot', callback_data: `toggle_dyno:off:${appName}` }]);
         keyboard.push(
             [
                 { text: 'Info', callback_data: `info:${appName}` },
@@ -6325,7 +6325,7 @@ if (action === 'selectapp' || action === 'selectbot') {
     } else {
         // Bot is OFF, show the "Turn On" button
         message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
-        keyboard.push([{ text: '🟢 Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
+        keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
     }
     
     keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
