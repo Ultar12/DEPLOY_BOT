@@ -96,7 +96,6 @@ async function monitorAllAppsForR14() {
             let message = `🚨 **R14 Memory Errors & Restarts** 🚨\n\nThe following bots were automatically restarted:\n\n`;
             botsWithErrors.forEach(appName => { message += `- \`${appName}\`\n`; });
             message += `\nTime: ${timeStr}`;
-            await sendTelegramAlert(message, moduleParams.ADMIN_ID);
             await sendTelegramAlert(message, moduleParams.TELEGRAM_CHANNEL_ID);
         }
     } catch (err) {
