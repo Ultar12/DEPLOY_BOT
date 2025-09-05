@@ -6280,7 +6280,33 @@ if (action === 'cancel_payment_and_deploy') {
 
      // In bot.js, inside the callback_query handler
 
-// In bot.js, inside the 'selectapp' / 'selectbot' handler
+if (action === 'selectapp' || action === 'selectbot') {
+    const isUserBot = action === 'selectbot';
+    const messageId = q.message.message_id;
+    const appName = payload;
+
+    await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
+        chat_id: cid,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+    });
+    
+    const dynoStatus = await dbServices.getDynoStatus(appName);
+
+    if (dynoStatus === 'deleted' || dynoStatus === 'error') {
+        await bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+        return;
+    }
+    
+    // The message and keyboard will now change based on the bot's status
+    let message = `Manage app "*${appName}*".\n\nStatus: *${dynoStatus.toUpperCase()}*`;
+    const keyboard = [];
+
+    // In bot.js, inside the 'selectapp' / 'selectbot' handler
 
 if (dynoStatus === 'on') {
     // Bot is ON, show the "Turn Off" button and full management options
@@ -6297,14 +6323,14 @@ if (dynoStatus === 'on') {
         [
             { text: 'Redeploy', callback_data: `redeploy_app:${appName}` },
             { text: 'Delete', callback_data: `userdelete:${appName}` },
-            { text: 'Turn Off Bot', callback_data: `toggle_dyno:off:${appName}` } // "Turn Bot Off" moved to this row
+            { text: '🔴 Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` } // "Turn Bot Off" moved to this row
         ],
         [{ text: 'Backup', callback_data: `backup_app:${appName}` }]
     );
 } else {
     // (The logic for the 'off' state remains the same)
     message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
-    keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
+    keyboard.push([{ text: '🟢 Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
 }
 
 
