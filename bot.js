@@ -7984,10 +7984,11 @@ setInterval(runDailyBackup, 60 * 60 * 1000);
 console.log('[Backup] Scheduled hourly automatic database backup.');
 
 
+// In bot.js, replace this entire function
+
 async function checkAndPruneLoggedOutBots() {
     console.log('[Prune] Running hourly check for long-term logged-out bots...');
     try {
-        // Find bots that have been logged out for 5 or more days
         const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
@@ -8005,43 +8006,28 @@ async function checkAndPruneLoggedOutBots() {
             console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 5 days.`);
             
             try {
-                // 1. THIS IS THE LINE THAT DELETES THE APP FROM HEROKU
+                // --- THIS IS THE FIX: The Heroku deletion command was missing ---
                 await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
-                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                    headers: { 
+                        Authorization: `Bearer ${HEROKU_API_KEY}`, 
+                        Accept: 'application/vnd.heroku+json; version=3' 
+                    }
                 });
 
-                // 2. This is the corrected database cleanup
-                const client = await pool.connect();
-                try {
-                    await client.query('BEGIN');
-                    // Deletes from the active bots list
-                    await client.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [user_id, bot_name]);
-                    // Deletes the deployment record from the main database
-                    await client.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [user_id, bot_name]);
-                    await client.query('COMMIT');
-                } catch (e) {
-                    await client.query('ROLLBACK');
-                    throw e; // Pass the error to the outer catch block
-                } finally {
-                    client.release();
-                }
+                // This is your existing, correct database cleanup logic
+                await dbServices.deleteUserBot(user_id, bot_name);
+                await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
 
-                // 3. Notify the user and the admin of the successful deletion
                 await bot.sendMessage(user_id, `Your bot "*${escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 5 days.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 5 days.`, { parse_mode: 'Markdown' });
 
             } catch (error) {
-                // This will catch errors from either the Heroku deletion or the database transaction
-                console.error(`[Prune] Failed to delete bot ${bot_name}:`, error.response?.data?.message || error.message);
-                
-                // If the app was not found on Heroku (404), it's already gone, so we just clean the DB
-                if (error.response?.status === 404) {
-                    console.log(`[Prune] App ${bot_name} not found on Heroku. Cleaning up database records anyway.`);
+                if (error.response && error.response.status === 404) {
+                    console.log(`[Prune] App ${bot_name} was already deleted from Heroku. Cleaning up DB records.`);
                     await dbServices.deleteUserBot(user_id, bot_name);
-                    // You need a function that deletes from the main deployment table, not backup.
-                    // This is handled by the transaction logic above, but as a fallback:
-                    await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [user_id, bot_name]);
+                    await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
                 } else {
+                    console.error(`[Prune] Failed to delete bot ${bot_name}:`, error.response?.data?.message || error.message);
                     await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs.`, { parse_mode: 'Markdown' });
                 }
             }
@@ -8051,10 +8037,8 @@ async function checkAndPruneLoggedOutBots() {
     }
 }
 
-/**
- * Finds and deletes users who have been inactive for over 30 days
- * and do not have any bots associated with their account.
- */
+
+
 async function pruneInactiveUsers() {
     console.log('[Prune] Running daily check for inactive users with no bots...');
     
