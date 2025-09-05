@@ -5839,25 +5839,31 @@ if (action === 'buy_temp_num') {
 
   // In bot.js, REPLACE the existing 'renew_bot' handler
 
+// In bot.js, inside the callback_query handler
+
 if (action === 'renew_bot') {
     const appName = payload;
     const renewalMessage = `Your bot "*${appName}*" is about to expire. Please select a renewal plan to extend its runtime:`;
     
-    // Show the available renewal plans (Standard and Premium)
+    // The keyboard now includes the ₦500 Basic plan
     await bot.editMessageText(renewalMessage, {
         chat_id: cid,
         message_id: q.message.message_id,
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
+                // --- THIS LINE IS NEW ---
+                [{ text: 'Basic: ₦500 for 10 Days', callback_data: `select_renewal:500:10:${appName}` }],
+                // -------------------------
                 [{ text: 'Standard: ₦1500 for 30 Days', callback_data: `select_renewal:1500:30:${appName}` }],
                 [{ text: 'Premium: ₦2000 for 50 Days', callback_data: `select_renewal:2000:50:${appName}` }],
-                [{ text: 'Back', callback_data: `selectbot:${appName}` }]
+                [{ text: '« Back', callback_data: `selectbot:${appName}` }]
             ]
         }
     });
     return;
 }
+
 
 
 // In bot.js, ADD this new handler inside your callback_query function
