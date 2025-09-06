@@ -695,17 +695,15 @@ async function isUserVerified(userId) {
 }
 
 
-// In bot.js, with your other helper functions
+// REPLACE this function in bot.js
 
-/**
- * Shows the user a choice between Paystack and Flutterwave.
- */
 async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = null) {
     const isRenewal = !!appName; // If appName is provided, it's a renewal
     
     // Construct callback data carefully to pass all necessary info
     const paystackCallback = isRenewal ? `paystack_renew:${priceNgn}:${days}:${appName}` : `paystack_deploy:${priceNgn}:${days}`;
     const flutterwaveCallback = isRenewal ? `flutterwave_renew:${priceNgn}:${days}:${appName}` : `flutterwave_deploy:${priceNgn}:${days}`;
+    const cancelCallback = isRenewal ? `cancel_renewal:${appName}` : 'cancel_payment_and_deploy'; // <-- This is the fix
 
     await bot.editMessageText(
         `Please choose your preferred payment method to get your key for **₦${priceNgn} (${days} days)**.`, {
@@ -716,12 +714,13 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
                 inline_keyboard: [
                     [{ text: 'Pay with Paystack', callback_data: paystackCallback }],
                     [{ text: 'Pay with Flutterwave', callback_data: flutterwaveCallback }],
-                    [{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]
+                    [{ text: '« Cancel', callback_data: cancelCallback }] // <-- This is the fix
                 ]
             }
         }
     );
 }
+
 
 
 /**
@@ -754,6 +753,60 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
     }
 }
 
+/**
+ * Creates a Paystack payment link and sends it to the user.
+ */
+async function initiatePaystackPayment(chatId, messageId, paymentDetails) {
+    const { isRenewal, appName, days, priceNgn, botType, APP_NAME, SESSION_ID } = paymentDetails;
+    const userEmail = await getUserEmail(chatId);
+
+    if (!userEmail) {
+        await bot.editMessageText('Error: Could not find your verified email to proceed.', { chat_id: chatId, message_id: messageId });
+        return;
+    }
+
+    const sentMsg = await bot.editMessageText('Generating Paystack payment link...', { chat_id: chatId, message_id: messageId });
+    
+    const reference = `psk_${crypto.randomBytes(12).toString('hex')}`;
+    const priceInKobo = priceNgn * 100;
+    
+    const metadata = isRenewal 
+        ? { user_id: chatId, product: 'Bot Renewal', days: days, appName: appName }
+        : { user_id: chatId, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
+
+    // Store pending payment in the database
+    if (!isRenewal) {
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, chatId, userEmail, botType, APP_NAME, SESSION_ID]
+        );
+    }
+
+    try {
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            { email: userEmail, amount: priceInKobo, reference, metadata },
+            { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+        );
+        
+        const paymentUrl = paystackResponse.data.data.authorization_url;
+        await bot.editMessageText(
+            `Click the button below to complete your payment with Paystack.`, {
+                chat_id: chatId,
+                message_id: sentMsg.message_id,
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
+                }
+            }
+        );
+    } catch (error) {
+        console.error("[Paystack] Error creating payment link:", error.response?.data || error.message);
+        await bot.editMessageText('Sorry, an error occurred while creating the Paystack payment link.', {
+            chat_id: chatId,
+            message_id: sentMsg.message_id
+        });
+    }
+}
 
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
     const checkingMsg = await bot.editMessageText(
@@ -6338,67 +6391,81 @@ if (action === 'select_plan') {
   // In bot.js, ADD these new handlers to your callback_query function
 
 // This handles the final choice to pay with Paystack
+// REPLACE the 'paystack_deploy'/'paystack_renew' handler with this one
+
 if (action === 'paystack_deploy' || action === 'paystack_renew') {
-    const st = userStates[cid];
-    if (!st || st.step !== 'AWAITING_KEY') return;
-    
     const isRenewal = action === 'paystack_renew';
     const priceNgn = parseInt(payload, 10);
     const days = parseInt(extra, 10);
-    const appName = isRenewal ? flag : st.data.APP_NAME;
     
-    // This calls your existing Paystack logic
-    // (Ensure you have a function that does this or paste the logic here)
-    await initiatePaystackPayment(cid, q.message.message_id, {
-        isRenewal,
-        appName,
-        days,
-        priceNgn,
-        botType: st.data.botType,
-        APP_NAME: st.data.APP_NAME,
-        SESSION_ID: st.data.SESSION_ID
-    });
+    if (isRenewal) {
+        // For renewals, we get the appName from the callback and don't need to check state.
+        const appName = flag;
+        await initiatePaystackPayment(cid, q.message.message_id, {
+            isRenewal: true, priceNgn, days, appName
+        });
+    } else {
+        // For new deployments, we must check the user's state.
+        const st = userStates[cid];
+        if (!st || st.step !== 'AWAITING_KEY') {
+            return bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
+        }
+        await initiatePaystackPayment(cid, q.message.message_id, {
+            isRenewal: false, priceNgn, days,
+            appName: st.data.APP_NAME,
+            botType: st.data.botType,
+            APP_NAME: st.data.APP_NAME,
+            SESSION_ID: st.data.SESSION_ID
+        });
+    }
     return;
 }
 
-// This handles the final choice to pay with Flutterwave
-if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
-    const st = userStates[cid];
-    if (!st || st.step !== 'AWAITING_KEY') return;
 
+// REPLACE the 'flutterwave_deploy'/'flutterwave_renew' handler with this one
+
+if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
     const days = parseInt(extra, 10);
-    const appName = isRenewal ? flag : st.data.APP_NAME;
+    const appName = isRenewal ? flag : null;
     const userEmail = await getUserEmail(cid);
 
     if (!userEmail) {
         return bot.answerCallbackQuery(q.id, { text: 'Error: Could not find your verified email.', show_alert: true });
     }
 
+    // For new deployments, perform the state check
+    if (!isRenewal) {
+        const st = userStates[cid];
+        if (!st || st.step !== 'AWAITING_KEY') {
+            return bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
+        }
+    }
+
     const sentMsg = await bot.editMessageText('Generating Flutterwave payment link...', {
-        chat_id: cid,
-        message_id: q.message.message_id
+        chat_id: cid, message_id: q.message.message_id
     });
     
     const reference = `flw_${crypto.randomBytes(12).toString('hex')}`;
-    const metadata = isRenewal ? 
-        { user_id: cid, product: 'Bot Renewal', days: days, appName: appName } : 
-        { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
+    const metadata = isRenewal 
+        ? { user_id: cid, product: 'Bot Renewal', days: days, appName: appName } 
+        : { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
 
-    await pool.query(
-        'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-        [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
-    );
-
+    if (!isRenewal) {
+        const st = userStates[cid];
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
+            [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
+        );
+    }
+    
     const paymentUrl = await initiateFlutterwavePayment(cid, userEmail, priceNgn, reference, metadata);
     
     if (paymentUrl) {
         await bot.editMessageText(
             `Click the button below to complete your payment with Flutterwave.`, {
-                chat_id: cid,
-                message_id: sentMsg.message_id,
-                parse_mode: 'Markdown',
+                chat_id: cid, message_id: sentMsg.message_id,
                 reply_markup: {
                     inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
                 }
@@ -6406,12 +6473,24 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
         );
     } else {
         await bot.editMessageText('Sorry, an error occurred while creating the Flutterwave payment link.', {
-            chat_id: cid,
-            message_id: sentMsg.message_id
+            chat_id: cid, message_id: sentMsg.message_id
         });
     }
     return;
 }
+
+
+// ADD this new handler for the renewal cancel button
+
+if (action === 'cancel_renewal') {
+    const appName = payload;
+    // Simulate a click on the 'selectbot' button to return to the bot's main menu.
+    await bot.answerCallbackQuery(q.id);
+    q.data = `selectbot:${appName}`;
+    bot.emit('callback_query', q);
+    return;
+}
+
 
 
 
