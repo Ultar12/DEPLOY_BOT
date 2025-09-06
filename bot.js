@@ -437,6 +437,60 @@ function escapeMarkdown(text) {
         .replace(/!/g, '\\!');
 }
 
+// A reusable function to format a concise countdown string for button lists.
+function formatTimeLeft(expirationDateStr) {
+    if (!expirationDateStr) {
+        return ''; // Return empty string if no expiration date
+    }
+
+    const expirationDate = new Date(expirationDateStr);
+    const now = new Date();
+    const timeLeftMs = expirationDate.getTime() - now.getTime();
+
+    if (timeLeftMs <= 0) {
+        return ' (Expired)';
+    }
+
+    const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    let timeLeftStr = '';
+    if (days > 0) {
+        timeLeftStr += `${days}d `;
+    }
+    if (hours > 0) {
+        timeLeftStr += `${hours}h `;
+    }
+    // Only show minutes if it's less than a day away from expiring for brevity
+    if (days === 0 && minutes > 0) {
+        timeLeftStr += `${minutes}m`;
+    }
+
+    return ` (${timeLeftStr.trim()} left)`;
+}
+
+// A reusable function to format a more precise countdown for the single bot menu.
+function formatPreciseCountdown(expirationDateStr) {
+    if (!expirationDateStr) {
+        return "Not Set";
+    }
+
+    const expirationDate = new Date(expirationDateStr);
+    const now = new Date();
+    const timeLeftMs = expirationDate.getTime() - now.getTime();
+
+    if (timeLeftMs <= 0) {
+        return "Expired";
+    }
+
+    const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((timeLeftMs % (1000 * 60)) / 1000);
+
+    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+}
 
 /**
  * Fetches a user's verified email from the database.
@@ -3873,12 +3927,14 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
+        // REPLACE the existing "if (text === 'My Bots')" block with this one
+
         if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
     const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on the server, please wait...');
 
     try {
-        // 1. Get the list of all bots the user has from the database, not just the active ones
+        // 1. Get all necessary bot info from the database.
         const dbBotsResult = await pool.query(
             `SELECT 
                 ub.bot_name, 
@@ -3906,7 +3962,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        // 2. Verify each bot's status against the Heroku API
+        // 2. Verify each bot's Heroku dyno status.
         const verificationPromises = userBotsFromDb.map(bot =>
             axios.get(`https://api.heroku.com/apps/${bot.bot_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
@@ -3923,18 +3979,16 @@ if (text === 'Deploy' || text === 'Free Trial') {
         results.forEach(result => {
             if (result.is_active) {
                 activeBots.push(result);
-            } else if (result.error && result.error.response && result.error.response.status === 404) {
-                // Heroku app not found, mark it for cleanup
+            } else if (result.error?.response?.status === 404) {
                 if (!result.deleted_from_heroku_at) {
                     botsToCleanup.push(result.bot_name);
                 }
             } else {
-                // For any other API error, we assume the bot is currently offline but exists
                 inactiveBots.push(result);
             }
         });
 
-        // 3. Mark "ghost" bots as inactive in the database
+        // 3. Clean up records for bots deleted from Heroku.
         if (botsToCleanup.length > 0) {
             console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bots for user ${cid}. Marking as inactive.`);
             await Promise.all(botsToCleanup.map(appName => dbServices.markDeploymentDeletedFromHeroku(cid, appName)));
@@ -3955,22 +4009,27 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        // 4. Display the list of bots with their status
+        // 4. Display the list of bots with their status and expiration.
         const appButtons = botsToDisplay.map(bot => {
-            let buttonText = bot.bot_name;
-            let statusIndicator = bot.is_active ? '🟢' : '🔴';
-            
-            if (bot.expiration_date) {
-                const expiration = new Date(bot.expiration_date);
-                const now = new Date();
-                const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-                buttonText += daysLeft > 0 ? ` (${daysLeft} days)` : ` (Expired)`;
+            let statusText;
+            if (bot.is_active) {
+                // Dyno is ON. Check our database for session status.
+                statusText = (bot.status === 'logged_out') ? 'Logged Out' : 'Connected';
+            } else {
+                // Dyno is OFF.
+                statusText = 'Off';
             }
+
+            // Get the expiration countdown string.
+            const expirationCountdown = formatTimeLeft(bot.expiration_date);
+
+            // Combine all parts for the button text.
+            const buttonText = `${bot.bot_name} - ${statusText}${expirationCountdown}`;
             
-            return { text: `${statusIndicator} ${buttonText}`, callback_data: `selectbot:${bot.bot_name}` };
+            return { text: buttonText, callback_data: `selectbot:${bot.bot_name}` };
         });
 
-        const rows = chunkArray(appButtons, 3);
+        const rows = chunkArray(appButtons, 2); // Arrange buttons in rows of 2 for better readability
         rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
 
         await bot.editMessageText('Your deployed bots:', {
@@ -3989,6 +4048,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
     }
     return;
 }
+
 
 // Add this handler in section 10 (Message handler for buttons & state machine)
 if (text === 'Referrals') {
@@ -6381,17 +6441,14 @@ if (action === 'cancel_payment_and_deploy') {
 
 
 
-    // In bot.js, replace this entire block inside your callback_query handler
+// REPLACE the existing "if (action === 'selectapp' || action === 'selectbot')" block with this one
 
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
 
-    // --- THIS IS THE FIX ---
-    // This line was missing. It saves the user's state, so the bot
-    // remembers which app is being managed for the next button click.
+    // Set user state to manage the selected app
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
-    // --- END OF FIX ---
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid,
@@ -6409,15 +6466,31 @@ if (action === 'selectapp' || action === 'selectbot') {
         });
     }
     
-    let message = `Manage app "*${appName}*".\n\nStatus: *${dynoStatus.toUpperCase()}*`;
+    // Determine the detailed final status
+    const botDbStatusResult = await pool.query('SELECT status FROM user_bots WHERE bot_name = $1', [appName]);
+    const botDbStatus = botDbStatusResult.rows[0]?.status;
+
+    let finalStatusText;
+    if (dynoStatus === 'on') {
+        finalStatusText = (botDbStatus === 'logged_out') ? 'Logged Out' : 'Connected';
+    } else {
+        finalStatusText = 'Off';
+    }
+
+    // Get the precise expiration countdown
+    const deploymentDetails = (await pool.query(
+        'SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', 
+        [cid, appName]
+    )).rows[0];
+    const expirationCountdown = formatPreciseCountdown(deploymentDetails?.expiration_date);
+    
+    let message;
     const keyboard = [];
 
     if (dynoStatus === 'on') {
-        const botDetailsResult = await pool.query(
-            `SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2`,
-            [cid, appName]
-        );
-        const botDetails = botDetailsResult.rows[0];
+        message = `Manage app "*${appName}*".\n\n` +
+                  `Status: *${finalStatusText}*\n` +
+                  `Expires in: *${expirationCountdown}*`;
         
         const mainRow = [
             { text: 'Info', callback_data: `info:${appName}` },
@@ -6425,11 +6498,9 @@ if (action === 'selectapp' || action === 'selectbot') {
             { text: 'Logs', callback_data: `logs:${appName}` }
         ];
 
-        if (botDetails && botDetails.expiration_date) {
-            const expirationDate = new Date(botDetails.expiration_date);
-            const now = new Date();
-            const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
-
+        // Add 'Renew' button if expiration is within 7 days
+        if (deploymentDetails && deploymentDetails.expiration_date) {
+            const daysLeft = Math.ceil((new Date(deploymentDetails.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
             if (daysLeft <= 7) {
                 mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
             }
@@ -6447,8 +6518,12 @@ if (action === 'selectapp' || action === 'selectbot') {
                 { text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }
             ]
         );
-    } else {
-        message = `Manage app "*${appName}*".\n\nStatus: *OFF*\n\nThis bot is currently turned off and will not respond to commands.`;
+
+    } else { // dynoStatus is 'off'
+        message = `Manage app "*${appName}*".\n\n` +
+                  `Status: *Off ⚪️*\n` +
+                  `Expires in: *${expirationCountdown}*\n\n` +
+                  `This bot is currently turned off and will not respond to commands.`;
         keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
     }
     
@@ -6463,6 +6538,7 @@ if (action === 'selectapp' || action === 'selectbot') {
       }
     });
 }
+
 
 
 // In bot.js, add this new handler inside the callback_query function
