@@ -97,7 +97,6 @@ async function sendVerificationEmail(toEmail, verificationCode) {
         </div>
         
         <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you did not request this code, you can safely ignore this email.</p>
-        <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
       </div>
     `,
   };
