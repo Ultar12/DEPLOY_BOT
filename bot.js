@@ -6722,7 +6722,7 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     } else { // dynoStatus is 'off'
         message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *Off ⚪️*\n` +
+                  `Status: *Off*\n` +
                   `Expires in: *${expirationCountdown}*\n\n` +
                   `This bot is currently turned off and will not respond to commands.`;
         keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
