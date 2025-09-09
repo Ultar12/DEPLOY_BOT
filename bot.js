@@ -2916,6 +2916,44 @@ bot.onText(/^\/bapp$/, (msg) => {
     bot.sendMessage(chatId, 'Which bot type do you want to manage from the backup list?', opts);
 });
 
+// In bot.js, with your other admin commands
+
+bot.onText(/^\/(api|apilist)$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+
+    // 1. Admin-only check
+    if (cid !== ADMIN_ID) return;
+
+    try {
+        // 2. Fetch all keys from the database
+        const result = await pool.query('SELECT api_key, added_at FROM heroku_api_keys ORDER BY id ASC');
+
+        // 3. Handle the case where no keys are found
+        if (result.rows.length === 0) {
+            return bot.sendMessage(cid, "There are no Heroku API keys in the database pool. Add one with `/addapi <key>`.", { parse_mode: 'Markdown' });
+        }
+
+        // 4. Mask each key for security and format the list
+        let message = "*Available Heroku API Keys:*\n\n";
+        result.rows.forEach((row, index) => {
+            const key = row.api_key;
+            // Mask the key: show first 8 and last 4 characters
+            const maskedKey = key.slice(0, 8) + '••••••••••••••••' + key.slice(-4);
+            const addedDate = new Date(row.added_at).toLocaleDateString("en-NG");
+
+            message += `${index + 1}. \`${maskedKey}\`\n   (Added: ${addedDate})\n`;
+        });
+        
+        message += "\n_The key at the top of the list will be used next._";
+
+        // 5. Send the final formatted message
+        await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
+
+    } catch (e) {
+        console.error(`[Admin] Error fetching API key list:`, e);
+        await bot.sendMessage(cid, `❌ Failed to fetch API key list. Check the logs.`);
+    }
+});
 
 
 bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
