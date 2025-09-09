@@ -8323,7 +8323,57 @@ async function pruneInactiveUsers() {
 
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
+setInterval(checkHerokuApiKey, 5 * 60 * 1000); // 5 minutes in milliseconds
+    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
+
+// In bot.js
+
+async function checkHerokuApiKey() {
+    // First, check if the key is even set in your environment
+    if (!HEROKU_API_KEY) {
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set in the environment.');
+        // No need to alert continuously if it's not set at all.
+        return;
+    }
+
+    try {
+        // Make a simple, lightweight API call to check credentials
+        await axios.get('https://api.heroku.com/account', {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        });
+        // If the request succeeds, the key is valid. We can log it quietly.
+        console.log('[API Check] Heroku API key is valid.');
+
+    } catch (error) {
+        // If the request fails, an error is caught.
+        console.error('[API Check] Heroku API key check failed!');
+
+        if (error.response && error.response.status === 401) {
+            // A 401 status specifically means the key is invalid or expired.
+            console.error('[API Check] Status 401: The key is unauthorized.');
+            await bot.sendMessage(ADMIN_ID,
+                '🚨 **CRITICAL ALERT** 🚨\n\n' +
+                'Your Heroku API key is **invalid or has expired**.\n\n' +
+                'The bot cannot deploy, restart, or manage apps until you update the `HEROKU_API_KEY` in your environment variables.',
+                { parse_mode: 'Markdown' }
+            );
+        } else {
+            // For other errors (e.g., network issues, Heroku server problems)
+            const errorMessage = error.message || 'An unknown error occurred.';
+            console.error(`[API Check] Error: ${errorMessage}`);
+            await bot.sendMessage(ADMIN_ID,
+                '⚠️ **API Check Warning** ⚠️\n\n' +
+                `Could not verify the Heroku API key due to an error: \`${errorMessage}\`\n\n` +
+                'This might be a temporary network issue with Heroku.',
+                { parse_mode: 'Markdown' }
+            );
+        }
+    }
+}
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
 async function checkAndSendLoggedOutReminders() {
