@@ -144,7 +144,17 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, bot_name)
           );
         `);
-        
+
+      await client.query(`
+          CREATE TABLE heroku_api_keys (
+    id SERIAL PRIMARY KEY,
+    api_key TEXT NOT NULL UNIQUE,
+    is_in_use BOOLEAN DEFAULT FALSE,
+    last_used_at TIMESTAMP,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
         await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
@@ -276,6 +286,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
+        await client.query(`ALTER TABLE heroku_api_keys DROP COLUMN is_in_use;`);
+        await client.query(`ALTER TABLE heroku_api_keys DROP COLUMN last_used_at;`);
 
         // --- Step 3: INSERT DEFAULT DATA ---
         await client.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;`);
@@ -1323,6 +1335,7 @@ async function notifyAdminUserOnline(msg) {
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
 
     await loadMaintenanceStatus(); // Load initial maintenance status
+    await checkPendingRestore(); // Check if we need to schedule a restore
 
 // Check the environment to decide whether to use webhooks or polling
 // At the top of your file, make sure you have crypto required
@@ -3057,6 +3070,43 @@ bot.onText(/^\/copydb$/, async (msg) => {
             ]
         }
     });
+});
+
+// In bot.js, with your other admin commands
+
+bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const newApiKey = match[1].trim();
+    try {
+        await pool.query(
+            'INSERT INTO heroku_api_keys (api_key) VALUES ($1) ON CONFLICT (api_key) DO NOTHING',
+            [newApiKey]
+        );
+        await bot.sendMessage(cid, `API Key added to the pool successfully.`);
+    } catch (e) {
+        console.error(`[Admin] Error adding API key:`, e);
+        await bot.sendMessage(cid, `Failed to add API key. Check the logs.`);
+    }
+});
+
+bot.onText(/^\/removeapi (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    const apiKeyToRemove = match[1].trim();
+    try {
+        const result = await pool.query('DELETE FROM heroku_api_keys WHERE api_key = $1', [apiKeyToRemove]);
+        if (result.rowCount > 0) {
+            await bot.sendMessage(cid, `API Key removed from the pool.`);
+        } else {
+            await bot.sendMessage(cid, `API Key not found in the pool.`);
+        }
+    } catch (e) {
+        console.error(`[Admin] Error removing API key:`, e);
+        await bot.sendMessage(cid, `Failed to remove API key. Check the logs.`);
+    }
 });
 
 
@@ -8306,6 +8356,31 @@ async function checkAndPruneLoggedOutBots() {
     }
 }
 
+// In bot.js, add this new helper function
+
+async function updateRenderEnvVar(key, value) {
+    try {
+        const RENDER_API_KEY = process.env.RENDER_API_KEY;
+        const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID;
+
+        if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+            console.error('[Render API] RENDER_API_KEY or RENDER_SERVICE_ID is not set.');
+            await bot.sendMessage(ADMIN_ID, '❌ **AUTO-RECOVERY FAILED!**\n\n`RENDER_API_KEY` or `RENDER_SERVICE_ID` is not set in the environment.', { parse_mode: 'Markdown' });
+            return false;
+        }
+
+        const renderApiUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
+        await axios.put(renderApiUrl, [{ key, value }], {
+            headers: { 'Authorization': `Bearer ${RENDER_API_KEY}`, 'Content-Type': 'application/json', 'Accept': 'application/json' }
+        });
+        return true;
+    } catch (error) {
+        console.error("[Render API] Failed to update env var:", error.response?.data || error.message);
+        await bot.sendMessage(ADMIN_ID, `❌ **AUTO-RECOVERY FAILED!**\n\nCould not update environment variables on Render. Please check logs.`);
+        return false;
+    }
+}
+
 
 
 async function pruneInactiveUsers() {
@@ -8366,6 +8441,8 @@ setInterval(checkHerokuApiKey, 5 * 60 * 1000); // 5 minutes in milliseconds
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
 
+// In bot.js
+
 async function checkHerokuApiKey() {
     if (!HEROKU_API_KEY) {
         console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
@@ -8374,32 +8451,90 @@ async function checkHerokuApiKey() {
 
     try {
         await axios.get('https://api.heroku.com/account', {
-            headers: {
-                'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                'Accept': 'application/vnd.heroku+json; version=3'
-            }
+            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}`, 'Accept': 'application/vnd.heroku+json; version=3' }
         });
         console.log('[API Check] Heroku API key is valid.');
 
     } catch (error) {
         if (error.response && error.response.status === 401) {
-            console.error('[API Check] Status 401: The Heroku key is unauthorized.');
-            await bot.sendMessage(ADMIN_ID,
-                '🚨 **CRITICAL ALERT: Heroku API Key Invalid** 🚨\n\n' +
-                'The bot cannot manage apps. Please provide a new key.',
-                {
-                    parse_mode: 'Markdown',
-                    // ✅ FIX: Added a button to start the update process.
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Update Heroku API Key', callback_data: 'change_heroku_key' }]
-                        ]
-                    }
-                }
-            );
+            console.error('[API Check] Status 401: The Heroku key is unauthorized. Starting auto-recovery...');
+            
+            // 1. Notify Admin and Enable Maintenance Mode
+            await bot.sendMessage(ADMIN_ID, '**Heroku API Key Invalid!** 🚨\n\nStarting automated recovery process...\nThe bot is now in maintenance mode.', { parse_mode: 'Markdown' });
+            isMaintenanceMode = true;
+            await saveMaintenanceStatus(true);
+
+            // 2. Get the next available key from the database pool
+            const newKeyResult = await pool.query('SELECT api_key FROM heroku_api_keys ORDER BY id ASC LIMIT 1');
+            if (newKeyResult.rows.length === 0) {
+                await bot.sendMessage(ADMIN_ID, '❌ **AUTO-RECOVERY FAILED!**\n\nThere are no available backup Heroku API keys in the database. Please add one with `/addapi <key>`.', { parse_mode: 'Markdown' });
+                return;
+            }
+            const newApiKey = newKeyResult.rows[0].api_key;
+
+            // ✅ FIX: Delete the old, invalid key from the database
+            const oldApiKey = HEROKU_API_KEY;
+            await pool.query('DELETE FROM heroku_api_keys WHERE api_key = $1', [oldApiKey]);
+            console.log(`[API Check] Deleted invalid key from the database pool.`);
+
+            // 3. Update the key on Render and set up the delayed restore
+            const updateSuccess = await updateRenderEnvVar('HEROKU_API_KEY', newApiKey);
+            if (updateSuccess) {
+                // Set a flag in the database to trigger restore after restart
+                await pool.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('restore_pending_at', $1) ON CONFLICT (setting_key) DO UPDATE SET setting_value = $1`, [new Date().toISOString()]);
+                
+                await bot.sendMessage(ADMIN_ID, '✅ **Key Updated on Render!**\n\nThe bot will now restart with the new key. The old, invalid key has been deleted from the pool. A full restore of all apps will automatically begin in 30 minutes.', { parse_mode: 'Markdown' });
+            }
         } else {
-            // ... (existing error handling for other issues) ...
+            console.error(`[API Check] An unexpected error occurred:`, error.message);
         }
+    }
+}
+
+// In bot.js, add these two new functions
+
+async function runFullRestoreProcess() {
+    await bot.sendMessage(ADMIN_ID, '**Starting Automated Restore Process...**\n\nThis will take a very long time. Progress updates will be sent here.', { parse_mode: 'Markdown' });
+
+    // Restore Raganork bots
+    const raganorkQuery = { message: { chat: { id: ADMIN_ID }, message_id: null }, data: 'restore_all_confirm:raganork' };
+    await handleRestoreAllConfirm(raganorkQuery);
+
+    // Restore Levanter bots
+    const levanterQuery = { message: { chat: { id: ADMIN_ID }, message_id: null }, data: 'restore_all_confirm:levanter' };
+    await handleRestoreAllConfirm(levanterQuery);
+
+    // When everything is done, turn off maintenance mode
+    isMaintenanceMode = false;
+    await saveMaintenanceStatus(false);
+    await bot.sendMessage(ADMIN_ID, '✅ **Automated Restore Complete!**\n\nMaintenance mode has been turned off.', { parse_mode: 'Markdown' });
+}
+
+async function checkPendingRestore() {
+    try {
+        const setting = await pool.query("SELECT setting_value FROM app_settings WHERE setting_key = 'restore_pending_at'");
+        if (setting.rows.length > 0) {
+            const pendingTime = new Date(setting.rows[0].setting_value);
+            const thirtyMinutes = 30 * 60 * 1000;
+            const timeElapsed = Date.now() - pendingTime.getTime();
+
+            if (timeElapsed >= thirtyMinutes) {
+                // More than 30 mins have passed, restore immediately
+                console.log('[Restore] Pending restore found. Time has elapsed. Starting now.');
+                await pool.query("DELETE FROM app_settings WHERE setting_key = 'restore_pending_at'");
+                await runFullRestoreProcess();
+            } else {
+                // Less than 30 mins have passed, schedule it for the remaining time
+                const timeLeft = thirtyMinutes - timeElapsed;
+                console.log(`[Restore] Pending restore found. Scheduling for ${Math.round(timeLeft / 1000 / 60)} minutes from now.`);
+                setTimeout(async () => {
+                    await pool.query("DELETE FROM app_settings WHERE setting_key = 'restore_pending_at'");
+                    await runFullRestoreProcess();
+                }, timeLeft);
+            }
+        }
+    } catch (e) {
+        console.error('[Restore] Error checking for pending restore:', e.message);
     }
 }
 
