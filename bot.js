@@ -283,9 +283,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
-        await client.query(`ALTER TABLE heroku_api_keys DROP COLUMN is_in_use;`);
-        await client.query(`ALTER TABLE heroku_api_keys DROP COLUMN last_used_at;`);
-
+        
         // --- Step 3: INSERT DEFAULT DATA ---
         await client.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;`);
         
