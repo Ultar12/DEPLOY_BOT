@@ -144,8 +144,14 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, bot_name)
           );
         `);
-
-
+      
+    await client.query(`
+       CREATE TABLE IF NOT EXISTS heroku_api_keys (
+    id SERIAL PRIMARY KEY,
+    api_key TEXT NOT NULL UNIQUE,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`);
         await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
@@ -8432,7 +8438,6 @@ setInterval(checkHerokuApiKey, 5 * 60 * 1000); // 5 minutes in milliseconds
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
 
-// In bot.js
 
 async function checkHerokuApiKey() {
     if (!HEROKU_API_KEY) {
@@ -8450,12 +8455,11 @@ async function checkHerokuApiKey() {
         if (error.response && error.response.status === 401) {
             console.error('[API Check] Status 401: The Heroku key is unauthorized. Starting auto-recovery...');
             
-            // 1. Notify Admin and Enable Maintenance Mode
-            await bot.sendMessage(ADMIN_ID, '**Heroku API Key Invalid!** 🚨\n\nStarting automated recovery process...\nThe bot is now in maintenance mode.', { parse_mode: 'Markdown' });
+            await bot.sendMessage(ADMIN_ID, '🚨 **Heroku API Key Invalid!** 🚨\n\nStarting automated recovery process...\nThe bot is now in maintenance mode.', { parse_mode: 'Markdown' });
             isMaintenanceMode = true;
             await saveMaintenanceStatus(true);
 
-            // 2. Get the next available key from the database pool
+            // Get the next available key from the database
             const newKeyResult = await pool.query('SELECT api_key FROM heroku_api_keys ORDER BY id ASC LIMIT 1');
             if (newKeyResult.rows.length === 0) {
                 await bot.sendMessage(ADMIN_ID, '❌ **AUTO-RECOVERY FAILED!**\n\nThere are no available backup Heroku API keys in the database. Please add one with `/addapi <key>`.', { parse_mode: 'Markdown' });
@@ -8463,17 +8467,15 @@ async function checkHerokuApiKey() {
             }
             const newApiKey = newKeyResult.rows[0].api_key;
 
-            // ✅ FIX: Delete the old, invalid key from the database
+            // ✅ FIX: This DELETES the old, invalid key instead of trying to update a missing column.
             const oldApiKey = HEROKU_API_KEY;
             await pool.query('DELETE FROM heroku_api_keys WHERE api_key = $1', [oldApiKey]);
             console.log(`[API Check] Deleted invalid key from the database pool.`);
 
-            // 3. Update the key on Render and set up the delayed restore
+            // Update the key on Render and set up the delayed restore
             const updateSuccess = await updateRenderEnvVar('HEROKU_API_KEY', newApiKey);
             if (updateSuccess) {
-                // Set a flag in the database to trigger restore after restart
                 await pool.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('restore_pending_at', $1) ON CONFLICT (setting_key) DO UPDATE SET setting_value = $1`, [new Date().toISOString()]);
-                
                 await bot.sendMessage(ADMIN_ID, '✅ **Key Updated on Render!**\n\nThe bot will now restart with the new key. The old, invalid key has been deleted from the pool. A full restore of all apps will automatically begin in 30 minutes.', { parse_mode: 'Markdown' });
             }
         } else {
@@ -8481,6 +8483,7 @@ async function checkHerokuApiKey() {
         }
     }
 }
+
 
 // In bot.js, add these two new functions
 
