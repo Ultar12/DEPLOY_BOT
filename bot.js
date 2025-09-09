@@ -4366,6 +4366,45 @@ if (st && st.step === 'AWAITING_KEY') {
     return;
 }
 
+// In bot.js, inside bot.on('message', ...)
+
+if (st && st.step === 'AWAITING_NEW_HEROKU_KEY') {
+    const newHerokuKey = text.trim();
+    delete userStates[cid]; // Clear state immediately
+
+    await bot.sendMessage(cid, `Received new key. Attempting to update the environment variable on Render...`);
+
+    try {
+        const RENDER_API_KEY = process.env.RENDER_API_KEY;
+        const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID;
+
+        // This is the Render API endpoint to update environment variables
+        const renderApiUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
+
+        await axios.put(renderApiUrl,
+            // The payload is an array of variables to set
+            [{
+                key: 'HEROKU_API_KEY',
+                value: newHerokuKey
+            }],
+            // The headers include your Render API key for authentication
+            {
+                headers: {
+                    'Authorization': `Bearer ${RENDER_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        await bot.sendMessage(cid, "**Success!**\n\nThe `HEROKU_API_KEY` has been updated on Render. The service will now automatically restart to apply the new key.", { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error("[Render API] Failed to update env var:", error.response?.data || error.message);
+        await bot.sendMessage(cid, `**Failed to Update Key**\n\nAn error occurred while contacting the Render API. Please check the bot's logs for details.`);
+    }
+    return;
+}
 
 
  if (st && st.step === 'SESSION_ID') {
@@ -8327,53 +8366,43 @@ setInterval(checkHerokuApiKey, 5 * 60 * 1000); // 5 minutes in milliseconds
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
 
-// In bot.js
-
 async function checkHerokuApiKey() {
-    // First, check if the key is even set in your environment
     if (!HEROKU_API_KEY) {
-        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set in the environment.');
-        // No need to alert continuously if it's not set at all.
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
         return;
     }
 
     try {
-        // Make a simple, lightweight API call to check credentials
         await axios.get('https://api.heroku.com/account', {
             headers: {
                 'Authorization': `Bearer ${HEROKU_API_KEY}`,
                 'Accept': 'application/vnd.heroku+json; version=3'
             }
         });
-        // If the request succeeds, the key is valid. We can log it quietly.
         console.log('[API Check] Heroku API key is valid.');
 
     } catch (error) {
-        // If the request fails, an error is caught.
-        console.error('[API Check] Heroku API key check failed!');
-
         if (error.response && error.response.status === 401) {
-            // A 401 status specifically means the key is invalid or expired.
-            console.error('[API Check] Status 401: The key is unauthorized.');
+            console.error('[API Check] Status 401: The Heroku key is unauthorized.');
             await bot.sendMessage(ADMIN_ID,
-                '🚨 **CRITICAL ALERT** 🚨\n\n' +
-                'Your Heroku API key is **invalid or has expired**.\n\n' +
-                'The bot cannot deploy, restart, or manage apps until you update the `HEROKU_API_KEY` in your environment variables.',
-                { parse_mode: 'Markdown' }
+                '🚨 **CRITICAL ALERT: Heroku API Key Invalid** 🚨\n\n' +
+                'The bot cannot manage apps. Please provide a new key.',
+                {
+                    parse_mode: 'Markdown',
+                    // ✅ FIX: Added a button to start the update process.
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Update Heroku API Key', callback_data: 'change_heroku_key' }]
+                        ]
+                    }
+                }
             );
         } else {
-            // For other errors (e.g., network issues, Heroku server problems)
-            const errorMessage = error.message || 'An unknown error occurred.';
-            console.error(`[API Check] Error: ${errorMessage}`);
-            await bot.sendMessage(ADMIN_ID,
-                '⚠️ **API Check Warning** ⚠️\n\n' +
-                `Could not verify the Heroku API key due to an error: \`${errorMessage}\`\n\n` +
-                'This might be a temporary network issue with Heroku.',
-                { parse_mode: 'Markdown' }
-            );
+            // ... (existing error handling for other issues) ...
         }
     }
 }
+
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
 async function checkAndSendLoggedOutReminders() {
