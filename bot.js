@@ -3997,14 +3997,14 @@ if (text === 'Deploy' || text === 'Free Trial') {
       return;
   }
 
-        // REPLACE the existing "if (text === 'My Bots')" block with this one
+        // In bot.js
 
-        if (text === 'My Bots') {
+if (text === 'My Bots') {
     const cid = msg.chat.id.toString();
-    const checkingMsg = await bot.sendMessage(cid, 'Checking your bots on the server, please wait...');
+    const checkingMsg = await bot.sendMessage(cid, 'Syncing your bot list with the server, please wait...');
 
     try {
-        // 1. Get all necessary bot info from the database.
+        // 1. Get all bots the user owns from the database.
         const dbBotsResult = await pool.query(
             `SELECT 
                 ub.bot_name, 
@@ -4020,8 +4020,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
 
         if (userBotsFromDb.length === 0) {
             await bot.editMessageText("You have no bots deployed.", {
-                chat_id: cid,
-                message_id: checkingMsg.message_id,
+                chat_id: cid, message_id: checkingMsg.message_id,
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Deploy Now!', callback_data: 'deploy_first_bot' }],
@@ -4032,46 +4031,50 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        // 2. Verify each bot's Heroku dyno status.
+        // 2. Check each bot's status on Heroku.
         const verificationPromises = userBotsFromDb.map(bot =>
-            axios.get(`https://api.heroku.com/apps/${bot.bot_name}`, {
+            axios.get(`https://api.heroku.com/apps/${bot.bot_name}/formation`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            }).then(() => ({ ...bot, is_active: true }))
-              .catch(error => ({ ...bot, is_active: false, error: error }))
+            }).then(response => {
+                const webDyno = response.data.find(d => d.type === 'web');
+                return { ...bot, exists_on_heroku: true, is_active: webDyno && webDyno.quantity > 0 };
+            })
+              .catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
         );
 
         const results = await Promise.all(verificationPromises);
-
-        const activeBots = [];
-        const inactiveBots = [];
+        
+        // ✅ FIX: Create two separate lists: one for bots that exist and one for those that don't.
+        const botsToDisplay = [];
         const botsToCleanup = [];
 
-        results.forEach(result => {
-            if (result.is_active) {
-                activeBots.push(result);
-            } else if (result.error?.response?.status === 404) {
+        for (const result of results) {
+            if (result.exists_on_heroku) {
+                botsToDisplay.push(result);
+            } else {
+                // If it doesn't exist on Heroku, it needs to be cleaned up.
                 if (!result.deleted_from_heroku_at) {
                     botsToCleanup.push(result.bot_name);
                 }
-            } else {
-                inactiveBots.push(result);
             }
-        });
-
-        // 3. Clean up records for bots deleted from Heroku.
+        }
+        
+        // 3. Clean up the database in the background.
         if (botsToCleanup.length > 0) {
-            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bots for user ${cid}. Marking as inactive.`);
-            await Promise.all(botsToCleanup.map(appName => dbServices.markDeploymentDeletedFromHeroku(cid, appName)));
+            console.log(`[Cleanup] Found ${botsToCleanup.length} ghost bot(s) for user ${cid}. Cleaning up DB.`);
+            await Promise.all(botsToCleanup.map(appName => {
+                dbServices.deleteUserBot(cid, appName); // Remove from active list
+                dbServices.markDeploymentDeletedFromHeroku(cid, appName); // Mark as deleted in backup
+            }));
         }
 
-        const botsToDisplay = activeBots.concat(inactiveBots);
-
+        // 4. Display the final, filtered list of bots.
         if (botsToDisplay.length === 0) {
-            await bot.editMessageText("It seems your active bots were deleted from Heroku. They have been moved to your restore list.", {
-                chat_id: cid,
-                message_id: checkingMsg.message_id,
+            await bot.editMessageText("It seems your bots were deleted from Heroku. You can restore them from your backup.", {
+                chat_id: cid, message_id: checkingMsg.message_id,
                 reply_markup: {
                     inline_keyboard: [
+                        [{ text: 'Deploy a New Bot', callback_data: 'deploy_first_bot' }],
                         [{ text: 'Restore From Backup', callback_data: 'restore_from_backup' }]
                     ]
                 }
@@ -4079,32 +4082,18 @@ if (text === 'Deploy' || text === 'Free Trial') {
             return;
         }
 
-        // 4. Display the list of bots with their status and expiration.
         const appButtons = botsToDisplay.map(bot => {
-            let statusText;
-            if (bot.is_active) {
-                // Dyno is ON. Check our database for session status.
-                statusText = (bot.status === 'logged_out') ? 'Logged Out' : 'Connected';
-            } else {
-                // Dyno is OFF.
-                statusText = 'Off';
-            }
-
-            // Get the expiration countdown string.
+            let statusText = bot.is_active ? (bot.status === 'logged_out' ? 'Logged Out' : 'Connected') : 'Off';
             const expirationCountdown = formatTimeLeft(bot.expiration_date);
-
-            // Combine all parts for the button text.
             const buttonText = `${bot.bot_name} - ${statusText}${expirationCountdown}`;
-            
             return { text: buttonText, callback_data: `selectbot:${bot.bot_name}` };
         });
 
-        const rows = chunkArray(appButtons, 2); // Arrange buttons in rows of 2 for better readability
+        const rows = chunkArray(appButtons, 2);
         rows.push([{ text: 'Bot not found? Restore', callback_data: 'restore_from_backup' }]);
 
-        await bot.editMessageText('Your deployed bots:', {
-            chat_id: cid,
-            message_id: checkingMsg.message_id,
+        await bot.editMessageText('Select a bot to manage:', {
+            chat_id: cid, message_id: checkingMsg.message_id,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
@@ -4112,12 +4101,12 @@ if (text === 'Deploy' || text === 'Free Trial') {
     } catch (error) {
         console.error("Error in 'My Bots' handler:", error);
         await bot.editMessageText("An error occurred while fetching your bots. Please try again.", {
-            chat_id: cid,
-            message_id: checkingMsg.message_id
+            chat_id: cid, message_id: checkingMsg.message_id
         });
     }
     return;
 }
+
 
 
 // Add this handler in section 10 (Message handler for buttons & state machine)
