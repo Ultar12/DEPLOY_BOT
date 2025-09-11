@@ -1155,7 +1155,7 @@ async function handleRestoreAllConfirm(query) {
                 //await bot.sendMessage(originalOwnerId, `Your bot "*${escapeMarkdown(deployment.app_name)}*" has been successfully restored by the admin.`, { parse_mode: 'Markdown' }).catch(()=>{});
 
                 if (index < deployments.length - 1) {
-                    await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
+                    await bot.sendMessage(chatId, `Waiting for 1 min before deploying the next app...`);
                     await new Promise(resolve => setTimeout(resolve, 1 * 60 * 1000));
                 }
             } else {
