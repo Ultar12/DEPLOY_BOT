@@ -8440,9 +8440,6 @@ async function pruneInactiveUsers() {
 
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
-setInterval(checkHerokuApiKey, 5 * 60 * 1000); // 5 minutes in milliseconds
-    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
-
 
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
