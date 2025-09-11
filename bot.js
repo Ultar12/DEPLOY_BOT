@@ -1064,17 +1064,23 @@ async function handleRestoreAllSelection(query) {
     });
 }
 
-// In bot.js, replace the entire handleRestoreAllConfirm function
+// In bot.js
 
 async function handleRestoreAllConfirm(query) {
     const chatId = query.message.chat.id; // This is the Admin's chat ID
     const botType = query.data.split(':')[1];
     
-    await bot.editMessageText(`Confirmation received. Starting sequential restoration for all *${botType}* bots. This will take a long time...`, {
-        chat_id: chatId,
-        message_id: query.message.message_id,
-        parse_mode: 'Markdown'
-    });
+    // This initial message can be a new message or an edit, let's keep it as an edit
+    const messageId = query.message ? query.message.message_id : null;
+    if (messageId) {
+        await bot.editMessageText(`Confirmation received. Starting sequential restoration for all *${botType}* bots. This will take a long time...`, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown'
+        });
+    } else {
+        await bot.sendMessage(chatId, `Confirmation received. Starting sequential restoration for all *${botType}* bots...`, { parse_mode: 'Markdown' });
+    }
 
     const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
     let successCount = 0;
@@ -1083,39 +1089,36 @@ async function handleRestoreAllConfirm(query) {
     for (const [index, deployment] of deployments.entries()) {
         const appName = deployment.app_name;
         
-        // This pre-check is correct and sends messages only to the admin
-        await bot.sendMessage(chatId, `Checking app ${index + 1}/${deployments.length}: \`${appName}\`...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `▶️ Processing bot ${index + 1}/${deployments.length}: \`${appName}\``, { parse_mode: 'Markdown' });
+        
         try {
+            // We try to see if the app already exists on the current account.
             await axios.get(`https://api.heroku.com/apps/${appName}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
-            await bot.sendMessage(chatId, `App \`${appName}\` is already active on Heroku. Skipping restore.`, { parse_mode: 'Markdown' });
-            continue;
+
+            // If the above line SUCCEEDS, it means the app is already active. We skip it.
+            await bot.sendMessage(chatId, `App \`${appName}\` is already active on this Heroku account. Skipping.`, { parse_mode: 'Markdown' });
+            continue; // Go to the next bot in the loop
+
         } catch (e) {
-            if (e.response && e.response.status !== 404) {
-                console.error(`[RestoreAll] Error checking status for ${appName}: ${e.message}`);
-                await bot.sendMessage(chatId, `Error checking status for \`${appName}\`. Skipping.`, { parse_mode: 'Markdown' });
-                continue;
-            }
+            // ✅ FIX: If the check FAILS for ANY reason (404, 403, etc.),
+            // we assume it's safe to proceed with creation.
+            // We log the reason for debugging but allow the code to continue to the deployment step below.
+            console.log(`[RestoreAll] App '${appName}' not found on current Heroku account (Error: ${e.response?.status || e.message}). Proceeding with creation.`);
         }
 
+        // --- DEPLOYMENT LOGIC ---
+        // This part is now reached if the app does not exist on the current Heroku account.
         try {
-            await bot.sendMessage(chatId, `Restoring bot ${index + 1}/${deployments.length}: \`${deployment.app_name}\` for user \`${deployment.user_id}\`...`, { parse_mode: 'Markdown' });
-            
             const vars = { ...deployment.config_vars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id };
             
-            // --- THIS IS THE FIX ---
-            // We now pass the admin's 'chatId' to the build function.
-            // All progress messages will be sent to you, not the user.
+            // The buildWithProgress function will send its own progress messages to the admin (chatId)
             const success = await dbServices.buildWithProgress(chatId, vars, false, true, botType);
 
             if (success) {
                 successCount++;
-                await bot.sendMessage(chatId, `Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
-
-                // --- THIS IS THE OTHER FIX ---
-                // The line that notified the user has been removed.
-                // await bot.sendMessage(deployment.user_id, ...); // <-- This line is gone.
+                await bot.sendMessage(chatId, `✅ Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
 
                 if (index < deployments.length - 1) {
                     await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
@@ -1123,7 +1126,7 @@ async function handleRestoreAllConfirm(query) {
                 }
             } else {
                 failureCount++;
-                await bot.sendMessage(chatId, `Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing to the next app.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(chatId, `❌ Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing...`, { parse_mode: 'Markdown' });
             }
         } catch (error) {
             failureCount++;
@@ -1131,8 +1134,10 @@ async function handleRestoreAllConfirm(query) {
             await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
         }
     }
+    
     await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
 }
+
 
 
 
