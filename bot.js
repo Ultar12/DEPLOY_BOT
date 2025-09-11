@@ -3311,6 +3311,24 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
     }
 });
 
+// In bot.js, with your other admin commands
+
+bot.onText(/^\/restoreall$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
+
+    // This callback data 'restore_all_bots' will trigger the selection handler
+    await bot.sendMessage(cid, "Please select the bot type you wish to restore from the backup database:", {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Levanter', callback_data: 'restore_all_bots:levanter' },
+                    { text: 'Raganork', callback_data: 'restore_all_bots:raganork' }
+                ]
+            ]
+        }
+    });
+});
 
 
 // 10) Message handler for buttons & state machine
