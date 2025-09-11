@@ -5243,66 +5243,145 @@ if (action === 'confirm_updateall') {
 
 
 
-  if (action === 'restore_from_backup') {
-    const checkingMsg = await bot.editMessageText('Checking for restorable apps...', { chat_id: cid, message_id: q.message.message_id });
-    
-    const userDeployments = await dbServices.getUserDeploymentsForRestore(cid);
-    
-    // Filter out bots that are active on Heroku or have expired.
-    const restorableDeployments = [];
-    const now = new Date();
-    
-    for (const dep of userDeployments) {
-        // First check if the original 45-day period has expired.
-        const originalExpirationDate = new Date(new Date(dep.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
-        if (originalExpirationDate <= now) {
-             // Expired, permanently delete it from the backup table and skip.
-             await dbServices.deleteUserDeploymentFromBackup(cid, dep.app_name);
-             continue;
-        }
+  // In bot.js, inside bot.on('callback_query', ...)
 
-        try {
-            // Now check if it is active on Heroku.
-            await axios.get(`https://api.heroku.com/apps/${dep.app_name}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            // If the request succeeds, it's active, so we skip it.
-        } catch (e) {
-            // A 404 means the app is not on Heroku, so it's restorable.
-            if (e.response && e.response.status === 404) {
-                restorableDeployments.push(dep);
-            } else {
-                console.error(`[Restore] Error checking Heroku status for ${dep.app_name}: ${e.message}`);
+if (action === 'restore_from_backup') {
+    const userId = q.message.chat.id.toString();
+    const messageId = q.message.message_id;
+
+    await bot.editMessageText('Checking for restorable bots in your backup...', {
+        chat_id: userId,
+        message_id: messageId
+    });
+
+    try {
+        const userDeployments = await dbServices.getUserDeploymentsForRestore(userId);
+        
+        const restorableDeployments = [];
+        const now = new Date();
+
+        for (const dep of userDeployments) {
+            // A bot is restorable if its original expiration period hasn't passed
+            const deployDate = new Date(dep.deploy_date);
+            // Assuming a 45-day expiration for this example
+            const originalExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
+            
+            if (originalExpirationDate <= now) {
+                // If it has truly expired, remove it from the backup permanently
+                await dbServices.deleteUserDeploymentFromBackup(userId, dep.app_name);
+                continue; // Skip to the next one
+            }
+
+            // Check if it is already active on Heroku
+            try {
+                await axios.get(`https://api.heroku.com/apps/${dep.app_name}`, {
+                    headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+                });
+                // If the request succeeds, it's active, so we don't list it for restore.
+            } catch (e) {
+                // A 404 means the app is not on Heroku, so it's restorable.
+                if (e.response && e.response.status === 404) {
+                    restorableDeployments.push(dep);
+                }
             }
         }
-    }
 
-    if (restorableDeployments.length === 0) {
-        return bot.editMessageText('No restorable backups found for your account. Please deploy a new bot.', {
-            chat_id: cid,
-            message_id: checkingMsg.message_id
+        if (restorableDeployments.length === 0) {
+            return bot.editMessageText('No restorable backups were found. You can deploy a new bot from the main menu.', {
+                chat_id: userId,
+                message_id: messageId
+            });
+        }
+
+        // Create a button for each restorable bot
+        const restoreOptions = restorableDeployments.map(dep => {
+            const daysLeft = Math.ceil((new Date(dep.expiration_date) - now) / (1000 * 60 * 60 * 24));
+            const expirationText = daysLeft > 0 ? `(${daysLeft} days left)` : '(Expired)';
+            
+            return [{
+                text: `${dep.app_name} ${expirationText}`,
+                callback_data: `select_restore_app:${dep.app_name}`
+            }];
+        });
+
+        await bot.editMessageText('Select a bot to restore from your backup:', {
+            chat_id: userId,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: restoreOptions
+            }
+        });
+
+    } catch (error) {
+        console.error("Error fetching restore list:", error);
+        await bot.editMessageText("An error occurred while fetching your backups.", {
+            chat_id: userId,
+            message_id: messageId
         });
     }
+    return;
+}
 
-    const restoreOptions = restorableDeployments.map(dep => {
-        const deployDate = new Date(dep.deploy_date).toLocaleDateString();
-        const originalExpirationDate = new Date(new Date(dep.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
-        const daysLeft = Math.ceil((originalExpirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        const expirationText = daysLeft > 0 ? ` (Expires in ${daysLeft} days)` : ` (Expired)`;
-        
-        return [{
-            text: `${dep.app_name} (${dep.bot_type ? dep.bot_type.toUpperCase() : 'Unknown'}) - Deployed: ${deployDate}${expirationText}`,
-            callback_data: `select_restore_app:${dep.app_name}`
-        }];
-    });
+// In bot.js, inside bot.on('callback_query', ...)
 
-    await bot.editMessageText('Select a bot to restore:', {
+if (action === 'select_restore_app') {
+    const appName = payload;
+    
+    await bot.editMessageText(`Are you sure you want to restore the bot "*${escapeMarkdown(appName)}*"? This will start a new deployment using your saved settings.`, {
         chat_id: cid,
-        message_id: checkingMsg.message_id,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
         reply_markup: {
-            inline_keyboard: restoreOptions
+            inline_keyboard: [
+                [
+                    { text: 'Yes, Restore Now', callback_data: `confirm_restore_app:${appName}` },
+                    { text: 'No, Cancel', callback_data: 'restore_from_backup' } // Go back to the list
+                ]
+            ]
         }
     });
+    return;
+}
+
+  // In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'confirm_restore_app') {
+    const appName = payload;
+    
+    await bot.editMessageText(`Fetching backup data for "*${escapeMarkdown(appName)}*" and starting the restore process. This may take a few minutes...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    try {
+        // Fetch the specific deployment details from the backup database
+        const backupResult = await backupPool.query(
+            'SELECT * FROM user_deployments WHERE user_id = $1 AND app_name = $2',
+            [cid, appName]
+        );
+
+        if (backupResult.rows.length === 0) {
+            return bot.sendMessage(cid, 'Sorry, could not find the backup data for this app.');
+        }
+        
+        const deployment = backupResult.rows[0];
+
+        // Prepare the variables for the build process
+        const vars = { 
+            ...deployment.config_vars, 
+            APP_NAME: deployment.app_name, 
+            SESSION_ID: deployment.session_id,
+            expiration_date: deployment.expiration_date // This preserves the original expiration date
+        };
+        
+        // Call your existing build function with the correct parameters for a restore
+        await dbServices.buildWithProgress(cid, vars, false, true, deployment.bot_type);
+
+    } catch (error) {
+        console.error(`[Restore] Error during restore of ${appName}:`, error);
+        await bot.sendMessage(cid, `An error occurred while trying to restore "*${escapeMarkdown(appName)}*". Please check the logs.`, { parse_mode: 'Markdown' });
+    }
     return;
 }
 
