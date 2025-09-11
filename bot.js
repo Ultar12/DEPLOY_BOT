@@ -144,7 +144,7 @@ async function createAllTablesInPool(dbPool, dbName) {
             PRIMARY KEY (user_id, bot_name)
           );
         `);
-      
+        
         await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
@@ -276,7 +276,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
-        
+
         // --- Step 3: INSERT DEFAULT DATA ---
         await client.query(`INSERT INTO app_settings (setting_key, setting_value) VALUES ('maintenance_mode', 'off') ON CONFLICT (setting_key) DO NOTHING;`);
         
@@ -2968,8 +2968,6 @@ bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
 
 
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
-// In bot.js
-
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
@@ -2977,6 +2975,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     }
     
     const caption = match[1] ? match[1].trim() : '';
+
     const repliedMsg = msg.reply_to_message;
     const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
     const isVideo = repliedMsg && repliedMsg.video;
@@ -2991,14 +2990,18 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     let failCount = 0;
     let blockedCount = 0;
     
+    // --- THIS IS THE CRITICAL FIX ---
+    // Change the table from 'all_users_backup' to 'user_activity'
     const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
+    // --- END OF FIX ---
+    
     const userIds = allUserIdsResult.rows.map(row => row.user_id);
     
     if (userIds.length === 0) {
-        return bot.sendMessage(adminId, "No users found to send messages to.");
+        return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
     }
     
-    // ✅ FIX: We get the fileId here, but we will call the specific bot method inside the loop.
+    const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
     const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : isVideo ? repliedMsg.video.file_id : null;
 
     for (const userId of userIds) {
@@ -3007,26 +3010,19 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
-            // ✅ FIX: Use an if/else block to call the method directly on the 'bot' object.
-            // This preserves the correct context and fixes the '_request' error.
-            if (isPhoto) {
-                await bot.sendPhoto(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
-            } else if (isVideo) {
-                await bot.sendVideo(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+            if (isPhoto || isVideo) {
+                await sendMethod(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await bot.sendMessage(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+                await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
             }
             
             successCount++;
-            // A small delay to avoid hitting Telegram's rate limits
             await new Promise(resolve => setTimeout(resolve, 100));
-
         } catch (error) {
             if (error.response?.body?.description.includes("bot was blocked")) {
                 blockedCount++;
             } else {
-                // Log the actual error for better debugging
-                console.error(`Error sending broadcast to user ${userId}:`, error.message);
+                console.error(`Error sending broadcast to user ${userId}:`, escapeMarkdown(error.message));
                 failCount++;
             }
         }
@@ -3041,6 +3037,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     );
 });
 
+// ... other code ...
 
 
 bot.onText(/^\/copydb$/, async (msg) => {
@@ -3060,81 +3057,6 @@ bot.onText(/^\/copydb$/, async (msg) => {
             ]
         }
     });
-});
-
-// In bot.js, with your other admin commands
-
-bot.onText(/^\/(api|apilist)$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-
-    // 1. Admin-only check
-    if (cid !== ADMIN_ID) return;
-
-    try {
-        // 2. Fetch all keys from the database, oldest first
-        const result = await pool.query('SELECT api_key, added_at FROM heroku_api_keys ORDER BY id ASC');
-
-        // 3. Handle the case where no keys are found
-        if (result.rows.length === 0) {
-            return bot.sendMessage(cid, "There are no Heroku API keys in the database pool. Add one with `/addapi <key>`.", { parse_mode: 'Markdown' });
-        }
-
-        // 4. Mask each key for security and format the list
-        let message = "*Available Heroku API Keys:*\n\n";
-        result.rows.forEach((row, index) => {
-            const key = row.api_key;
-            // Mask the key: show the first 8 and last 4 characters
-            const maskedKey = key.slice(0, 8) + '••••••••••••••••' + key.slice(-4);
-            const addedDate = new Date(row.added_at).toLocaleDateString("en-NG", { timeZone: 'Africa/Lagos' });
-
-            message += `${index + 1}. \`${maskedKey}\`\n   (Added: ${addedDate})\n`;
-        });
-        
-        message += "\n_The key at the top of the list will be used next._";
-
-        // 5. Send the final formatted message
-        await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
-
-    } catch (e) {
-        console.error(`[Admin] Error fetching API key list:`, e);
-        await bot.sendMessage(cid, `❌ Failed to fetch API key list. Check the logs.`);
-    }
-});
-
-
-bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
-
-    const newApiKey = match[1].trim();
-    try {
-        await pool.query(
-            'INSERT INTO heroku_api_keys (api_key) VALUES ($1) ON CONFLICT (api_key) DO NOTHING',
-            [newApiKey]
-        );
-        await bot.sendMessage(cid, `API Key added to the pool successfully.`);
-    } catch (e) {
-        console.error(`[Admin] Error adding API key:`, e);
-        await bot.sendMessage(cid, `Failed to add API key. Check the logs.`);
-    }
-});
-
-bot.onText(/^\/removeapi (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
-
-    const apiKeyToRemove = match[1].trim();
-    try {
-        const result = await pool.query('DELETE FROM heroku_api_keys WHERE api_key = $1', [apiKeyToRemove]);
-        if (result.rowCount > 0) {
-            await bot.sendMessage(cid, `API Key removed from the pool.`);
-        } else {
-            await bot.sendMessage(cid, `API Key not found in the pool.`);
-        }
-    } catch (e) {
-        console.error(`[Admin] Error removing API key:`, e);
-        await bot.sendMessage(cid, `Failed to remove API key. Check the logs.`);
-    }
 });
 
 
@@ -4444,45 +4366,6 @@ if (st && st.step === 'AWAITING_KEY') {
     return;
 }
 
-// In bot.js, inside bot.on('message', ...)
-
-if (st && st.step === 'AWAITING_NEW_HEROKU_KEY') {
-    const newHerokuKey = text.trim();
-    delete userStates[cid]; // Clear state immediately
-
-    await bot.sendMessage(cid, `Received new key. Attempting to update the environment variable on Render...`);
-
-    try {
-        const RENDER_API_KEY = process.env.RENDER_API_KEY;
-        const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID;
-
-        // This is the Render API endpoint to update environment variables
-        const renderApiUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
-
-        await axios.put(renderApiUrl,
-            // The payload is an array of variables to set
-            [{
-                key: 'HEROKU_API_KEY',
-                value: newHerokuKey
-            }],
-            // The headers include your Render API key for authentication
-            {
-                headers: {
-                    'Authorization': `Bearer ${RENDER_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                }
-            }
-        );
-
-        await bot.sendMessage(cid, "**Success!**\n\nThe `HEROKU_API_KEY` has been updated on Render. The service will now automatically restart to apply the new key.", { parse_mode: 'Markdown' });
-
-    } catch (error) {
-        console.error("[Render API] Failed to update env var:", error.response?.data || error.message);
-        await bot.sendMessage(cid, `**Failed to Update Key**\n\nAn error occurred while contacting the Render API. Please check the bot's logs for details.`);
-    }
-    return;
-}
 
 
  if (st && st.step === 'SESSION_ID') {
@@ -6717,7 +6600,7 @@ if (action === 'selectapp' || action === 'selectbot') {
 
     } else { // dynoStatus is 'off'
         message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *Off*\n` +
+                  `Status: *Off ⚪️*\n` +
                   `Expires in: *${expirationCountdown}*\n\n` +
                   `This bot is currently turned off and will not respond to commands.`;
         keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
@@ -8383,6 +8266,7 @@ async function checkAndPruneLoggedOutBots() {
         console.error('[Prune] DB Error while checking for logged-out bots:', dbError);
     }
 }
+
 
 
 async function pruneInactiveUsers() {
