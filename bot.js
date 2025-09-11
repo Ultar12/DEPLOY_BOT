@@ -1152,11 +1152,11 @@ async function handleRestoreAllConfirm(query) {
                 successCount++;
                 await bot.sendMessage(chatId, `✅ Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
                 // Also notify the original owner
-                await bot.sendMessage(originalOwnerId, `Your bot "*${escapeMarkdown(deployment.app_name)}*" has been successfully restored by the admin.`, { parse_mode: 'Markdown' }).catch(()=>{});
+                //await bot.sendMessage(originalOwnerId, `Your bot "*${escapeMarkdown(deployment.app_name)}*" has been successfully restored by the admin.`, { parse_mode: 'Markdown' }).catch(()=>{});
 
                 if (index < deployments.length - 1) {
                     await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
-                    await new Promise(resolve => setTimeout(resolve, 3 * 60 * 1000));
+                    await new Promise(resolve => setTimeout(resolve, 1 * 60 * 1000));
                 }
             } else {
                 failureCount++;
