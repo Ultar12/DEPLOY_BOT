@@ -145,13 +145,6 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
       
-    await client.query(`
-       CREATE TABLE IF NOT EXISTS heroku_api_keys (
-    id SERIAL PRIMARY KEY,
-    api_key TEXT NOT NULL UNIQUE,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-`);
         await client.query(`
           CREATE TABLE IF NOT EXISTS deploy_keys (
             key        TEXT PRIMARY KEY,
