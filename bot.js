@@ -1323,7 +1323,6 @@ async function notifyAdminUserOnline(msg) {
   mailListener.init(bot, pool); // Start the mail listener with the bot and database pool
 
     await loadMaintenanceStatus(); // Load initial maintenance status
-    await checkPendingRestore(); // Check if we need to schedule a restore
 
 // Check the environment to decide whether to use webhooks or polling
 // At the top of your file, make sure you have crypto required
