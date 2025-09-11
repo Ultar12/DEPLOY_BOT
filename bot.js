@@ -8385,32 +8385,6 @@ async function checkAndPruneLoggedOutBots() {
     }
 }
 
-// In bot.js, add this new helper function
-
-async function updateRenderEnvVar(key, value) {
-    try {
-        const RENDER_API_KEY = process.env.RENDER_API_KEY;
-        const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID;
-
-        if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
-            console.error('[Render API] RENDER_API_KEY or RENDER_SERVICE_ID is not set.');
-            await bot.sendMessage(ADMIN_ID, '❌ **AUTO-RECOVERY FAILED!**\n\n`RENDER_API_KEY` or `RENDER_SERVICE_ID` is not set in the environment.', { parse_mode: 'Markdown' });
-            return false;
-        }
-
-        const renderApiUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
-        await axios.put(renderApiUrl, [{ key, value }], {
-            headers: { 'Authorization': `Bearer ${RENDER_API_KEY}`, 'Content-Type': 'application/json', 'Accept': 'application/json' }
-        });
-        return true;
-    } catch (error) {
-        console.error("[Render API] Failed to update env var:", error.response?.data || error.message);
-        await bot.sendMessage(ADMIN_ID, `❌ **AUTO-RECOVERY FAILED!**\n\nCould not update environment variables on Render. Please check logs.`);
-        return false;
-    }
-}
-
-
 
 async function pruneInactiveUsers() {
     console.log('[Prune] Running daily check for inactive users with no bots...');
