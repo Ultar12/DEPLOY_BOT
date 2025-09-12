@@ -799,11 +799,26 @@ async function initiatePaystackPayment(chatId, messageId, paymentDetails) {
     const { isRenewal, appName, days, priceNgn, botType, APP_NAME, SESSION_ID } = paymentDetails;
     const userEmail = await getUserEmail(chatId);
 
+    // ✅ FIX: This is the new logic for unverified users
     if (!userEmail) {
-        await bot.editMessageText('Error: Could not find your verified email to proceed.', { chat_id: chatId, message_id: messageId });
+        userStates[chatId] = { 
+            step: 'AWAITING_VERIFICATION_BEFORE_ACTION', 
+            data: { action: 'renew', appName: appName } 
+        };
+        await bot.editMessageText(
+            "To proceed, you first need to verify your email address. This helps keep your account secure.", {
+                chat_id: chatId,
+                message_id: messageId,
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: 'Start Verification', callback_data: 'start_verification' }
+                    ]]
+                }
+            }
+        );
         return;
     }
-
+   
     const sentMsg = await bot.editMessageText('Generating Paystack payment link...', { chat_id: chatId, message_id: messageId });
     
     const reference = `psk_${crypto.randomBytes(12).toString('hex')}`;
