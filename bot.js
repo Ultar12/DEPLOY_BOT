@@ -3644,9 +3644,7 @@ if (st && st.step === 'AWAITING_EMAIL') {
     return;
 }
 
-
-
-// REPLACE your existing 'AWAITING_OTP' handler with this one
+// In bot.js, inside the bot.on('message', ...) handler
 
 if (st && st.step === 'AWAITING_OTP') {
     const userOtp = text.trim();
@@ -3674,26 +3672,37 @@ if (st && st.step === 'AWAITING_OTP') {
 
         if (userOtp === otp) {
             // --- SUCCESS! ---
-            // The code is correct, proceed as normal.
             await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
-            await bot.sendMessage(cid, 'Verified successfully! You can now proceed with your deployment.');
-            delete userStates[cid];
-
-            const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
-            const fakeMsg = { ...msg, text: deployCommand }; 
-            bot.emit('message', fakeMsg);
+            await bot.sendMessage(cid, '✅ Verified successfully!');
+            
+            // ✅ FIX: Check for a pending action and redirect the user.
+            if (st.data && st.data.action === 'renew') {
+                const appName = st.data.appName;
+                delete userStates[cid]; // Clear state
+                
+                // Automatically re-trigger the renew menu for the user
+                const fakeQuery = { 
+                    message: { chat: { id: cid }, message_id: msg.message_id }, 
+                    data: `renew_bot:${appName}` 
+                };
+                await bot.sendMessage(cid, "Now, let's get back to your renewal.");
+                // Simulate the user clicking the "Renew" button again
+                bot.emit('callback_query', fakeQuery); 
+            
+            } else {
+                // Default behavior for new users
+                delete userStates[cid];
+                const deployCommand = st.data.isFreeTrial ? 'Free Trial' : 'Deploy';
+                const fakeMsg = { ...msg, text: deployCommand }; 
+                bot.emit('message', fakeMsg);
+            }
 
         } else {
-            // --- INCORRECT CODE ---
-            // Initialize or increment the attempt counter in the user's state.
+            // Incorrect code logic
             st.data.otpAttempts = (st.data.otpAttempts || 0) + 1;
-
             if (st.data.otpAttempts >= 2) {
-                // This is the second failed attempt. Cancel the process silently.
-                delete userStates[cid]; // Clear the state.
-                // No message is sent, as requested.
+                delete userStates[cid];
             } else {
-                // This is the first failed attempt. Warn the user.
                 await bot.sendMessage(cid, 'Invalid code. Please check your email and try again.');
             }
         }
@@ -3704,6 +3713,7 @@ if (st && st.step === 'AWAITING_OTP') {
     }
     return;
 }
+
 
   // --- REPLACE this entire block in bot.js ---
 
@@ -6409,6 +6419,22 @@ if (action === 'confirm_and_pay_step') {
     }
     return;
 }
+
+  // In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'start_verification') {
+    const st = userStates[cid];
+    if (!st || st.step !== 'AWAITING_VERIFICATION_BEFORE_ACTION') return;
+
+    // Transition to the email entry step, preserving the original action data
+    st.step = 'AWAITING_EMAIL';
+    await bot.editMessageText('Please enter your email address to begin verification:', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
 
 // REPLACE your 'resend_otp' handler with this one
 
