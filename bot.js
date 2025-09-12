@@ -6620,41 +6620,44 @@ if (action === 'paystack_deploy' || action === 'paystack_renew') {
 }
 
 
-// // In bot.js, inside bot.on('callback_query', ...)
+// In bot.js, inside bot.on('callback_query', ...)
 
 if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
     const days = parseInt(extra, 10);
-    const appName = isRenewal ? flag : null; // For renewals, the appName is the 4th part
+    const appName = isRenewal ? flag : null;
     const userEmail = await getUserEmail(cid);
 
     if (!userEmail) {
         return bot.answerCallbackQuery(q.id, { text: 'Error: Could not find your verified email.', show_alert: true });
     }
 
-    // For new deployments, perform the state check
-    if (!isRenewal) {
-        const st = userStates[cid];
-        if (!st || st.step !== 'AWAITING_KEY') {
-            return bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
-        }
+    const st = userStates[cid];
+    // For new deployments, we must check the user's state.
+    if (!isRenewal && (!st || st.step !== 'AWAITING_KEY')) {
+        return bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
     }
 
-    const sentMsg = await bot.editMessageText('Generating Flutterwave payment link...', {
+    await bot.editMessageText('Generating Flutterwave payment link...', {
         chat_id: cid, message_id: q.message.message_id
     });
     
     const reference = `flw_${crypto.randomBytes(12).toString('hex')}`;
-    
-    // ✅ FIX: Correctly sets metadata for both new deployments and renewals.
-    const metadata = isRenewal 
-        ? { user_id: cid, product: 'Bot Renewal', days: days, appName: appName } 
-        : { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
+    let metadata;
 
-    // For new deployments, save the pending payment details
-    if (!isRenewal) {
-        const st = userStates[cid];
+    // ✅ FIX: This block now correctly prepares and saves a pending payment for renewals.
+    if (isRenewal) {
+        metadata = { user_id: cid, product: 'Bot Renewal', days: days, appName: appName };
+        
+        // Save a pending payment record so the webhook knows what to do.
+        await pool.query(
+            'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
+            [reference, cid, userEmail, `renewal_${appName}`]
+        );
+    } else {
+        // This is the existing, correct logic for new deployments.
+        metadata = { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
             [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
@@ -6666,7 +6669,7 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     if (paymentUrl) {
         await bot.editMessageText(
             `Click the button below to complete your payment with Flutterwave.`, {
-                chat_id: cid, message_id: sentMsg.message_id,
+                chat_id: cid, message_id: q.message.message_id,
                 reply_markup: {
                     inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
                 }
@@ -6674,11 +6677,12 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
         );
     } else {
         await bot.editMessageText('Sorry, an error occurred while creating the Flutterwave payment link.', {
-            chat_id: cid, message_id: sentMsg.message_id
+            chat_id: cid, message_id: q.message.message_id
         });
     }
     return;
 }
+
 
 
 
