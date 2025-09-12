@@ -766,7 +766,27 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
  * Creates a Flutterwave payment link and returns the URL.
  */
 async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, metadata) {
-    try {
+  // ✅ FIX: The unverified user check is also added here for consistency.
+    const isVerified = await isUserVerified(chatId);
+    if (!email && !isVerified) {
+         userStates[chatId] = { 
+            step: 'AWAITING_VERIFICATION_BEFORE_ACTION', 
+            data: { action: 'renew', appName: metadata.appName } 
+        };
+        // Since we don't have a messageId here, we send a new message.
+        await bot.sendMessage(
+            chatId,
+            "To proceed, you first need to verify your email address.", {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: 'Start Verification', callback_data: 'start_verification' }
+                    ]]
+                }
+            }
+        );
+        return null; // Return null to indicate failure
+    }  
+  try {
         const response = await axios.post('https://api.flutterwave.com/v3/payments', {
             tx_ref: reference,
             amount: priceNgn,
