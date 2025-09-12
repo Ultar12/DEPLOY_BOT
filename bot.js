@@ -6620,13 +6620,13 @@ if (action === 'paystack_deploy' || action === 'paystack_renew') {
 }
 
 
-// REPLACE the 'flutterwave_deploy'/'flutterwave_renew' handler with this one
+// // In bot.js, inside bot.on('callback_query', ...)
 
 if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
     const days = parseInt(extra, 10);
-    const appName = isRenewal ? flag : null;
+    const appName = isRenewal ? flag : null; // For renewals, the appName is the 4th part
     const userEmail = await getUserEmail(cid);
 
     if (!userEmail) {
@@ -6646,10 +6646,13 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     });
     
     const reference = `flw_${crypto.randomBytes(12).toString('hex')}`;
+    
+    // ✅ FIX: Correctly sets metadata for both new deployments and renewals.
     const metadata = isRenewal 
         ? { user_id: cid, product: 'Bot Renewal', days: days, appName: appName } 
         : { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
 
+    // For new deployments, save the pending payment details
     if (!isRenewal) {
         const st = userStates[cid];
         await pool.query(
@@ -6676,6 +6679,7 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     }
     return;
 }
+
 
 
 // ADD this new handler for the renewal cancel button
