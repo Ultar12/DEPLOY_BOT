@@ -2088,7 +2088,7 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 
 
 
-    // --- END MINI APP ROUTES ---
+// In bot.js
 
 app.post('/flutterwave/webhook', async (req, res) => {
     const signature = req.headers['verif-hash'];
@@ -2118,29 +2118,30 @@ app.post('/flutterwave/webhook', async (req, res) => {
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
             if (meta.product === 'Bot Renewal') {
-                // ... (your existing, correct renewal logic)
-            } else { 
-                // ✅ FIX: This block is corrected to handle new deployments properly.
-                const pendingPaymentResult = await pool.query(
-                    'SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
-                    [reference]
+                const { appName, days } = meta;
+                
+                // ✅ FIX: This robust query handles both existing and null expiration dates.
+                await pool.query(
+                    `UPDATE user_deployments 
+                     SET expiration_date = 
+                        CASE
+                            WHEN expiration_date > NOW() THEN expiration_date + ($1 * INTERVAL '1 day')
+                            ELSE NOW() + ($1 * INTERVAL '1 day')
+                        END
+                     WHERE user_id = $2 AND app_name = $3`,
+                    [days, user_id, appName]
                 );
 
-                if (pendingPaymentResult.rows.length > 0) {
-                    const { bot_type, app_name, session_id } = pendingPaymentResult.rows[0];
-                    
+                await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
+            
+            } else { // New Deployment Logic...
+                const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+                if (pendingPayment.rows.length > 0) {
+                    const { bot_type, app_name, session_id } = pendingPayment.rows[0];
                     await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
-
-                    // Construct the complete 'vars' object, including a default for AUTO_STATUS_VIEW
-                    const deployVars = { 
-                        SESSION_ID: session_id, 
-                        APP_NAME: app_name,
-                        AUTO_STATUS_VIEW: 'false' // Or retrieve this if you save it in pending_payments
-                    };
-                    
-                    // Call the build process with the complete variables
+                    const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, AUTO_STATUS_VIEW: 'false' };
                     dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
-                    
                     await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
                 }
             }
@@ -2152,6 +2153,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
+
 
 
     // At the top of your file, ensure 'crypto' is required
@@ -3754,7 +3756,7 @@ if (st && st.step === 'AWAITING_EMAIL') {
     return;
 }
 
-// In bot.js, inside the bot.on('message', ...) handler
+// In bot.js, inside bot.on('message', ...)
 
 if (st && st.step === 'AWAITING_OTP') {
     const userOtp = text.trim();
@@ -3770,34 +3772,28 @@ if (st && st.step === 'AWAITING_OTP') {
 
         if (result.rows.length === 0) {
             delete userStates[cid];
-            return bot.sendMessage(cid, 'Registration session expired. Please tap "Deploy" again.');
+            return bot.sendMessage(cid, 'Registration session expired. Please start over.');
         }
 
         const { otp, otp_expires_at } = result.rows[0];
 
         if (new Date() > new Date(otp_expires_at)) {
             delete userStates[cid];
-            return bot.sendMessage(cid, 'Your verification code has expired. Please tap "Deploy" to start over.');
+            return bot.sendMessage(cid, 'Your verification code has expired. Please start over.');
         }
 
         if (userOtp === otp) {
             // --- SUCCESS! ---
             await pool.query('UPDATE email_verification SET is_verified = TRUE, otp = NULL WHERE user_id = $1', [cid]);
-            await bot.sendMessage(cid, '✅ Verified successfully!');
+            const successMsg = await bot.sendMessage(cid, 'Verified successfully!');
             
-            // ✅ FIX: Check for a pending action and redirect the user.
+            // ✅ FIX: Instead of sending another message, go directly to payment options.
             if (st.data && st.data.action === 'renew') {
                 const appName = st.data.appName;
-                delete userStates[cid]; // Clear state
+                delete userStates[cid];
                 
-                // Automatically re-trigger the renew menu for the user
-                const fakeQuery = { 
-                    message: { chat: { id: cid }, message_id: msg.message_id }, 
-                    data: `renew_bot:${appName}` 
-                };
-                await bot.sendMessage(cid, "Now, let's get back to your renewal.");
-                // Simulate the user clicking the "Renew" button again
-                bot.emit('callback_query', fakeQuery); 
+                // Show the renewal pricing tiers immediately.
+                await showPaymentOptions(cid, successMsg.message_id, 1500, 30, appName); // Defaulting to show standard plan, user can choose others.
             
             } else {
                 // Default behavior for new users
@@ -3813,16 +3809,17 @@ if (st && st.step === 'AWAITING_OTP') {
             if (st.data.otpAttempts >= 2) {
                 delete userStates[cid];
             } else {
-                await bot.sendMessage(cid, 'Invalid code. Please check your email and try again.');
+                await bot.sendMessage(cid, 'Invalid code. Please try again.');
             }
         }
     } catch (dbError) {
         console.error('[DB] Error verifying OTP:', dbError);
         delete userStates[cid];
-        await bot.sendMessage(cid, 'A database error occurred during verification. Please try again.');
+        await bot.sendMessage(cid, 'A database error occurred during verification.');
     }
     return;
 }
+
 
 
   // --- REPLACE this entire block in bot.js ---
