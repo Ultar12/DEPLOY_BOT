@@ -6637,7 +6637,8 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
         return bot.answerCallbackQuery(q.id, { text: 'Error: Could not find your verified email.', show_alert: true });
     }
 
-    // For new deployments, we must check the user's state.
+    // ✅ FIX: The state check is now MOVED inside the 'else' block,
+    // so it ONLY runs for new deployments and is SKIPPED for renewals.
     if (!isRenewal) {
         const st = userStates[cid];
         if (!st || st.step !== 'AWAITING_KEY') {
@@ -6652,18 +6653,14 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const reference = `flw_${crypto.randomBytes(12).toString('hex')}`;
     let metadata;
 
-    // ✅ FIX: This block now correctly prepares and saves a pending payment for renewals.
     if (isRenewal) {
         metadata = { user_id: cid, product: 'Bot Renewal', days: days, appName: appName };
-        
-        // This was the missing step: Save a pending payment record for the webhook.
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
             [reference, cid, userEmail, `renewal_${appName}`]
         );
     } else {
-        // This is the existing, correct logic for new deployments.
-        const st = userStates[cid];
+        const st = userStates[cid]; // State is guaranteed to exist here now
         metadata = { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -6689,6 +6686,7 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     }
     return;
 }
+
 
 
 
