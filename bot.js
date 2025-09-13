@@ -526,6 +526,73 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
+// In bot.js, with your other helper functions
+
+async function sendRegisteredUserList(chatId, page = 1, messageId = null) {
+    try {
+        const result = await pool.query('SELECT DISTINCT user_id FROM user_bots');
+        const allUserIds = result.rows.map(row => row.user_id);
+        
+        if (allUserIds.length === 0) {
+            return bot.editMessageText("No registered users (with bots) found.", { chat_id: chatId, message_id: messageId });
+        }
+        
+        const totalPages = Math.ceil(allUserIds.length / USERS_PER_PAGE);
+        page = Math.max(1, Math.min(page, totalPages));
+        const offset = (page - 1) * USERS_PER_PAGE;
+        const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
+
+        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
+        for (const userId of userIdsOnPage) {
+            responseMessage += `• \`${userId}\`\n`;
+        }
+        responseMessage += `\n_Use /info <ID> for full details._`;
+
+        const navRow = [];
+        if (page > 1) navRow.push({ text: '« Prev', callback_data: `users_registered:${page - 1}` });
+        if (page < totalPages) navRow.push({ text: 'Next »', callback_data: `users_registered:${page + 1}` });
+
+        await bot.editMessageText(responseMessage, {
+            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [navRow] }
+        });
+    } catch (e) { console.error("Error sending registered user list:", e); }
+}
+
+async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
+    try {
+        const result = await pool.query(`
+            SELECT user_id FROM user_activity 
+            WHERE user_id NOT IN (SELECT DISTINCT user_id FROM user_bots)
+        `);
+        const allUserIds = result.rows.map(row => row.user_id);
+
+        if (allUserIds.length === 0) {
+            return bot.editMessageText("No unregistered users found.", { chat_id: chatId, message_id: messageId });
+        }
+
+        const totalPages = Math.ceil(allUserIds.length / USERS_PER_PAGE);
+        page = Math.max(1, Math.min(page, totalPages));
+        const offset = (page - 1) * USERS_PER_PAGE;
+        const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
+
+        let responseMessage = `*Unregistered Users - Page ${page}/${totalPages}*\n\n`;
+        for (const userId of userIdsOnPage) {
+            responseMessage += `• \`${userId}\`\n`;
+        }
+        responseMessage += `\n_These users have started the bot but not deployed._`;
+
+        const navRow = [];
+        if (page > 1) navRow.push({ text: '« Prev', callback_data: `users_unregistered:${page - 1}` });
+        if (page < totalPages) navRow.push({ text: 'Next »', callback_data: `users_unregistered:${page + 1}` });
+
+        await bot.editMessageText(responseMessage, {
+            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [navRow] }
+        });
+    } catch (e) { console.error("Error sending unregistered user list:", e); }
+}
+
 
 // REDUCED ANIMATION FREQUENCY
 async function animateMessage(chatId, messageId, baseText) {
@@ -2575,36 +2642,62 @@ bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
     }
 });
 
+// In bot.js, with your other admin commands
 
+bot.onText(/^\/deluser (\d+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const targetUserId = match[1];
+    
+    if (cid !== ADMIN_ID) return;
+    if (targetUserId === ADMIN_ID) {
+        return bot.sendMessage(cid, "You cannot delete yourself.");
+    }
+    
+    await bot.sendMessage(cid, `⚠️ Are you sure you want to permanently delete user \`${targetUserId}\` and all their data? This cannot be undone.`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Yes, Delete User', callback_data: `confirm_deluser:${targetUserId}` },
+                    { text: 'Cancel', callback_data: 'cancel_deluser' }
+                ]
+            ]
+        }
+    });
+});
+
+
+
+// In bot.js
 
 bot.onText(/^\/info (\d+)$/, async (msg, match) => {
     const callerId = msg.chat.id.toString();
-    await dbServices.updateUserActivity(callerId);
     const targetUserId = match[1];
 
     if (callerId !== ADMIN_ID) {
         return bot.sendMessage(callerId, "You are not authorized to use this command.");
     }
+    
+    await dbServices.updateUserActivity(callerId);
 
     try {
         const targetChat = await bot.getChat(targetUserId);
-        const firstName = targetChat.first_name ? escapeMarkdown(targetChat.first_name) : 'N/A';
-        const lastName = targetChat.last_name ? escapeMarkdown(targetChat.last_name) : 'N/A';
+        const firstName = escapeMarkdown(targetChat.first_name || 'N/A');
         const username = targetChat.username ? escapeMarkdown(targetChat.username) : 'N/A';
         const userIdEscaped = escapeMarkdown(targetUserId);
 
-        let userDetails = `*Telegram User Info for ID:* \`${userIdEscaped}\`\n\n`;
-        userDetails += `*First Name:* ${firstName}\n`;
-        userDetails += `*Last Name:* ${lastName}\n`;
+        let userDetails = `*User Info for ID:* \`${userIdEscaped}\`\n\n`;
+        userDetails += `*Name:* ${firstName}\n`;
         userDetails += `*Username:* ${targetChat.username ? `@${username}` : 'N/A'}\n`;
-        userDetails += `*Type:* ${escapeMarkdown(targetChat.type)}\n`;
-
-        if (targetChat.username) {
-            userDetails += `*Profile Link:* [t.me/${username}](https://t.me/${targetChat.username})\n`;
+        
+        // ✅ FIX: Get and add the user's verified email if it exists.
+        const userEmail = await getUserEmail(targetUserId);
+        if (userEmail) {
+            userDetails += `*Email:* \`${escapeMarkdown(userEmail)}\`\n`;
         }
-
+        
         // Fetch bots deployed by this user
-        const userBots = await dbServices.getUserBots(targetUserId); // Use dbServices
+        const userBots = await dbServices.getUserBots(targetUserId);
         if (userBots.length > 0) {
             userDetails += `\n*Deployed Bots:*\n`;
             for (const botName of userBots) {
@@ -2615,34 +2708,26 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
         }
 
         // Fetch user's last seen activity
-        const lastSeen = await dbServices.getUserLastSeen(targetUserId); // Use dbServices
-        userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric' }) : 'Never seen (or no recent activity)'}\n`;
+        const lastSeen = await dbServices.getUserLastSeen(targetUserId);
+        userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }) : 'Never seen'}\n`;
 
         // Check ban status
-        const bannedStatus = await dbServices.isUserBanned(targetUserId); // Use dbServices
+        const bannedStatus = await dbServices.isUserBanned(targetUserId);
         userDetails += `*Banned:* ${bannedStatus ? 'Yes' : 'No'}\n`;
-
 
         await bot.sendMessage(callerId, userDetails, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error(`Error fetching user info for ID ${targetUserId}:`, error.message);
 
-        if (error.response && error.response.body && error.response.body.description) {
-            const apiError = error.response.body.description;
-            if (apiError.includes("chat not found") || apiError.includes("user not found")) {
-                await bot.sendMessage(callerId, `User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
-            } else if (apiError.includes("bot was blocked by the user")) {
-                await bot.sendMessage(callerId, `The bot is blocked by user \`${targetUserId}\`. Cannot retrieve info.`);
-            } else {
-                await bot.sendMessage(callerId, `An unexpected error occurred while fetching info for user \`${targetUserId}\`: ${apiError}`);
-            }
+        if (error.response?.body?.description.includes("chat not found")) {
+            await bot.sendMessage(callerId, `User with ID \`${targetUserId}\` not found or has not interacted with the bot.`);
         } else {
-            console.error(`Full unexpected error object for ID ${targetUserId}:`, JSON.stringify(error, null, 2));
-            await bot.sendMessage(callerId, `An unexpected error occurred while fetching info for user \`${targetUserId}\`. Please check server logs for details.`);
+            await bot.sendMessage(callerId, `An unexpected error occurred while fetching info for user \`${targetUserId}\`.`);
         }
     }
 });
+
 
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
@@ -2955,21 +3040,23 @@ ${keyDetails}
 });
 
 
-// Command: /users (Admin only)
+// In bot.js, with your other commands
+
 bot.onText(/^\/users$/, async (msg) => {
     const cid = msg.chat.id.toString();
     if (cid !== ADMIN_ID) return;
-    await dbServices.updateUserActivity(cid);
     
-    // Call the helper function to show the first page
-    await sendUserListPage(cid, 1);
+    await bot.sendMessage(cid, "Please select which user group you'd like to view:", {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: 'Registered Users (Have Bots)', callback_data: 'users_registered:1' },
+                    { text: 'Unregistered Users (No Bots)', callback_data: 'users_unregistered:1' }
+                ]
+            ]
+        }
+    });
 });
-
-// Helper for the /users command's pagination callback
-async function handleUsersPage(query) {
-    const pageToGo = parseInt(query.data.split(':')[1], 10);
-    await sendUserListPage(query.message.chat.id, pageToGo, query.message.message_id);
-}
 
 
 
@@ -5960,6 +6047,56 @@ if (action === 'verify_join_after_miniapp') {
     return;
 }
 
+  // In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'confirm_deluser') {
+    const targetUserId = payload;
+    
+    await bot.editMessageText(`Deleting user ${targetUserId}...`, {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Delete from all relevant tables
+        await client.query('DELETE FROM user_bots WHERE user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM user_deployments WHERE user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM user_activity WHERE user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM user_referrals WHERE referred_user_id = $1 OR inviter_user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM email_verification WHERE user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM completed_payments WHERE user_id = $1', [targetUserId]);
+        await client.query('DELETE FROM banned_users WHERE user_id = $1', [targetUserId]);
+        await client.query('COMMIT');
+        
+        await bot.editMessageText(`User \`${targetUserId}\` and all their associated data have been permanently deleted.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Error deleting user:", e);
+        await bot.editMessageText(`❌ Failed to delete user ${targetUserId}. Check logs.`, {
+            chat_id: cid,
+            message_id: q.message.message_id
+        });
+    } finally {
+        client.release();
+    }
+    return;
+}
+
+if (action === 'cancel_deluser') {
+    await bot.editMessageText('User deletion cancelled.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
+
   // Add this inside bot.on('callback_query', async q => { ... })
 
   if (action === 'verify_join_temp_num') {
@@ -6020,6 +6157,19 @@ if (action === 'verify_join_after_miniapp') {
     return;
 }
 
+// In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'users_registered') {
+    const page = parseInt(payload, 10);
+    await sendRegisteredUserList(cid, page, q.message.message_id);
+    return;
+}
+
+if (action === 'users_unregistered') {
+    const page = parseInt(payload, 10);
+    await sendUnregisteredUserList(cid, page, q.message.message_id);
+    return;
+}
 
 // Add this code block with your other "if (action === ...)" handlers
 
