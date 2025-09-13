@@ -526,44 +526,14 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
-// In bot.js, with your other helper functions
-
-async function sendRegisteredUserList(chatId, page = 1, messageId = null) {
-    try {
-        const result = await pool.query('SELECT DISTINCT user_id FROM user_bots');
-        const allUserIds = result.rows.map(row => row.user_id);
-        
-        if (allUserIds.length === 0) {
-            return bot.editMessageText("No registered users (with bots) found.", { chat_id: chatId, message_id: messageId });
-        }
-        
-        const totalPages = Math.ceil(allUserIds.length / USERS_PER_PAGE);
-        page = Math.max(1, Math.min(page, totalPages));
-        const offset = (page - 1) * USERS_PER_PAGE;
-        const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
-
-        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
-        for (const userId of userIdsOnPage) {
-            responseMessage += `• \`${userId}\`\n`;
-        }
-        responseMessage += `\n_Use /info <ID> for full details._`;
-
-        const navRow = [];
-        if (page > 1) navRow.push({ text: '« Prev', callback_data: `users_registered:${page - 1}` });
-        if (page < totalPages) navRow.push({ text: 'Next »', callback_data: `users_registered:${page + 1}` });
-
-        await bot.editMessageText(responseMessage, {
-            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [navRow] }
-        });
-    } catch (e) { console.error("Error sending registered user list:", e); }
-}
+// In bot.js
 
 async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
     try {
         const result = await pool.query(`
             SELECT user_id FROM user_activity 
             WHERE user_id NOT IN (SELECT DISTINCT user_id FROM user_bots)
+            ORDER BY user_id
         `);
         const allUserIds = result.rows.map(row => row.user_id);
 
@@ -577,10 +547,17 @@ async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
         const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
 
         let responseMessage = `*Unregistered Users - Page ${page}/${totalPages}*\n\n`;
+        // ✅ FIX: Loop now fetches user names
         for (const userId of userIdsOnPage) {
-            responseMessage += `• \`${userId}\`\n`;
+            try {
+                const user = await bot.getChat(userId);
+                const fullName = escapeMarkdown(`${user.first_name || ''} ${user.last_name || ''}`.trim());
+                responseMessage += `*Name:* ${fullName || 'N/A'}\n*ID:* \`${userId}\`\n\n`;
+            } catch (e) {
+                responseMessage += `*Name:* _User not accessible_\n*ID:* \`${userId}\`\n\n`;
+            }
         }
-        responseMessage += `\n_These users have started the bot but not deployed._`;
+        responseMessage += `_These users have started the bot but not deployed._`;
 
         const navRow = [];
         if (page > 1) navRow.push({ text: '« Prev', callback_data: `users_unregistered:${page - 1}` });
@@ -592,6 +569,48 @@ async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
         });
     } catch (e) { console.error("Error sending unregistered user list:", e); }
 }
+
+
+// In bot.js
+
+async function sendRegisteredUserList(chatId, page = 1, messageId = null) {
+    try {
+        const result = await pool.query('SELECT DISTINCT user_id FROM user_bots ORDER BY user_id');
+        const allUserIds = result.rows.map(row => row.user_id);
+        
+        if (allUserIds.length === 0) {
+            return bot.editMessageText("No registered users (with bots) found.", { chat_id: chatId, message_id: messageId });
+        }
+        
+        const totalPages = Math.ceil(allUserIds.length / USERS_PER_PAGE);
+        page = Math.max(1, Math.min(page, totalPages));
+        const offset = (page - 1) * USERS_PER_PAGE;
+        const userIdsOnPage = allUserIds.slice(offset, offset + USERS_PER_PAGE);
+
+        let responseMessage = `*Registered Users - Page ${page}/${totalPages}*\n\n`;
+        // ✅ FIX: Loop now fetches user names
+        for (const userId of userIdsOnPage) {
+            try {
+                const user = await bot.getChat(userId);
+                const fullName = escapeMarkdown(`${user.first_name || ''} ${user.last_name || ''}`.trim());
+                responseMessage += `*Name:* ${fullName || 'N/A'}\n*ID:* \`${userId}\`\n\n`;
+            } catch (e) {
+                responseMessage += `*Name:* _User not accessible_\n*ID:* \`${userId}\`\n\n`;
+            }
+        }
+        responseMessage += `_Use /info <ID> for full details._`;
+
+        const navRow = [];
+        if (page > 1) navRow.push({ text: '« Prev', callback_data: `users_registered:${page - 1}` });
+        if (page < totalPages) navRow.push({ text: 'Next »', callback_data: `users_registered:${page + 1}` });
+
+        await bot.editMessageText(responseMessage, {
+            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [navRow] }
+        });
+    } catch (e) { console.error("Error sending registered user list:", e); }
+}
+
 
 
 // REDUCED ANIMATION FREQUENCY
