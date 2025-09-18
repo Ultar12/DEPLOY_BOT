@@ -2383,7 +2383,7 @@ To get started, please follow these simple steps:
 We are here to assist you every step of the way!
 `;
 
-        await bot.sendPhoto(cid, welcomeImageUrl, {
+        const sentMessage = await bot.sendPhoto(cid, welcomeImageUrl, {
             caption: welcomeCaption,
             parse_mode: 'Markdown',
             reply_markup: {
@@ -2391,8 +2391,21 @@ We are here to assist you every step of the way!
                 resize_keyboard: true
             }
         });
+        
+        // --- Reaction Logic ---
+        if (sentMessage) {
+            try {
+                await bot.setMessageReaction(cid, sentMessage.message_id, {
+                    reaction: [{ type: 'emoji', emoji: '🎉' }]
+                });
+                console.log(`Successfully reacted to message ${sentMessage.message_id} with a 🎉.`);
+            } catch (error) {
+                console.error(`Failed to set reaction on message ${sentMessage.message_id}:`, error.message);
+            }
+        }
     }
 });
+
 
 
 
