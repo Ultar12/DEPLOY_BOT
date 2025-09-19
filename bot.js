@@ -2108,7 +2108,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
             if (checkProcessed.rows.length > 0) {
                 return res.status(200).end();
             }
-
+            
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
                 [reference, user_id, customer.email, amount]
@@ -2117,10 +2117,10 @@ app.post('/flutterwave/webhook', async (req, res) => {
             const userChat = await bot.getChat(user_id);
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
+            // Check if it's a Bot Renewal first
             if (meta.product === 'Bot Renewal') {
                 const { appName, days } = meta;
                 
-                // ✅ FIX: This robust query handles both existing and null expiration dates.
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -2135,7 +2135,8 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
-            } else { // New Deployment Logic...
+            // Check if it's a New Deployment
+            } else if (meta.product === 'New Deployment') { 
                 const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
                 if (pendingPayment.rows.length > 0) {
                     const { bot_type, app_name, session_id } = pendingPayment.rows[0];
@@ -2153,6 +2154,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
+
 
 
 
