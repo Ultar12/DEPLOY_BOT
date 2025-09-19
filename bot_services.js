@@ -1586,9 +1586,22 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
       // --- END OF CORRECTED RESTORE LOGIC ---
 
-      await addUserBot(chatId, name, vars.SESSION_ID, botType);
+            await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-            await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, null, vars.email);
+      
+      let expirationDate = null;
+      // ✅ Use a paid duration from 'vars.DAYS' if available. Otherwise, check for a free trial.
+      if (vars.DAYS) {
+        expirationDate = new Date();
+        expirationDate.setDate(expirationDate.getDate() + parseInt(vars.DAYS, 10));
+      } else if (isFreeTrial) {
+        expirationDate = new Date();
+        expirationDate.setDate(expirationDate.getDate() + 35); // Default to 35 days for free trials
+      }
+      
+      // ✅ Pass the calculated expirationDate to the function
+      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDate, vars.email);
+
 
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
