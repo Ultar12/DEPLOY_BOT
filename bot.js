@@ -2812,7 +2812,7 @@ bot.onText(/^\/buytemp$/, async msg => {
     });
 });
 
-bot.onText(/^\/sr (\d+)\s+(\d+)$/, (msg, match) => {
+bot.onText(/^\/aa (\d+)\s+(\d+)$/, (msg, match) => {
     const chatId = msg.chat.id;
     const phoneNumber = match[1];
     const hours = parseInt(match[2], 10);
