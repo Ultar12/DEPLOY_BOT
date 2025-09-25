@@ -2812,6 +2812,30 @@ bot.onText(/^\/buytemp$/, async msg => {
     });
 });
 
+bot.onText(/^\/sr (\d+)\s+(\d+)$/, (msg, match) => {
+    const chatId = msg.chat.id;
+    const phoneNumber = match[1];
+    const hours = parseInt(match[2], 10);
+
+    // Check if the hours value is a valid number
+    if (isNaN(hours) || hours <= 0) {
+        bot.sendMessage(chatId, '❌ Invalid time provided. Please use a positive number for hours.');
+        return;
+    }
+
+    // Convert hours to milliseconds for setTimeout
+    const delayInMilliseconds = hours * 60 * 60 * 1000;
+
+    // Send an immediate confirmation message to the user
+    bot.sendMessage(chatId, `✅ Reminder set for ${phoneNumber} in ${hours} hour(s). I will remind you when the time is up!`);
+
+    // Schedule the reminder message
+    setTimeout(() => {
+        bot.sendMessage(chatId, `🔔 REMINDER: It has been ${hours} hour(s) since you requested a reminder for ${phoneNumber}.`);
+    }, delayInMilliseconds);
+
+    console.log(`Reminder set: Phone number ${phoneNumber}, in ${hours} hour(s) for chat ${chatId}`);
+});
 
 // ... other code ...
 
