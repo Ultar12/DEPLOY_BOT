@@ -1,4 +1,4 @@
-const nodemailer = require('nodemailer');
+Const nodemailer = require('nodemailer');
 
 const GMAIL_USER = process.env.GMAIL_USER;
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
@@ -7,13 +7,17 @@ if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
   console.warn('GMAIL_USER or GMAIL_APP_PASSWORD is not set. Email functionality will be disabled.');
 }
 
+// --- UPDATED TRANSPORTER CONFIGURATION (Explicit SMTP for GMAIL) ---
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com', // Explicitly define host
+  port: 465,             // Standard secure port for SMTP
+  secure: true,          // Use SSL/TLS
   auth: {
     user: GMAIL_USER,
-    pass: GMAIL_APP_PASSWORD,
+    pass: GMAIL_APP_PASSWORD, // Must be the 16-character App Password
   },
 });
+// ------------------------------------------------------------------
 
 async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !toEmail) {
