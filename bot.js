@@ -2879,6 +2879,77 @@ You can now use /stats or /bapp to see the updated count of all your bots.
 });
 
 
+// New /read command (to be used in reply to a .txt file)
+bot.onText(/^\/read$/, async msg => {
+    const cid = msg.chat.id.toString();
+    await dbServices.updateUserActivity(cid); // Keep your activity update
+
+    const replyMsg = msg.reply_to_message;
+    
+    // 1. 🔍 Check if the command is a reply and if the reply contains a document
+    if (!replyMsg || !replyMsg.document) {
+        return bot.sendMessage(cid, "❌ Please use the **`/read`** command by **replying** to the `.txt` file you want to process.", { parse_mode: 'Markdown' });
+    }
+
+    const document = replyMsg.document;
+    const fileName = document.file_name;
+    const fileSizeMB = (document.file_size / 1024 / 1024).toFixed(2);
+    
+    // 2. 📁 Validate the file extension (must be .txt)
+    if (!fileName || !fileName.toLowerCase().endsWith('.txt')) {
+        return bot.sendMessage(cid, `⚠️ I can only process **.txt** files. The file you replied to is named: \`${fileName}\`.`, { parse_mode: 'Markdown' });
+    }
+
+    let messageText;
+
+    try {
+        // 3. ⬇️ Download the file content
+        // This is necessary because the file is on Telegram's servers.
+        const fileId = document.file_id;
+        
+        // This downloads the file to a temporary buffer (in memory)
+        const fileBuffer = await bot.downloadFile(fileId, './'); 
+        
+        // Convert the buffer to a string
+        const fileContent = fs.readFileSync(fileBuffer).toString('utf8');
+
+        // 4. ✨ Process the content: Parse, Filter, and Format
+        const allNumbers = fileContent
+            .split(/[\s,]+/) // Split by one or more spaces or commas
+            .map(s => s.trim())
+            .filter(s => s.length > 0)
+            .map(s => parseInt(s, 10))
+            .filter(n => !isNaN(n)); // Filter out any non-numeric results
+
+        // Exclude the number 98
+        const filteredNumbers = allNumbers.filter(n => n !== 98);
+
+        // 5. 📝 Format the output
+        if (filteredNumbers.length > 0) {
+            const originalCount = allNumbers.length;
+            const finalCount = filteredNumbers.length;
+            const numbersList = filteredNumbers.join(', ');
+
+            messageText = `✅ **Read Numbers Success!**\n\n**File:** \`${fileName}\` (${fileSizeMB} MB)\n**Total Numbers Found:** ${originalCount}\n**Numbers (Excluding 98):** ${finalCount}\n\nList: \`${numbersList}\``;
+        } else if (allNumbers.length > 0) {
+            messageText = `⚠️ All ${allNumbers.length} numbers found in \`${fileName}\` were the number \`98\`. No remaining numbers to list.`;
+        } else {
+            messageText = `❌ Could not find any numbers in the file \`${fileName}\`. Please check the file content.`;
+        }
+        
+        // 6. 🗑️ Clean up the temporary file (important!)
+        fs.unlinkSync(fileBuffer);
+
+    } catch (error) {
+        console.error(`[ReadNumbers] Error processing file ${fileName}:`, error.message);
+        messageText = `🚨 **Error reading numbers!**\n\nAn unexpected error occurred while downloading or processing the file. Check the bot's console log for details: \`${error.message}\``;
+    }
+
+    // 7. 📤 Send the result back to the user
+    await bot.sendMessage(cid, messageText, { parse_mode: 'Markdown' });
+});
+
+
 // NEW: /askadmin command for users to initiate support
 bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
