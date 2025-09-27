@@ -10,7 +10,7 @@ if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
 // --- UPDATED TRANSPORTER CONFIGURATION (Explicit SMTP for GMAIL) ---
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com', // Explicitly define host
-  port: 465,             // Standard secure port for SMTP
+  port: 2525,             // Standard secure port for SMTP
   secure: true,          // Use SSL/TLS
   auth: {
     user: GMAIL_USER,
