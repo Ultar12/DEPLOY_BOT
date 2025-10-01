@@ -12,7 +12,7 @@ function init(params) {
 
     // Start all scheduled tasks
     setInterval(monitorAllAppsForR14, 30 * 60 * 1000);      // Every 3 minutes
-    setInterval(checkLoggedOutBots, 5 * 60 * 1000);        // Every 5 minutes
+    setInterval(checkLoggedOutBots, 1400 * 60 * 1000);        // Every 5 minutes
     setInterval(checkExpiredBots, 10 * 60 * 1000);         // Every 10 minutes
 }
 
