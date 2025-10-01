@@ -8673,7 +8673,7 @@ async function checkAndPruneLoggedOutBots() {
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [fiveDaysAgo]
+            [sevenDaysAgo]
         );
 
         const botsToDelete = result.rows;
