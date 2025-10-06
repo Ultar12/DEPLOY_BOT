@@ -8773,7 +8773,7 @@ async function pruneInactiveUsers() {
 }
 
 // Run the check every hour
-setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
+setInterval(checkAndPruneLoggedOutBots, 24 * 60 * 60 * 1000);
 
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
