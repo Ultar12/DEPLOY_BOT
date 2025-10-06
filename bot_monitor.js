@@ -11,7 +11,7 @@ function init(params) {
     console.log('--- bot_monitor.js initialized and active! ---');
 
     // Start all scheduled tasks
-    setInterval(monitorAllAppsForR14, 30 * 60 * 1000);      // Every 3 minutes
+    setInterval(monitorAllAppsForR14, 1440 * 60 * 1000);      // Every 3 minutes
     setInterval(checkLoggedOutBots, 1400 * 60 * 1000);        // Every 5 minutes
     setInterval(checkExpiredBots, 10 * 60 * 1000);         // Every 10 minutes
 }
