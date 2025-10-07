@@ -4166,8 +4166,6 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
 // In bot.js, inside the bot.on('message', async msg => { ... }) handler
 
-// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
-
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
@@ -4222,9 +4220,17 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
 
     } else {
-        // --- THIS IS THE "DEPLOY" BUTTON FLOW (NOW SKIPS VERIFICATION) ---
-        // The previous verification and email prompt have been removed.
-        
+        // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
+        const isVerified = await isUserVerified(cid);
+    
+        if (!isVerified) {
+            // **Step 1: User is NOT verified, so we start the registration process.**
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
+            return; // Stop and wait for their email
+        }
+    
+        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
@@ -4238,7 +4244,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
-
 
 
 
