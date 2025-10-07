@@ -1,39 +1,39 @@
-const nodemailer = require('nodemailer');
+const { MailerSend, EmailParams, Sender, Recipient } = require("mailersend");
 
-const GMAIL_USER = process.env.GMAIL_USER;
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+// ❌ Removed: const nodemailer = require('nodemailer');
+// ❌ Removed: const GMAIL_USER = process.env.GMAIL_USER;
+// ❌ Removed: const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
 
-if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-  console.warn('GMAIL_USER or GMAIL_APP_PASSWORD is not set. Email functionality will be disabled.');
+// --- NEW CONFIGURATION ---
+const MAILERSEND_API_KEY = process.env.MAILERSEND_API_KEY;
+const SENDER_ADDRESS = process.env.SENDER_EMAIL; // Must be a verified sender in MailerSend
+
+if (!MAILERSEND_API_KEY || !SENDER_ADDRESS) {
+  console.warn('MAILERSEND_API_KEY or SENDER_EMAIL is not set. Email functionality will be disabled.');
 }
 
-// --- UPDATED TRANSPORTER CONFIGURATION (Explicit SMTP for GMAIL) ---
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com', // Explicitly define host
-  port: 2525,             // Standard secure port for SMTP
-  secure: true,          // Use SSL/TLS
-  auth: {
-    user: GMAIL_USER,
-    pass: GMAIL_APP_PASSWORD, // Must be the 16-character App Password
-  },
+const mailersend = new MailerSend({
+  apiKey: MAILERSEND_API_KEY,
 });
-// ------------------------------------------------------------------
+
+// ❌ Removed: const transporter = nodemailer.createTransport({...});
+// -------------------------
 
 async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
-  if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !toEmail) {
+  if (!MAILERSEND_API_KEY || !SENDER_ADDRESS || !toEmail) {
     console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
-    return;
+    return false; // ✨ Improvement: Return false on check failure
   }
   
   const formattedBotType = botType.toUpperCase();
+  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
+  const recipients = [new Recipient(toEmail, userName)];
 
-  const mailOptions = {
-    from: `"ULTAR'S WBD" <${GMAIL_USER}>`,
-    to: toEmail,
-    subject: `Payment Confirmed: Your Bot Deployment`,
-    html: `
+  // The HTML content is updated to include the userName
+  const emailHtml = `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <h1 style="font-size: 24px; font-weight: bold; margin-top: 20px;">Ultar received your payment of</h1>
+        <p style="font-size: 18px; color: #fff; margin-bottom: 0;">Hey ${userName},</p>
+        <h1 style="font-size: 24px; font-weight: bold; margin-top: 5px;">Ultar received your payment of</h1>
         <h1 style="font-size: 40px; font-weight: bold; color: #69F0AE; margin: 10px 0;">NGN 1,500.00</h1>
         
         <div style="background-color: #121212; border-radius: 8px; padding: 15px; margin: 20px 0;">
@@ -68,29 +68,36 @@ async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, 
         
         <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
       </div>
-    `,
-  };
+    `;
+
+  const emailParams = new EmailParams()
+    .setFrom(sender)
+    .setTo(recipients)
+    .setSubject(`Payment Confirmed: Your Bot Deployment`)
+    .setHtml(emailHtml);
+
 
   try {
-    await transporter.sendMail(mailOptions);
+    await mailersend.email.send(emailParams);
     console.log(`Email successfully sent to ${toEmail}`);
+    return true; // ✨ Improvement: Return true on success
   } catch (error) {
     console.error(`Error sending email to ${toEmail}:`, error);
+    return false; // ✨ Improvement: Return false on error
   }
 }
 
 // --- VERIFICATION EMAIL UPDATED HERE ---
 async function sendVerificationEmail(toEmail, verificationCode) {
-  if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !toEmail) {
+  if (!MAILERSEND_API_KEY || !SENDER_ADDRESS || !toEmail) {
     console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
-    return;
+    return false;
   }
   
-  const mailOptions = {
-    from: `"ULTAR'S WBD" <${GMAIL_USER}>`,
-    to: toEmail,
-    subject: `Your Verification Code`,
-    html: `
+  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
+  const recipients = [new Recipient(toEmail)];
+
+  const emailHtml = `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
         <p style="font-size: 16px;">Please use the code below to complete your registration. This code is valid for 10 minutes.</p>
         
@@ -102,11 +109,17 @@ async function sendVerificationEmail(toEmail, verificationCode) {
         
         <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you did not request this code, you can safely ignore this email.</p>
       </div>
-    `,
-  };
+    `;
+
+  const emailParams = new EmailParams()
+    .setFrom(sender)
+    .setTo(recipients)
+    .setSubject(`Your Verification Code`)
+    .setHtml(emailHtml);
+
 
   try {
-    await transporter.sendMail(mailOptions);
+    await mailersend.email.send(emailParams);
     console.log(`Verification email successfully sent to ${toEmail}`);
     return true;
   } catch (error) {
@@ -118,16 +131,15 @@ async function sendVerificationEmail(toEmail, verificationCode) {
 // In email_service.js
 
 async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDeletion) {
-  if (!toEmail || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  if (!toEmail || !MAILERSEND_API_KEY || !SENDER_ADDRESS) {
     console.warn(`[Email] Skipping logged-out reminder. Email service not configured or recipient is missing.`);
-    return;
+    return false;
   }
   
-  const mailOptions = {
-    from: `"ULTAR'S WBD" <${GMAIL_USER}>`,
-    to: toEmail,
-    subject: `Action Required: Your Bot (${appName}) is Offline`,
-    html: `
+  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
+  const recipients = [new Recipient(toEmail)];
+
+  const emailHtml = `
       <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
         <h1 style="font-size: 24px; font-weight: bold; color: #ff3b30;">Your Bot (${appName}) is Offline</h1>
         
@@ -141,14 +153,22 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDel
         
         <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
       </div>
-    `,
-  };
+    `;
+
+  const emailParams = new EmailParams()
+    .setFrom(sender)
+    .setTo(recipients)
+    .setSubject(`Action Required: Your Bot (${appName}) is Offline`)
+    .setHtml(emailHtml);
+
 
   try {
-    await transporter.sendMail(mailOptions);
+    await mailersend.email.send(emailParams);
     console.log(`Sent logged-out reminder email to ${toEmail} for bot ${appName}`);
+    return true;
   } catch (error) {
     console.error(`Error sending logged-out reminder email to ${toEmail}:`, error);
+    return false;
   }
 }
 
