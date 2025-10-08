@@ -3479,7 +3479,7 @@ _The following apps were not found in the local database._
     }
 });
 
-// bot.js (Add this with your other command handlers)
+// bot.js (REPLACE the entire bot.onText(/^\/forward (\d+)$/, ...) function)
 
 bot.onText(/^\/forward (\d+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -3492,35 +3492,61 @@ bot.onText(/^\/forward (\d+)$/, async (msg, match) => {
     const repliedMsg = msg.reply_to_message;
     
     if (!repliedMsg) {
-        return bot.sendMessage(adminId, "Please use this command by **replying** to the message (text, photo, video, etc.) you want to forward.", { parse_mode: 'Markdown' });
+        return bot.sendMessage(adminId, "❌ Please use this command by **replying** to the message (text, photo, video, etc.) you want to forward.", { parse_mode: 'Markdown' });
     }
     
     // Check if the target user ID exists and is accessible
     try {
         await bot.getChat(targetUserId);
     } catch (e) {
-        return bot.sendMessage(adminId, `Cannot forward: User with ID \`${targetUserId}\` not found or has blocked the bot.`, { parse_mode: 'Markdown' });
+        return bot.sendMessage(adminId, `❌ Cannot forward: User with ID \`${targetUserId}\` not found or has blocked the bot.`, { parse_mode: 'Markdown' });
     }
 
     try {
-        // --- Core Fix: Using forwardMessage ---
-        // This single API call forwards nearly all message types (text, photo, video, sticker, etc.)
-        // including their captions and media.
-        const forwardedMessage = await bot.forwardMessage(
-            targetUserId, 
-            repliedMsg.chat.id, 
-            repliedMsg.message_id
-        );
-        
-        await bot.sendMessage(adminId, `Message successfully forwarded to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+        let sentMessage;
+        const captionText = repliedMsg.caption ? repliedMsg.caption : repliedMsg.text ? repliedMsg.text : null;
+        const baseOptions = { parse_mode: 'Markdown' };
+
+        // --- Core Fix: Manually determine message type and send content ---
+        if (repliedMsg.text) {
+            // 1. Text message
+            sentMessage = await bot.sendMessage(targetUserId, repliedMsg.text, baseOptions);
+        } else if (repliedMsg.photo) {
+            // 2. Photo message
+            const fileId = repliedMsg.photo[repliedMsg.photo.length - 1].file_id;
+            sentMessage = await bot.sendPhoto(targetUserId, fileId, { caption: captionText, ...baseOptions });
+        } else if (repliedMsg.video) {
+            // 3. Video message
+            const fileId = repliedMsg.video.file_id;
+            sentMessage = await bot.sendVideo(targetUserId, fileId, { caption: captionText, ...baseOptions });
+        } else if (repliedMsg.animation) {
+             // 4. GIF (Animation)
+            const fileId = repliedMsg.animation.file_id;
+            sentMessage = await bot.sendAnimation(targetUserId, fileId, { caption: captionText, ...baseOptions });
+        } else if (repliedMsg.sticker) {
+            // 5. Sticker
+            const fileId = repliedMsg.sticker.file_id;
+            sentMessage = await bot.sendSticker(targetUserId, fileId);
+        } else if (repliedMsg.document) {
+            // 6. Document/File
+            const fileId = repliedMsg.document.file_id;
+            sentMessage = await bot.sendDocument(targetUserId, fileId, { caption: captionText, ...baseOptions });
+        } else {
+            // Fallback for unsupported types
+            return bot.sendMessage(adminId, `⚠️ Message type (e.g., voice, video note) not supported for "un-forwarding".`, { parse_mode: 'Markdown' });
+        }
+      
+
+        await bot.sendMessage(adminId, `✅ Message successfully sent (without forwarding tag) to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
         
     } catch (error) {
         const escapedError = escapeMarkdown(error.message);
-        console.error(`Error forwarding message to user ${targetUserId}:`, escapedError);
+        console.error(`Error manually sending content to user ${targetUserId}:`, escapedError);
         
-        await bot.sendMessage(adminId, `Failed to forward message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(adminId, `❌ Failed to send content to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
     }
 });
+
 
 
 
@@ -6509,16 +6535,19 @@ if (action === 'users_unregistered') {
     return;
 }
 
-// Add this code block with your other "if (action === ...)" handlers
+// bot.js (Inside bot.on('callback_query', ...))
 
 if (action === 'free_trial_temp_num') {
     const userId = q.from.id.toString();
     const cid = q.message.chat.id.toString();
-
+    
+    // 🚨 FIX 1: Answer the callback query immediately to acknowledge the click.
+    await bot.answerCallbackQuery(q.id, { text: "Starting security check..." }); // Added acknowledgement
+    
     // Check if the APP_URL is configured, which is essential for the Mini App
     if (!process.env.APP_URL) {
         console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
-        await bot.answerCallbackQuery(q.id, { text: "Error: The verification service is currently unavailable.", show_alert: true });
+        await bot.sendMessage(cid, "Error: The verification service is currently unavailable.", { show_alert: true });
         return;
     }
     
@@ -6526,7 +6555,7 @@ if (action === 'free_trial_temp_num') {
         // Check if the user has already claimed a trial
         const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
         if (trialUserCheck.rows.length > 0) {
-            await bot.answerCallbackQuery(q.id, { text: "You have already claimed your one-time free trial number.", show_alert: true });
+            await bot.editMessageText("You have already claimed your one-time free trial number.", { chat_id: cid, message_id: q.message.message_id });
             return;
         }
 
@@ -6548,7 +6577,8 @@ if (action === 'free_trial_temp_num') {
 
     } catch (error) {
         console.error("Error during free trial eligibility check:", error);
-        await bot.answerCallbackQuery(q.id, { text: "An error occurred. Please try again.", show_alert: true });
+        // 🚨 FIX 2: Send the error message directly instead of using answerCallbackQuery, which was already sent.
+        await bot.sendMessage(cid, "An error occurred during eligibility check. Please try again.");
     }
     return;
 }
