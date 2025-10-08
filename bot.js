@@ -2357,30 +2357,30 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
             }
         });
     } else {
-        const { first_name: userFirstName } = msg.from;
-        let personalizedGreeting = `Welcome back, ${escapeMarkdown(userFirstName || 'User')} to our Bot Deployment Service!`;
+        const userDisplayName = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'User');
+        
+        const welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!`;
 
-        const welcomeImageUrl = 'https://i.ibb.co/23tpQKrP/temp.jpg';
-        const welcomeCaption = `
-${personalizedGreeting}
+        const welcomeVideoUrl = 'https://files.catbox.moe/9gn267.mp4';
+        
+        // 🚨 FIX: Inline keyboard with both buttons in the SAME row array [ [Button 1, Button 2] ]
+        const inlineKeyboard = {
+            inline_keyboard: [
+                [
+                    { text: 'Get Session ID', callback_data: 'get_session_start_flow' },
+                    { text: 'Deploy Your Bot', callback_data: 'deploy_first_bot' }
+                ]
+            ]
+        };
 
-To get started, please follow these simple steps:
-
-1.  *Get Your Session:*
-    Tap 'Get Session ID' to get your Bot Session ID.
-
-2.  *Deploy Your Bot:*
-    Once you have your session code, use the 'Deploy' button to launch your personalized bot.
-
-We are here to assist you every step of the way!
-`;
-
-        const sentMessage = await bot.sendPhoto(cid, welcomeImageUrl, {
+        // We use bot.sendVideo, passing the custom keyboard and the inline keyboard.
+        const sentMessage = await bot.sendVideo(cid, welcomeVideoUrl, {
             caption: welcomeCaption,
             parse_mode: 'Markdown',
             reply_markup: {
                 keyboard: buildKeyboard(false),
-                resize_keyboard: true
+                resize_keyboard: true,
+                ...inlineKeyboard
             }
         });
         
@@ -2397,6 +2397,7 @@ We are here to assist you every step of the way!
         }
     }
 });
+
 
 
 
