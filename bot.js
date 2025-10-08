@@ -2091,6 +2091,8 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
   
+// bot.js (Replace the entire app.post('/flutterwave/webhook', ...) block)
+
 app.post('/flutterwave/webhook', async (req, res) => {
     const signature = req.headers['verif-hash'];
     if (!signature || (signature !== process.env.FLUTTERWAVE_SECRET_HASH)) {
@@ -2103,7 +2105,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         const { tx_ref: reference, amount, customer, meta } = payload.data;
         const user_id = meta.user_id;
-        const days = meta.days; // ✅ New line: Retrieve the 'days' from metadata
+        const days = meta.days; 
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
@@ -2119,36 +2121,43 @@ app.post('/flutterwave/webhook', async (req, res) => {
             const userChat = await bot.getChat(user_id);
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
+            // --- START OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
             if (meta.product === 'Bot Renewal') {
-                const { appName, days } = meta;
+                const { appName } = meta;
                 
+                // 🚨 FIX: Add days to the expiration date. Use CASE WHEN to handle past expiration.
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
-                        CASE
-                            WHEN expiration_date > NOW() THEN expiration_date + ($1 * INTERVAL '1 day')
-                            ELSE NOW() + ($1 * INTERVAL '1 day')
+                        CASE 
+                           WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
+                           ELSE expiration_date + ($1 * INTERVAL '1 day')
                         END
                      WHERE user_id = $2 AND app_name = $3`,
                     [days, user_id, appName]
                 );
 
-                await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(user_id, `Payment confirmed! 🎉\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
-            } else {
+            } else { // This handles new deployments
                 const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-                if (pendingPayment.rows.length > 0) {
-                    const { bot_type, app_name, session_id } = pendingPayment.rows[0];
-                    await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
-                    // ✅ Updated deployVars to include the 'days' value
-                    const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, AUTO_STATUS_VIEW: 'false', DAYS: days };
-                    dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
-                    await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                
+                if (pendingPayment.rows.length === 0) {
+                    console.warn(`Pending deployment payment not found for reference: ${reference}.`);
+                    return res.status(200).end();
                 }
+
+                const { bot_type, app_name, session_id } = pendingPayment.rows[0];
+                await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
+                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, AUTO_STATUS_VIEW: 'false', DAYS: days };
+                dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+                
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             }
+            // --- END OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
             
-            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
         }
@@ -2158,8 +2167,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
 
 
 
+
     // At the top of your file, ensure 'crypto' is required
 const crypto = require('crypto');
+
+// bot.js (Replace the entire app.post('/paystack/webhook', ...) block)
 
 app.post('/paystack/webhook', express.json(), async (req, res) => {
     // 1. Verify the Paystack signature to ensure the request is legitimate
@@ -2177,75 +2189,75 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
     if (event.event === 'charge.success') {
         const { reference, metadata, amount, currency, customer } = event.data;
         const userId = metadata.user_id; // Get the user ID from the metadata
-        const days = metadata.days; // ✅ New line: Retrieve the 'days' from metadata
+        const days = metadata.days; // Retrieve the 'days' from metadata
 
         try {
             // Check if this payment has already been processed to prevent duplicates
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
             if (checkProcessed.rows.length > 0) {
                 console.log(`Webhook for reference ${reference} already processed. Ignoring.`);
-                return res.sendStatus(200); // Acknowledge the webhook without processing again
+                return res.sendStatus(200);
             }
 
-            // 3. Use metadata to determine the payment type and route the logic
-            if (metadata.product === 'temporary_number') {
-                // ... (your existing temporary_number logic) ...
-            } else {
-                const pendingPayment = await pool.query('SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-                if (pendingPayment.rows.length === 0) {
-                    console.warn(`Pending payment for bot deploy not found for reference: ${reference}.`);
-                    return res.sendStatus(200);
-                }
-                const { user_id, bot_type, app_name, session_id } = pendingPayment.rows[0];
+            // 3. Process the payment and insert into completed_payments
+            await pool.query(
+                `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+                [reference, userId, customer.email, amount, currency, event.data.paid_at]
+            );
 
+            const userChat = await bot.getChat(userId);
+            const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+            
+            // --- START OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
+            if (metadata.product === 'Bot Renewal') {
+                const { appName } = metadata;
+
+                // 🚨 FIX: Add days to the expiration date. Use CASE WHEN to handle past expiration.
                 await pool.query(
-                    `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-                    [reference, user_id, customer.email, amount, currency, event.data.paid_at]
+                    `UPDATE user_deployments 
+                     SET expiration_date = 
+                        CASE 
+                           WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
+                           ELSE expiration_date + ($1 * INTERVAL '1 day')
+                        END
+                     WHERE user_id = $2 AND app_name = $3`,
+                    [days, userId, appName]
                 );
 
-                const userChat = await bot.getChat(user_id);
-                const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
+                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(appName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Paystack)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
 
-                if (metadata.product === 'Bot Renewal') {
-                    const { appName, days } = metadata;
-
-                    await pool.query(
-                        `UPDATE user_deployments 
-                         SET expiration_date = expiration_date + ($1 * INTERVAL '1 day') 
-                         WHERE user_id = $2 AND app_name = $3`,
-                        [days, user_id, appName]
-                    );
-
-                    await bot.sendMessage(user_id, `Payment confirmed!\n\nYour bot *${escapeMarkdown(appName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
-                    await bot.sendMessage(ADMIN_ID, `*Bot Renewed!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
-
-                } else {
-                    const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-                    if (pendingPayment.rows.length === 0) {
-                         console.warn(`Pending payment not found for reference: ${reference}.`);
-                         return res.sendStatus(200);
-                    }
-                    const { bot_type, app_name, session_id } = pendingPayment.rows[0];
-
-                    await bot.sendMessage(user_id, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
-                    // ✅ Updated deployVars to include the 'days' value
-                    const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days };
-                    dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
-                    await bot.sendMessage(ADMIN_ID, `*New App Deployed (Paid)*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
+            } else if (metadata.product !== 'temporary_number') { // This handles new deployments
+                // This logic still relies on pending_payments, which is correct for *new* deploys.
+                const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
+                
+                if (pendingPayment.rows.length === 0) {
+                     console.warn(`Pending deployment payment not found for reference: ${reference}.`);
+                     // We already logged the payment, so just return OK.
+                     return res.sendStatus(200);
                 }
+                const { bot_type, app_name, session_id } = pendingPayment.rows[0];
+
+                await bot.sendMessage(userId, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
+                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days };
+                dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
+                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Paid)*\n\n*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
 
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
-                console.log(`Successfully processed bot deployment payment for reference: ${reference}`);
             }
+            // --- END OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
+            
+            console.log(`Successfully processed payment for reference: ${reference}`);
 
         } catch (dbError) {
             console.error(`Webhook DB Error for reference ${reference}:`, dbError);
             await bot.sendMessage(ADMIN_ID, `⚠️ CRITICAL: Webhook processing failed for reference ${reference}. Manual intervention required.`);
-            return res.sendStatus(500); // Internal Server Error
+            return res.sendStatus(500);
         }
     }
     res.sendStatus(200);
 });
+
 
 
 
