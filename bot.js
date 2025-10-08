@@ -8306,7 +8306,7 @@ if (action === 'change_session') {
         ? RAGANORK_SESSION_PREFIX // Assuming this constant is defined
         : LEVANTER_SESSION_PREFIX; // Assuming this constant is defined
 
-    const sessionPrompt = `Please enter the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
+    const sessionPrompt = `Please send the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
     
     userStates[cid] = {
         step: 'SETVAR_ENTER_VALUE',
