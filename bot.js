@@ -863,38 +863,52 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
 
 
 
+// bot.js (Replace existing initiateFlutterwavePayment function)
+
 /**
  * Creates a Flutterwave payment link and returns the URL.
  */
 async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, metadata) {
-  // ✅ FIX: The unverified user check is also added here for consistency.
-    const isVerified = await isUserVerified(chatId);
-    if (!email && !isVerified) {
-         userStates[chatId] = { 
-            step: 'AWAITING_VERIFICATION_BEFORE_ACTION', 
-            data: { action: 'renew', appName: metadata.appName } 
+    const isRenewal = metadata.product === 'Bot Renewal'; 
+    const userEmail = await getUserEmail(chatId);
+    
+    // --- START OF MODIFIED LOGIC: ASK FOR EMAIL IF MISSING, AUTO-REGISTER ---
+    if (!userEmail) {
+        // Save the *entire* payment details object to the state to resume later
+        userStates[chatId] = { 
+            step: 'AWAITING_EMAIL_FOR_AUTO_REG', 
+            data: { 
+                // Store all metadata for resumption, plus the reference and provider
+                ...metadata, 
+                priceNgn: priceNgn, 
+                reference: reference, // <-- CRUCIAL: Store the Flutterwave reference
+                provider: 'flutterwave' // <-- CRUCIAL: Flag the payment provider
+            } 
         };
-        // Since we don't have a messageId here, we send a new message.
+        
+        // Send a new message asking for email
         await bot.sendMessage(
             chatId,
-            "To proceed, you first need to verify your email address.", {
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: 'Start Verification', callback_data: 'start_verification' }
-                    ]]
-                }
-            }
+            "Please enter your **e**mail address. This will be automatically **s**aved for your account and used for this transaction.",
+            { parse_mode: 'Markdown' }
         );
-        return null; // Return null to indicate failure
-    }  
-  try {
+        
+        // Return null to stop the current payment flow and wait for user input
+        return null; 
+    }
+    // --- END OF MODIFIED LOGIC ---
+
+    const finalEmail = userEmail; // Guaranteed to be non-null here
+
+    // ... (rest of the successful payment code remains the same)
+    try {
         const response = await axios.post('https://api.flutterwave.com/v3/payments', {
             tx_ref: reference,
             amount: priceNgn,
             currency: "NGN",
             redirect_url: `https://t.me/${botUsername}`,
             customer: {
-                email: email,
+                email: finalEmail,
                 name: `User ${chatId}`
             },
             meta: metadata,
@@ -4053,29 +4067,60 @@ if (st && st.step === 'AWAITING_EMAIL_FOR_AUTO_REG') {
             // 2. Resume the payment process using the newly stored email
             const paymentDetails = st.data;
             const isRenewal = paymentDetails.isRenewal;
+            const provider = paymentDetails.provider || 'paystack'; // Get provider, default to paystack
+            
+            // Determine product for metadata (needed for Flutterwave resumption)
+            const product = isRenewal ? 'Bot Renewal' : `Deployment Key - ${paymentDetails.days} Days`;
+            
+            // Define metadata for the current transaction (needed for Flutterwave resumption)
+            const resumeMetadata = {
+                user_id: cid, 
+                product: product,
+                days: paymentDetails.days,
+                appName: paymentDetails.appName,
+                ...(isRenewal ? {} : { price: paymentDetails.priceNgn, botType: paymentDetails.botType }) 
+            };
+
 
             // This is the message we want to edit/send the payment link to. 
             // If the messageId exists from the Paystack flow, use it to edit.
-            // Otherwise, send a new message.
+            // Otherwise, use the new message ID.
             const messageToEdit = paymentDetails.messageId 
                 ? await bot.editMessageText('Email registered! Resuming payment...', { chat_id: cid, message_id: paymentDetails.messageId })
                 : await bot.sendMessage(cid, `Email \`${email}\` registered and saved! Continuing payment...`, {parse_mode: 'Markdown'});
             
             const messageIdToUse = messageToEdit.message_id || msg.message_id;
 
+            // 🚨 FIX: Payment Resumption Logic
+            if (provider === 'flutterwave') {
+                // Flutterwave Resumption
+                const paymentUrl = await initiateFlutterwavePayment(
+                    cid, 
+                    email, // Use the newly saved email
+                    paymentDetails.priceNgn, 
+                    paymentDetails.reference, // Use the reference saved in the state
+                    resumeMetadata
+                );
+                
+                if (paymentUrl) {
+                    await bot.editMessageText(
+                        `Click the button below to complete your payment with Flutterwave.`, {
+                            chat_id: cid,
+                            message_id: messageIdToUse,
+                            reply_markup: {
+                                inline_keyboard: [[{ text: 'Pay Now', url: paymentUrl }]]
+                            }
+                        }
+                    );
+                } else {
+                     await bot.editMessageText('Sorry, an error occurred while creating the Flutterwave payment link.', { chat_id: cid, message_id: messageIdToUse });
+                }
 
-            if (isRenewal) {
-                // Renewal flow
-                await initiatePaystackPayment(cid, messageIdToUse, {
-                    isRenewal: true, 
-                    appName: paymentDetails.appName, 
-                    days: paymentDetails.days, 
-                    priceNgn: paymentDetails.priceNgn
-                });
             } else {
-                // New deployment flow
+                // Paystack Resumption (Original Logic)
                 await initiatePaystackPayment(cid, messageIdToUse, {
-                    isRenewal: false, 
+                    isRenewal: isRenewal, 
+                    appName: paymentDetails.appName, 
                     days: paymentDetails.days, 
                     priceNgn: paymentDetails.priceNgn,
                     botType: paymentDetails.botType,
@@ -4103,6 +4148,7 @@ if (st && st.step === 'AWAITING_EMAIL_FOR_AUTO_REG') {
     }
     return;
 }
+
 
 // ... existing code ...
 
