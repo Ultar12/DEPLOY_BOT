@@ -5651,8 +5651,8 @@ if (action === 'get_session_start_flow') {
         message_id: q.message.message_id,
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Levanter', callback_data: select_get_session_type:levanter }],
-                [{ text: 'Raganork MD', callback_data: select_get_session_type:raganork }]
+                [{ text: 'Levanter', callback_data: `select_get_session_type:levanter` }],
+                [{ text: 'Raganork MD', callback_data: `select_get_session_type:raganork` }]
             ]
         }
     });
