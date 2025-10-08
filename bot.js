@@ -6466,7 +6466,7 @@ if (action === 'levanter_wa_fallback') {
     return;
 }
 
-  // Add this inside bot.on('callback_query', ...)
+// Add this inside bot.on('callback_query', ...)
 if (action === 'verify_join_after_miniapp') {
     const userId = q.from.id.toString();
     const cid = q.message.chat.id.toString();
@@ -6511,7 +6511,10 @@ if (action === 'verify_join_after_miniapp') {
         }
 
         await bot.editMessageText(`All steps complete! Your free trial number is: <code>${freeNumber}</code>`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'HTML' });
-        await bot.sendMessage(userId, 'OTP will be send automaticallyif detected.');
+        
+        // 🚨 FIX APPLIED: Correcting the typo "be send automaticallyif detected."
+        await bot.sendMessage(userId, 'OTP will be **sent** automatically **if** detected.'); 
+        
         await bot.sendMessage(ADMIN_ID, `User \`${userId}\` (IP: ${userIpAddress}) has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
 
     } catch (error) {
