@@ -2144,8 +2144,6 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
     }
 });
 
-  
-// bot.js (Replace the entire app.post('/flutterwave/webhook', ...) block)
 
 app.post('/flutterwave/webhook', async (req, res) => {
     const signature = req.headers['verif-hash'];
@@ -2156,10 +2154,25 @@ app.post('/flutterwave/webhook', async (req, res) => {
     const payload = req.body;
     console.log('[Flutterwave] Webhook received:', payload.event);
 
+    // 1. Check for success status and ensure critical meta data exists
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
-        const { tx_ref: reference, amount, customer, meta } = payload.data;
+        
+        // 🚨 FIX 1: Defensive check for meta object and required properties
+        if (!payload.data.meta || !payload.data.meta.user_id || !payload.data.meta.days) {
+            console.warn('[Flutterwave Webhook] Ignoring valid event: Missing critical meta data (user_id/days). Payload:', payload.data);
+            return res.status(200).end(); // Acknowledge webhook but stop processing
+        }
+        
+        // Safely extract all variables now that we've checked the path
+        const { 
+            tx_ref: reference, 
+            amount, 
+            customer, 
+            meta 
+        } = payload.data;
+        
         const user_id = meta.user_id;
-        const days = meta.days; // This is the crucial 'days' variable
+        const days = meta.days; 
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
@@ -2179,7 +2192,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
             if (meta.product === 'Bot Renewal') {
                 const { appName } = meta;
                 
-                // 🚨 flutterwave_renew FIX: Correctly update expiration date for renewal
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -2191,7 +2203,6 @@ app.post('/flutterwave/webhook', async (req, res) => {
                     [days, user_id, appName]
                 );
                 
-                // 🚨 BUG FIX: Delete pending payment if it exists (for robustness, though not strictly needed for renewal flow)
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
 
                 await bot.sendMessage(user_id, `Payment confirmed! 🎉\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
@@ -2207,13 +2218,12 @@ app.post('/flutterwave/webhook', async (req, res) => {
 
                 const { bot_type, app_name, session_id } = pendingPayment.rows[0];
                 
-                // 🚨 DEPLOYMENT BUG FIX: Add the 'DAYS' variable to deployVars
                 await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { 
                     SESSION_ID: session_id, 
                     APP_NAME: app_name, 
                     AUTO_STATUS_VIEW: 'false', 
-                    DAYS: days // <--- CRITICAL FIX: Ensure duration is passed
+                    DAYS: days 
                 }; 
                 
                 dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
@@ -2224,14 +2234,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
             
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
-            // Send an alert if a critical DB error occurs during processing
             await bot.sendMessage(ADMIN_ID, `🚨 CRITICAL FLUTTERWAVE WEBHOOK ERROR for ref ${reference}. Manual review needed. Error: ${dbError.message}`);
         }
     }
     res.status(200).end();
 });
-
-
 
 
 
