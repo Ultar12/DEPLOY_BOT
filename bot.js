@@ -889,7 +889,7 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
         // Send a new message asking for email
         await bot.sendMessage(
             chatId,
-            "Please enter your **e**mail address. This will be automatically **s**aved for your account and used for this transaction.",
+            "Please enter your **e**mail address.",
             { parse_mode: 'Markdown' }
         );
         
