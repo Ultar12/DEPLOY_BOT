@@ -3289,68 +3289,6 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-bot.onText(/^\/send (\d+) ?(.+)?$/, async (msg, match) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) {
-        return bot.sendMessage(adminId, "You are not authorized to use this command.");
-    }
-
-    const targetUserId = match[1];
-    const caption = match[2] ? match[2].trim() : '';
-    const repliedMsg = msg.reply_to_message;
-
-    // --- FIX START: Handle both media and text-only messages ---
-    if (repliedMsg) {
-        // This is the media fallback system from the previous fix
-        const isPhoto = repliedMsg.photo && repliedMsg.photo.length > 0;
-        const isVideo = repliedMsg.video;
-        const isDocument = repliedMsg.document;
-        const baseOptions = { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' };
-
-        if (isPhoto || isVideo) {
-            try {
-                const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : repliedMsg.video.file_id;
-                const sendMethod = isPhoto ? bot.sendPhoto : bot.sendVideo;
-                await sendMethod(targetUserId, fileId, baseOptions);
-                return bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
-            } catch (error) {
-                console.error(`Failed on Fallback 1 (Photo/Video):`, error.message);
-            }
-        }
-
-        if (isDocument) {
-            try {
-                const fileId = repliedMsg.document.file_id;
-                await bot.sendDocument(targetUserId, fileId, baseOptions);
-                return bot.sendMessage(adminId, `Media sent to user \`${targetUserId}\`. (Sent as a document)`, { parse_mode: 'Markdown' });
-            } catch (error) {
-                console.error(`Failed on Fallback 2 (Document):`, error.message);
-            }
-        }
-
-        // Final fallback for media is a text-only message
-        const textFallbackMessage = `*Admin Message:*\n${caption}\n\n_Note: The attached media could not be sent due to an unsupported format or error._`;
-        await bot.sendMessage(targetUserId, textFallbackMessage, { parse_mode: 'Markdown' });
-        await bot.sendMessage(adminId, `⚠Could not send media to user \`${targetUserId}\`. The file format may be unsupported. A text-only message was sent instead.`, { parse_mode: 'Markdown' });
-
-    } else {
-        // --- This block handles text-only messages directly from the command ---
-        if (!caption) {
-            return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to send.");
-        }
-        try {
-            await bot.sendMessage(targetUserId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
-            await bot.sendMessage(adminId, `✅ Message sent to user \`${targetUserId}\`.`);
-        } catch (error) {
-            const escapedError = escapeMarkdown(error.message);
-            console.error(`Error sending message to user ${targetUserId}:`, escapedError);
-            await bot.sendMessage(adminId, `❌ Failed to send message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
-        }
-    }
-});
-
-
-
 // --- FIX: Updated /sendall command to support text, photos, and videos ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
@@ -3395,7 +3333,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
             if (await dbServices.isUserBanned(userId)) continue;
             
             if (isPhoto || isVideo) {
-                await sendMethod(userId, fileId, { caption: `*Message from Admin:*\n${caption}`, parse_mode: 'Markdown' });
+                await sendMethod(userId, fileId, { caption: `*Broadcast:*\n${caption}`, parse_mode: 'Markdown' });
             } else {
                 await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
             }
@@ -3500,7 +3438,7 @@ _The following apps were not found in the local database._
 
 // bot.js (REPLACE the entire bot.onText(/^\/forward (\d+)$/, ...) function)
 
-bot.onText(/^\/forward (\d+)$/, async (msg, match) => {
+bot.onText(/^\/send (\d+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     const targetUserId = match[1];
     
