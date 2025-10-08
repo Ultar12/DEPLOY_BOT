@@ -173,6 +173,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`CREATE TABLE IF NOT EXISTS app_settings (setting_key VARCHAR(50) PRIMARY KEY, setting_value VARCHAR(50) NOT NULL);`);
 
         await client.query(`CREATE TABLE IF NOT EXISTS key_rewards (user_id TEXT PRIMARY KEY, reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+
+        await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS action_history JSONB DEFAULT '[]'::jsonb;`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS all_users_backup (user_id TEXT PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
       
@@ -1367,34 +1369,52 @@ async function restartBot(appName) {
 
 
 
+// bot.js (REPLACE the entire notifyAdminUserOnline function)
+
 // NEW: User online notification logic (uses global maps declared above)
 async function notifyAdminUserOnline(msg) {
-    // Ensure msg.from exists and has an ID to prevent errors for non-user messages (e.g., channel posts)
-    if (!msg || !msg.from || !msg.from.id) {
-        console.warn("[Admin Notification] Skipping: msg.from or msg.from.id is undefined.", msg);
-        return;
-    }
-
-    // Prevent bot from notifying itself (or other bots)
-    if (msg.from.is_bot) {
-        console.log("[Admin Notification] Skipping: Message originated from a bot.");
-        return;
+    if (!msg || !msg.from || !msg.from.id || msg.from.is_bot) {
+        return; 
     }
 
     const userId = msg.from.id.toString();
-    const now = Date.now();
-
-    if (userId === ADMIN_ID) { // Don't notify admin about themselves
+    if (userId === ADMIN_ID) {
         return;
     }
-
+    
+    const now = Date.now();
     const lastNotified = userLastSeenNotification.get(userId) || 0;
     const lastAdminMessageId = adminOnlineMessageIds.get(userId);
 
-    // Capture the text of the message (button/command pressed)
+    // 1. Determine the current user action
     const userAction = msg.text || (msg.callback_query ? `Callback: ${msg.callback_query.data}` : 'Interacted');
+    
+    // 2. 🚨 FIX: Update user activity with the current action.
+    // NOTE: This assumes you've updated dbServices.updateUserActivity as shown above.
+    await dbServices.updateUserActivity(userId, userAction); 
 
-    // Safely get user details, providing fallbacks for undefined properties
+    // 3. 🚨 FIX: Fetch the complete action history
+    let historyResult;
+    try {
+        historyResult = await pool.query(
+            "SELECT action_history FROM user_activity WHERE user_id = $1", [userId]
+        );
+    } catch (e) {
+        console.error(`Error fetching history for ${userId}:`, e);
+        historyResult = { rows: [] };
+    }
+    const actionHistory = historyResult.rows[0]?.action_history || [];
+
+    // Format the action history for display
+    let historyDisplay = '';
+    if (actionHistory.length > 0) {
+        historyDisplay = actionHistory.map(item => 
+            `  • ${item.time}: ${escapeMarkdown(item.action).slice(0, 50)}`
+        ).join('\n');
+    } else {
+        historyDisplay = '  • No recent history.';
+    }
+
     const first_name = msg.from.first_name ? escapeMarkdown(msg.from.first_name) : 'N/A';
     const last_name = msg.from.last_name ? escapeMarkdown(msg.from.last_name) : '';
     const username = msg.from.username ? `@${escapeMarkdown(msg.from.username)}` : 'N/A';
@@ -1404,8 +1424,10 @@ async function notifyAdminUserOnline(msg) {
 *ID:* \`${userId}\`
 *Name:* ${first_name} ${last_name}
 *Username:* ${username}
-*Last Action:* \`${escapeMarkdown(userAction)}\`
-*Time:* ${new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' })}
+*Current Action:* \`${escapeMarkdown(userAction)}\`
+
+*Last 5 Actions:*
+${historyDisplay}
     `;
 
     // If within cooldown, attempt to edit the existing message
@@ -1416,31 +1438,28 @@ async function notifyAdminUserOnline(msg) {
                 message_id: lastAdminMessageId,
                 parse_mode: 'Markdown'
             });
-            userLastSeenNotification.set(userId, now); // Still update timestamp to reset cooldown
-            console.log(`[Admin Notification] Edited admin notification for user ${userId} (action: ${userAction}).`);
+            userLastSeenNotification.set(userId, now);
         } catch (error) {
-            console.error(`Error editing admin notification for user ${userId}:`, error.message);
-            // If editing fails (e.g., message too old), send a new one
+            // If editing fails, send a new one
             try {
                 const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
                 adminOnlineMessageIds.set(userId, sentMsg.message_id);
                 userLastSeenNotification.set(userId, now);
-                console.log(`[Admin Notification] Sent new admin notification for user ${userId} after edit failure.`);
             } catch (sendError) {
-                console.error(`Error sending new admin notification for user ${userId} after edit failure:`, sendError.message);
+                console.error(`Error sending new admin notification for user ${userId}:`, sendError.message);
             }
         }
-    } else { // Outside cooldown or no previous message to edit, send new message
+    } else { // Send new message
         try {
             const sentMsg = await bot.sendMessage(ADMIN_ID, userDetails, { parse_mode: 'Markdown' });
             adminOnlineMessageIds.set(userId, sentMsg.message_id);
             userLastSeenNotification.set(userId, now);
-            console.log(`[Admin Notification] Notified admin about user ${userId} being online (action: ${userAction}).`);
         } catch (error) {
             console.error(`Error notifying admin about user ${userId} online:`, error.message);
         }
     }
 }
+
 
 // 7) Initialize modular components
 (async () => {
