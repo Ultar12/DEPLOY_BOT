@@ -234,6 +234,16 @@ async function createAllTablesInPool(dbPool, dbName) {
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
         `);
+
+      await client.query(`
+  CREATE TABLE IF NOT EXISTS heroku_api_keys (
+    id SERIAL PRIMARY KEY,
+    api_key TEXT NOT NULL UNIQUE,
+    added_by TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
         
         await client.query(`
           CREATE TABLE IF NOT EXISTS completed_payments (
@@ -2897,6 +2907,62 @@ You can now use /stats or /bapp to see the updated count of all your bots.
         });
     }
 });
+// bot.js (New command to add a new Heroku API key)
+bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const newKey = match[1].trim();
+
+    if (newKey.length < 30) {
+        return bot.sendMessage(adminId, "Invalid key length. Heroku API keys are long tokens. Please provide the full key.");
+    }
+
+    try {
+        await pool.query(
+            "INSERT INTO heroku_api_keys (api_key, added_by) VALUES ($1, $2)",
+            [newKey, adminId]
+        );
+        await bot.sendMessage(adminId, `New Heroku API Key added successfully! The bot will use this key automatically if the current one fails.`, { parse_mode: 'Markdown' });
+    } catch (e) {
+        if (e.code === '23505') { // Unique violation
+            return bot.sendMessage(adminId, `Key already exists in the database.`);
+        }
+        console.error("Error adding new API key:", e);
+        await bot.sendMessage(adminId, `Failed to add API key: ${e.message}`);
+    }
+});
+
+// bot.js (New command to list stored Heroku API keys)
+bot.onText(/^\/apilist$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    try {
+        const result = await pool.query("SELECT api_key, is_active, added_at FROM heroku_api_keys ORDER BY added_at DESC");
+        const keys = result.rows;
+
+        if (keys.length === 0) {
+            return bot.sendMessage(adminId, "No Heroku API keys stored in the database.");
+        }
+
+        let message = "*Stored Heroku API Keys:*\n\n";
+        keys.forEach((k, index) => {
+            const status = k.is_active ? '🟢 (Active)' : '🔴 (Inactive)';
+            const addedDate = new Date(k.added_at).toLocaleDateString();
+            const maskedKey = `${k.api_key.substring(0, 4)}...${k.api_key.substring(k.api_key.length - 4)}`;
+            message += `${index + 1}. \`${maskedKey}\` - ${status} (Added: ${addedDate})\n`;
+        });
+        
+        message += "\n_The bot will attempt to use the most recent active key upon failure._";
+
+        await bot.sendMessage(adminId, message, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error("Error listing API keys:", e);
+        await bot.sendMessage(adminId, `❌ Failed to list API keys: ${e.message}`);
+    }
+});
+
 
 
 // New /read command (to be used in reply to a .txt file)
