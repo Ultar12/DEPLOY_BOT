@@ -1,125 +1,222 @@
-<script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Verification</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --tg-bg-color: var(--tg-theme-bg-color, #212121);
+            --tg-text-color: var(--tg-theme-text-color, #ffffff);
+            --tg-button-color: var(--tg-theme-button-color, #58a9f4);
+            --tg-button-text-color: var(--tg-theme-button-text-color, #ffffff);
+            --tg-hint-color: var(--tg-theme-hint-color, #aaaaaa);
+            --success-color: #34C759;
+            --error-color: #FF3B30;
+        }
 
-    const statusIcon = document.getElementById('status-icon');
-    const statusTitle = document.getElementById('status-title');
-    const statusMessage = document.getElementById('status-message');
-    const hintText = document.getElementById('hint-text');
-    const retryButton = document.getElementById('retryButton');
-    
-    retryButton.addEventListener('click', runVerification);
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-bg-color);
+            color: var(--tg-text-color);
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            box-sizing: border-box;
+        }
 
-    async function runVerification() {
-        // Reset UI to initial loading state
-        statusIcon.innerHTML = '<div class="spinner"></div>';
-        statusTitle.innerText = 'Verification';
-        statusMessage.innerText = 'Please wait while we verify your eligibility...';
-        hintText.innerText = 'This should only take a moment.';
-        statusMessage.style.color = 'inherit';
-        retryButton.style.display = 'none';
+        .container {
+            max-width: 300px;
+        }
+        
+        #status-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
 
-        let verificationPayload = {}; // Declare outside try block
+        #status-title {
+            margin: 15px 0 5px;
+        }
 
-        try {
-            // Get user IP/location info
-            const geoResponse = await fetch('https://ipapi.co/json/');
-            const geoData = await geoResponse.json();
+        #status-message {
+            margin: 15px 0;
+            font-weight: 500;
+            font-size: 1.1em;
+            min-height: 40px;
+        }
+        
+        #hint-text {
+            color: var(--tg-hint-color);
+            font-size: 0.9em;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid var(--tg-text-color);
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
 
-            verificationPayload = {
-                telegramInitData: tg.initData || null,
-                telegramUser: tg.initDataUnsafe?.user || null,
-                location: geoData,
-                status: "pending"
-            };
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        button {
+            display: none; /* Hidden by default */
+            margin-top: 20px;
+            background-color: var(--tg-button-color);
+            color: var(--tg-button-text-color);
+            border: none;
+            padding: 12px 25px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="status-icon"><div class="spinner"></div></div> 
+        <h2 id="status-title">Verification</h2>
+        <p id="status-message">Please wait while we verify your eligibility...</p>
+        <p id="hint-text">This should only take a moment.</p>
+        <button id="retryButton">Try Again</button>
+    </div>
 
-            // 🚨 FIX 1: Client-Side Country Restriction Check
-            if (geoData.country_code !== 'NG') {
-                verificationPayload.status = "denied";
-                verificationPayload.reason = "Country not eligible";
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
 
-                statusIcon.innerHTML = '🚫'; 
-                statusTitle.innerText = 'Access Denied';
-                statusMessage.innerText = 'Sorry, the free trial is only available in Nigeria.';
-                hintText.innerText = '';
+        const statusIcon = document.getElementById('status-icon');
+        const statusTitle = document.getElementById('status-title');
+        const statusMessage = document.getElementById('status-message');
+        const hintText = document.getElementById('hint-text');
+        const retryButton = document.getElementById('retryButton');
+        
+        retryButton.addEventListener('click', runVerification);
 
-                // Send denial data to bot
-                tg.sendData(JSON.stringify(verificationPayload));
-                return;
-            }
+        async function runVerification() {
+            // Reset UI to initial loading state
+            statusIcon.innerHTML = '<div class="spinner"></div>';
+            statusTitle.innerText = 'Verification';
+            statusMessage.innerText = 'Please wait while we verify your eligibility...';
+            hintText.innerText = 'This should only take a moment.';
+            statusMessage.style.color = 'inherit';
+            retryButton.style.display = 'none';
 
-            // 🚨 FIX 2: Send Simplified Payload to Backend for Server/IP Check
-            // The server already extracts Telegram data from headers and IP from request.
-            const serverResponse = await fetch('/pre-verify-user', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Telegram-Init-Data': tg.initData // Crucial header for authentication
-                },
-                body: JSON.stringify({}) // Empty body is fine, as data is in headers
-            });
+            try {
+                // Get user IP/location info
+                const geoResponse = await fetch('https://ipapi.co/json/');
+                const geoData = await geoResponse.json();
 
-            const serverData = await serverResponse.json();
+                // Build verification payload
+                const verificationPayload = {
+                    telegramInitData: tg.initData || null,
+                    telegramUser: tg.initDataUnsafe?.user || null,
+                    location: geoData,
+                    status: "pending"
+                };
 
-            if (serverData.success) {
-                verificationPayload.status = "verified";
-                verificationPayload.serverCheck = "passed";
+                // Country restriction check
+                if (geoData.country_code !== 'NG') {
+                    verificationPayload.status = "denied";
+                    verificationPayload.reason = "Country not eligible";
 
-                // 1. Send data to bot (triggers the next step in bot.js)
-                tg.sendData(JSON.stringify(verificationPayload));
-
-                // 2. KEEP LOADING UI while bot processes
-                statusTitle.innerText = 'Processing...';
-                statusMessage.innerText = 'Bot is finalizing your number assignment.';
-                hintText.innerText = 'The window will close shortly.';
-                
-                // 3. Update UI to SUCCESS and close after 5 seconds
-                setTimeout(() => {
-                    // Final success visual change
-                    statusIcon.innerHTML = '✅';
-                    statusTitle.innerText = 'Success!';
-                    statusMessage.innerText = 'Verification complete. Window closing now.';
-                    statusMessage.style.color = 'var(--success-color)';
+                    statusIcon.innerHTML = '🚫'; // Use innerHTML to replace spinner
+                    statusTitle.innerText = 'Access Denied';
+                    statusMessage.innerText = 'Sorry, the free trial is only available in Nigeria.';
                     hintText.innerText = '';
+
+                    // Send denial data to bot
+                    tg.sendData(JSON.stringify(verificationPayload));
+                    return;
+                }
+
+                // Send to backend for extra verification
+                const serverResponse = await fetch('/pre-verify-user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': tg.initData
+                    },
+                    body: JSON.stringify(verificationPayload)
+                });
+
+                const serverData = await serverResponse.json();
+
+                if (serverData.success) {
+                    verificationPayload.status = "verified";
+                    verificationPayload.serverCheck = "passed";
+
+                    // 1. Send data to bot (processed by bot.js)
+                    tg.sendData(JSON.stringify(verificationPayload));
+
+                    // 2. KEEP LOADING UI WHILE BOT PROCESSES
+                    // Update the message but keep the spinner/loading state
+                    statusTitle.innerText = 'Processing...';
+                    statusMessage.innerText = 'Please wait for the final confirmation...';
+                    hintText.innerText = 'The bot is finalizing your verification.';
                     
-                    // Close the window after a slight delay to ensure user sees the success state
-                    setTimeout(() => tg.close(), 500); 
+                    // 3. Update UI to SUCCESS and close after 5 seconds
+                    setTimeout(() => {
+                        // Final success visual change
+                        statusIcon.innerHTML = '✅';
+                        statusTitle.innerText = 'Success!';
+                        statusMessage.innerText = 'Verification complete. Window closing now.';
+                        statusMessage.style.color = 'var(--success-color)';
+                        hintText.innerText = '';
+                        
+                        // Close the window after a slight delay to ensure user sees the success state
+                        setTimeout(() => tg.close(), 500); 
 
-                }, 5000); // 🚨 WAIT 5 SECONDS (5000ms) for bot to process and send buttons
+                    }, 5000); // 🚨 WAIT 5 SECONDS (5000ms) for bot to process and send buttons
 
-            } else {
-                verificationPayload.status = "failed";
-                verificationPayload.serverCheck = "failed";
-                verificationPayload.error = serverData.message || "Unknown error";
+                } else {
+                    verificationPayload.status = "failed";
+                    verificationPayload.serverCheck = "failed";
+                    verificationPayload.error = serverData.message || "Unknown error";
+
+                    statusIcon.innerHTML = '⚠️';
+                    statusTitle.innerText = 'Verification Failed';
+                    statusMessage.innerText = verificationPayload.error;
+                    statusMessage.style.color = 'var(--error-color)';
+                    hintText.innerText = 'Please try again or contact support.';
+                    retryButton.style.display = 'block';
+
+                    tg.sendData(JSON.stringify(verificationPayload));
+                }
+
+            } catch (error) {
+                const errorPayload = {
+                    telegramInitData: tg.initData || null,
+                    telegramUser: tg.initDataUnsafe?.user || null,
+                    status: "error",
+                    error: error.message
+                };
 
                 statusIcon.innerHTML = '⚠️';
-                statusTitle.innerText = 'Verification Failed';
-                statusMessage.innerText = verificationPayload.error;
+                statusTitle.innerText = 'Network Error';
+                statusMessage.innerText = 'Could not complete verification. Please check your connection and try again.';
                 statusMessage.style.color = 'var(--error-color)';
-                hintText.innerText = 'Please try again or contact support.';
+                hintText.innerText = '';
                 retryButton.style.display = 'block';
 
-                tg.sendData(JSON.stringify(verificationPayload));
+                tg.sendData(JSON.stringify(errorPayload));
             }
-
-        } catch (error) {
-            const errorPayload = {
-                telegramInitData: tg.initData || null,
-                telegramUser: tg.initDataUnsafe?.user || null,
-                status: "error",
-                error: error.message
-            };
-
-            statusIcon.innerHTML = '⚠️';
-            statusTitle.innerText = 'Network Error';
-            statusMessage.innerText = 'Could not complete verification. Please check your connection and try again.';
-            statusMessage.style.color = 'var(--error-color)';
-            hintText.innerText = '';
-            retryButton.style.display = 'block';
-
-            tg.sendData(JSON.stringify(errorPayload));
         }
-    }
-    
-    window.onload = runVerification;
-</script>
+        
+        window.onload = runVerification;
+    </script>
+</body>
+</html>
