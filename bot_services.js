@@ -556,22 +556,52 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// --- MODIFIED FUNCTION ---
-async function updateUserActivity(userId) {
-  const query = `
-    INSERT INTO user_activity(user_id, last_seen)
-    VALUES($1, NOW())
-    ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
-  `;
+// --- MODIFIED FUNCTION: Includes action history tracking ---
+async function updateUserActivity(userId, userAction) {
+  const client = await pool.connect();
+  
+  // 1. Format the new action entry
+  const newActionEntry = {
+    time: new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' }),
+    action: userAction
+  };
+
   try {
-    // Now only writes to the main pool (DATABASE_URL)
-    await pool.query(query, [userId]);
-    console.log(`[DB] User activity updated for ${userId}.`);
+    await client.query('BEGIN');
+    
+    // 2. Fetch existing history and last_seen in one go
+    const fetchQuery = `SELECT action_history FROM user_activity WHERE user_id = $1 FOR UPDATE;`;
+    const result = await client.query(fetchQuery, [userId]);
+    
+    let history = result.rows[0]?.action_history || [];
+
+    // 3. Prepend the new action and cap the array size to 5
+    history.unshift(newActionEntry);
+    if (history.length > 5) {
+        history = history.slice(0, 5);
+    }
+    
+    // 4. Update the DB with the new history and last_seen
+    const updateQuery = `
+      INSERT INTO user_activity(user_id, last_seen, action_history)
+      VALUES($1, NOW(), $2)
+      ON CONFLICT (user_id) 
+      DO UPDATE SET last_seen = NOW(), action_history = $2;
+    `;
+    
+    await client.query(updateQuery, [userId, history]);
+    await client.query('COMMIT');
+    
+    console.log(`[DB] User activity updated for ${userId}. Action: ${userAction}`);
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
+  } finally {
+    client.release();
   }
 }
 // --- END OF MODIFICATION ---
+
 
 async function getUserLastSeen(userId) {
   try {
