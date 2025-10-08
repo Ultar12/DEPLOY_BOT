@@ -556,7 +556,8 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// --- MODIFIED FUNCTION: Includes action history tracking ---
+// bot_services.js (Updated updateUserActivity function)
+
 async function updateUserActivity(userId, userAction) {
   const client = await pool.connect();
   
@@ -569,19 +570,27 @@ async function updateUserActivity(userId, userAction) {
   try {
     await client.query('BEGIN');
     
-    // 2. Fetch existing history and last_seen in one go
+    // 2. Fetch existing history (Lock the row for update to prevent concurrent issues)
+    // NOTE: If you just added the action_history column, older rows might have NULL or {}
     const fetchQuery = `SELECT action_history FROM user_activity WHERE user_id = $1 FOR UPDATE;`;
     const result = await client.query(fetchQuery, [userId]);
     
-    let history = result.rows[0]?.action_history || [];
+    // 3. Initialize history safely (defaults to empty array if column is NULL/missing/malformed)
+    let history = [];
+    if (result.rows.length > 0 && result.rows[0].action_history) {
+        // We rely on the driver to parse JSONB into a JS object/array.
+        // It's already a JS object/array here.
+        history = result.rows[0].action_history;
+    }
 
-    // 3. Prepend the new action and cap the array size to 5
+    // 4. Prepend the new action and cap the array size to 5
     history.unshift(newActionEntry);
     if (history.length > 5) {
         history = history.slice(0, 5);
     }
     
-    // 4. Update the DB with the new history and last_seen
+    // 5. Update the DB: Use $2 for the history array parameter
+    // The 'pg' library will automatically serialize the JavaScript 'history' array into a correct JSONB string.
     const updateQuery = `
       INSERT INTO user_activity(user_id, last_seen, action_history)
       VALUES($1, NOW(), $2)
@@ -589,18 +598,20 @@ async function updateUserActivity(userId, userAction) {
       DO UPDATE SET last_seen = NOW(), action_history = $2;
     `;
     
+    // Pass [userId, history] as parameters
     await client.query(updateQuery, [userId, history]);
     await client.query('COMMIT');
     
     console.log(`[DB] User activity updated for ${userId}. Action: ${userAction}`);
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
+    // Ensure you log the error with the user ID to trace which user caused the issue
+    console.error(`[DB] Failed to update user activity for ${userId}: invalid input syntax for type json`, error.message);
   } finally {
     client.release();
   }
 }
-// --- END OF MODIFICATION ---
+
 
 
 async function getUserLastSeen(userId) {
