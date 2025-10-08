@@ -556,73 +556,22 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// bot_services.js (Updated updateUserActivity function for safety)
-
-async function updateUserActivity(userId, userAction) {
-  const client = await pool.connect();
-  
-  // 1. Format the new action entry
-  const newActionEntry = {
-    time: new Date().toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Africa/Lagos' }),
-    action: userAction
-  };
-
+// --- MODIFIED FUNCTION ---
+async function updateUserActivity(userId) {
+  const query = `
+    INSERT INTO user_activity(user_id, last_seen)
+    VALUES($1, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
+  `;
   try {
-    await client.query('BEGIN');
-    
-    // 2. Fetch existing history SAFELY
-    // We select the column, and the 'pg' driver should handle the JSONB conversion.
-    // We MUST handle the case where result.rows is empty (user doesn't exist yet).
-    const fetchQuery = `SELECT action_history FROM user_activity WHERE user_id = $1 FOR UPDATE;`;
-    const result = await client.query(fetchQuery, [userId]);
-    
-    let history = [];
-    
-    // FIX: Safely extract history. If row exists and history is returned, use it.
-    // If the DB stored 'null' or '{}' it will be handled here.
-    if (result.rows.length > 0) {
-        // If result.rows[0].action_history is null, it evaluates to false, and history remains [].
-        // If it's a valid JSON array, it's used.
-        history = result.rows[0].action_history || []; 
-    }
-    
-    // Safety check: ensure history is an array before pushing
-    if (!Array.isArray(history)) {
-        console.warn(`[DB] Corrupted action_history found for ${userId}. Resetting history.`);
-        history = [];
-    }
-
-
-    // 3. Prepend the new action and cap the array size to 5
-    history.unshift(newActionEntry);
-    if (history.length > 5) {
-        history = history.slice(0, 5);
-    }
-    
-    // 4. Update the DB: Pass the history array as parameter $2.
-    // The 'pg' library automatically serializes the JavaScript array into a correct JSONB string.
-    const updateQuery = `
-      INSERT INTO user_activity(user_id, last_seen, action_history)
-      VALUES($1, NOW(), $2)
-      ON CONFLICT (user_id) 
-      DO UPDATE SET last_seen = NOW(), action_history = $2;
-    `;
-    
-    // Pass [userId, history] as parameters
-    await client.query(updateQuery, [userId, history]);
-    await client.query('COMMIT');
-    
-    console.log(`[DB] User activity updated for ${userId}. Action: ${userAction}`);
+    // Now only writes to the main pool (DATABASE_URL)
+    await pool.query(query, [userId]);
+    console.log(`[DB] User activity updated for ${userId}.`);
   } catch (error) {
-    await client.query('ROLLBACK');
-    // Ensure you log the error with the user ID and the full error message
-    console.error(`[DB] Failed to update user activity for ${userId}: invalid input syntax for type json`, error.message);
-  } finally {
-    client.release();
+    console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
-
-
+// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
