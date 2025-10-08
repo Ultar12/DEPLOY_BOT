@@ -2145,6 +2145,8 @@ app.post('/api/pay', validateWebAppInitData, async (req, res) => {
 });
 
 
+// bot.js (REPLACE the entire app.post('/flutterwave/webhook', ...) block)
+
 app.post('/flutterwave/webhook', async (req, res) => {
     const signature = req.headers['verif-hash'];
     if (!signature || (signature !== process.env.FLUTTERWAVE_SECRET_HASH)) {
@@ -2154,25 +2156,36 @@ app.post('/flutterwave/webhook', async (req, res) => {
     const payload = req.body;
     console.log('[Flutterwave] Webhook received:', payload.event);
 
-    // 1. Check for success status and ensure critical meta data exists
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         
-        // 🚨 FIX 1: Defensive check for meta object and required properties
-        if (!payload.data.meta || !payload.data.meta.user_id || !payload.data.meta.days) {
-            console.warn('[Flutterwave Webhook] Ignoring valid event: Missing critical meta data (user_id/days). Payload:', payload.data);
-            return res.status(200).end(); // Acknowledge webhook but stop processing
+        const reference = payload.data.tx_ref;
+        const amount = payload.data.amount;
+        const customer = payload.data.customer;
+        
+        // --- Step 1: Look up transaction details from our PENDING_PAYMENTS table ---
+        const pendingPayment = await pool.query(
+            'SELECT user_id, bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', 
+            [reference]
+        );
+        
+        if (pendingPayment.rows.length === 0) {
+            // This happens when the bot hasn't recorded the payment as pending, 
+            // usually due to a race condition or user payment outside the flow.
+            console.warn(`[Flutterwave Webhook] Cannot process reference ${reference}. Details missing from PENDING_PAYMENTS.`);
+            return res.status(200).end(); 
         }
+
+        const { user_id, bot_type, app_name, session_id } = pendingPayment.rows[0];
+
+        // --- Step 2: Determine if Renewal or New Deployment ---
+        const isRenewal = app_name && app_name.startsWith('renewal_');
+        let finalAppName = app_name;
         
-        // Safely extract all variables now that we've checked the path
-        const { 
-            tx_ref: reference, 
-            amount, 
-            customer, 
-            meta 
-        } = payload.data;
-        
-        const user_id = meta.user_id;
-        const days = meta.days; 
+        // Determine days paid based on amount (This is the Paystack logic fallback)
+        let days;
+        if (amount >= 200000) days = 50; // N2000 (200000 kobo)
+        else if (amount >= 150000) days = 30; // N1500
+        else days = 10; // N500 (Basic plan)
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
@@ -2180,17 +2193,18 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 return res.status(200).end();
             }
             
+            // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, user_id, customer.email, amount]
+                [reference, user_id, customer.email || pendingPayment.rows[0].email, amount]
             );
 
             const userChat = await bot.getChat(user_id);
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
-            // --- FIXED LOGIC: RENEWAL/DEPLOYMENT ---
-            if (meta.product === 'Bot Renewal') {
-                const { appName } = meta;
+            if (isRenewal) {
+                // RENEWAL LOGIC
+                finalAppName = finalAppName.substring('renewal_'.length);
                 
                 await pool.query(
                     `UPDATE user_deployments 
@@ -2200,23 +2214,14 @@ app.post('/flutterwave/webhook', async (req, res) => {
                            ELSE expiration_date + ($1 * INTERVAL '1 day')
                         END
                      WHERE user_id = $2 AND app_name = $3`,
-                    [days, user_id, appName]
+                    [days, user_id, finalAppName]
                 );
-                
-                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
 
-                await bot.sendMessage(user_id, `Payment confirmed! 🎉\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(user_id, `Payment confirmed! 🎉\n\nYour bot *${escapeMarkdown(finalAppName)}* has been successfully renewed for **${days} days**.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${finalAppName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
-            } else { // Handles NEW deployments
-                const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
-                
-                if (pendingPayment.rows.length === 0) {
-                    console.warn(`Pending deployment payment not found for reference: ${reference}.`);
-                    return res.status(200).end();
-                }
-
-                const { bot_type, app_name, session_id } = pendingPayment.rows[0];
+            } else { 
+                // NEW DEPLOYMENT LOGIC
                 
                 await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
                 const deployVars = { 
@@ -2228,9 +2233,10 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 
                 dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
                 await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
-                
-                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             }
+            
+            // Cleanup pending payment record
+            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
@@ -2239,6 +2245,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     }
     res.status(200).end();
 });
+
 
 
 
