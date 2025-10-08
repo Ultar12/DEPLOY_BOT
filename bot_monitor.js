@@ -103,41 +103,6 @@ async function monitorAllAppsForR14() {
     }
 }
 
-/**
- * Checks for bots that have been logged out for more than 5 days and deletes them.
- */
-async function checkLoggedOutBots() {
-    console.log('[Logout Monitor] Running scheduled check for old logged-out bots...');
-    try {
-        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-        const result = await moduleParams.mainPool.query(
-            "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [fiveDaysAgo]
-        );
-
-        for (const botInfo of result.rows) {
-            const { user_id, bot_name } = botInfo;
-            console.log(`[Logout Monitor] Deleting ${bot_name} for being logged out over 5 days.`);
-            try {
-                await axios.delete(`https://api.heroku.com/apps/${bot_name}`, { headers: { Authorization: `Bearer ${moduleParams.HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
-                await moduleParams.deleteUserBot(user_id, bot_name);
-                await moduleParams.deleteUserDeploymentFromBackup(user_id, bot_name);
-                await moduleParams.bot.sendMessage(user_id, `Your bot "*${moduleParams.escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 5 days.`, { parse_mode: 'Markdown' });
-                await sendTelegramAlert(`Auto-deleted bot \`${bot_name}\` (owner: \`${user_id}\`) for being logged out over 5 days.`, moduleParams.ADMIN_ID);
-            } catch (error) {
-                if (error.response && error.response.status === 404) {
-                    console.log(`[Logout Monitor] App ${bot_name} was already deleted from Heroku. Cleaning up DB records.`);
-                    await moduleParams.deleteUserBot(user_id, bot_name);
-                    await moduleParams.deleteUserDeploymentFromBackup(user_id, bot_name);
-                } else {
-                    console.error(`[Logout Monitor] Failed to delete bot ${bot_name}:`, error.message);
-                }
-            }
-        }
-    } catch (dbError) {
-        console.error('[Logout Monitor] DB Error:', dbError);
-    }
-}
 
 /**
  * Checks for bots that have passed their expiration date and deletes them.
