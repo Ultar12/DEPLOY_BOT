@@ -1312,6 +1312,29 @@ async function handleRestoreAllConfirm(query) {
     await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
 }
 
+// bot.js (Add this helper function in the utilities section)
+
+/**
+ * Fetches all non-system user-created table names from the database.
+ * @returns {Promise<string[]>} A list of table names.
+ */
+async function getAllTableNames() {
+    // Query to select all table names that are not system tables
+    const query = `
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public' 
+        AND tablename NOT IN ('sessions', 'all_users_backup')
+        ORDER BY tablename;
+    `;
+    try {
+        const result = await pool.query(query);
+        return result.rows.map(row => row.tablename);
+    } catch (e) {
+        console.error("Error fetching table names:", e);
+        return [];
+    }
+}
 
 
 // A new reusable function to display the key deletion menu
@@ -3139,6 +3162,35 @@ bot.onText(/^\/removenum (.+)$/, async (msg, match) => {
         console.error(`Error removing number ${number}:`, e);
         await bot.sendMessage(adminId, `Failed to remove number. An error occurred.`);
     }
+});
+
+// bot.js (Add this with other admin commands)
+
+bot.onText(/^\/deldb$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) {
+        return;
+    }
+    
+    await bot.sendMessage(cid, "Fetching table list, please wait...");
+    
+    const tables = await getAllTableNames();
+
+    if (tables.length === 0) {
+        return bot.sendMessage(cid, "No user-defined tables found to delete.");
+    }
+
+    const tableButtons = tables.map(name => ([{
+        text: name,
+        callback_data: `deldb_select:${name}`
+    }]));
+
+    await bot.sendMessage(cid, "*Select a table to delete permanently:*\n\n**WARNING:** This action is irreversible and deletes ALL data in the selected table.", {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: tableButtons
+        }
+    });
 });
 
 
@@ -6184,6 +6236,81 @@ if (action === 'select_get_session_type') {
         });
         return;
     }
+}
+
+
+  // bot.js (Inside bot.on('callback_query', async q => { ... }))
+
+if (action === 'deldb_select') {
+    const tableName = payload;
+    
+    await bot.editMessageText(
+        `🚨 **CONFIRM DELETE: ${tableName.toUpperCase()}** 🚨\n\nAre you absolutely sure you want to drop the table \`${tableName}\`? This will erase **ALL** data and cannot be recovered.`,
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: `YES, DROP TABLE ${tableName}`, callback_data: `deldb_confirm:${tableName}` },
+                    ],
+                    [
+                        { text: 'NO, CANCEL', callback_data: 'deldb_cancel' }
+                    ]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+if (action === 'deldb_confirm') {
+    const tableName = payload;
+    
+    await bot.editMessageText(`Attempting to drop table \`${tableName}\`...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+    
+    // Safety check: Final check to prevent dropping core tables (case insensitive)
+    const coreTables = ['user_bots', 'user_deployments', 'deploy_keys', 'user_activity', 'email_verification', 'completed_payments', 'pending_payments', 'app_settings', 'banned_users', 'user_referrals', 'key_rewards', 'free_trial_monitoring', 'temp_deploys', 'temp_numbers', 'pre_verified_users', 'free_trial_numbers', 'pinned_messages', 'heroku_api_keys'];
+    if (coreTables.includes(tableName.toLowerCase())) {
+         return bot.editMessageText(`🛑 ERROR: Table \`${tableName}\` is a CORE table and cannot be deleted via this command.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+
+    try {
+        // Use a parameterized query. Although table names cannot be parameterized with $1 in all drivers,
+        // we construct the query string using the trusted input from getAllTableNames, which is safer.
+        await pool.query(`DROP TABLE IF EXISTS ${tableName} CASCADE;`);
+        
+        await bot.editMessageText(`Table \`${tableName}\` successfully dropped (deleted).`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    } catch (e) {
+        console.error(`Error dropping table ${tableName}:`, e);
+        await bot.editMessageText(`Failed to drop table \`${tableName}\`.\nReason: ${e.message}`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+    }
+    return;
+}
+
+if (action === 'deldb_cancel') {
+    await bot.editMessageText('Table deletion cancelled.', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
 }
 
 
