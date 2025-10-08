@@ -901,29 +901,32 @@ async function initiateFlutterwavePayment(chatId, email, priceNgn, reference, me
 /**
  * Creates a Paystack payment link and sends it to the user.
  */
+// bot.js (Replace existing initiatePaystackPayment function)
+
 async function initiatePaystackPayment(chatId, messageId, paymentDetails) {
     const { isRenewal, appName, days, priceNgn, botType, APP_NAME, SESSION_ID } = paymentDetails;
     const userEmail = await getUserEmail(chatId);
 
-    // ✅ FIX: This is the new logic for unverified users
+    // --- START OF MODIFIED LOGIC: ASK FOR EMAIL IF MISSING, AUTO-REGISTER ---
     if (!userEmail) {
+        // Save the *entire* payment details object to the state to resume later
         userStates[chatId] = { 
-            step: 'AWAITING_VERIFICATION_BEFORE_ACTION', 
-            data: { action: 'renew', appName: appName } 
+            step: 'AWAITING_EMAIL_FOR_AUTO_REG', 
+            data: { 
+                ...paymentDetails, // Keep all deployment/renewal info
+                messageId: messageId // Keep track of the message to edit later
+            } 
         };
         await bot.editMessageText(
-            "To proceed, you first need to verify your email address. This helps keep your account secure.", {
+            "Please enter your **e**mail address.", {
                 chat_id: chatId,
                 message_id: messageId,
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: 'Start Verification', callback_data: 'start_verification' }
-                    ]]
-                }
+                parse_mode: 'Markdown'
             }
         );
         return;
     }
+    // --- END OF MODIFIED LOGIC ---
    
     const sentMsg = await bot.editMessageText('Generating Paystack payment link...', { chat_id: chatId, message_id: messageId });
     
@@ -967,6 +970,7 @@ async function initiatePaystackPayment(chatId, messageId, paymentDetails) {
         });
     }
 }
+
 
 async function sendBappList(chatId, messageId = null, botTypeFilter) {
     const checkingMsg = await bot.editMessageText(
@@ -3837,6 +3841,85 @@ if (st && st.step === 'AWAITING_EMAIL') {
     return;
 }
 
+  // bot.js (Insert this in the bot.on('message', ...) block)
+
+// ... existing code ...
+
+if (st && st.step === 'AWAITING_EMAIL_FOR_AUTO_REG') {
+    const email = text.trim().toLowerCase();
+    
+    // Check if the input is a valid email format
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        // --- VALID EMAIL ---
+        
+        try {
+            // 1. Automatically register the email as verified (no OTP needed)
+            await pool.query(
+                `INSERT INTO email_verification (user_id, email, is_verified) 
+                 VALUES ($1, $2, TRUE)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                   email = EXCLUDED.email,
+                   is_verified = TRUE`, // Always set to TRUE
+                [cid, email]
+            );
+
+            // 2. Resume the payment process using the newly stored email
+            const paymentDetails = st.data;
+            const isRenewal = paymentDetails.isRenewal;
+
+            // This is the message we want to edit/send the payment link to. 
+            // If the messageId exists from the Paystack flow, use it to edit.
+            // Otherwise, send a new message.
+            const messageToEdit = paymentDetails.messageId 
+                ? await bot.editMessageText('Email registered! Resuming payment...', { chat_id: cid, message_id: paymentDetails.messageId })
+                : await bot.sendMessage(cid, `Email \`${email}\` registered and saved! Continuing payment...`, {parse_mode: 'Markdown'});
+            
+            const messageIdToUse = messageToEdit.message_id || msg.message_id;
+
+
+            if (isRenewal) {
+                // Renewal flow
+                await initiatePaystackPayment(cid, messageIdToUse, {
+                    isRenewal: true, 
+                    appName: paymentDetails.appName, 
+                    days: paymentDetails.days, 
+                    priceNgn: paymentDetails.priceNgn
+                });
+            } else {
+                // New deployment flow
+                await initiatePaystackPayment(cid, messageIdToUse, {
+                    isRenewal: false, 
+                    days: paymentDetails.days, 
+                    priceNgn: paymentDetails.priceNgn,
+                    botType: paymentDetails.botType,
+                    APP_NAME: paymentDetails.APP_NAME,
+                    SESSION_ID: paymentDetails.SESSION_ID
+                });
+            }
+
+        } catch (dbError) {
+            console.error('[DB] Error saving and resuming payment:', dbError);
+            await bot.sendMessage(cid, 'A database error occurred. Please try again later.');
+        } finally {
+            delete userStates[cid];
+        }
+    } else {
+        // --- INVALID EMAIL ATTEMPT LOGIC ---
+        st.data.emailAttempts = (st.data.emailAttempts || 0) + 1;
+
+        if (st.data.emailAttempts >= 2) {
+            await bot.sendMessage(cid, 'Too many invalid attempts. Transaction cancelled. Please try again.');
+            delete userStates[cid];
+        } else {
+            await bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again. You have 1 attempt left.");
+        }
+    }
+    return;
+}
+
+// ... existing code ...
+
+
 // In bot.js, inside bot.on('message', ...)
 
 if (st && st.step === 'AWAITING_OTP') {
@@ -4166,6 +4249,8 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 
 // In bot.js, inside the bot.on('message', async msg => { ... }) handler
 
+// In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
+
 if (text === 'Deploy' || text === 'Free Trial') {
     const isFreeTrial = (text === 'Free Trial');
 
@@ -4220,17 +4305,9 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
 
     } else {
-        // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
-        const isVerified = await isUserVerified(cid);
-    
-        if (!isVerified) {
-            // **Step 1: User is NOT verified, so we start the registration process.**
-            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
-            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
-            return; // Stop and wait for their email
-        }
-    
-        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
+        // --- THIS IS THE "DEPLOY" BUTTON FLOW (NOW SKIPS VERIFICATION) ---
+        // The previous verification and email prompt have been removed.
+        
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
@@ -4244,6 +4321,7 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
     }
 }
+
 
 
 
@@ -8678,7 +8756,7 @@ async function checkAndPruneLoggedOutBots() {
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [sevenDaysAgo]
+            [fiveDaysAgo]
         );
 
         const botsToDelete = result.rows;
@@ -8778,7 +8856,7 @@ async function pruneInactiveUsers() {
 }
 
 // Run the check every hour
-setInterval(checkAndPruneLoggedOutBots, 24 * 60 * 60 * 1000);
+setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
 
 
 // --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
