@@ -1988,7 +1988,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
     }
 });
   
-  /// Replace the existing app.post('/pre-verify-user', ...) route in bot.js
+  // bot.js (Around Line 1628)
 
 app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
     try {
@@ -2011,6 +2011,7 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
         }
 
         // --- CHECK 2: Has this IP already been used? ---
+        // 🚨 FIX: We check for IP usage BEFORE recording the IP address.
         const trialIpCheck = await pool.query(
             "SELECT user_id FROM free_trial_numbers WHERE ip_address = $1",
             [userIpAddress]
@@ -2019,7 +2020,7 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
             return res.json({ success: false, message: 'This network has already been used for a free trial.' });
         }
 
-        // --- RECORD: Add or update user in pre_verified_users ---
+        // 🚨 FIX: Record the user/IP success only
         await pool.query(
             `INSERT INTO pre_verified_users (user_id, ip_address, verified_at)
              VALUES ($1, $2, NOW())
@@ -2028,14 +2029,15 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
             [userId, userIpAddress]
         );
 
-        // ✅ Everything passed
-        return res.json({ success: true });
+        // ✅ Everything passed on the server side
+        return res.json({ success: true, message: "Server checks passed." });
 
     } catch (error) {
         console.error("Error in /pre-verify-user:", error);
-        return res.status(500).json({ success: false, message: 'Server error.' });
+        return res.status(500).json({ success: false, message: 'Server error during verification check.' });
     }
 });
+
 
 
 // POST /api/bots/set-var - Updates a single config variable for a bot
