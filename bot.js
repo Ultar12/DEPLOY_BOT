@@ -8762,13 +8762,18 @@ console.log('[Backup] Scheduled hourly automatic database backup.');
 
 // In bot.js, replace this entire function
 
+// bot.js (Replace existing checkAndPruneLoggedOutBots function)
+
 async function checkAndPruneLoggedOutBots() {
     console.log('[Prune] Running hourly check for long-term logged-out bots...');
     try {
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        // Define the correct threshold: 7 days ago
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); 
+        
+        // 🚨 FIX: Correctly query bots logged out for more than 7 days
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [fiveDaysAgo]
+            [sevenDaysAgo] // Use the correctly calculated variable
         );
 
         const botsToDelete = result.rows;
@@ -8782,7 +8787,7 @@ async function checkAndPruneLoggedOutBots() {
             console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 7 days.`);
             
             try {
-                // --- THIS IS THE FIX: The Heroku deletion command was missing ---
+                // 🚨 FIX: Ensure Heroku deletion command is correctly placed and executed
                 await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
                     headers: { 
                         Authorization: `Bearer ${HEROKU_API_KEY}`, 
@@ -8794,8 +8799,8 @@ async function checkAndPruneLoggedOutBots() {
                 await dbServices.deleteUserBot(user_id, bot_name);
                 await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
 
-                await bot.sendMessage(user_id, `Your bot "*${escapeMarkdown(bot_name)}*" has been automatically deleted because it was logged out for more than 7 days.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 5 days.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(user_id, `Your bot *${escapeMarkdown(bot_name)}* has been automatically deleted because it was logged out for more than 7 days.`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 7 days.`, { parse_mode: 'Markdown' });
 
             } catch (error) {
                 if (error.response && error.response.status === 404) {
@@ -8803,6 +8808,7 @@ async function checkAndPruneLoggedOutBots() {
                     await dbServices.deleteUserBot(user_id, bot_name);
                     await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
                 } else {
+                    // Send alert for critical failure if it's not a 404
                     console.error(`[Prune] Failed to delete bot ${bot_name}:`, error.response?.data?.message || error.message);
                     await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs.`, { parse_mode: 'Markdown' });
                 }
