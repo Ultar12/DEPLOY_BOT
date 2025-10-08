@@ -8168,10 +8168,13 @@ if (action === 'setvarbool') {
 
   // bot.js (Inside bot.on('callback_query', async q => { ... }))
 
+// bot.js (Inside bot.on('callback_query', async q => { ... }))
+
 if (action === 'change_session') {
     const appName = payload;
     const targetUserId = extra;
     const cid = q.message.chat.id.toString();
+    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
 
     if (cid !== targetUserId) {
         await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
@@ -8184,7 +8187,7 @@ if (action === 'change_session') {
     // --- START OF FIXED IMAGE/PHOTO LOGIC ---
     const isRaganork = botTypeForChangeSession === 'raganork';
     
-    // 🚨 FIX: Select the correct image URL based on bot type
+    // Select the correct image URL based on bot type
     const imageGuideUrl = isRaganork
         ? 'https://files.catbox.moe/lqk3gj.jpeg' // Raganork Image URL
         : 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
@@ -8210,7 +8213,7 @@ if (action === 'change_session') {
         }
     };
     
-    // 🚨 FIX: Use bot.sendPhoto to include the image.
+    // 1. Send the new image/instructions message
     await bot.sendPhoto(cid, imageGuideUrl, { 
         caption: sessionPrompt, // Use the prompt as the caption
         parse_mode: 'Markdown',
@@ -8222,11 +8225,10 @@ if (action === 'change_session') {
             ]
         }
     });
-    // We send a new message, so we edit the old message to "..." or delete it
-    await bot.editMessageText('^ Please use the new message above ^', {
-        chat_id: cid,
-        message_id: q.message.message_id
-    }).catch(e => console.log(`Could not edit message ${q.message.message_id}: ${e.message}`));
+    
+    // 2. 🚨 FIX: Delete the original message that contained the button
+    await bot.deleteMessage(cid, messageIdToDelete)
+        .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
     
     // --- END OF FIXED IMAGE/PHOTO LOGIC ---
     
