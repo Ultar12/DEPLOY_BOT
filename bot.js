@@ -7303,51 +7303,70 @@ if (action === 'paystack_deploy' || action === 'paystack_renew') {
 
 // In bot.js, inside bot.on('callback_query', ...)
 
+// bot.js (Inside bot.on('callback_query', ...) handler)
+
 if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
     const isRenewal = action === 'flutterwave_renew';
     const priceNgn = parseInt(payload, 10);
     const days = parseInt(extra, 10);
     const appName = isRenewal ? flag : null;
-    const userEmail = await getUserEmail(cid);
+    const userEmail = await getUserEmail(cid); // Get current verified email
 
-    if (!userEmail) {
-        return bot.answerCallbackQuery(q.id, { text: 'Error: Could not find your verified email.', show_alert: true });
-    }
-
-    // ✅ FIX: The state check is now MOVED inside the 'else' block,
-    // so it ONLY runs for new deployments and is SKIPPED for renewals.
+    // --- NEW DEPLOYMENT CONTEXT ---
+    let deployMetadata = {};
     if (!isRenewal) {
         const st = userStates[cid];
         if (!st || st.step !== 'AWAITING_KEY') {
             return bot.answerCallbackQuery(q.id, { text: "Your session has expired. Please start over.", show_alert: true });
         }
+        // 🚨 FIX 1: Capture deployment details from state for metadata
+        deployMetadata = {
+            botType: st.data.botType,
+            APP_NAME: st.data.APP_NAME,
+            SESSION_ID: st.data.SESSION_ID,
+            price: priceNgn,
+        };
     }
-
-    await bot.editMessageText('Generating Flutterwave payment link...', {
-        chat_id: cid, message_id: q.message.message_id
-    });
+    // --- END NEW DEPLOYMENT CONTEXT ---
     
+    // 🚨 FIX 2: Define FINAL Metadata
+    const metadata = { 
+        user_id: cid, 
+        product: isRenewal ? 'Bot Renewal' : `Deployment Key - ${days} Days`, 
+        days: days,
+        appName: appName, // For renewal
+        ...deployMetadata, // For new deploy
+    };
+    
+    // We generate the reference here whether or not we have the email.
     const reference = `flw_${crypto.randomBytes(12).toString('hex')}`;
-    let metadata;
 
-    if (isRenewal) {
-        metadata = { user_id: cid, product: 'Bot Renewal', days: days, appName: appName };
-        await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email, bot_type) VALUES ($1, $2, $3, $4)',
-            [reference, cid, userEmail, `renewal_${appName}`]
-        );
-    } else {
-        const st = userStates[cid]; // State is guaranteed to exist here now
-        metadata = { user_id: cid, product: `Deployment Key - ${days} Days`, days: days, price: priceNgn };
+    // --- The key difference: Do NOT insert into pending_payments yet if no email exists! ---
+    // The payment link generation will fail if the email is null, and the next function must handle the state change.
+    
+    if (userEmail) {
+        // If email exists, proceed to insert pending payment and generate link immediately
+        await bot.editMessageText('Generating Flutterwave payment link...', {
+            chat_id: cid, message_id: q.message.message_id
+        });
+        
         await pool.query(
             'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-            [reference, cid, userEmail, st.data.botType, st.data.APP_NAME, st.data.SESSION_ID]
+            [reference, cid, userEmail, metadata.botType || 'unknown', metadata.APP_NAME, metadata.SESSION_ID]
         );
     }
     
-    const paymentUrl = await initiateFlutterwavePayment(cid, userEmail, priceNgn, reference, metadata);
+    // 🚨 FIX 3: Call initiateFlutterwavePayment. It will check userEmail internally.
+    const paymentUrl = await initiateFlutterwavePayment(
+        cid, 
+        userEmail, // Pass current email (can be null)
+        priceNgn, 
+        reference, 
+        metadata
+    );
     
     if (paymentUrl) {
+        // This block runs if initiateFlutterwavePayment succeeded (i.e., email existed)
         await bot.editMessageText(
             `Click the button below to complete your payment with Flutterwave.`, {
                 chat_id: cid, message_id: q.message.message_id,
@@ -7357,12 +7376,22 @@ if (action === 'flutterwave_deploy' || action === 'flutterwave_renew') {
             }
         );
     } else {
-        await bot.editMessageText('Sorry, an error occurred while creating the Flutterwave payment link.', {
-            chat_id: cid, message_id: q.message.message_id
-        });
+        // This block runs if initiateFlutterwavePayment returned null, meaning:
+        // 1. The key was bad.
+        // 2. The userEmail was null, AND the state was set to AWAITING_EMAIL_FOR_AUTO_REG.
+        
+        // If the state was set (userEmail was null), we trust the subsequent message handler.
+        // Otherwise, send a generic error.
+        if (!userStates[cid] || userStates[cid].step !== 'AWAITING_EMAIL_FOR_AUTO_REG') {
+            await bot.editMessageText('Sorry, an error occurred while creating the Flutterwave payment link.', {
+                chat_id: cid, message_id: q.message.message_id
+            });
+        }
+        // If state was set, the message asking for email was already sent inside initiateFlutterwavePayment.
     }
     return;
 }
+
 
 
 
