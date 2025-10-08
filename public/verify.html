@@ -87,7 +87,7 @@
 </head>
 <body>
     <div class="container">
-        <div id="status-icon"><div class="spinner"></div></div>
+        <div id="status-icon"><div class="spinner"></div></div> 
         <h2 id="status-title">Verification</h2>
         <p id="status-message">Please wait while we verify your eligibility...</p>
         <p id="hint-text">This should only take a moment.</p>
@@ -107,7 +107,7 @@
         retryButton.addEventListener('click', runVerification);
 
         async function runVerification() {
-            // Reset UI
+            // Reset UI to initial loading state
             statusIcon.innerHTML = '<div class="spinner"></div>';
             statusTitle.innerText = 'Verification';
             statusMessage.innerText = 'Please wait while we verify your eligibility...';
@@ -133,12 +133,12 @@
                     verificationPayload.status = "denied";
                     verificationPayload.reason = "Country not eligible";
 
-                    statusIcon.innerText = '🚫';
+                    statusIcon.innerHTML = '🚫'; // Use innerHTML to replace spinner
                     statusTitle.innerText = 'Access Denied';
                     statusMessage.innerText = 'Sorry, the free trial is only available in Nigeria.';
                     hintText.innerText = '';
 
-                    // Send denial data to bot too
+                    // Send denial data to bot
                     tg.sendData(JSON.stringify(verificationPayload));
                     return;
                 }
@@ -159,23 +159,35 @@
                     verificationPayload.status = "verified";
                     verificationPayload.serverCheck = "passed";
 
-                    statusIcon.innerText = '✅';
-                    statusTitle.innerText = 'Success!';
-                    statusMessage.innerText = 'Verification complete. Returning to the bot...';
-                    statusMessage.style.color = 'var(--success-color)';
-                    hintText.innerText = 'The bot will now complete the process.';
-                    
-                    // Send full data back to bot
+                    // 1. Send data to bot (processed by bot.js)
                     tg.sendData(JSON.stringify(verificationPayload));
 
-                    // 🚨 FIX: Auto close after a short delay, assuming the bot received and processed tg.sendData
-                    setTimeout(() => tg.close(), 5000); 
+                    // 2. KEEP LOADING UI WHILE BOT PROCESSES
+                    // Update the message but keep the spinner/loading state
+                    statusTitle.innerText = 'Processing...';
+                    statusMessage.innerText = 'Please wait for the final confirmation...';
+                    hintText.innerText = 'The bot is finalizing your verification.';
+                    
+                    // 3. Update UI to SUCCESS and close after 5 seconds
+                    setTimeout(() => {
+                        // Final success visual change
+                        statusIcon.innerHTML = '✅';
+                        statusTitle.innerText = 'Success!';
+                        statusMessage.innerText = 'Verification complete. Window closing now.';
+                        statusMessage.style.color = 'var(--success-color)';
+                        hintText.innerText = '';
+                        
+                        // Close the window after a slight delay to ensure user sees the success state
+                        setTimeout(() => tg.close(), 500); 
+
+                    }, 5000); // 🚨 WAIT 5 SECONDS (5000ms) for bot to process and send buttons
+
                 } else {
                     verificationPayload.status = "failed";
                     verificationPayload.serverCheck = "failed";
                     verificationPayload.error = serverData.message || "Unknown error";
 
-                    statusIcon.innerText = '⚠️';
+                    statusIcon.innerHTML = '⚠️';
                     statusTitle.innerText = 'Verification Failed';
                     statusMessage.innerText = verificationPayload.error;
                     statusMessage.style.color = 'var(--error-color)';
@@ -193,7 +205,7 @@
                     error: error.message
                 };
 
-                statusIcon.innerText = '⚠️';
+                statusIcon.innerHTML = '⚠️';
                 statusTitle.innerText = 'Network Error';
                 statusMessage.innerText = 'Could not complete verification. Please check your connection and try again.';
                 statusMessage.style.color = 'var(--error-color)';
