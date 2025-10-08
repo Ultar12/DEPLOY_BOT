@@ -40,6 +40,10 @@
             margin-bottom: 15px;
         }
 
+        #status-title {
+            margin: 15px 0 5px;
+        }
+
         #status-message {
             margin: 15px 0;
             font-weight: 500;
@@ -157,14 +161,15 @@
 
                     statusIcon.innerText = '✅';
                     statusTitle.innerText = 'Success!';
-                    statusMessage.innerText = 'Verification complete. You can now close this window.';
+                    statusMessage.innerText = 'Verification complete. Returning to the bot...';
                     statusMessage.style.color = 'var(--success-color)';
-                    hintText.innerText = 'Returning to the bot...';
+                    hintText.innerText = 'The bot will now complete the process.';
                     
                     // Send full data back to bot
                     tg.sendData(JSON.stringify(verificationPayload));
 
-                    setTimeout(() => tg.close(), 1500);
+                    // 🚨 FIX: Auto close after a short delay, assuming the bot received and processed tg.sendData
+                    setTimeout(() => tg.close(), 5000); 
                 } else {
                     verificationPayload.status = "failed";
                     verificationPayload.serverCheck = "failed";
