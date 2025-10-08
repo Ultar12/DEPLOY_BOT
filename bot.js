@@ -5641,7 +5641,23 @@ if (action === 'confirm_updateall') {
     }
 }
 
+if (action === 'get_session_start_flow') {
+    // This starts the session ID flow (which is the same as the "Get Session ID" button)
+    delete userStates[cid];
+    userStates[cid] = { step: 'AWAITING_GET_SESSION_BOT_TYPE', data: {} };
 
+    await bot.editMessageText('Which bot type do you need a session ID for?', {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Levanter', callback_data: select_get_session_type:levanter }],
+                [{ text: 'Raganork MD', callback_data: select_get_session_type:raganork }]
+            ]
+        }
+    });
+    return;
+}
 
   // In bot.js, inside bot.on('callback_query', ...)
 
