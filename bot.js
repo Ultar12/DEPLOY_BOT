@@ -8165,9 +8165,12 @@ if (action === 'setvarbool') {
 }
 
 
-  if (action === 'change_session') {
+  // bot.js (Inside bot.on('callback_query', async q => { ... }))
+
+if (action === 'change_session') {
     const appName = payload;
     const targetUserId = extra;
+    const cid = q.message.chat.id.toString();
 
     if (cid !== targetUserId) {
         await bot.sendMessage(cid, `You can only change the session ID for your own bots.`);
@@ -8176,7 +8179,25 @@ if (action === 'setvarbool') {
     // Clear current state and set up for session ID input
     delete userStates[cid];
     const botTypeForChangeSession = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
+    
+    // --- START OF FIXED IMAGE/PHOTO LOGIC ---
+    const isRaganork = botTypeForChangeSession === 'raganork';
+    
+    // 🚨 FIX: Select the correct image URL based on bot type
+    const imageGuideUrl = isRaganork
+        ? 'https://files.catbox.moe/lqk3gj.jpeg' // Raganork Image URL
+        : 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        
+    const sessionSiteUrl = isRaganork
+        ? RAGANORK_SESSION_SITE_URL // Assuming this constant is defined
+        : LEVANTER_SESSION_SITE_URL; // Assuming this constant is defined
+        
+    const prefix = isRaganork 
+        ? RAGANORK_SESSION_PREFIX // Assuming this constant is defined
+        : LEVANTER_SESSION_PREFIX; // Assuming this constant is defined
 
+    const sessionPrompt = `Please enter the *new* session ID for your bot "*${escapeMarkdown(appName)}*". It must start with \`${prefix}\`.`;
+    
     userStates[cid] = {
         step: 'SETVAR_ENTER_VALUE',
         data: {
@@ -8188,25 +8209,29 @@ if (action === 'setvarbool') {
         }
     };
     
-    const sessionPrompt = `Please enter the *new* session ID for your bot "*${appName}*". It must start with \`${botTypeForChangeSession === 'raganork' ? RAGANORK_SESSION_PREFIX : LEVANTER_SESSION_PREFIX}\`.`;
-    
-    const sessionSiteUrl = botTypeForChangeSession === 'raganork' 
-        ? RAGANORK_SESSION_SITE_URL 
-        : 'https://levanter-delta.vercel.app/';
-
-    await bot.sendMessage(cid, sessionPrompt, { 
+    // 🚨 FIX: Use bot.sendPhoto to include the image.
+    await bot.sendPhoto(cid, imageGuideUrl, { 
+        caption: sessionPrompt, // Use the prompt as the caption
         parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "Don't have the new session?", url: sessionSiteUrl }
+                    { text: "Don't have the new session? (Click Here)", url: sessionSiteUrl }
                 ]
             ]
         }
     });
-
+    // We send a new message, so we edit the old message to "..." or delete it
+    await bot.editMessageText('^ Please use the new message above ^', {
+        chat_id: cid,
+        message_id: q.message.message_id
+    }).catch(e => console.log(`Could not edit message ${q.message.message_id}: ${e.message}`));
+    
+    // --- END OF FIXED IMAGE/PHOTO LOGIC ---
+    
     return;
-  }
+}
+
   
   if (action === 'admin_delete_trial_app') {
       const appToDelete = payload;
