@@ -517,17 +517,35 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    const tenDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000); // 10 days cooldown
+    // 🚨 FIX 1: Define the cooldown period as 90 days (3 months)
+    const COOLDOWN_DAYS = 90; 
+
+    // 1. Get the timestamp of the user's last free deployment
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
     );
+    
+    // If no record is found, the user can deploy.
     if (res.rows.length === 0) return { can: true };
+    
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
-    if (lastDeploy < tenDaysAgo) return { can: true };
-    const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000);
-    return { can: false, cooldown: nextAvailable };
+    const now = new Date();
+    
+    // 2. Calculate the exact future date when the cooldown ends
+    const cooldownEnd = new Date(lastDeploy.getTime() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+    
+    // 3. Compare current time with the cooldown end date
+    if (now >= cooldownEnd) {
+        // Cooldown period has passed.
+        return { can: true };
+    } else {
+        // Cooldown is still active. Return the future date.
+        // 🚨 FIX 2: Removed flawed "tenDaysAgo" logic and use "cooldownEnd" as the return value.
+        return { can: false, cooldown: cooldownEnd };
+    }
 }
+
 
 async function recordFreeTrialDeploy(userId) {
     await pool.query(
