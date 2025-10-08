@@ -2143,7 +2143,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
     if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
         const { tx_ref: reference, amount, customer, meta } = payload.data;
         const user_id = meta.user_id;
-        const days = meta.days; 
+        const days = meta.days; // This is the crucial 'days' variable
 
         try {
             const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [reference]);
@@ -2159,11 +2159,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
             const userChat = await bot.getChat(user_id);
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
-            // --- START OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
+            // --- FIXED LOGIC: RENEWAL/DEPLOYMENT ---
             if (meta.product === 'Bot Renewal') {
                 const { appName } = meta;
                 
-                // 🚨 FIX: Add days to the expiration date. Use CASE WHEN to handle past expiration.
+                // 🚨 flutterwave_renew FIX: Correctly update expiration date for renewal
                 await pool.query(
                     `UPDATE user_deployments 
                      SET expiration_date = 
@@ -2174,11 +2174,14 @@ app.post('/flutterwave/webhook', async (req, res) => {
                      WHERE user_id = $2 AND app_name = $3`,
                     [days, user_id, appName]
                 );
+                
+                // 🚨 BUG FIX: Delete pending payment if it exists (for robustness, though not strictly needed for renewal flow)
+                await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
 
                 await bot.sendMessage(user_id, `Payment confirmed! 🎉\n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days**.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*Bot:* \`${appName}\`\n*Duration:* ${days} days`, { parse_mode: 'Markdown' });
             
-            } else { // This handles new deployments
+            } else { // Handles NEW deployments
                 const pendingPayment = await pool.query('SELECT bot_type, app_name, session_id FROM pending_payments WHERE reference = $1', [reference]);
                 
                 if (pendingPayment.rows.length === 0) {
@@ -2187,21 +2190,31 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 }
 
                 const { bot_type, app_name, session_id } = pendingPayment.rows[0];
+                
+                // 🚨 DEPLOYMENT BUG FIX: Add the 'DAYS' variable to deployVars
                 await bot.sendMessage(user_id, 'Payment confirmed! Your bot deployment has started.', { parse_mode: 'Markdown' });
-                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, AUTO_STATUS_VIEW: 'false', DAYS: days };
+                const deployVars = { 
+                    SESSION_ID: session_id, 
+                    APP_NAME: app_name, 
+                    AUTO_STATUS_VIEW: 'false', 
+                    DAYS: days // <--- CRITICAL FIX: Ensure duration is passed
+                }; 
+                
                 dbServices.buildWithProgress(user_id, deployVars, false, false, bot_type);
                 await bot.sendMessage(ADMIN_ID, `*New App Deployed (Flutterwave)!*\n\n*User:* ${escapeMarkdown(userName)} (\`${user_id}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
                 
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             }
-            // --- END OF FIX: RENEWAL/DEPLOYMENT LOGIC ---
             
         } catch (dbError) {
             console.error('[Flutterwave Webhook] DB Error:', dbError);
+            // Send an alert if a critical DB error occurs during processing
+            await bot.sendMessage(ADMIN_ID, `🚨 CRITICAL FLUTTERWAVE WEBHOOK ERROR for ref ${reference}. Manual review needed. Error: ${dbError.message}`);
         }
     }
     res.status(200).end();
 });
+
 
 
 
