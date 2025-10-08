@@ -3479,6 +3479,50 @@ _The following apps were not found in the local database._
     }
 });
 
+// bot.js (Add this with your other command handlers)
+
+bot.onText(/^\/forward (\d+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    const targetUserId = match[1];
+    
+    if (adminId !== ADMIN_ID) {
+        return bot.sendMessage(adminId, "You are not authorized to use this command.");
+    }
+    
+    const repliedMsg = msg.reply_to_message;
+    
+    if (!repliedMsg) {
+        return bot.sendMessage(adminId, "Please use this command by **replying** to the message (text, photo, video, etc.) you want to forward.", { parse_mode: 'Markdown' });
+    }
+    
+    // Check if the target user ID exists and is accessible
+    try {
+        await bot.getChat(targetUserId);
+    } catch (e) {
+        return bot.sendMessage(adminId, `Cannot forward: User with ID \`${targetUserId}\` not found or has blocked the bot.`, { parse_mode: 'Markdown' });
+    }
+
+    try {
+        // --- Core Fix: Using forwardMessage ---
+        // This single API call forwards nearly all message types (text, photo, video, sticker, etc.)
+        // including their captions and media.
+        const forwardedMessage = await bot.forwardMessage(
+            targetUserId, 
+            repliedMsg.chat.id, 
+            repliedMsg.message_id
+        );
+        
+        await bot.sendMessage(adminId, `Message successfully forwarded to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+        
+    } catch (error) {
+        const escapedError = escapeMarkdown(error.message);
+        console.error(`Error forwarding message to user ${targetUserId}:`, escapedError);
+        
+        await bot.sendMessage(adminId, `Failed to forward message to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
+    }
+});
+
+
 
 bot.onText(/^\/revenue$/, async (msg) => {
     const cid = msg.chat.id.toString();
