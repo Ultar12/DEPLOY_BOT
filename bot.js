@@ -108,6 +108,7 @@ const SUPPORT_USERNAME = '@star_ies1';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 const LEVANTER_SESSION_PREFIX = 'levanter_';
 const RAGANORK_SESSION_PREFIX = 'RGNK';
+const LEVANTER_SESSION_SITE_URL = `https://levanter-delta.vercel.app/`;
 const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 
 // 4) Postgres setup & ensure tables exist
