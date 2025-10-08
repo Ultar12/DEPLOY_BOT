@@ -5076,40 +5076,63 @@ if (action === 'users_page') {
     return;
 }
 
-  // ... inside bot.on('callback_query', ...)
-// --- FIX: Refactored select_deploy_type to ask for Session ID first ---
+
+// --- FIX: Refactored select_deploy_type to ask for Session ID first with Image ---
 if (action === 'select_deploy_type') {
     const botType = payload;
     const st = userStates[cid];
+    const messageIdToDelete = q.message.message_id; // Get the ID of the message to delete
 
     if (!st || st.step !== 'AWAITING_BOT_TYPE_SELECTION') {
-        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: q.message.message_id });
+        return bot.editMessageText('This session has expired. Please start the deployment process again.', { chat_id: cid, message_id: messageIdToDelete });
     }
       
     st.data.botType = botType;
 
-    // The flow now always goes to SESSION_ID first, regardless of free trial status.
+    // The flow now always goes to SESSION_ID first.
     st.step = 'SESSION_ID';
     
-    let botName = botType.charAt(0).toUpperCase() + botType.slice(1);
-    let sessionUrl = (botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : 'https://levanter-delta.vercel.app/';
+    // --- START OF NEW IMAGE LOGIC ---
+    const isRaganork = botType === 'raganork';
 
-    // Send a message asking for the session ID. The key step comes later.
-    await bot.editMessageText(
-        `You've selected *${botName}*. Please send your session id.`,
-        {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: `Get Session ID for ${botName}`, url: sessionUrl }]
+    const prefix = isRaganork 
+        ? RAGANORK_SESSION_PREFIX // Assuming this constant is defined
+        : LEVANTER_SESSION_PREFIX; // Assuming this constant is defined
+        
+    const imageGuideUrl = isRaganork
+        ? 'https://files.catbox.moe/lqk3gj.jpeg' // Raganork Image URL
+        : 'https://files.catbox.moe/k6wgxl.jpeg'; // Levanter Image URL
+        
+    const sessionSiteUrl = isRaganork
+        ? RAGANORK_SESSION_SITE_URL // Assuming this constant is defined
+        : LEVANTER_SESSION_SITE_URL; // Assuming this constant is defined
+
+    const botName = botType.charAt(0).toUpperCase() + botType.slice(1);
+    
+    const sessionPrompt = `You've selected *${botName}*. Please send your session id. It must start with \`${prefix}\`.`;
+    
+    // 1. Send the new image/instructions message
+    await bot.sendPhoto(cid, imageGuideUrl, { 
+        caption: sessionPrompt, // Use the prompt as the caption
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: `Get Session ID for ${botName}`, url: sessionSiteUrl }
                 ]
-            }
+            ]
         }
-    );
+    });
+
+    // 2. 🚨 FIX: Delete the original message that contained the bot type buttons
+    await bot.deleteMessage(cid, messageIdToDelete)
+        .catch(e => console.log(`Could not delete message ${messageIdToDelete}: ${e.message}`));
+
+    // --- END OF NEW IMAGE LOGIC ---
+
     return;
 }
+
 
 
 
