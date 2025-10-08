@@ -3438,9 +3438,14 @@ _The following apps were not found in the local database._
 
 // bot.js (REPLACE the entire bot.onText(/^\/forward (\d+)$/, ...) function)
 
-bot.onText(/^\/send (\d+)$/, async (msg, match) => {
+// bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
+
+// Updated regex to capture optional text after the user ID: /send <user_id> <optional_text>
+bot.onText(/^\/send (\d+)\s*([\s\S]*)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     const targetUserId = match[1];
+    // Capture all text after the user ID, trimming any leading/trailing whitespace
+    const directCaptionOrText = match[2] ? match[2].trim() : ''; 
     
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
@@ -3448,52 +3453,74 @@ bot.onText(/^\/send (\d+)$/, async (msg, match) => {
     
     const repliedMsg = msg.reply_to_message;
     
-    if (!repliedMsg) {
-        return bot.sendMessage(adminId, "❌ Please use this command by **replying** to the message (text, photo, video, etc.) you want to forward.", { parse_mode: 'Markdown' });
-    }
+    // --- Step 1: Pre-Checks ---
     
     // Check if the target user ID exists and is accessible
     try {
         await bot.getChat(targetUserId);
     } catch (e) {
-        return bot.sendMessage(adminId, `❌ Cannot forward: User with ID \`${targetUserId}\` not found or has blocked the bot.`, { parse_mode: 'Markdown' });
+        return bot.sendMessage(adminId, `❌ Cannot send: User with ID \`${targetUserId}\` not found or has blocked the bot.`, { parse_mode: 'Markdown' });
+    }
+    
+    // Ensure there is SOMETHING to send (either a replied message OR direct text)
+    if (!repliedMsg && !directCaptionOrText) {
+        return bot.sendMessage(adminId, "❌ Please reply to media/file/sticker OR provide a message after the user ID to send.", { parse_mode: 'Markdown' });
     }
 
     try {
         let sentMessage;
-        const captionText = repliedMsg.caption ? repliedMsg.caption : repliedMsg.text ? repliedMsg.text : null;
-        const baseOptions = { parse_mode: 'Markdown' };
+        let baseOptions = { parse_mode: 'Markdown' };
 
-        // --- Core Fix: Manually determine message type and send content ---
-        if (repliedMsg.text) {
-            // 1. Text message
-            sentMessage = await bot.sendMessage(targetUserId, repliedMsg.text, baseOptions);
-        } else if (repliedMsg.photo) {
-            // 2. Photo message
-            const fileId = repliedMsg.photo[repliedMsg.photo.length - 1].file_id;
-            sentMessage = await bot.sendPhoto(targetUserId, fileId, { caption: captionText, ...baseOptions });
-        } else if (repliedMsg.video) {
-            // 3. Video message
-            const fileId = repliedMsg.video.file_id;
-            sentMessage = await bot.sendVideo(targetUserId, fileId, { caption: captionText, ...baseOptions });
-        } else if (repliedMsg.animation) {
-             // 4. GIF (Animation)
-            const fileId = repliedMsg.animation.file_id;
-            sentMessage = await bot.sendAnimation(targetUserId, fileId, { caption: captionText, ...baseOptions });
-        } else if (repliedMsg.sticker) {
-            // 5. Sticker
-            const fileId = repliedMsg.sticker.file_id;
-            sentMessage = await bot.sendSticker(targetUserId, fileId);
-        } else if (repliedMsg.document) {
-            // 6. Document/File
-            const fileId = repliedMsg.document.file_id;
-            sentMessage = await bot.sendDocument(targetUserId, fileId, { caption: captionText, ...baseOptions });
-        } else {
-            // Fallback for unsupported types
-            return bot.sendMessage(adminId, `⚠️ Message type (e.g., voice, video note) not supported for "un-forwarding".`, { parse_mode: 'Markdown' });
+        // --- Step 2: Sending Logic (Prioritize Reply Content) ---
+
+        if (repliedMsg) {
+            // A. Handle REPLIED MESSAGE (Media/File + Optional Caption)
+            
+            // Use caption from the replied message, but allow text from the command to overwrite it
+            const mediaCaption = repliedMsg.caption ? repliedMsg.caption : '';
+            const finalCaption = directCaptionOrText || mediaCaption;
+            
+            // Set the caption in the base options
+            if (finalCaption) {
+                baseOptions.caption = finalCaption;
+            }
+
+            if (repliedMsg.text) {
+                // 1. Text message (if replying to text)
+                const finalContent = directCaptionOrText || repliedMsg.text;
+                sentMessage = await bot.sendMessage(targetUserId, finalContent, baseOptions);
+            } else if (repliedMsg.photo) {
+                // 2. Photo message
+                const fileId = repliedMsg.photo[repliedMsg.photo.length - 1].file_id;
+                sentMessage = await bot.sendPhoto(targetUserId, fileId, baseOptions);
+            } else if (repliedMsg.video) {
+                // 3. Video message
+                const fileId = repliedMsg.video.file_id;
+                sentMessage = await bot.sendVideo(targetUserId, fileId, baseOptions);
+            } else if (repliedMsg.animation) {
+                // 4. GIF (Animation)
+                const fileId = repliedMsg.animation.file_id;
+                sentMessage = await bot.sendAnimation(targetUserId, fileId, baseOptions);
+            } else if (repliedMsg.sticker) {
+                // 5. Sticker (Stickers do not support captions)
+                sentMessage = await bot.sendSticker(targetUserId, repliedMsg.sticker.file_id);
+            } else if (repliedMsg.document) {
+                // 6. Document/File
+                const fileId = repliedMsg.document.file_id;
+                sentMessage = await bot.sendDocument(targetUserId, fileId, baseOptions);
+            } else {
+                // Fallback for unsupported types (like voice notes, video notes, etc.)
+                return bot.sendMessage(adminId, `⚠️ The replied message type is not supported for direct sending.`, { parse_mode: 'Markdown' });
+            }
+        } else if (directCaptionOrText) {
+            // B. Handle DIRECT TEXT/CAPTION (If no reply message)
+            
+            // 7. Text from command line
+            sentMessage = await bot.sendMessage(targetUserId, directCaptionOrText, baseOptions);
         }
-      
 
+
+        // --- Step 3: Confirmation ---
         await bot.sendMessage(adminId, `✅ Message successfully sent (without forwarding tag) to user \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
         
     } catch (error) {
@@ -3503,6 +3530,7 @@ bot.onText(/^\/send (\d+)$/, async (msg, match) => {
         await bot.sendMessage(adminId, `❌ Failed to send content to user \`${targetUserId}\`: ${escapedError}`, { parse_mode: 'Markdown' });
     }
 });
+
 
 
 
