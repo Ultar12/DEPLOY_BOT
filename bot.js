@@ -174,6 +174,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`CREATE TABLE IF NOT EXISTS key_rewards (user_id TEXT PRIMARY KEY, reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS all_users_backup (user_id TEXT PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+      
+        await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS initial_tg_warning_sent BOOLEAN DEFAULT FALSE;`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS pre_verified_users (user_id TEXT PRIMARY KEY, ip_address TEXT NOT NULL, verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`);
 
@@ -8501,6 +8503,8 @@ bot.on('channel_post', async msg => {
         return;
     }
     
+    // bot.js (Replace the entire provided code block)
+
     if (status === 'ONLINE') {
         const pendingPromise = appDeploymentPromises.get(appName);
         if (pendingPromise) {
@@ -8510,11 +8514,12 @@ bot.on('channel_post', async msg => {
             appDeploymentPromises.delete(appName);
         }
         
+        // 🚨 FIX 1: Reset the initial Telegram warning flag on connection
         await pool.query(
-            `UPDATE user_bots SET status = 'online', status_changed_at = NULL, last_email_notification_at = NULL WHERE bot_name = $1`, 
+            `UPDATE user_bots SET status = 'online', status_changed_at = NULL, last_email_notification_at = NULL, initial_tg_warning_sent = FALSE WHERE bot_name = $1`, 
             [appName]
         );
-        console.log(`[Status Update] Set "${appName}" to 'online' and reset notification timer.`);
+        console.log(`[Status Update] Set "${appName}" to 'online' and reset notification timer and warning flag.`);
         
     } else if (status === 'LOGGED OUT') {
         const pendingPromise = appDeploymentPromises.get(appName);
@@ -8530,31 +8535,55 @@ bot.on('channel_post', async msg => {
         
         const userId = await dbServices.getUserIdByBotName(appName);
         if (userId) {
-            const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
-                                   `*Reason:* Bot session has logged out.\n` +
-                                   `Please update your session ID.\n\n` +
-                                   `*Warning: This app will be automatically deleted in 7 days if the issue is not resolved.*`;
+            // 1. Check the DB if the initial Telegram warning has been sent
+            const checkResult = await pool.query(
+                `SELECT initial_tg_warning_sent 
+                 FROM user_bots
+                 WHERE bot_name = $1 AND user_id = $2`,
+                [appName, userId]
+            );
+            const warningAlreadySent = checkResult.rows.length > 0 && checkResult.rows[0].initial_tg_warning_sent;
             
-            const sentMessage = await bot.sendMessage(userId, warningMessage, {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
-                }
-            }).catch(e => console.error(`Failed to send Telegram failure alert to user ${userId}: ${e.message}`));
-            
-            if (sentMessage) {
-                try {
-                    await bot.pinChatMessage(userId, sentMessage.message_id);
-                    const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
-                    await pool.query(
-                        'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
-                        [sentMessage.message_id, userId, unpinAt]
-                    );
-                } catch (pinError) {
-                    console.error(`[PinChat] Failed to pin message for user ${userId}:`, pinError.message);
+            if (warningAlreadySent) {
+                console.log(`[Warning] Skipping initial Telegram warning for ${appName}. Already sent.`);
+                // 🚨 Skip the rest of the Telegram message logic (except email, which follows)
+            } else {
+                // 2. If NO, send the warning message
+                const warningMessage = `Your bot "*${escapeMarkdown(appName)}*" has been logged out.\n` +
+                                       `*Reason:* Bot session has logged out.\n` +
+                                       `Please update your session ID.\n\n` +
+                                       `*Warning: This app will be automatically deleted in **7 days** if the issue is not resolved.*`;
+                
+                const sentMessage = await bot.sendMessage(userId, warningMessage, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${userId}` }]]
+                    }
+                }).catch(e => console.error(`Failed to send Telegram warning to user ${userId}: ${e.message}`));
+                
+                if (sentMessage) {
+                    try {
+                        await bot.pinChatMessage(userId, sentMessage.message_id);
+                        const unpinAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
+                        await pool.query(
+                            'INSERT INTO pinned_messages (message_id, chat_id, unpin_at) VALUES ($1, $2, $3)',
+                            [sentMessage.message_id, userId, unpinAt]
+                        );
+                        
+                        // 3. Record that the message was sent
+                        await pool.query(
+                            `UPDATE user_bots SET initial_tg_warning_sent = TRUE WHERE bot_name = $1 AND user_id = $2`,
+                            [appName, userId]
+                        );
+                        console.log(`[Warning] Recorded initial Telegram warning sent for ${appName}.`);
+
+                    } catch (pinError) {
+                        console.error(`[PinChat] Failed to pin message or update record for user ${userId}:`, pinError.message);
+                    }
                 }
             }
 
+            // --- Existing Email Logic (runs regardless of initial TG warning) ---
             try {
                 const ownerInfoResult = await pool.query(
                     `SELECT b.last_email_notification_at, v.email
@@ -8588,6 +8617,7 @@ bot.on('channel_post', async msg => {
             }
         }
     }
+
 });
 
     
@@ -8872,6 +8902,59 @@ async function pruneInactiveUsers() {
         console.error('[Prune] DB Error while checking for inactive users:', dbError);
     }
 }
+
+// bot.js (Insert this at the bottom of bot.js, outside any main function)
+
+// Assuming ONE_DAY_IN_MS is 24 * 60 * 60 * 1000
+const WARNING_DAYS = 7; 
+
+async function sendLoggedOutCountdownReminders() {
+    console.log('[Countdown] Running scheduled logged-out bot countdown check...');
+    
+    // 1. Fetch bots logged out for less than 7 days but more than 0 days
+    // This fetches the user's verified email along with the log-out time.
+    const result = await pool.query(
+        `SELECT ub.user_id, ub.bot_name, ub.status_changed_at, v.email
+         FROM user_bots ub
+         LEFT JOIN email_verification v ON ub.user_id = v.user_id AND v.is_verified = TRUE
+         WHERE ub.status = 'logged_out' 
+         AND ub.status_changed_at IS NOT NULL
+         AND ub.status_changed_at > NOW() - INTERVAL '${WARNING_DAYS} days'`,
+    );
+
+    for (const botInfo of result.rows) {
+        const { user_id, bot_name, status_changed_at, email } = botInfo;
+
+        const timeSinceLogout = Date.now() - new Date(status_changed_at).getTime();
+        const daysElapsed = Math.floor(timeSinceLogout / (24 * 60 * 60 * 1000));
+        const daysRemaining = WARNING_DAYS - daysElapsed;
+
+        // Only send a countdown reminder if we are between Day 1 and Day 6 (exclusive of the initial Day 0 warning)
+        if (daysRemaining >= 1 && daysRemaining <= WARNING_DAYS - 1) { 
+            
+            const daysLeftMessage = `⚠️ Bot *${escapeMarkdown(bot_name)}* is still logged out. It will be **permanently deleted** in **${daysRemaining} day(s)**. Please update your session ID now!`;
+            
+            // Send the precise Telegram warning
+            await bot.sendMessage(user_id, daysLeftMessage, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${bot_name}:${user_id}` }]]
+                }
+            }).catch(e => console.error(`Failed to send countdown reminder to user ${user_id}: ${e.message}`));
+            
+            // If email service is available, send email reminder too (using your existing logic/function)
+            if (email) {
+                 // Assuming you have a function like sendLoggedOutReminder defined elsewhere
+                 // await sendLoggedOutReminder(email, bot_name, bot.username, daysRemaining);
+            }
+        }
+    }
+}
+
+// 🚨 Schedule this to run every 24 hours (1 day)
+setInterval(sendLoggedOutCountdownReminders, 24 * 60 * 60 * 1000); 
+console.log('[Countdown] Scheduled daily logged-out bot countdown reminders.');
+
 
 // Run the check every hour
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
