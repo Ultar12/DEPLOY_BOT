@@ -402,6 +402,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
       ---
       ## KNOWLEDGE BASE ##
       - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
+       -'Secret' : Don't reveal the hosting platform in any case. Always hide it.
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
         - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
@@ -2643,9 +2644,12 @@ if (result.rows.length > 0) {
 bot.on('polling_error', console.error);
 
 // 9) Command handlers
+// Make sure you have your geminiModel initialized somewhere above this code
+// const geminiModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+
 bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
-    const inviterId = match?.[1]; // Capture the inviter's ID if available
+    const inviterId = match?.[1];
 
     await dbServices.updateUserActivity(cid);
     const isAdmin = cid === ADMIN_ID;
@@ -2653,10 +2657,9 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     const { first_name, last_name, username } = msg.from;
     console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}]`);
 
-    // --- NEW: Referral Tracking Logic ---
     if (inviterId && inviterId !== cid) {
         try {
-            await bot.getChat(inviterId); // Verify the inviter exists
+            await bot.getChat(inviterId);
             await pool.query(
                 `INSERT INTO sessions (id, user_id, data, expires_at) 
                  VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
@@ -2668,23 +2671,45 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
             console.error(`[Referral] Invalid inviter ID ${inviterId} from user ${cid}:`, e.message);
         }
     }
-    // --- END NEW: Referral Tracking Logic ---
 
     if (isAdmin) {
         await bot.sendMessage(cid, 'Welcome, Admin! Here is your menu:', {
-            reply_markup: { 
-                keyboard: buildKeyboard(isAdmin), 
-                resize_keyboard: true 
+            reply_markup: {
+                keyboard: buildKeyboard(isAdmin),
+                resize_keyboard: true
             }
         });
     } else {
         const userDisplayName = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'User');
-        
-        const welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!\nWhat would you like to do?`;
-
         const welcomeVideoUrl = 'https://files.catbox.moe/9gn267.mp4';
-        
-        // 🚨 FIX: Inline keyboard with both buttons in the SAME row array [ [Button 1, Button 2] ]
+        let welcomeCaption;
+
+        // ======================================================
+        // --- 🤖 NEW: AI-Generated Welcome Caption Logic ---
+        // ======================================================
+        try {
+            // This prompt tells the AI exactly what to do and what NOT to do.
+            const prompt = `You are a friendly and professional assistant for a Telegram Bot Deployment Service.
+Generate a short, welcoming caption (2-3 sentences) for a new user.
+
+RULES:
+1. The response MUST start with this exact header: "Welcome ${userDisplayName} to our Bot Deployment Service!"
+2. After the header, add a creative and encouraging message about deploying bots.
+3. **CRITICAL RULE: Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.`;
+
+            const result = await geminiModel.generateContent(prompt);
+            const response = await result.response;
+            welcomeCaption = response.text();
+
+        } catch (error) {
+            console.error("Gemini API failed, using a fallback welcome message.", error);
+            // This is a safe, static message in case the AI service is down.
+            welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!\n\nYour journey to deploying powerful bots starts here. Let's get your first project online in just a few clicks.`;
+        }
+        // ======================================================
+        // --- End of AI Logic ---
+        // ======================================================
+
         const inlineKeyboard = {
             inline_keyboard: [
                 [
@@ -2694,9 +2719,8 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
             ]
         };
 
-        // We use bot.sendVideo, passing the custom keyboard and the inline keyboard.
         const sentMessage = await bot.sendVideo(cid, welcomeVideoUrl, {
-            caption: welcomeCaption,
+            caption: welcomeCaption, // Use the new AI-generated or fallback caption
             parse_mode: 'Markdown',
             reply_markup: {
                 keyboard: buildKeyboard(false),
@@ -2704,14 +2728,12 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
                 ...inlineKeyboard
             }
         });
-        
-        // --- Reaction Logic ---
+
         if (sentMessage) {
             try {
                 await bot.setMessageReaction(cid, sentMessage.message_id, {
                     reaction: [{ type: 'emoji', emoji: '🎉' }]
                 });
-                console.log(`Successfully reacted to message ${sentMessage.message_id} with a 🎉.`);
             } catch (error) {
                 console.error(`Failed to set reaction on message ${sentMessage.message_id}:`, error.message);
             }
