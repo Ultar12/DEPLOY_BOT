@@ -16,6 +16,9 @@ const { Pool } = require('pg');
 const path = require('path');
 const mailListener = require('./mail_listener');
 const fs = require('fs');
+const fetch = require('node-fetch');
+const fs = require('fs');
+const tempfile = require('tempfile'); 
 const express = require('express');
 
 // In bot.js (near the top)
@@ -2963,27 +2966,25 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 });
 
 
-// bot.js (REPLACE the existing bot.onText(/^\/dl (.+)$/, ...) handler)
+// bot.js (Add this with other command handlers)
 
 bot.onText(/^\/dl (.+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
-    const mediaLink = match[1].trim(); // General media link (TikTok, YouTube, etc.)
+    const mediaLink = match[1].trim(); 
+    let tempFilePath = null; // Declare here so we can access it in the catch block
 
     await dbServices.updateUserActivity(cid, `/dl ${mediaLink.substring(0, 30)}...`);
 
-    // Basic validation
     if (!mediaLink.match(/http/i)) {
         return bot.sendMessage(cid, "❌ Please provide a valid URL starting with 'http' or 'https'.");
     }
 
-    // 1. Send initial animated message while processing
     const processingMsg = await bot.sendMessage(cid, 'Extracting HD media link, please wait... ⏳ (Max 30s)');
 
-    // 2. Fetch the media URL using yt-dlp wrapper
-    const mediaData = await extractMediaInfo(mediaLink);
-
-    // 3. Handle result and send media
     try {
+        // 1. Get media information via yt-dlp
+        const mediaData = await extractMediaInfo(mediaLink);
+
         if (mediaData.type === 'error') {
             await bot.editMessageText(`❌ Download Failed: ${mediaData.message}`, { chat_id: cid, message_id: processingMsg.message_id });
             return;
@@ -2991,27 +2992,56 @@ bot.onText(/^\/dl (.+)$/, async (msg, match) => {
 
         const finalCaption = escapeMarkdown(mediaData.caption).substring(0, 900) + `...\n\n*Downloaded in HD via UltarBot*`;
         
-        // Use the generic sendDocument for larger files or videos to ensure direct embedding/download.
-        if (mediaData.type === 'video' || mediaData.type === 'image_gallery' || mediaData.type === 'image') {
-            
-            await bot.sendDocument(cid, mediaData.url, { 
+        // 2. Determine file extension and local path
+        const ext = mediaData.type === 'video' ? '.mp4' : '.jpg';
+        tempFilePath = tempfile(ext); 
+        
+        await bot.editMessageText(`Downloading media locally... 💾`, { chat_id: cid, message_id: processingMsg.message_id });
+
+        // 3. Download the file from the extracted URL to the local temporary path
+        const response = await fetch(mediaData.url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch media from source: ${response.statusText}`);
+        }
+        await new Promise((resolve, reject) => {
+            const dest = fs.createWriteStream(tempFilePath);
+            response.body.pipe(dest);
+            response.body.on('error', (err) => {
+                 console.error("Pipe error during download:", err);
+                 reject(err);
+            });
+            dest.on('finish', resolve);
+        });
+
+        await bot.editMessageText(`Uploading to Telegram... ⬆️`, { chat_id: cid, message_id: processingMsg.message_id });
+
+        // 4. Upload the local file to Telegram
+        if (mediaData.type === 'video') {
+            await bot.sendVideo(cid, tempFilePath, { 
                 caption: finalCaption,
                 parse_mode: 'Markdown'
             });
-            
         } else {
-            // Fallback for unexpected media type
-            await bot.sendMessage(cid, `Media link found, but type (${mediaData.type}) is currently unsupported for sending.`);
+             // Use sendDocument as a safe fallback for images, galleries, and videos not fitting the strict 'sendVideo' size limits
+             await bot.sendDocument(cid, tempFilePath, {
+                 caption: finalCaption,
+                 parse_mode: 'Markdown'
+             });
         }
         
-        await bot.deleteMessage(cid, processingMsg.message_id).catch(() => {}); // Delete "Processing" message
+        // 5. Cleanup the temporary file and messages
+        fs.unlinkSync(tempFilePath); 
+        await bot.deleteMessage(cid, processingMsg.message_id).catch(() => {});
 
     } catch (e) {
-        console.error("Error sending downloaded media:", e);
-        await bot.editMessageText('🚨 A critical error occurred while sending the media. Check the bot logs.', { chat_id: cid, message_id: processingMsg.message_id });
+        console.error("Error during download, upload, or cleanup:", e);
+        // Attempt to clean up temp file if it exists and wasn't cleaned
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+        }
+        await bot.editMessageText(`🚨 Critical Error during download/upload: ${e.message.substring(0, 80)}`, { chat_id: cid, message_id: processingMsg.message_id });
     }
 });
-
 
 bot.onText(/^\/buytemp$/, async msg => {
     const cid = msg.chat.id.toString();
