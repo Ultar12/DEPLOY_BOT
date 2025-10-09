@@ -23,7 +23,7 @@
     "rimraf": "^6.0.0",
     "mailersend": "^2.0.0",
     "util": "0.12.5",            
-    "node-fetch": "^3.3.2",    
+    "node-fetch": "^3.3.2"  
   },
   "devDependencies": {
   }
