@@ -330,6 +330,101 @@ async function createAllTablesInPool(dbPool, dbName) {
   }
 })();
 
+// --- NEW GEMINI INTEGRATION ---
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+async function handleFallbackWithGemini(chatId, userMessage) {
+    // Show a "typing..." status to the user
+    bot.sendChatAction(chatId, 'typing');
+
+    // This is the core of the integration. We create a detailed prompt for Gemini.
+    const prompt = `
+        You are a helpful AI assistant for a Telegram bot. Your job is to understand the user's message and classify their intent into one of the following categories. Respond ONLY with a valid JSON object.
+
+        The user's message is: "${userMessage}"
+
+        Here are the possible intents and what they mean:
+        - "DEPLOY": The user wants to create, make, or deploy a new bot.
+        - "GET_SESSION": The user is asking for a session ID or how to get one.
+        - "LIST_BOTS": The user wants to see, check, or manage their existing bots ("My Bots").
+        - "SUPPORT": The user is asking for help, has a problem, or wants to contact the admin.
+        - "GENERAL_QUERY": The user is asking a general question that is not related to a specific bot action.
+
+        Analyze the user's message and determine their primary intent. Provide a short, helpful text response to send back to the user.
+
+        Examples:
+        - User message: "how do i make a new bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. Let's get started!"}
+        - User message: "can you show me my bots" -> {"intent": "LIST_BOTS", "response": "Sure, here are the bots you've deployed."}
+        - User message: "my bot is not working" -> {"intent": "SUPPORT", "response": "I'm sorry to hear you're having trouble. You can get help by contacting support."}
+        - User message: "what is node.js" -> {"intent": "GENERAL_QUERY", "response": "Node.js is an open-source, cross-platform JavaScript runtime environment that executes JavaScript code outside a web browser."}
+
+        Now, based on the user's message, provide the JSON output.
+    `;
+
+    try {
+        const result = await geminiModel.generateContent(prompt);
+        const responseText = result.response.text();
+        
+        // Clean the response to make sure it's valid JSON
+        const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const aiResponse = JSON.parse(jsonString);
+
+        console.log('[Gemini] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
+
+        // This is where you connect the AI's decision to your bot's actions
+        switch (aiResponse.intent) {
+            case 'DEPLOY':
+                // Send the "Deploy" button or start the deploy flow
+                await bot.sendMessage(chatId, aiResponse.response, {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Deploy Your Bot', callback_data: 'deploy_first_bot' }]
+                        ]
+                    }
+                });
+                break;
+
+            case 'GET_SESSION':
+                // Send the "Get Session ID" button
+                await bot.sendMessage(chatId, aiResponse.response, {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]
+                        ]
+                    }
+                });
+                break;
+
+            case 'LIST_BOTS':
+                // Send the text response, and then trigger your "My Bots" logic
+                await bot.sendMessage(chatId, aiResponse.response);
+                // Fake a message to trigger your existing 'My Bots' button logic
+                const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
+                bot.emit('message', fakeMsg);
+                break;
+
+            case 'SUPPORT':
+                // Send the support information
+                await bot.sendMessage(chatId, aiResponse.response + `\n\nYou can reach our support at: ${SUPPORT_USERNAME}`, {parse_mode: 'Markdown'});
+                break;
+
+            case 'GENERAL_QUERY':
+            default:
+                // For general questions, just send Gemini's text response
+                await bot.sendMessage(chatId, aiResponse.response);
+                break;
+        }
+
+    } catch (error) {
+        console.error("Error with Gemini integration:", error);
+        await bot.sendMessage(chatId, "Sorry, my AI brain is a bit fuzzy right now. Please use the buttons to navigate.");
+    }
+}
+// --- END OF GEMINI INTEGRATION ---
 
 
 // --- END OF REPLACEMENT ---
@@ -5360,6 +5455,10 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       console.error(`[API_CALL_ERROR] Error updating variable ${VAR_NAME} for ${APP_NAME}:`, errorMsg, e.response?.data);
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
+  }
+  else {
+        // If no other command or state matched, send it to Gemini
+        handleFallbackWithGemini(cid, text);
   }
 });
 
