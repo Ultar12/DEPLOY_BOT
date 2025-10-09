@@ -17,7 +17,6 @@ const path = require('path');
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const fetch = require('node-fetch');
-const fs = require('fs');
 const tempfile = require('tempfile'); 
 const express = require('express');
 
