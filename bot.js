@@ -3988,23 +3988,26 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 
 // REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
-    // This new log is ESSENTIAL. It will show us the raw data Telegram sends.
-    console.log("\n\n================== RAW MESSAGE RECEIVED ==================");
-    console.log(JSON.stringify(msg, null, 2));
-    console.log("======================================================\n");
-
     const cid = msg.chat.id.toString();
 
-    // --- Section 1: Handle Mini App Data ---
-    // We check for this first because these messages have no text.
+    // --- Step 1: Universal Security Check ---
+    // This runs first for every message type to block banned users.
+    if (cid !== ADMIN_ID) {
+        const banned = await dbServices.isUserBanned(cid);
+        if (banned) {
+            console.log(`[Security] Banned user ${cid} (message_id: ${msg.message_id}) interaction blocked.`);
+            return;
+        }
+    }
+
+    // --- Step 2: Handle High-Priority Special Data (from Mini App) ---
+    // This block is checked immediately after security. This is the key fix.
     if (msg.web_app_data) {
-        console.log(`[Handler] Message is from a Mini App. Processing...`);
         try {
             const data = JSON.parse(msg.web_app_data.data);
-            console.log("📩 [MiniApp] Parsed data:", data);
+            console.log("📩 [MiniApp] Data received from Mini App:", data);
 
             if (data.status === 'verified') {
-                console.log("✅ [MiniApp] Status is 'verified'. Sending next step to user.");
                 await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
                     parse_mode: 'Markdown',
                     reply_markup: {
@@ -4016,43 +4019,33 @@ bot.on('message', async msg => {
                 });
             } else {
                 const reason = data.reason || data.error || "An unknown issue occurred.";
-                console.log(`⚠️ [MiniApp] Verification failed. Reason: ${reason}`);
                 await bot.sendMessage(cid, 
-                    `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support.`, 
+                    `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
                     { parse_mode: 'Markdown' }
                 );
             }
         } catch (err) {
-            console.error("❌ [MiniApp] CRITICAL ERROR parsing web_app_data:", err.message);
+            console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
             await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
         }
-        return; // Stop here after processing Mini App data
+        return; // Stop processing after handling Mini App data
     }
 
-    // --- Section 2: Handle Regular Text Messages ---
+    // --- Step 3: Handle Regular Text-Based Commands ---
+    // This only runs if the message was not from the Mini App.
     const text = msg.text?.trim();
 
-    if (text) {
-        console.log(`[Handler] Message is a text command. Text: "${text}"`);
-
-        // Ban check and all other text-based logic goes here
-        if (cid !== ADMIN_ID) {
-            const banned = await dbServices.isUserBanned(cid);
-            if (banned) {
-                console.log(`[Security] Banned user ${cid} blocked.`);
-                return;
-            }
-        }
-        
-        // PASTE ALL YOUR OTHER MESSAGE LOGIC HERE
-        // (e.g., if (text === 'Deploy'), if (st && st.step === ...), etc.)
-
-    } else {
-        // --- Section 3: Handle All Other Non-Text, Non-MiniApp Messages ---
-        console.log(`[Handler] Ignoring message because it is not from a Mini App and has no text.`);
+    // If the message has no text (e.g., a sticker, photo), ignore it.
+    if (!text) 
         return;
-    }
-});
+    
+
+    // =========================================================================
+    //
+    // ALL YOUR OTHER TEXT-BASED LOGIC GOES HERE
+    // (For example: if (text === 'Deploy'), if (st && st.step === ...), etc.)
+    //
+    // ========================================================================
 
 
 
