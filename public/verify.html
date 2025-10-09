@@ -2,59 +2,139 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Verification</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        :root {
+            --tg-bg-color: var(--tg-theme-bg-color, #212121);
+            --tg-text-color: var(--tg-theme-text-color, #ffffff);
+            --tg-button-color: var(--tg-theme-button-color, #58a9f4);
+            --tg-button-text-color: var(--tg-theme-button-text-color, #ffffff);
+            --tg-hint-color: var(--tg-theme-hint-color, #aaaaaa);
+            --success-color: #34C759;
+            --error-color: #FF3B30;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-bg-color);
+            color: var(--tg-text-color);
+            text-align: center;
+            padding: 20px;
+            margin: 0;
             display: flex;
             flex-direction: column;
-            align-items: center;
             justify-content: center;
-            text-align: center;
+            align-items: center;
             height: 100vh;
-            margin: 0;
-            color: var(--tg-theme-text-color);
-            background-color: var(--tg-theme-bg-color);
+            box-sizing: border-box;
         }
+        .container { max-width: 300px; }
+        #status-icon { font-size: 48px; margin-bottom: 15px; }
+        #status-title { margin: 15px 0 5px; }
+        #status-message { margin: 15px 0; font-weight: 500; font-size: 1.1em; min-height: 40px; }
+        #hint-text { color: var(--tg-hint-color); font-size: 0.9em; }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid var(--tg-text-color);
+            width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
         button {
-            padding: 15px 30px;
-            font-size: 18px;
-            font-weight: bold;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            color: var(--tg-theme-button-text-color);
-            background-color: var(--tg-theme-button-color);
+            display: none;
+            margin-top: 20px;
+            background-color: var(--tg-button-color);
+            color: var(--tg-button-text-color);
+            border: none; padding: 12px 25px;
+            font-size: 16px; font-weight: bold;
+            border-radius: 12px; cursor: pointer;
+            width: 100%;
         }
     </style>
 </head>
 <body>
+    <div class="container">
+        <div id="status-icon"><div class="spinner"></div></div> 
+        <h2 id="status-title">Verification</h2>
+        <p id="status-message">Please wait while we verify your eligibility...</p>
+        <p id="hint-text">This should only take a moment.</p>
+        <button id="retryButton">Try Again</button>
+    </div>
 
-    <h2>Complete the Security Check</h2>
-    <p>Please click the button below to confirm you are human.</p>
-    <br>
-    <button id="verifyButton">I am not a robot</button>
-
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
-        // 2. This is the JavaScript logic that talks to your bot
         const tg = window.Telegram.WebApp;
-        const verifyButton = document.getElementById('verifyButton');
-
-        // When the user clicks the verification button...
-        verifyButton.addEventListener('click', () => {
-            // This is the crucial function.
-            // It sends a JSON string back to your bot.
-            // Your bot's `if (msg.web_app_data)` will receive this.
-            tg.sendData(JSON.stringify({ status: 'verified' }));
-
-            // NOTE: You do not need to call tg.close(). 
-            // The sendData() function closes the Mini App automatically.
-        });
-
-        // Let the Telegram app know that your Mini App is ready to be shown.
+        tg.expand();
         tg.ready();
+
+        const statusIcon = document.getElementById('status-icon');
+        const statusTitle = document.getElementById('status-title');
+        const statusMessage = document.getElementById('status-message');
+        const hintText = document.getElementById('hint-text');
+        const retryButton = document.getElementById('retryButton');
+        
+        retryButton.addEventListener('click', runVerification);
+
+        async function runVerification() {
+            // 1. Reset UI to loading state
+            statusIcon.innerHTML = '<div class="spinner"></div>';
+            statusTitle.innerText = 'Verification';
+            statusMessage.innerText = 'Please wait while we verify your eligibility...';
+            hintText.innerText = 'This should only take a moment.';
+            statusMessage.style.color = 'inherit';
+            retryButton.style.display = 'none';
+
+            try {
+                // 2. Check for Nigeria IP
+                const geoResponse = await fetch('https://ipapi.co/json/');
+                if (!geoResponse.ok) throw new Error('Could not check location.');
+                const geoData = await geoResponse.json();
+
+                if (geoData.country_code !== 'NG') {
+                    throw new Error("Sorry, the free trial is only available in Nigeria.");
+                }
+
+                // 3. Verify with your backend
+                const serverResponse = await fetch('/pre-verify-user', {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                const serverData = await serverResponse.json();
+
+                if (!serverData.success) {
+                    throw new Error(serverData.message || "You are not eligible for a trial.");
+                }
+
+                // 4. ✅ SUCCESS: Update UI first, then send data
+                statusIcon.innerHTML = '✅';
+                statusTitle.innerText = 'Success!';
+                statusMessage.innerText = 'Verification complete. You can now close this window.';
+                statusMessage.style.color = 'var(--success-color)';
+                hintText.innerText = '';
+                
+                // Wait 1.5 seconds for the user to see the success message
+                setTimeout(() => {
+                    // This is the VERY LAST STEP. It sends data and closes the app.
+                    tg.sendData(JSON.stringify({ status: 'verified' }));
+                }, 1500);
+
+            } catch (error) {
+                // 5. ❌ FAILURE: Show error and retry button
+                statusIcon.innerHTML = '⚠️';
+                statusTitle.innerText = 'Verification Failed';
+                statusMessage.innerText = error.message;
+                statusMessage.style.color = 'var(--error-color)';
+                hintText.innerText = 'Please try again or contact support.';
+                retryButton.style.display = 'block';
+
+                // Send a failure status to the bot for logging purposes
+                tg.sendData(JSON.stringify({ status: 'failed', reason: error.message }));
+            }
+        }
+        
+        // Run verification automatically when the page loads
+        window.onload = runVerification;
     </script>
 </body>
 </html>
