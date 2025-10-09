@@ -2680,7 +2680,7 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     } else {
         const userDisplayName = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'User');
         
-        const welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!`;
+        const welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!\nWhat would you like to do?`;
 
         const welcomeVideoUrl = 'https://files.catbox.moe/9gn267.mp4';
         
