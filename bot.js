@@ -332,6 +332,83 @@ async function createAllTablesInPool(dbPool, dbName) {
 
 
 // --- END OF REPLACEMENT ---
+// bot.js (Add this utility function in your file)
+
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+
+/**
+ * Executes yt-dlp to extract high-quality media information.
+ * @param {string} url The URL of the video/image post (e.g., TikTok, Instagram).
+ * @returns {Promise<{type: string, url: string, caption: string, message?: string}>} Media details or error.
+ */
+async function extractMediaInfo(url) {
+    // Command to run:
+    // 1. -j: Output raw JSON
+    // 2. --flat-playlist: Needed for some platforms
+    // 3. --no-warnings: Cleans up the console output
+    const command = `yt-dlp -j --flat-playlist --no-warnings "${url}"`;
+    
+    try {
+        const { stdout, stderr } = await execPromise(command, { timeout: 30000 }); // 30 second timeout
+
+        if (stderr && !stderr.includes('Warning')) {
+            console.error("yt-dlp error output:", stderr);
+            return { type: 'error', message: `yt-dlp error: ${stderr.substring(0, 100)}` };
+        }
+        
+        const info = JSON.parse(stdout);
+        
+        // --- Logic to find the best download URL ---
+        let downloadUrl = info.url || info.webpage_url;
+        let mediaType = 'video';
+        
+        // Find the best quality URL within the 'formats' array for video/audio
+        if (info.formats && Array.isArray(info.formats)) {
+            // Filter for video streams and pick one that is not just audio
+            const bestFormat = info.formats
+                .filter(f => f.vcodec !== 'none' || f.acodec !== 'none')
+                .sort((a, b) => (b.height || 0) - (a.height || 0))[0]; // Sort by highest resolution
+            
+            if (bestFormat && bestFormat.url) {
+                downloadUrl = bestFormat.url;
+            }
+        }
+        
+        // TikTok sometimes involves images or carousels; check for that
+        if (info.is_gallery) {
+             mediaType = 'image_gallery';
+             // For simplicity, we just return the URL of the first media item in a gallery
+             downloadUrl = info.entries?.[0]?.url || info.entries?.[0]?.formats?.[0]?.url;
+        } else if (info.ext === 'jpg' || info.ext === 'png' || info.ext === 'webp') {
+             mediaType = 'image';
+        }
+        
+        // Final sanity check
+        if (!downloadUrl) {
+            return { type: 'error', message: "No playable media link could be extracted." };
+        }
+
+        return { 
+            type: mediaType, 
+            url: downloadUrl,
+            caption: info.title || info.description || 'Downloaded Media'
+        };
+
+    } catch (error) {
+        let errorMessage = "Timed out or execution failed.";
+        if (error.code === 'ENOENT') {
+            errorMessage = "yt-dlp is not installed on the server. Contact Admin.";
+        } else if (error.message.includes('404')) {
+            errorMessage = "Video not found or is private.";
+        } else if (error.message.includes('ERROR:')) {
+            errorMessage = error.message.split('ERROR:')[1].trim().substring(0, 100);
+        }
+        console.error("yt-dlp Execution failed:", error.message);
+        return { type: 'error', message: errorMessage };
+    }
+}
 
 
 
@@ -2884,6 +2961,57 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
         bot.sendMessage(cid, "An error occurred while starting the removal process. Please try again.");
     }
 });
+
+
+// bot.js (REPLACE the existing bot.onText(/^\/dl (.+)$/, ...) handler)
+
+bot.onText(/^\/dl (.+)$/, async (msg, match) => {
+    const cid = msg.chat.id.toString();
+    const mediaLink = match[1].trim(); // General media link (TikTok, YouTube, etc.)
+
+    await dbServices.updateUserActivity(cid, `/dl ${mediaLink.substring(0, 30)}...`);
+
+    // Basic validation
+    if (!mediaLink.match(/http/i)) {
+        return bot.sendMessage(cid, "❌ Please provide a valid URL starting with 'http' or 'https'.");
+    }
+
+    // 1. Send initial animated message while processing
+    const processingMsg = await bot.sendMessage(cid, 'Extracting HD media link, please wait... ⏳ (Max 30s)');
+
+    // 2. Fetch the media URL using yt-dlp wrapper
+    const mediaData = await extractMediaInfo(mediaLink);
+
+    // 3. Handle result and send media
+    try {
+        if (mediaData.type === 'error') {
+            await bot.editMessageText(`❌ Download Failed: ${mediaData.message}`, { chat_id: cid, message_id: processingMsg.message_id });
+            return;
+        }
+
+        const finalCaption = escapeMarkdown(mediaData.caption).substring(0, 900) + `...\n\n*Downloaded in HD via UltarBot*`;
+        
+        // Use the generic sendDocument for larger files or videos to ensure direct embedding/download.
+        if (mediaData.type === 'video' || mediaData.type === 'image_gallery' || mediaData.type === 'image') {
+            
+            await bot.sendDocument(cid, mediaData.url, { 
+                caption: finalCaption,
+                parse_mode: 'Markdown'
+            });
+            
+        } else {
+            // Fallback for unexpected media type
+            await bot.sendMessage(cid, `Media link found, but type (${mediaData.type}) is currently unsupported for sending.`);
+        }
+        
+        await bot.deleteMessage(cid, processingMsg.message_id).catch(() => {}); // Delete "Processing" message
+
+    } catch (e) {
+        console.error("Error sending downloaded media:", e);
+        await bot.editMessageText('🚨 A critical error occurred while sending the media. Check the bot logs.', { chat_id: cid, message_id: processingMsg.message_id });
+    }
+});
+
 
 bot.onText(/^\/buytemp$/, async msg => {
     const cid = msg.chat.id.toString();
