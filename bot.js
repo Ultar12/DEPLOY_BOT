@@ -336,7 +336,8 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
+const models = await genAI.listModels();
+console.log(models);
 // REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
