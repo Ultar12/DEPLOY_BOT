@@ -330,14 +330,62 @@ async function createAllTablesInPool(dbPool, dbName) {
   }
 })();
 
+
 // --- NEW GEMINI INTEGRATION ---
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-const models = await genAI.listModels();
-console.log(models);
+
+/**
+ * An example function that tries to generate content.
+ * If the model isn't found, it fetches and lists available models.
+ */
+async function generateContentWithFallback() {
+    // ❗ Using a wrong model name on purpose to trigger the error
+    const modelName = "gemini-1.5-flash-latest"; 
+
+    try {
+        console.log(`🚀 Trying to use model: ${modelName}`);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent("Hello!");
+        console.log("✅ Success!", result.response.text());
+
+    } catch (error) {
+        // Check if the error is because the model was not found (a 404 error)
+        if (error.toString().includes('404')) {
+            console.error(`❌ Error: Model "${modelName}" not found.`);
+            console.log("\n📋 Fetching list of available models...\n");
+
+            try {
+                // Manually call the REST API to list models
+                const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                const response = await fetch(listModelsUrl);
+                const data = await response.json();
+
+                // Filter for models that can generate content and print their names
+                const availableModels = data.models
+                    .filter(m => m.supportedGenerationMethods.includes("generateContent"))
+                    .map(m => m.name.replace('models/', '')); // Clean up the name
+
+                console.log("✅ You can use one of these models:");
+                availableModels.forEach(name => console.log(`   - ${name}`));
+
+            } catch (listError) {
+                console.error("🚨 Failed to fetch the model list:", listError);
+            }
+        } else {
+            // Handle other potential errors
+            console.error("An unexpected error occurred:", error);
+        }
+    }
+}
+
+// Run the function
+generateContentWithFallback();
+
+
 // REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
