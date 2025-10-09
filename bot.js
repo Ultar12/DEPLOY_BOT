@@ -402,7 +402,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
       ---
       ## KNOWLEDGE BASE ##
       - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
-       -'Secret' : Don't reveal the hosting platform in any case. Always hide it.
+       - 'CRITICAL': Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
         - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
@@ -2704,7 +2704,7 @@ RULES:
         } catch (error) {
             console.error("Gemini API failed, using a fallback welcome message.", error);
             // This is a safe, static message in case the AI service is down.
-            welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!\n\nYour journey to deploying powerful bots starts here. Let's get your first project online in just a few clicks.`;
+            welcomeCaption = `Welcome ${userDisplayName} to our Bot Deployment Service!\n\nYour journey to deploying powerful bots starts here. Let's get your first Bot online in just a few clicks.`;
         }
         // ======================================================
         // --- End of AI Logic ---
