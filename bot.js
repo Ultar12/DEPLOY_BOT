@@ -337,93 +337,114 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-async function handleFallbackWithGemini(chatId, userMessage) {
-    // Show a "typing..." status to the user
+// REPLACE your old 'handleFallbackWithGemini' function with this one
+async function handleProfessionalFallback(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
-    // This is the core of the integration. We create a detailed prompt for Gemini.
-    const prompt = `
-        You are a helpful AI assistant for a Telegram bot. Your job is to understand the user's message and classify their intent into one of the following categories. Respond ONLY with a valid JSON object.
+    // This new prompt is much more detailed and professional
+    const professionalPrompt = `
+      You are 'Ultar AI', the intelligent assistant for the Ultar Bot Deployer on Telegram.
+      Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
+      You must be concise, helpful, and professional.
+      Your entire response MUST be a single, valid JSON object and nothing else.
 
-        The user's message is: "${userMessage}"
+      The user's request is: "${userMessage}"
 
-        Here are the possible intents and what they mean:
-        - "DEPLOY": The user wants to create, make, or deploy a new bot.
-        - "GET_SESSION": The user is asking for a session ID or how to get one.
-        - "LIST_BOTS": The user wants to see, check, or manage their existing bots ("My Bots").
-        - "SUPPORT": The user is asking for help, has a problem, or wants to contact the admin.
-        - "GENERAL_QUERY": The user is asking a general question that is not related to a specific bot action.
+      ---
+      ## KNOWLEDGE BASE ##
+      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
+      - **Key Features:**
+        - 'Deploy': The main function to start creating a new bot.
+        - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
+        - 'My Bots': A menu where users can see a list of all bots they have deployed. From here, they can manage them (restart, get logs, check status, set variables, or delete).
+        - 'Free Trial': A one-time offer for new users to test the service. It has limitations and requires joining a Telegram channel.
+        - 'Referrals': Users can invite friends to earn extra days on their bot's subscription.
+        - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
+      - **Pricing & Payment:**
+        - Deploying a bot requires a paid key or a free trial.
+        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days), Premium (₦2000/50 Days).
+        - Users can pay with Paystack or Flutterwave.
+      - **Common Issues:**
+        - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
+        - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
 
-        Analyze the user's message and determine their primary intent. Provide a short, helpful text response to send back to the user.
+      ---
+      ## INTENT CLASSIFICATION RULES ##
+      Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
 
-        Examples:
-        - User message: "how do i make a new bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. Let's get started!"}
-        - User message: "can you show me my bots" -> {"intent": "LIST_BOTS", "response": "Sure, here are the bots you've deployed."}
-        - User message: "my bot is not working" -> {"intent": "SUPPORT", "response": "I'm sorry to hear you're having trouble. You can get help by contacting support."}
-        - User message: "what is node.js" -> {"intent": "GENERAL_QUERY", "response": "Node.js is an open-source, cross-platform JavaScript runtime environment that executes JavaScript code outside a web browser."}
+      - "DEPLOY": User wants to create, make, build, or deploy a new bot.
+      - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
+      - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
+      - "MANAGE_BOT": User is having a problem with an existing bot (e.g., "it's not working," "it crashed," "how to restart," "how to see logs," "update session").
+      - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
+      - "PRICING": User is asking about cost, payment, or subscription plans.
+      - "SUPPORT": User wants to contact the admin, report a serious bug, or is asking for general help.
+      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature (e.g., "what is Heroku?").
 
-        Now, based on the user's message, provide the JSON output.
+      ---
+      ## RESPONSE FORMAT ##
+      Your response MUST be a JSON object with two keys: "intent" and "response".
+      - "intent": The category you classified from the list above.
+      - "response": A short, helpful text to send back to the user that guides them.
+
+      ## EXAMPLES ##
+      - User: "how do I make a bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. You can start by using the 'Deploy' button from the main menu."}
+      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I'm sorry to hear that. You can manage your bot, including restarting it or checking its logs, from the 'My Bots' menu."}
+      - User: "is this free" -> {"intent": "PRICING", "response": "We offer a one-time Free Trial. For continuous service, paid plans start at ₦1500 for 30 days."}
+      - User: "i need my session id" -> {"intent": "GET_SESSION", "response": "You can generate a new Session ID by using the 'Get Session ID' button from the main menu."}
+
+      Now, analyze the user's request and provide the JSON output.
     `;
-
+    
     try {
-        const result = await geminiModel.generateContent(prompt);
+        const result = await geminiModel.generateContent(professionalPrompt);
         const responseText = result.response.text();
-        
-        // Clean the response to make sure it's valid JSON
         const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiResponse = JSON.parse(jsonString);
 
-        console.log('[Gemini] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
-
-        // This is where you connect the AI's decision to your bot's actions
+        console.log('[Gemini Pro] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
+        
+        // This switch statement is now more powerful
         switch (aiResponse.intent) {
             case 'DEPLOY':
-                // Send the "Deploy" button or start the deploy flow
                 await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Deploy Your Bot', callback_data: 'deploy_first_bot' }]
-                        ]
-                    }
+                    reply_markup: { inline_keyboard: [[{ text: 'Start Deployment', callback_data: 'deploy_first_bot' }]] }
                 });
                 break;
 
             case 'GET_SESSION':
-                // Send the "Get Session ID" button
                 await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]
-                        ]
-                    }
+                    reply_markup: { inline_keyboard: [[{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]] }
                 });
                 break;
 
             case 'LIST_BOTS':
-                // Send the text response, and then trigger your "My Bots" logic
+            case 'MANAGE_BOT':
+                // For both listing and managing, we direct the user to the "My Bots" menu.
                 await bot.sendMessage(chatId, aiResponse.response);
-                // Fake a message to trigger your existing 'My Bots' button logic
                 const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
-                bot.emit('message', fakeMsg);
+                bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
                 break;
 
+            case 'FREE_TRIAL':
+                await bot.sendMessage(chatId, aiResponse.response);
+                const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
+                bot.emit('message', freeTrialMsg);
+                break;
+                
+            case 'PRICING':
             case 'SUPPORT':
-                // Send the support information
-                await bot.sendMessage(chatId, aiResponse.response + `\n\nYou can reach our support at: ${SUPPORT_USERNAME}`, {parse_mode: 'Markdown'});
-                break;
-
             case 'GENERAL_QUERY':
             default:
-                // For general questions, just send Gemini's text response
                 await bot.sendMessage(chatId, aiResponse.response);
                 break;
         }
-
     } catch (error) {
-        console.error("Error with Gemini integration:", error);
-        await bot.sendMessage(chatId, "Sorry, my AI brain is a bit fuzzy right now. Please use the buttons to navigate.");
+        console.error("Error with Professional Gemini integration:", error);
+        await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
     }
 }
+
 // --- END OF GEMINI INTEGRATION ---
 
 
