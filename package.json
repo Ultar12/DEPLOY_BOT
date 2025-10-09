@@ -24,7 +24,7 @@
     "mailersend": "^2.0.0",
     "util": "0.12.5",            
     "node-fetch": "^3.3.2",    
-    "tempfile": "^8.0.0"    
+    "tempfile": "^7.0.0"    
   },
   "devDependencies": {
   }
