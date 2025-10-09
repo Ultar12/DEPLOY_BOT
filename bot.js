@@ -338,7 +338,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-pro" });
 
 // REPLACE your old 'handleFallbackWithGemini' function with this one
-async function handleProfessionalFallback(chatId, userMessage) {
+async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
     // This new prompt is much more detailed and professional
