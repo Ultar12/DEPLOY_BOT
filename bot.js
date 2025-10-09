@@ -3986,64 +3986,74 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 });
 
 
-// 10) Message handler for buttons & state machine
+// REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
-  const cid = msg.chat.id.toString();
-  const text = msg.text?.trim();
+    // This new log is ESSENTIAL. It will show us the raw data Telegram sends.
+    console.log("\n\n================== RAW MESSAGE RECEIVED ==================");
+    console.log(JSON.stringify(msg, null, 2));
+    console.log("======================================================\n");
 
-  // IMPORTANT: Ban check before any other logic for non-admin users
-  if (cid !== ADMIN_ID) {
-      const banned = await dbServices.isUserBanned(cid); // Use dbServices
-      if (banned) {
-          console.log(`[Security] Banned user ${cid} attempted to interact with message: "${text}"`);
-          return; // Stop processing for banned users
-      }
-  }
+    const cid = msg.chat.id.toString();
 
-/// In bot.js, find and replace this entire block inside bot.on('message', ...)
+    // --- Section 1: Handle Mini App Data ---
+    // We check for this first because these messages have no text.
+    if (msg.web_app_data) {
+        console.log(`[Handler] Message is from a Mini App. Processing...`);
+        try {
+            const data = JSON.parse(msg.web_app_data.data);
+            console.log("📩 [MiniApp] Parsed data:", data);
 
-if (msg.web_app_data) {
-    try {
-        // 1. Parse the data string sent from the Mini App
-        const data = JSON.parse(msg.web_app_data.data);
-        console.log("📩 [MiniApp] Data received from Mini App:", data);
-
-        // 2. Check the 'status' field inside the data
-        if (data.status === 'verified') {
-            // This is the success path, which will now run correctly
-            console.log("✅ [MiniApp] User verified successfully:", data.telegramUser?.id);
-
-            await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                        [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
-                    ]
-                }
-            });
-        } else {
-            // This handles any other status like 'denied', 'failed', or 'error'
-            const reason = data.reason || data.error || "An unknown issue occurred.";
-            console.log(`⚠️ [MiniApp] Verification failed for user ${cid}. Reason: ${reason}`);
-
-            await bot.sendMessage(cid, 
-                `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support if the issue persists.`, 
-                { parse_mode: 'Markdown' }
-            );
+            if (data.status === 'verified') {
+                console.log("✅ [MiniApp] Status is 'verified'. Sending next step to user.");
+                await bot.sendMessage(cid, "Security check passed!\n\n**Final step:** Join our channel and click the button below to receive your free number.", {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
+                            [{ text: 'I have joined, Get My Number!', callback_data: 'verify_join_after_miniapp' }]
+                        ]
+                    }
+                });
+            } else {
+                const reason = data.reason || data.error || "An unknown issue occurred.";
+                console.log(`⚠️ [MiniApp] Verification failed. Reason: ${reason}`);
+                await bot.sendMessage(cid, 
+                    `Your verification could not be completed.\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support.`, 
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        } catch (err) {
+            console.error("❌ [MiniApp] CRITICAL ERROR parsing web_app_data:", err.message);
+            await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
         }
-    } catch (err) {
-        console.error("❌ [MiniApp] Failed to parse web_app_data:", err.message);
-        await bot.sendMessage(cid, "An error occurred while processing the verification data. Please try again.");
+        return; // Stop here after processing Mini App data
     }
 
-    return; // Stop further message processing
-}
+    // --- Section 2: Handle Regular Text Messages ---
+    const text = msg.text?.trim();
 
+    if (text) {
+        console.log(`[Handler] Message is a text command. Text: "${text}"`);
 
+        // Ban check and all other text-based logic goes here
+        if (cid !== ADMIN_ID) {
+            const banned = await dbServices.isUserBanned(cid);
+            if (banned) {
+                console.log(`[Security] Banned user ${cid} blocked.`);
+                return;
+            }
+        }
+        
+        // PASTE ALL YOUR OTHER MESSAGE LOGIC HERE
+        // (e.g., if (text === 'Deploy'), if (st && st.step === ...), etc.)
 
-// --- 4. EXIT IF THE MESSAGE IS NOT TEXT ---
-if (!text) return;
+    } else {
+        // --- Section 3: Handle All Other Non-Text, Non-MiniApp Messages ---
+        console.log(`[Handler] Ignoring message because it is not from a Mini App and has no text.`);
+        return;
+    }
+});
+
 
 
   // Now the rest of your code for handling text messages will run correctly
