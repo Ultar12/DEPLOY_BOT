@@ -2694,7 +2694,7 @@ Generate a short, welcoming caption (2-3 sentences) for a new user.
 
 RULES:
 1. The response MUST start with this exact header: "Welcome ${userDisplayName} to our Bot Deployment Service!"
-2. After the header, add a creative and encouraging message about deploying bots.
+2. After the header, add a creative and encouraging message about deploying bots. Please it should very conciseand short. it'sfor deploying WhatsApp bot.
 3. **CRITICAL RULE: Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.`;
 
             const result = await geminiModel.generateContent(prompt);
@@ -4175,6 +4175,11 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 // REPLACE your entire bot.on('message', ...) function with this:
 bot.on('message', async msg => {
     const cid = msg.chat.id.toString();
+
+  if (msg.text && msg.text.startsWith('/')) {
+  return; 
+}
+
 
     // --- Step 1: Universal Security Check ---
     // This runs first for every message type to block banned users.
