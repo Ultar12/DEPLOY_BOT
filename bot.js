@@ -683,7 +683,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         const aiResponse = JSON.parse(jsonString);
 
         console.log('[Gemini Phase 1] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
-        
+
         switch (aiResponse.intent) {
             case 'DEPLOY':
                 await bot.sendMessage(chatId, aiResponse.response, {
@@ -697,54 +697,50 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                 });
                 break;
 
-            // This is the combined and corrected case for managing a bot.
             case 'LIST_BOTS':
             case 'MANAGE_BOT':
                 console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
                 
-                // Initialize a new model instance that is aware of the tools.
                 const modelWithTools = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest", tools: tools });
-                
                 const chat = modelWithTools.startChat();
-                // Pass the user ID and original message to the tool-aware model.
                 const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
                 const calls = toolResult.response.functionCalls();
 
                 if (calls && calls.length > 0) {
-                    // --- Function Calling Logic ---
+                    // A specific function was identified by the AI.
                     const functionResponses = [];
                     for (const call of calls) {
                         const functionName = call.name;
                         if (availableTools[functionName]) {
                             const args = { ...call.args, userId: chatId };
                             let functionResult;
-
                             try {
-                                // **NEW LOGIC**: Handle ambiguous requests by asking the user to select a bot.
+                                // **NEW LOGIC**: If the AI is unsure which bot to use, it will call getUserBots.
+                                // We intercept this to ask the user directly.
                                 if (functionName === 'getUserBots') {
-                                    console.log('[Gemini] Ambiguity detected, fetching bot list to ask user.');
-                                    // Use your actual function to get the list of bots.
-                                    const botListResult = await dbServices.getUserBots(chatId);
-
-                                    if (botListResult.length > 1) {
-                                        // Store the original message to re-run after selection.
+                                    console.log('[Gemini] Ambiguity detected. Checking user bot count.');
+                                    const userBots = await dbServices.getUserBots(chatId);
+                                    
+                                    if (userBots.length > 1) {
+                                        // The user has multiple bots, so we must ask which one they mean.
                                         userStates[chatId] = {
                                             step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
                                             originalMessage: userMessage
                                         };
-                                        const keyboard = botListResult.map(botName => ([{
+                                        const keyboard = userBots.map(botName => ([{
                                             text: botName,
                                             callback_data: `gemini_select_bot:${botName}`
                                         }]));
                                         
-                                        await bot.sendMessage(chatId, "You have multiple bots. Which one are you referring to?", {
+                                        await bot.sendMessage(chatId, "You have multiple bots. Which one does this apply to?", {
                                             reply_markup: { inline_keyboard: keyboard }
                                         });
-                                        return; // IMPORTANT: Stop processing and wait for user callback.
+                                        return; // Stop processing and wait for the user's button click.
                                     }
+                                    // If user has 0 or 1 bot, let the AI handle it by passing the result back.
                                 }
-
-                                // Execute the function call as normal.
+                                
+                                // Execute the function call.
                                 switch (functionName) {
                                     case 'getUserBots':
                                         functionResult = await availableTools[functionName](args.userId);
@@ -758,22 +754,22 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                                 }
                                 functionResponses.push({ functionResponse: { name: functionName, response: functionResult } });
                             } catch (e) {
+                                console.error(`[Bot] Error executing tool ${functionName}:`, e);
                                 functionResponses.push({ functionResponse: { name: functionName, response: { status: 'error', message: e.message } } });
                             }
                         }
                     }
-                    // Send the tool results back to Gemini to get a final text response.
+                    // Send the results back to Gemini to generate the final, user-facing text response.
                     const finalResult = await chat.sendMessage(functionResponses);
                     await bot.sendMessage(chatId, finalResult.response.text(), { parse_mode: 'Markdown' });
 
                 } else {
-                    // --- Fallback Logic ---
-                    // If the tool model couldn't find a specific function, fall back to the initial response
-                    // and guide the user to the "My Bots" menu.
+                    // Fallback: If the tool model couldn't find a specific function to call,
+                    // we use the original behavior of guiding the user to the menu.
                     console.log('[Gemini Phase 2] No specific function found. Guiding user to My Bots menu.');
                     await bot.sendMessage(chatId, aiResponse.response);
                     const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
-                    bot.emit('message', fakeMsg);
+                    bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
                 }
                 break;
 
@@ -791,10 +787,10 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                 break;
         }
     } catch (error) {
-        console.error("Error with Gemini integration:", error);
+        console.error("Error with Professional Gemini integration:", error);
         await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
     }
-}
+
 
 // --- END OF GEMINI INTEGRATION ---
 
@@ -6766,6 +6762,35 @@ if (action === 'confirm_restore_app') {
       // If you need immediate feedback before buildWithProgress, it's done by the first editMessageText.
       return; // Ensure this function exits
   }
+
+  // Add this new 'if' block inside your bot.on('callback_query', ...) function
+
+if (action === 'gemini_select_bot') {
+    const selectedBotName = payload;
+    const st = userStates[cid];
+
+    // Ensure this callback is coming from the correct state
+    if (st && st.step === 'AWAITING_BOT_SELECTION_FOR_GEMINI') {
+        const originalMessage = st.originalMessage;
+        delete userStates[cid]; // Clean up the state
+
+        // Re-run the Gemini handler with a more specific, clarified message
+        const clarifiedMessage = `${originalMessage} for my bot named "${selectedBotName}"`;
+        
+        await bot.editMessageText(`Okay, applying the action to your bot: *${selectedBotName}*`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
+        });
+
+        // This will now trigger the function call directly because the bot name is included.
+        await handleFallbackWithGemini(cid, clarifiedMessage);
+    } else {
+        await bot.answerCallbackQuery(q.id, { text: "This selection has expired.", show_alert: true });
+    }
+    return;
+}
+
 
   if (action === 'delete_bapp') {
     const appName = payload;
