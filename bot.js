@@ -330,6 +330,236 @@ async function createAllTablesInPool(dbPool, dbName) {
   }
 })();
 
+// A new function to get a list of all bots owned by a user.
+async function getUserBots(userId) {
+    console.log(`[ACTION] Fetching bot list for user ${userId}...`);
+    try {
+        // Example: Query your database to get all bots linked to this user's ID.
+        // const result = await pool.query('SELECT bot_id, bot_name FROM your_bots_table WHERE owner_id = $1', [userId]);
+        // return { status: "success", bots: result.rows }; // result.rows would be like [{ bot_id: 'xyz', bot_name: 'My Music Bot' }]
+        
+        // --- For demonstration, we'll return mock data ---
+        const mockBots = [
+            { bot_id: 'bot_123', bot_name: 'Stickers Bot' },
+            { bot_id: 'bot_456', bot_name: 'Admin Bot' },
+        ];
+        return { status: "success", bots: mockBots };
+
+    } catch (dbError) {
+        console.error("Database error fetching user bots:", dbError);
+        return { status: "error", message: "Could not retrieve bot list." };
+    }
+}
+
+// All other functions now take a 'botId' parameter.
+async function redeployBot(userId, botId) {
+    console.log(`[ACTION] Starting redeployment for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const bot_repo_url = await pool.query('SELECT repo_url FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.triggerRedeploy(bot_repo_url);
+    return { status: "success", message: `Redeployment has been initiated for bot ${botId}.` };
+}
+
+async function getBotInfo(userId, botId) {
+    console.log(`[ACTION] Fetching info for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const result = await pool.query('SELECT * FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // const botInfo = result.rows[0];
+    const botInfo = { bot_id: botId, bot_name: 'Stickers Bot', status: 'online', plan: 'premium' }; // Mock data
+    return { status: "success", data: botInfo };
+}
+
+async function deleteBot(userId, botId) {
+    console.log(`[ACTION] Deleting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await pool.query('DELETE FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.destroyApp(botId);
+    return { status: "success", message: `Bot ${botId} has been scheduled for deletion.` };
+}
+
+async function restartBot(userId, botId) {
+    console.log(`[ACTION] Restarting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await your_hosting_api.restartDyno(botId);
+    return { status: "success", message: `Bot ${botId} is now restarting.` };
+}
+
+async function getBotLogs(userId, botId) {
+    console.log(`[ACTION] Fetching logs for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const logs = await your_hosting_api.getLogs(botId);
+    const logs = `[${new Date().toISOString()}] INFO: Bot ${botId} started successfully.\n[${new Date().toISOString()}] WARN: High memory usage detected.`;
+    return { status: "success", logs: logs };
+}
+
+// Note: updateUserVariable also needs the botId to know which bot's variable to change.
+async function updateUserVariable(userId, botId, variableName, newValue) {
+    if (!allowedVariables.includes(variableName)) {
+        return { status: "error", message: "This variable cannot be changed." };
+    }
+    console.log(`[ACTION] For bot ${botId}, updating "${variableName}" to "${newValue}"`);
+    // Example logic:
+    // await pool.query(`UPDATE your_bots_table SET ${variableName} = $1 WHERE bot_id = $2 AND owner_id = $3`, [newValue, botId, userId]);
+    return { status: "success", message: `Variable "${variableName}" for bot ${botId} was updated.` };
+}
+
+
+const tools = [
+    {
+        "functionDeclarations": [
+            // NEW TOOL: To get the list of bots first.
+            {
+                "name": "getUserBots",
+                "description": "Retrieves a list of all bots owned by a specific user. Call this first if the user has multiple bots and their command is ambiguous.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": { "userId": { "type": "STRING", "description": "The user's unique ID." }},
+                    "required": ["userId"]
+                }
+            },
+            // UPDATED TOOL: Now requires a botId.
+            {
+                "name": "updateUserVariable",
+                "description": "Updates a specific variable for a specific user's bot.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "userId": { "type": "STRING", "description": "The user's unique ID." },
+                        "botId": { "type": "STRING", "description": "The unique ID of the bot to be updated." },
+                        "variableName": { "type": "STRING", "description": "The name of the variable to change." },
+                        "newValue": { "type": "STRING", "description": "The new value for the variable." }
+                    },
+                    "required": ["userId", "botId", "variableName", "newValue"]
+                }
+            },
+            // All other tools are also updated to require a botId.
+            {
+                "name": "redeployBot",
+                "description": "Initiates the redeployment process for a specific user's bot.",
+                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
+            },
+            {
+                "name": "getBotInfo",
+                "description": "Retrieves information and status about a specific user's bot.",
+                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
+            },
+            {
+                "name": "deleteBot",
+                "description": "Deletes a specific user's bot and all associated data.",
+                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
+            },
+            {
+                "name": "restartBot",
+                "description": "Restarts a specific user's bot process.",
+                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
+            },
+            {
+                "name": "getBotLogs",
+                "description": "Fetches the most recent logs for a specific user's bot.",
+                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
+            }
+        ]
+    }
+];
+
+
+
+// Assume 'genAI' and 'geminiModel' are already initialized with the tools above.
+
+// Map the function name to the actual JavaScript function.
+const availableTools = {
+    updateUserVariable,
+    redeployBot,
+    getBotInfo,
+    deleteBot,
+    getUserBots,
+    restartBot,
+    getBotLogs,
+    backupBotData
+};
+
+// This function can now handle more complex requests.
+async function handleUserPrompt(prompt, userId) {
+    const chat = geminiModel.startChat();
+    const result = await chat.sendMessage(prompt);
+    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
+
+    if (!calls || calls.length === 0) {
+        return result.response.text();
+    }
+    
+    // The AI might ask to call multiple functions in one turn
+    const functionResponses = [];
+    for (const call of calls) {
+        if (availableTools[call.name]) {
+            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
+            const functionToCall = availableTools[call.name];
+            
+            // Add the userId from your bot's context
+            const args = { ...call.args, userId: userId };
+            
+            // Call your actual function
+            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
+            
+            functionResponses.push({
+                functionResponse: {
+                    name: call.name,
+                    response: functionResult,
+                },
+            });
+        }
+    }
+    
+    // Send all function results back to the AI
+    const result2 = await chat.sendMessage(functionResponses);
+    return result2.response.text();
+}
+
+
+/**
+ * A list of database columns that the AI is permitted to update.
+ * This is a critical security measure.
+ */
+const allowedVariables = [
+    'session_id',
+    'auto_read_status',
+    'always_online',
+    'handlers',
+    'anti_delete',
+    'sudo'
+];
+/**
+ * Updates a specific variable for a given user in the database.
+ * @param {string} userId - The ID of the user to update.
+ * @param {string} variableName - The name of the variable/column to update.
+ * @param {string | number} newValue - The new value to set.
+ * @returns {object} An object indicating the status of the operation.
+ */
+async function updateUserVariable(userId, variableName, newValue) {
+    // Security Check: Ensure the variable is on the allowed list.
+    if (!allowedVariables.includes(variableName)) {
+        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}".`);
+        return { status: "error", message: "This variable cannot be changed." };
+    }
+
+    console.log(`[ACTION] Updating "${variableName}" for user ${userId} to: ${newValue}`);
+
+    // --- Your Database Logic Goes Here ---
+    // Example using a database pool (remember to use parameterized queries to prevent SQL injection!)
+    // try {
+    //   await pool.query(`UPDATE users SET ${variableName} = $1 WHERE user_id = $2`, [newValue, userId]);
+    // } catch (dbError) {
+    //   console.error("Database update failed:", dbError);
+    //   return { status: "error", message: "Failed to update the database." };
+    // }
+    
+    return { 
+        status: "success", 
+        message: `The variable "${variableName}" was successfully updated.` 
+    };
+}
+
+
 
 // --- NEW GEMINI INTEGRATION ---
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -392,7 +622,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
     // This new prompt is much more detailed and professional
     const professionalPrompt = `
-      You are 'Ultar AI', the intelligent assistant for the Ultar Bot Deployer on Telegram.
+      You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
       Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
       You must be concise, helpful, and professional.
       Your entire response MUST be a single, valid JSON object and nothing else.
@@ -403,6 +633,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
       ## KNOWLEDGE BASE ##
       - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
        - 'CRITICAL': Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.
+       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmskss
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
         - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
