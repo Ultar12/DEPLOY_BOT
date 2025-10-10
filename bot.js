@@ -477,43 +477,42 @@ const availableTools = {
     getBotLogs
 };
 
-// This function can now handle more complex requests.
+// ✅ REPLACE your old handleUserPrompt function with this one
+
 async function handleUserPrompt(prompt, userId) {
+    // This is the full prompt template we created before
+    const fullPrompt = `You are 'Ultar WBD', an intelligent assistant... The user's request is: "${prompt}" ... (and the rest of your detailed instructions)`;
+    
     const chat = geminiModel.startChat();
-    const result = await chat.sendMessage(prompt);
-    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
+    let result = await chat.sendMessage(fullPrompt);
 
-    if (!calls || calls.length === 0) {
-        return result.response.text();
-    }
-    
-    // The AI might ask to call multiple functions in one turn
-    const functionResponses = [];
-    for (const call of calls) {
-        if (availableTools[call.name]) {
-            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
-            const functionToCall = availableTools[call.name];
-            
-            // Add the userId from your bot's context
-            const args = { ...call.args, userId: userId };
-            
-            // Call your actual function
-            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
-            
-            functionResponses.push({
-                functionResponse: {
-                    name: call.name,
-                    response: functionResult,
-                },
-            });
+    while (true) {
+        const calls = result.response.functionCalls();
+        if (!calls || calls.length === 0) {
+            return result.response.text(); // No tool to call, just return the text.
         }
-    }
-    
-    // Send all function results back to the AI
-    const result2 = await chat.sendMessage(functionResponses);
-    return result2.response.text();
-}
 
+        const functionResponses = [];
+        for (const call of calls) {
+            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
+            if (availableTools[call.name]) {
+                const functionToCall = availableTools[call.name];
+                const args = { ...call.args, userId: userId };
+                
+                // --- THIS IS THE BUG FIX ---
+                // We now pass arguments dynamically and in the correct order.
+                const functionResult = await functionToCall(...Object.values(args));
+                
+                functionResponses.push({
+                    functionResponse: { name: call.name, response: functionResult },
+                });
+            }
+        }
+        
+        // Send the results of the functions back to the AI
+        result = await chat.sendMessage(functionResponses);
+    }
+}
 
 /**
  * A list of database columns that the AI is permitted to update.
@@ -565,7 +564,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools:tools});
 
 /**
  * An example function that tries to generate content.
