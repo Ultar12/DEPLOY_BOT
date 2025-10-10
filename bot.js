@@ -527,36 +527,7 @@ const allowedVariables = [
     'anti_delete',
     'sudo'
 ];
-/**
- * Updates a specific variable for a given user in the database.
- * @param {string} userId - The ID of the user to update.
- * @param {string} variableName - The name of the variable/column to update.
- * @param {string | number} newValue - The new value to set.
- * @returns {object} An object indicating the status of the operation.
- */
-async function updateUserVariable(userId, variableName, newValue) {
-    // Security Check: Ensure the variable is on the allowed list.
-    if (!allowedVariables.includes(variableName)) {
-        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}".`);
-        return { status: "error", message: "This variable cannot be changed." };
-    }
 
-    console.log(`[ACTION] Updating "${variableName}" for user ${userId} to: ${newValue}`);
-
-    // --- Your Database Logic Goes Here ---
-    // Example using a database pool (remember to use parameterized queries to prevent SQL injection!)
-    // try {
-    //   await pool.query(`UPDATE users SET ${variableName} = $1 WHERE user_id = $2`, [newValue, userId]);
-    // } catch (dbError) {
-    //   console.error("Database update failed:", dbError);
-    //   return { status: "error", message: "Failed to update the database." };
-    // }
-    
-    return { 
-        status: "success", 
-        message: `The variable "${variableName}" was successfully updated.` 
-    };
-}
 
 
 
