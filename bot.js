@@ -648,7 +648,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
       ## KNOWLEDGE BASE ##
       - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'.
        - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
-       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmskss
+       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmsks. when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
         - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
