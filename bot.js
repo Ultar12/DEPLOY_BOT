@@ -1118,6 +1118,143 @@ function getAnimatedEmoji() {
 }
 
 // In bot.js
+/**
+ * Updates a specific environment variable on Render using their API.
+ * @param {string} varName The name of the variable to update.
+ * @param {string} varValue The new value for the variable.
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function updateRenderVar(varName, varValue) {
+    const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
+    if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+        return { success: false, message: "Render API Key or Service ID is not set." };
+    }
+
+    try {
+        const headers = {
+            'Authorization': `Bearer ${RENDER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+        const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
+
+        const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
+        const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
+
+        if (varIndex > -1) {
+            currentEnvVars[varIndex].envVar.value = varValue;
+        } else {
+            currentEnvVars.push({ envVar: { key: varName, value: varValue } });
+        }
+        
+        const payload = currentEnvVars.map(item => item.envVar);
+        await axios.put(envVarsUrl, payload, { headers });
+        
+        return { success: true, message: `Successfully updated ${varName} on Render.` };
+    } catch (error) {
+        const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
+        console.error(`[Render API] Failed to update var ${varName}:`, errorDetails);
+        return { success: false, message: errorDetails };
+    }
+}
+
+
+let isRecoveryInProgress = false; // Global flag to prevent multiple recoveries at once
+
+/**
+ * Handles the entire automated workflow when a Heroku API key is found to be invalid.
+ * @param {string} failingKey The API key that just failed.
+ */
+async function handleInvalidHerokuKeyWorkflow(failingKey) {
+    if (isRecoveryInProgress) {
+        console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
+        return;
+    }
+    isRecoveryInProgress = true;
+    console.log('[Recovery] Invalid Heroku API key detected! Starting automated recovery workflow.');
+
+    try {
+        // 1. Alert Admin and enable Maintenance Mode
+        await bot.sendMessage(ADMIN_ID, "🚨 **CRITICAL: Heroku API Key Invalid!**\n\nStarting automated recovery process. The bot is now in maintenance mode.", { parse_mode: 'Markdown' });
+        isMaintenanceMode = true;
+        await saveMaintenanceStatus(true);
+
+        // 2. Get a new, valid key from the database that is NOT the one that just failed
+        const newKeyResult = await pool.query(
+            "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
+            [failingKey]
+        );
+
+        if (newKeyResult.rows.length === 0) {
+            throw new Error("No alternative Heroku API keys found in the database. Manual intervention required.");
+        }
+        const newKey = newKeyResult.rows[0].api_key;
+        const newKeyId = newKeyResult.rows[0].id;
+        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
+        
+        // 3. Update the HEROKU_API_KEY on Render
+        const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
+        if (!updateResult.success) {
+            throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
+        }
+        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
+
+        // 4. Delete the used key from the database as requested
+        await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
+        console.log('[Recovery] Deleted the newly used key from the database.');
+
+        // 5. Schedule the restore process for 1 hour from now
+        await bot.sendMessage(ADMIN_ID, "The bot will now wait **1 hour** for the new key to be active before starting the mass restore process.");
+        
+        setTimeout(async () => {
+            try {
+                await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**\n\nThis will take a long time...", { parse_mode: 'Markdown' });
+                await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
+
+                await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
+                await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
+
+                await bot.sendMessage(ADMIN_ID, "**All recovery actions complete!**\n\nDisabling maintenance mode now.", { parse_mode: 'Markdown' });
+                isMaintenanceMode = false;
+                await saveMaintenanceStatus(false);
+            } catch (restoreError) {
+                console.error('[Recovery] CRITICAL ERROR during the restore phase:', restoreError);
+                await bot.sendMessage(ADMIN_ID, `**Restore Phase Failed!**\n\nAn error occurred during the mass restore: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
+            } finally {
+                isRecoveryInProgress = false; // Reset the flag after the timeout completes or fails
+            }
+        }, 3600000); // 1 hour in milliseconds
+
+    } catch (error) {
+        console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
+        await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
+        isRecoveryInProgress = false; // Reset flag on failure
+    }
+}
+
+// Create a dedicated axios instance for Heroku API calls
+const herokuApi = axios.create({
+    baseURL: 'https://api.heroku.com',
+    headers: {
+        'Accept': 'application/vnd.heroku+json; version=3',
+        'Content-Type': 'application/json'
+    }
+});
+
+// Add a response interceptor to automatically catch 401 errors
+herokuApi.interceptors.response.use(
+    (response) => response, // If response is successful, just return it
+    async (error) => {
+        // If the error is a 401 (Unauthorized), trigger our recovery workflow
+        if (error.response?.status === 401) {
+            const failingKey = error.config.headers.Authorization?.split(' ')[1] || 'unknown';
+            console.log('INTERCEPTOR: Detected a 401 Unauthorized error from Heroku.');
+            handleInvalidHerokuKeyWorkflow(failingKey);
+        }
+        // IMPORTANT: re-throw the error so the original function that made the call knows it failed
+        return Promise.reject(error);
+    }
+);
 
 /**
  * A reusable function to display the API key deletion menu.
