@@ -616,10 +616,11 @@ generateContentWithFallback();
 
 
 // REPLACE your old 'handleFallbackWithGemini' function with this one
+// REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
-    // This new prompt is much more detailed and professional
+    // This prompt for intent classification remains the same as your original code.
     const professionalPrompt = `
       You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
       Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
@@ -630,8 +631,8 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
       ---
       ## KNOWLEDGE BASE ##
-      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
-       - 'CRITICAL': Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.
+      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'.
+       - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
        - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmskss
       - **Key Features:**
         - 'Deploy': The main function to start creating a new bot.
@@ -643,68 +644,22 @@ async function handleFallbackWithGemini(chatId, userMessage) {
       - **Pricing & Payment:**
         - Deploying a bot requires a paid key or a free trial.
         - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days), Premium (₦2000/50 Days).
-        - Users can pay with Paystack or Flutterwave.
       - **Common Issues:**
         - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
         - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
 
       ---
-
-      ## 🛠️ AVAILABLE TOOLS & FUNCTIONS ##
-You have access to the following functions. Your job is to determine which function to call based on the user's request.
-
-- **'getUserBots(userId)'**:
-  - **Description:** Retrieves a list of all bots owned by a user.
-  - **When to use:** Call this **FIRST** if a user wants to manage a bot (restart, update, get logs, etc.) but does **NOT** specify which one.
-
-- **'updateUserVariable(userId, botId, variableName, newValue)'**:
-  - **Description:** Updates a specific variable for a specific user's bot.
-  - **Parameters:**
-    - 'botId': The unique ID of the bot to update.
-    - 'variableName': The variable to change. Must be one of: 'session_id', 'auto_read_status', 'always_online', 'handlers', 'anti_delete', 'sudo'.
-    - 'newValue': The new value for the variable.
-  - **When to use:** When the user explicitly wants to set or change one of the allowed variables for a specific bot.
-
-- **'restartBot(userId, botId)'**:
-  - **Description:** Restarts a specific user's bot process.
-  - **When to use:** If a user's bot is frozen, not responding, or they explicitly ask to restart it.
-
-- **'getBotLogs(userId, botId)'**:
-  - **Description:** Fetches the most recent logs for a specific user's bot.
-  - **When to use:** If a user says their bot is not working, has an error, or they explicitly ask for logs.
-
-- **'getBotInfo(userId, botId)'**:
-  - **Description:** Retrieves status and information about a specific bot.
-  - **When to use:** When a user asks for the status or details of their bot.
-
-- **'deleteBot(userId, botId)'**:
-  - **Description:** Deletes a user's bot and all its data.
-  - **When to use:** When a user explicitly asks to delete, remove, or terminate their bot.
-
-- **'backupBotData(userId, botId)'**:
-  - **Description:** Creates a backup of the user's bot data.
-  - **When to use:** When a user asks to save or back up their data.
-
----
-## 📜 DECISION-MAKING PROCESS & RULES ##
-1.  **Analyze Intent:** Read the user's message and understand what they want to achieve.
-2.  **Extract Parameters:** Identify any useful information in the message, like a bot name/ID, a variable name, or a new session ID value.
-3.  **Select a Tool:** Based on the intent, choose the single best function from the 'AVAILABLE TOOLS' list.
-4.  **Handle Ambiguity:** If the user wants to perform an action (restart, update, etc.) but they haven't specified a bot ID and you know they have multiple, your **ONLY** first step is to call 'getUserBots'. Do not guess.
-5.  **No Tool Needed?:** If the user's request is a general question (e.g., about pricing, support, what the bot does), do not call a function. Instead, provide a helpful, concise text response based on the 'Contextual Knowledge'.
-
----
       ## INTENT CLASSIFICATION RULES ##
       Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
 
       - "DEPLOY": User wants to create, make, build, or deploy a new bot.
       - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
       - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
-      - "MANAGE_BOT": User is having a problem with an existing bot (e.g., "it's not working," "it crashed," "how to restart," "how to see logs," "update session").
+      - "MANAGE_BOT": User is having a problem with an existing bot OR wants to perform a specific action on it (e.g., "it's not working," "restart my bot," "update my session id to XYZ", "get logs for bot-abc").
       - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
       - "PRICING": User is asking about cost, payment, or subscription plans.
-      - "SUPPORT": User wants to contact the admin, report a serious bug, or is asking for general help.
-      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature (e.g., "what is Heroku?").
+      - "SUPPORT": User wants to contact the admin or is asking for general help.
+      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature.
 
       ---
       ## RESPONSE FORMAT ##
@@ -727,9 +682,8 @@ You have access to the following functions. Your job is to determine which funct
         const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiResponse = JSON.parse(jsonString);
 
-        console.log('[Gemini Pro] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
+        console.log('[Gemini Phase 1] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
         
-        // This switch statement is now more powerful
         switch (aiResponse.intent) {
             case 'DEPLOY':
                 await bot.sendMessage(chatId, aiResponse.response, {
@@ -743,32 +697,54 @@ You have access to the following functions. Your job is to determine which funct
                 });
                 break;
 
+            // This is the combined and corrected case for managing a bot.
             case 'LIST_BOTS':
             case 'MANAGE_BOT':
-                // For both listing and managing, we direct the user to the "My Bots" menu.
-                await bot.sendMessage(chatId, aiResponse.response);
-                const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
-                bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
-                break;
-
-                // +++ THIS IS THE NEW, ADDED LOGIC +++
-            case 'MANAGE_BOT':
-                console.log('[Gemini] Managing bot. Attempting direct function execution...');
+                console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
                 
-                // Now we use the powerful function-calling model to execute the specific action
-                const chat = geminiModel.startChat(); // This model should be initialized with tools
-                const result2 = await chat.sendMessage(userMessage);
-                const calls = result2.response.functionCalls();
+                // Initialize a new model instance that is aware of the tools.
+                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest", tools: tools });
+                
+                const chat = modelWithTools.startChat();
+                // Pass the user ID and original message to the tool-aware model.
+                const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
+                const calls = toolResult.response.functionCalls();
 
-                // If a specific function is found (e.g., restartBot), execute it
                 if (calls && calls.length > 0) {
+                    // --- Function Calling Logic ---
                     const functionResponses = [];
                     for (const call of calls) {
                         const functionName = call.name;
                         if (availableTools[functionName]) {
                             const args = { ...call.args, userId: chatId };
                             let functionResult;
+
                             try {
+                                // **NEW LOGIC**: Handle ambiguous requests by asking the user to select a bot.
+                                if (functionName === 'getUserBots') {
+                                    console.log('[Gemini] Ambiguity detected, fetching bot list to ask user.');
+                                    // Use your actual function to get the list of bots.
+                                    const botListResult = await dbServices.getUserBots(chatId);
+
+                                    if (botListResult.length > 1) {
+                                        // Store the original message to re-run after selection.
+                                        userStates[chatId] = {
+                                            step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
+                                            originalMessage: userMessage
+                                        };
+                                        const keyboard = botListResult.map(botName => ([{
+                                            text: botName,
+                                            callback_data: `gemini_select_bot:${botName}`
+                                        }]));
+                                        
+                                        await bot.sendMessage(chatId, "You have multiple bots. Which one are you referring to?", {
+                                            reply_markup: { inline_keyboard: keyboard }
+                                        });
+                                        return; // IMPORTANT: Stop processing and wait for user callback.
+                                    }
+                                }
+
+                                // Execute the function call as normal.
                                 switch (functionName) {
                                     case 'getUserBots':
                                         functionResult = await availableTools[functionName](args.userId);
@@ -786,18 +762,20 @@ You have access to the following functions. Your job is to determine which funct
                             }
                         }
                     }
-                    const result3 = await chat.sendMessage(functionResponses);
-                    await bot.sendMessage(chatId, result3.response.text(), { parse_mode: 'Markdown' });
+                    // Send the tool results back to Gemini to get a final text response.
+                    const finalResult = await chat.sendMessage(functionResponses);
+                    await bot.sendMessage(chatId, finalResult.response.text(), { parse_mode: 'Markdown' });
 
                 } else {
-                    // Fallback: If no specific function is found, do the original action (guide to 'My Bots')
-                    console.log('[Gemini] No specific function found. Guiding user to My Bots menu.');
-                    await bot.sendMessage(chatId, "I see you need to manage your bot. Please select it from the 'My Bots' menu to continue.");
+                    // --- Fallback Logic ---
+                    // If the tool model couldn't find a specific function, fall back to the initial response
+                    // and guide the user to the "My Bots" menu.
+                    console.log('[Gemini Phase 2] No specific function found. Guiding user to My Bots menu.');
+                    await bot.sendMessage(chatId, aiResponse.response);
                     const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
                     bot.emit('message', fakeMsg);
                 }
                 break;
-            // +++ END OF NEW LOGIC +++
 
             case 'FREE_TRIAL':
                 await bot.sendMessage(chatId, aiResponse.response);
@@ -813,7 +791,7 @@ You have access to the following functions. Your job is to determine which funct
                 break;
         }
     } catch (error) {
-        console.error("Error with Professional Gemini integration:", error);
+        console.error("Error with Gemini integration:", error);
         await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
     }
 }
