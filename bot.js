@@ -331,185 +331,71 @@ async function createAllTablesInPool(dbPool, dbName) {
 })();
 
 // A new function to get a list of all bots owned by a user.
-// A function to get a list of all bots owned by a user from the database.
 async function getUserBots(userId) {
     console.log(`[ACTION] Fetching bot list for user ${userId}...`);
     try {
-        // This should query your actual database.
-        const result = await pool.query(
-            "SELECT bot_name FROM user_bots WHERE user_id = $1 AND status != 'deleted'", 
-            [userId]
-        );
-        const botNames = result.rows.map(row => row.bot_name);
-        console.log(`[DB] Found ${botNames.length} bots for user ${userId}.`);
-        return { status: "success", bots: botNames };
+        // Example: Query your database to get all bots linked to this user's ID.
+        // const result = await pool.query('SELECT bot_id, bot_name FROM your_bots_table WHERE owner_id = $1', [userId]);
+        // return { status: "success", bots: result.rows }; // result.rows would be like [{ bot_id: 'xyz', bot_name: 'My Music Bot' }]
+        
+        // --- For demonstration, we'll return mock data ---
+        const mockBots = [
+            { bot_id: 'bot_123', bot_name: 'Stickers Bot' },
+            { bot_id: 'bot_456', bot_name: 'Admin Bot' },
+        ];
+        return { status: "success", bots: mockBots };
+
     } catch (dbError) {
         console.error("Database error fetching user bots:", dbError);
-        return { status: "error", message: "Could not retrieve your bot list due to a database error." };
+        return { status: "error", message: "Could not retrieve bot list." };
     }
 }
 
 // All other functions now take a 'botId' parameter.
 async function redeployBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
-    // This is a placeholder for your actual redeployment logic.
-    // Example: await herokuApi.redeploy(botId);
-    return { status: "success", message: `Redeployment has been initiated for bot '${botId}'. You'll be notified upon completion.` };
+    console.log(`[ACTION] Starting redeployment for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const bot_repo_url = await pool.query('SELECT repo_url FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.triggerRedeploy(bot_repo_url);
+    return { status: "success", message: `Redeployment has been initiated for bot ${botId}.` };
 }
 
 async function getBotInfo(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested info for bot ${botId}.`);
-    try {
-        const result = await pool.query(
-            `SELECT ub.bot_name, ub.bot_type, ub.status, ud.expiration_date 
-             FROM user_bots ub 
-             LEFT JOIN user_deployments ud ON ub.bot_name = ud.app_name AND ub.user_id = ud.user_id 
-             WHERE ub.user_id = $1 AND ub.bot_name = $2`,
-            [userId, botId]
-        );
-        if (result.rows.length === 0) {
-            return { status: "error", message: `I couldn't find a bot named '${botId}' under your account.`};
-        }
-        return { status: "success", data: result.rows[0] };
-    } catch (dbError) {
-        return { status: "error", message: "A database error occurred while fetching bot info." };
-    }
+    console.log(`[ACTION] Fetching info for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const result = await pool.query('SELECT * FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // const botInfo = result.rows[0];
+    const botInfo = { bot_id: botId, bot_name: 'Stickers Bot', status: 'online', plan: 'premium' }; // Mock data
+    return { status: "success", data: botInfo };
 }
 
 async function deleteBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested deletion for bot ${botId}.`);
-    // This is a placeholder for your actual deletion logic.
-    // Example: await herokuApi.delete(botId); and then await dbServices.deleteUserBot(userId, botId);
-    return { status: "success", message: `Bot '${botId}' has been scheduled for deletion.` };
+    console.log(`[ACTION] Deleting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await pool.query('DELETE FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.destroyApp(botId);
+    return { status: "success", message: `Bot ${botId} has been scheduled for deletion.` };
 }
 
 async function restartBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested restart for bot ${botId}.`);
-    // This is a placeholder for your actual restart logic.
-    // Example: await herokuApi.restart(botId);
-    return { status: "success", message: `Bot '${botId}' is now restarting.` };
+    console.log(`[ACTION] Restarting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await your_hosting_api.restartDyno(botId);
+    return { status: "success", message: `Bot ${botId} is now restarting.` };
 }
 
 async function getBotLogs(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested logs for bot ${botId}.`);
-    // This is a placeholder for your actual log fetching logic.
-    // Example: const logs = await herokuApi.getLogs(botId);
-    const logs = `[INFO] Bot ${botId} started.\n[WARN] High memory usage detected.`;
+    console.log(`[ACTION] Fetching logs for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const logs = await your_hosting_api.getLogs(botId);
+    const logs = `[${new Date().toISOString()}] INFO: Bot ${botId} started successfully.\n[${new Date().toISOString()}] WARN: High memory usage detected.`;
     return { status: "success", logs: logs };
 }
 
-//  RENEW BOT FUNCTION: Adds days to a bot's expiration.
-async function renewBotSubscription(userId, botId, daysToAdd = 30) {
-    console.log(`[ACTION] Renewing bot ${botId} for user ${userId} by ${daysToAdd} days.`);
-    try {
-        // This query intelligently adds days: if expired, it adds from NOW, otherwise from the current expiration date.
-        const result = await pool.query(
-            `UPDATE user_deployments 
-             SET expiration_date = 
-                CASE 
-                   WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day')
-                   ELSE expiration_date + ($1 * INTERVAL '1 day')
-                END
-             WHERE user_id = $2 AND app_name = $3
-             RETURNING expiration_date`,
-            [daysToAdd, userId, botId]
-        );
-        if (result.rowCount === 0) {
-            return { status: "error", message: `Could not find the bot '${botId}' to renew.` };
-        }
-        const newExpiry = new Date(result.rows[0].expiration_date).toLocaleDateString();
-        return { status: "success", message: `Bot '${botId}' has been renewed. New expiration date: ${newExpiry}.` };
-    } catch (dbError) {
-        console.error("DB error renewing bot:", dbError);
-        return { status: "error", message: "A database error occurred during renewal." };
-    }
-}
+// Note: updateUserVariable also needs the botId to know which bot's variable to change.
+// REPLACE your mock 'updateUserVariable' function with this REAL one
 
-// ❗️ CRITICAL SECURITY UPDATE: Your updateUserVariable function needs to be more robust.
-// This version normalizes the variable name to prevent bypasses and uses a strict allow-list.
-async function updateUserVariable(userId, botId, variableName, newValue) {
-    // Step 1: Normalize the variable name to a consistent format (UPPERCASE_SNAKE_CASE).
-    const finalVarName = variableName.toLowerCase().replace(/ /g, '_').toUpperCase();
-
-    // Step 2: Validate the normalized name against the *strict* uppercase allow-list.
-    if (!allowedVariables.includes(finalVarName)) {
-        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}" (Normalized: "${finalVarName}")`);
-        return { status: "error", message: `Sorry, the variable '${variableName}' cannot be changed for security reasons.` };
-    }
-
-    // Step 3: Validate the new session ID value based on the bot's type.
-    if (finalVarName === 'SESSION_ID') {
-        const botTypeResult = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, botId]);
-        if (botTypeResult.rows.length > 0) {
-            const botType = botTypeResult.rows[0].bot_type;
-            const isLevanter = botType === 'levanter' && newValue.startsWith(LEVANTER_SESSION_PREFIX);
-            const isRaganork = botType === 'raganork' && newValue.startsWith(RAGANORK_SESSION_PREFIX);
-            if (!isLevanter && !isRaganork) {
-                return { status: "error", message: `The session ID you provided does not have the correct format for a ${botType} bot.` };
-            }
-        }
-    }
-    
-    // Step 4: Perform the real Heroku API call with the normalized variable name.
-    try {
-        console.log(`[Heroku API] User ${userId} is updating var for bot '${botId}': { "${finalVarName}": "..." }`);
-        await axios.patch(
-            `https://api.heroku.com/apps/${botId}/config-vars`,
-            { [finalVarName]: newValue }, // Use the safe, normalized variable name
-            {
-                headers: {
-                    'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                    'Accept': 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        console.log(`[Heroku API] Successfully updated "${finalVarName}" for bot '${botId}'.`);
-        return { 
-            status: "success", 
-            message: `Success! The variable ${finalVarName} for your bot '${botId}' has been updated. The bot will now restart.` 
-        };
-    } catch (error) {
-        const errorMessage = error.response?.data?.message || 'An unknown API error occurred.';
-        console.error(`[Heroku API] Error updating var for bot '${botId}':`, errorMessage);
-        return { 
-            status: "error", 
-            message: `I couldn't update the variable for '${botId}'. The server responded: ${errorMessage}` 
-        };
-    }
-}
-
-// This list MUST be uppercase. It is a security allow-list.
-const allowedVariables = [
-    'SESSION_ID',
-    'AUTO_READ_STATUS',
-    'AUTO_STATUS_VIEW',
-    'ALWAYS_ONLINE',
-    'HANDLERS',
-    'PREFIX',
-    'ANTI_DELETE',
-    'SUDO' 
-];
-
-// --- GEMINI AI INITIALIZATION ---
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-// Check if the API key exists
-if (!process.env.GEMINI_API_KEY) {
-    console.error("CRITICAL ERROR: GEMINI_API_KEY is not set in the environment variables. The AI features will not work.");
-    // In a real app, you might want to process.exit(1) here if AI is critical
-}
-
-// Initialize the Generative AI client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// Initialize the model for general tasks (like intent classification)
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-console.log("Gemini AI models initialized successfully.");
-// --- END OF GEMINI AI INITIALIZATION ---
-
-
+// REPLACE your 'allowedVariables' const with this one. It MUST be uppercase.
 
 // REPLACE your 'updateUserVariable' function with this FINAL, WORKING version.
 async function updateUserVariable(userId, botId, variableName, newValue) {
@@ -564,57 +450,55 @@ async function updateUserVariable(userId, botId, variableName, newValue) {
 const tools = [
     {
         "functionDeclarations": [
+            // NEW TOOL: To get the list of bots first.
             {
                 "name": "getUserBots",
-                "description": "Retrieves a list of all bots owned by a specific user. This is the first function to call if a user's request is about a bot but they don't specify which one, or if they ask to see their bots.",
-                "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" } }, "required": ["userId"] }
+                "description": "Retrieves a list of all bots owned by a specific user. Call this first if the user has multiple bots and their command is ambiguous.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": { "userId": { "type": "STRING", "description": "The user's unique ID." }},
+                    "required": ["userId"]
+                }
             },
+            // UPDATED TOOL: Now requires a botId.
             {
                 "name": "updateUserVariable",
-                "description": "Updates a specific configuration variable (like a session ID) for a user's bot. Use this for requests like 'change my session', 'update my session_id', 'set my prefix'.",
+                "description": "Updates a specific variable for a specific user's bot.",
                 "parameters": {
-                    "type": "OBJECT", "properties": {
-                        "userId": { "type": "STRING" },
-                        "botId": { "type": "STRING", "description": "The unique name or ID of the bot to update." },
-                        "variableName": { "type": "STRING", "description": "The name of the variable to change (e.g., SESSION_ID, PREFIX)." },
+                    "type": "OBJECT",
+                    "properties": {
+                        "userId": { "type": "STRING", "description": "The user's unique ID." },
+                        "botId": { "type": "STRING", "description": "The unique ID of the bot to be updated." },
+                        "variableName": { "type": "STRING", "description": "The name of the variable to change." },
                         "newValue": { "type": "STRING", "description": "The new value for the variable." }
-                    }, "required": ["userId", "botId", "variableName", "newValue"]
+                    },
+                    "required": ["userId", "botId", "variableName", "newValue"]
                 }
             },
-            {
-                "name": "renewBotSubscription",
-                "description": "Extends the subscription or runtime of a user's specified bot. Use for requests like 'renew my bot', 'extend my bot', 'add more days'.",
-                "parameters": {
-                    "type": "OBJECT", "properties": {
-                        "userId": { "type": "STRING" },
-                        "botId": { "type": "STRING", "description": "The name or ID of the bot to renew." },
-                        "daysToAdd": { "type": "NUMBER", "description": "The number of days to add to the subscription. Defaults to 30." }
-                    }, "required": ["userId", "botId"]
-                }
-            },
+            // All other tools are also updated to require a botId.
             {
                 "name": "redeployBot",
-                "description": "Initiates the redeployment process (updates the bot's code to the latest version) for a specific bot.",
+                "description": "Initiates the redeployment process for a specific user's bot.",
                 "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
             },
             {
                 "name": "getBotInfo",
-                "description": "Retrieves detailed information and status about a specific bot.",
+                "description": "Retrieves information and status about a specific user's bot.",
                 "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
             },
             {
                 "name": "deleteBot",
-                "description": "Deletes a specific bot and all its associated data.",
+                "description": "Deletes a specific user's bot and all associated data.",
                 "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
             },
             {
                 "name": "restartBot",
-                "description": "Restarts a specific bot's process. Useful if the bot is unresponsive.",
+                "description": "Restarts a specific user's bot process.",
                 "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
             },
             {
                 "name": "getBotLogs",
-                "description": "Fetches the most recent activity logs for a specific bot to help with troubleshooting.",
+                "description": "Fetches the most recent logs for a specific user's bot.",
                 "parameters": { "type": "OBJECT", "properties": { "userId": { "type": "STRING" }, "botId": { "type": "STRING" } }, "required": ["userId", "botId"] }
             }
         ]
@@ -622,22 +506,86 @@ const tools = [
 ];
 
 
+
 // Assume 'genAI' and 'geminiModel' are already initialized with the tools above.
 
 // Map the function name to the actual JavaScript function.
 const availableTools = {
-    getUserBots,
     updateUserVariable,
-    renewBotSubscription,
     redeployBot,
     getBotInfo,
     deleteBot,
+    getUserBots,
     restartBot,
     getBotLogs
 };
 
+// This function can now handle more complex requests.
+async function handleUserPrompt(prompt, userId) {
+    const chat = geminiModel.startChat();
+    const result = await chat.sendMessage(prompt);
+    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
+
+    if (!calls || calls.length === 0) {
+        return result.response.text();
+    }
+    
+    // The AI might ask to call multiple functions in one turn
+    const functionResponses = [];
+    for (const call of calls) {
+        if (availableTools[call.name]) {
+            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
+            const functionToCall = availableTools[call.name];
+            
+            // Add the userId from your bot's context
+            const args = { ...call.args, userId: userId };
+            
+            // Call your actual function
+            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
+            
+            functionResponses.push({
+                functionResponse: {
+                    name: call.name,
+                    response: functionResult,
+                },
+            });
+        }
+    }
+    
+    // Send all function results back to the AI
+    const result2 = await chat.sendMessage(functionResponses);
+    return result2.response.text();
+}
 
 
+/**
+ * A list of database columns that the AI is permitted to update.
+ * This is a critical security measure.
+ */
+const allowedVariables = [
+    'SESSION_ID',
+    'AUTO_READ_STATUS',
+    'ALWAYS_ONLINE',
+    'HANDLERS',
+    'ANTI_DELETE',
+    'SUDO' 
+];
+
+
+
+
+
+// --- NEW GEMINI INTEGRATION ---
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+/**
+ * An example function that tries to generate content.
+ * If the model isn't found, it fetches and lists available models.
+ */
 async function generateContentWithFallback() {
     // ❗ Using a wrong model name on purpose to trigger the error
     const modelName = "gemini-1.5-flash-latest"; 
@@ -683,135 +631,184 @@ generateContentWithFallback();
 
 
 // REPLACE your old 'handleFallbackWithGemini' function with this one
+// REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
     bot.sendChatAction(chatId, 'typing');
 
-    // Phase 1: Classify the user's general intent.
+    // This prompt for intent classification remains the same as your original code.
     const professionalPrompt = `
-      You are 'Geminito', the intelligent assistant for the Ultar Bot Deployer.
-      Your primary purpose is to understand a user's request and classify their intent.
-      You MUST be concise, helpful, and professional.
+      You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
+      Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
+      You must be concise, helpful, and professional.
       Your entire response MUST be a single, valid JSON object and nothing else.
 
       The user's request is: "${userMessage}"
-      
+
       ---
-      ## KNOWLEDGE BASE & RULES ##
-      - **Main Goal:** Deploy two types of WhatsApp bots: 'Levanter' and 'Raganork'.
-      - **CRITICAL RULE:** When a user says 'update my session', 'change my session id', or anything similar, you MUST understand this refers to the 'SESSION_ID' variable. You should then check the format of the new session value they provide. If it starts with '${LEVANTER_SESSION_PREFIX}', the bot is 'levanter'. If it starts with '${RAGANORK_SESSION_PREFIX}', the bot is 'raganork'. This is essential for the tool to work correctly.
-      - **Key Features:** 'Deploy', 'Get Session ID', 'My Bots' (to manage existing bots), 'Free Trial', 'Referrals', 'Support'.
-      - **Management Actions:** Users can restart, get logs, check status, set variables (like SESSION_ID), or delete their bots from the 'My Bots' menu.
-      - **Common Issues:** "Logged Out" status requires the user to get a new Session ID and update it.
-      
+      ## KNOWLEDGE BASE ##
+      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'.
+       - 'CRITICAL': Do NOT mention any specific hosting platforms. Focus on the ease and power of our generic service.
+       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmsks. when user say update or change my session or session id or session_id,  just know that user means SESSION_ID, Then carry out the function!. always check bot type 
+      - **Key Features:**
+        - 'Deploy': The main function to start creating a new bot.
+        - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
+        - 'My Bots': A menu where users can see a list of all bots they have deployed. From here, they can manage them (restart, get logs, check status, set variables, or delete).
+        - 'Free Trial': A one-time offer for new users to test the service. It has limitations and requires joining a Telegram channel.
+        - 'Referrals': Users can invite friends to earn extra days on their bot's subscription.
+        - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
+      - **Pricing & Payment:**
+        - Deploying a bot requires a paid key or a free trial.
+        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days), Premium (₦2000/50 Days).
+      - **Common Issues:**
+        - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
+        - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
+
       ---
-      ## INTENT CLASSIFICATION ##
-      Classify the user's request into ONE of the following intents:
-      - "DEPLOY": User wants to create, make, or deploy a new bot.
-      - "GET_SESSION": User is asking how to get a session ID or pairing code.
-      - "LIST_BOTS": User wants to see, check, or find their list of bots.
-      - "MANAGE_BOT": User wants to perform a specific action on an existing bot (e.g., "restart my bot," "update my session id to XYZ", "get logs", "renew my bot"). This is the most common intent for users with existing bots.
-      - "FREE_TRIAL": User is asking about the free trial.
-      - "PRICING": User is asking about cost or payment.
-      - "SUPPORT": User wants to contact the admin or needs general help.
-      - "GENERAL_QUERY": A general question not covered by other intents.
-      
+      ## INTENT CLASSIFICATION RULES ##
+      Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
+
+      - "DEPLOY": User wants to create, make, build, or deploy a new bot.
+      - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
+      - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
+      - "MANAGE_BOT": User is having a problem with an existing bot OR wants to perform a specific action on it (e.g., "it's not working," "restart my bot," "update my session id to XYZ", "get logs for bot-abc").
+      - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
+      - "PRICING": User is asking about cost, payment, or subscription plans.
+      - "SUPPORT": User wants to contact the admin or is asking for general help.
+      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature.
+
       ---
-      ## RESPONSE FORMAT (JSON ONLY) ##
-      {
-        "intent": "YOUR_CLASSIFIED_INTENT",
-        "response": "A short, helpful text to guide the user. For MANAGE_BOT, this text is a fallback if a direct action cannot be taken."
-      }
-      
+      ## RESPONSE FORMAT ##
+      Your response MUST be a JSON object with two keys: "intent" and "response".
+      - "intent": The category you classified from the list above.
+      - "response": A short, helpful text to send back to the user that guides them.
+
       ## EXAMPLES ##
-      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I can help with that. To manage your bot, including restarting it or checking its logs, please go to the 'My Bots' menu."}
-      - User: "renew my bot" -> {"intent": "MANAGE_BOT", "response": "I can help with renewal. Which bot would you like to renew?"}
-      - User: "change my session to ${RAGANORK_SESSION_PREFIX}abcdef" -> {"intent": "MANAGE_BOT", "response": "Okay, I will update your session ID."}
+      - User: "how do I make a bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. You can start by using the 'Deploy' button from the main menu."}
+      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I'm sorry to hear that. You can manage your bot, including restarting it or checking its logs, from the 'My Bots' menu."}
+      - User: "is this free" -> {"intent": "PRICING", "response": "We offer a one-time Free Trial. For continuous service, paid plans start at ₦1500 for 30 days."}
+      - User: "i need my session id" -> {"intent": "GET_SESSION", "response": "You can generate a new Session ID by using the 'Get Session ID' button from the main menu."}
+
+      Now, analyze the user's request and provide the JSON output.
     `;
     
     try {
-        const intentResult = await geminiModel.generateContent(professionalPrompt);
-        const jsonString = intentResult.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        const result = await geminiModel.generateContent(professionalPrompt);
+        const responseText = result.response.text();
+        const jsonString = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiResponse = JSON.parse(jsonString);
 
-        console.log('[Gemini Phase 1] Intent:', aiResponse.intent);
+        console.log('[Gemini Phase 1] Intent:', aiResponse.intent, '| Response:', aiResponse.response);
 
-        if (aiResponse.intent === "MANAGE_BOT" || aiResponse.intent === "LIST_BOTS") {
-            console.log('[Gemini Phase 2] Managing bot. Initializing model with tools...');
-            bot.sendChatAction(chatId, 'typing');
-
-            const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
-            const chat = modelWithTools.startChat();
-            const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
-            const calls = toolResult.response.functionCalls();
-
-            if (calls && calls.length > 0) {
-                const call = calls[0]; // Process one function call at a time for simplicity
-                const functionName = call.name;
-                console.log(`[Gemini Phase 2] Recommending call to: ${functionName} with args:`, call.args);
-
-                if (availableTools[functionName]) {
-                    // **Multi-Bot Logic Interception**
-                    if (functionName !== 'getUserBots' && !call.args.botId) {
-                        const userBotsResult = await getUserBots(chatId);
-                        if (userBotsResult.status === 'success' && userBotsResult.bots.length > 1) {
-                            userStates[chatId] = {
-                                step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
-                                originalMessage: userMessage 
-                            };
-                            const keyboard = userBotsResult.bots.map(botName => ([{
-                                text: botName,
-                                callback_data: `gemini_select_bot:${botName}`
-                            }]));
-                            await bot.sendMessage(chatId, "It looks like you have multiple bots. Which one does this request apply to?", {
-                                reply_markup: { inline_keyboard: keyboard }
-                            });
-                            return; // Stop and wait for user's choice
-                        } else if (userBotsResult.status === 'success' && userBotsResult.bots.length === 1) {
-                           // Automatically use the only bot they have
-                           call.args.botId = userBotsResult.bots[0];
-                        }
-                    }
-
-                    const argsWithUserId = { ...call.args, userId: chatId };
-                    const functionToCall = availableTools[functionName];
-                    const functionResult = await functionToCall(...Object.values(argsWithUserId));
-
-                    const functionResponses = [{ functionResponse: { name: functionName, response: functionResult } }];
-                    const finalResult = await chat.sendMessage(functionResponses);
-                    await bot.sendMessage(chatId, finalResult.response.text());
-                } else {
-                     await bot.sendMessage(chatId, "I'm not sure how to do that. You can try managing your bot from the 'My Bots' menu.");
-                }
-            } else {
-                // If Gemini can't find a specific tool, use the fallback response.
-                await bot.sendMessage(chatId, aiResponse.response, {
-                    reply_markup: { inline_keyboard: [[{ text: 'Go to My Bots', callback_data: 'back_to_app_list' }]] }
-                });
-            }
-            return;
-        }
-
-        // --- Handle other intents as before ---
         switch (aiResponse.intent) {
             case 'DEPLOY':
-                await bot.sendMessage(chatId, aiResponse.response, { reply_markup: { inline_keyboard: [[{ text: 'Start Deployment', callback_data: 'deploy_first_bot' }]] } });
+                await bot.sendMessage(chatId, aiResponse.response, {
+                    reply_markup: { inline_keyboard: [[{ text: 'Start Deployment', callback_data: 'deploy_first_bot' }]] }
+                });
                 break;
+
             case 'GET_SESSION':
-                await bot.sendMessage(chatId, aiResponse.response, { reply_markup: { inline_keyboard: [[{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]] } });
+                await bot.sendMessage(chatId, aiResponse.response, {
+                    reply_markup: { inline_keyboard: [[{ text: 'Get Session ID', callback_data: 'get_session_start_flow' }]] }
+                });
                 break;
+
+            case 'LIST_BOTS':
+            case 'MANAGE_BOT':
+                console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
+                
+                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
+                const chat = modelWithTools.startChat();
+                const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
+                const calls = toolResult.response.functionCalls();
+
+                if (calls && calls.length > 0) {
+                    // A specific function was identified by the AI.
+                    const functionResponses = [];
+                    for (const call of calls) {
+                        const functionName = call.name;
+                        if (availableTools[functionName]) {
+                            const args = { ...call.args, userId: chatId };
+                            let functionResult;
+                            try {
+                                // **NEW LOGIC**: If the AI is unsure which bot to use, it will call getUserBots.
+                                // We intercept this to ask the user directly.
+                                if (functionName === 'getUserBots') {
+                                    console.log('[Gemini] Ambiguity detected. Checking user bot count.');
+                                    const userBots = await dbServices.getUserBots(chatId);
+                                    
+                                    if (userBots.length > 1) {
+                                        // The user has multiple bots, so we must ask which one they mean.
+                                        userStates[chatId] = {
+                                            step: 'AWAITING_BOT_SELECTION_FOR_GEMINI',
+                                            originalMessage: userMessage
+                                        };
+                                        const keyboard = userBots.map(botName => ([{
+                                            text: botName,
+                                            callback_data: `gemini_select_bot:${botName}`
+                                        }]));
+                                        
+                                        await bot.sendMessage(chatId, "You have multiple bots. Which one does this apply to?", {
+                                            reply_markup: { inline_keyboard: keyboard }
+                                        });
+                                        return; // Stop processing and wait for the user's button click.
+                                    }
+                                    // If user has 0 or 1 bot, let the AI handle it by passing the result back.
+                                }
+                                
+                                // Execute the function call.
+                                switch (functionName) {
+                                    case 'getUserBots':
+                                        functionResult = await availableTools[functionName](args.userId);
+                                        break;
+                                    case 'updateUserVariable':
+                                        functionResult = await availableTools[functionName](args.userId, args.botId, args.variableName, args.newValue);
+                                        break;
+                                    default: // Handles restartBot, getBotLogs, etc.
+                                        functionResult = await availableTools[functionName](args.userId, args.botId);
+                                        break;
+                                }
+                                functionResponses.push({ functionResponse: { name: functionName, response: functionResult } });
+                            } catch (e) {
+                                console.error(`[Bot] Error executing tool ${functionName}:`, e);
+                                functionResponses.push({ functionResponse: { name: functionName, response: { status: 'error', message: e.message } } });
+                            }
+                        }
+                    }
+                    // Send the results back to Gemini to generate the final, user-facing text response.
+                    const finalResult = await chat.sendMessage(functionResponses);
+                    await bot.sendMessage(chatId, finalResult.response.text());
+
+                } else {
+                    // Fallback: If the tool model couldn't find a specific function to call,
+                    // we use the original behavior of guiding the user to the menu.
+                    console.log('[Gemini Phase 2] No specific function found. Guiding user to My Bots menu.');
+                    await bot.sendMessage(chatId, aiResponse.response);
+                    const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
+                    bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
+                }
+                break;
+
             case 'FREE_TRIAL':
-                 const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
-                 bot.emit('message', freeTrialMsg);
-                 break;
-            default: // PRICING, SUPPORT, GENERAL_QUERY
+                await bot.sendMessage(chatId, aiResponse.response);
+                const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
+                bot.emit('message', freeTrialMsg);
+                break;
+                
+            case 'PRICING':
+            case 'SUPPORT':
+            case 'GENERAL_QUERY':
+            default:
                 await bot.sendMessage(chatId, aiResponse.response);
                 break;
         }
     } catch (error) {
-        console.error("Error with Gemini integration:", error);
-        await bot.sendMessage(chatId, "I'm having trouble understanding that. Please try using the main menu buttons or rephrase your request.");
+        console.error("Error with Professional Gemini integration:", error);
+        await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
     }
 }
+
+
+// --- END OF GEMINI INTEGRATION ---
 
 
 // --- END OF REPLACEMENT ---
@@ -6784,11 +6781,11 @@ if (action === 'confirm_restore_app') {
 
   // Add this new 'if' block inside your bot.on('callback_query', ...) function
 
-i// This handles the bot selection when Gemini is unsure which bot to manage.
 if (action === 'gemini_select_bot') {
     const selectedBotName = payload;
     const st = userStates[cid];
 
+    // Ensure this callback is coming from the correct state
     if (st && st.step === 'AWAITING_BOT_SELECTION_FOR_GEMINI') {
         const originalMessage = st.originalMessage;
         delete userStates[cid]; // Clean up the state
@@ -6796,7 +6793,7 @@ if (action === 'gemini_select_bot') {
         // Re-run the Gemini handler with a more specific, clarified message
         const clarifiedMessage = `${originalMessage} for my bot named "${selectedBotName}"`;
         
-        await bot.editMessageText(`Got it! Performing the action on your bot: *${selectedBotName}*`, {
+        await bot.editMessageText(`Okay, applying the action to your bot: *${selectedBotName}*`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown'
@@ -6806,11 +6803,9 @@ if (action === 'gemini_select_bot') {
         await handleFallbackWithGemini(cid, clarifiedMessage);
     } else {
         await bot.answerCallbackQuery(q.id, { text: "This selection has expired.", show_alert: true });
-        await bot.deleteMessage(cid, q.message.message_id).catch(() => {});
     }
     return;
 }
-
 
 
   if (action === 'delete_bapp') {
