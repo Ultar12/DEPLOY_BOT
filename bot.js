@@ -491,6 +491,25 @@ const allowedVariables = [
     'SUDO' 
 ];
 
+// --- GEMINI AI INITIALIZATION ---
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Check if the API key exists
+if (!process.env.GEMINI_API_KEY) {
+    console.error("CRITICAL ERROR: GEMINI_API_KEY is not set in the environment variables. The AI features will not work.");
+    // In a real app, you might want to process.exit(1) here if AI is critical
+}
+
+// Initialize the Generative AI client
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Initialize the model for general tasks (like intent classification)
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+console.log("Gemini AI models initialized successfully.");
+// --- END OF GEMINI AI INITIALIZATION ---
+
+
 
 // REPLACE your 'updateUserVariable' function with this FINAL, WORKING version.
 async function updateUserVariable(userId, botId, variableName, newValue) {
