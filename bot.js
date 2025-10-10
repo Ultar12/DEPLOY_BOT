@@ -751,6 +751,54 @@ You have access to the following functions. Your job is to determine which funct
                 bot.emit('message', fakeMsg); // Trigger your existing 'My Bots' logic
                 break;
 
+                // +++ THIS IS THE NEW, ADDED LOGIC +++
+            case 'MANAGE_BOT':
+                console.log('[Gemini] Managing bot. Attempting direct function execution...');
+                
+                // Now we use the powerful function-calling model to execute the specific action
+                const chat = geminiModel.startChat(); // This model should be initialized with tools
+                const result2 = await chat.sendMessage(userMessage);
+                const calls = result2.response.functionCalls();
+
+                // If a specific function is found (e.g., restartBot), execute it
+                if (calls && calls.length > 0) {
+                    const functionResponses = [];
+                    for (const call of calls) {
+                        const functionName = call.name;
+                        if (availableTools[functionName]) {
+                            const args = { ...call.args, userId: chatId };
+                            let functionResult;
+                            try {
+                                switch (functionName) {
+                                    case 'getUserBots':
+                                        functionResult = await availableTools[functionName](args.userId);
+                                        break;
+                                    case 'updateUserVariable':
+                                        functionResult = await availableTools[functionName](args.userId, args.botId, args.variableName, args.newValue);
+                                        break;
+                                    default: // Handles restartBot, getBotLogs, etc.
+                                        functionResult = await availableTools[functionName](args.userId, args.botId);
+                                        break;
+                                }
+                                functionResponses.push({ functionResponse: { name: functionName, response: functionResult } });
+                            } catch (e) {
+                                functionResponses.push({ functionResponse: { name: functionName, response: { status: 'error', message: e.message } } });
+                            }
+                        }
+                    }
+                    const result3 = await chat.sendMessage(functionResponses);
+                    await bot.sendMessage(chatId, result3.response.text(), { parse_mode: 'Markdown' });
+
+                } else {
+                    // Fallback: If no specific function is found, do the original action (guide to 'My Bots')
+                    console.log('[Gemini] No specific function found. Guiding user to My Bots menu.');
+                    await bot.sendMessage(chatId, "I see you need to manage your bot. Please select it from the 'My Bots' menu to continue.");
+                    const fakeMsg = { chat: { id: chatId }, text: 'My Bots' };
+                    bot.emit('message', fakeMsg);
+                }
+                break;
+            // +++ END OF NEW LOGIC +++
+
             case 'FREE_TRIAL':
                 await bot.sendMessage(chatId, aiResponse.response);
                 const freeTrialMsg = { chat: { id: chatId }, text: 'Free Trial' };
