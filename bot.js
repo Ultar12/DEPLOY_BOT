@@ -2431,6 +2431,44 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to update session ID.' });
     }
 });
+
+
+  // GET /api/bots/config-vars/:appName - Gets editable config vars for a bot
+app.get('/api/bots/config-vars/:appName', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName } = req.params;
+    try {
+        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1 AND user_id = $2', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        }
+        const botType = ownerCheck.rows[0].bot_type;
+
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+        
+        // Define which variables are relevant for each bot type
+        const commonVars = ['SESSION_ID', 'ALWAYS_ONLINE', 'ANTI_DELETE', 'SUDO'];
+        const raganorkVars = ['AUTO_READ_STATUS', 'HANDLERS'];
+        const levanterVars = ['AUTO_STATUS_VIEW', 'PREFIX'];
+        
+        const relevantVarKeys = botType === 'raganork' 
+            ? [...commonVars, ...raganorkVars]
+            : [...commonVars, ...levanterVars];
+
+        const relevantVars = {};
+        for (const key of relevantVarKeys) {
+            relevantVars[key] = configRes.data[key] || 'Not Set';
+        }
+
+        res.json({ success: true, configVars: relevantVars, botType: botType });
+    } catch (e) {
+        console.error(`[MiniApp V2] Error fetching config vars for ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to get bot settings.' });
+    }
+});
+
 // GET /api/app-name-check/:appName - Check if an app name is available
 app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
     const { appName } = req.params;
@@ -2608,6 +2646,41 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
         return res.status(500).json({ success: false, message: 'Server error during verification check.' });
     }
 });
+
+
+  // POST /api/bots/delete - Deletes a bot from Heroku and the database
+app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
+    const userId = req.telegramData.id.toString();
+    const { appName } = req.body;
+    try {
+        // Verify ownership
+        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1 AND user_id = $2', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
+            return res.status(403).json({ success: false, message: 'You do not own this bot or it does not exist.' });
+        }
+        
+        // 1. Delete from Heroku
+        await axios.delete(`https://api.heroku.com/apps/${appName}`, {
+            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+        });
+
+        // 2. Clean up database records
+        await dbServices.deleteUserBot(userId, appName);
+        await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
+
+        res.json({ success: true, message: `Bot '${appName}' has been successfully deleted.` });
+    } catch (e) {
+        if (e.response && e.response.status === 404) {
+            // If it's already gone from Heroku, just clean up the DB
+            await dbServices.deleteUserBot(userId, appName);
+            await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
+            return res.json({ success: true, message: `Bot '${appName}' was already deleted from the server. Your list is now clean.` });
+        }
+        console.error(`[MiniApp V2] Error deleting bot ${appName}:`, e.message);
+        res.status(500).json({ success: false, message: 'Failed to delete bot.' });
+    }
+});
+
 
 
 
