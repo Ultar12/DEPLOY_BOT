@@ -3849,78 +3849,6 @@ bot.onText(/^\/apilist$/, async (msg) => {
 
 
 
-
-// New /read command (to be used in reply to a .txt file)
-bot.onText(/^\/read$/, async msg => {
-    const cid = msg.chat.id.toString();
-    await dbServices.updateUserActivity(cid); // Keep your activity update
-
-    const replyMsg = msg.reply_to_message;
-    
-    // 1. 🔍 Check if the command is a reply and if the reply contains a document
-    if (!replyMsg || !replyMsg.document) {
-        return bot.sendMessage(cid, "❌ Please use the **`/read`** command by **replying** to the `.txt` file you want to process.", { parse_mode: 'Markdown' });
-    }
-
-    const document = replyMsg.document;
-    const fileName = document.file_name;
-    const fileSizeMB = (document.file_size / 1024 / 1024).toFixed(2);
-    
-    // 2. 📁 Validate the file extension (must be .txt)
-    if (!fileName || !fileName.toLowerCase().endsWith('.txt')) {
-        return bot.sendMessage(cid, `⚠️ I can only process **.txt** files. The file you replied to is named: \`${fileName}\`.`, { parse_mode: 'Markdown' });
-    }
-
-    let messageText;
-
-    try {
-        // 3. ⬇️ Download the file content
-        // This is necessary because the file is on Telegram's servers.
-        const fileId = document.file_id;
-        
-        // This downloads the file to a temporary buffer (in memory)
-        const fileBuffer = await bot.downloadFile(fileId, './'); 
-        
-        // Convert the buffer to a string
-        const fileContent = fs.readFileSync(fileBuffer).toString('utf8');
-
-        // 4. ✨ Process the content: Parse, Filter, and Format
-        const allNumbers = fileContent
-            .split(/[\s,]+/) // Split by one or more spaces or commas
-            .map(s => s.trim())
-            .filter(s => s.length > 0)
-            .map(s => parseInt(s, 10))
-            .filter(n => !isNaN(n)); // Filter out any non-numeric results
-
-        // Exclude the number 98
-        const filteredNumbers = allNumbers.filter(n => n !== 98);
-
-        // 5. 📝 Format the output
-        if (filteredNumbers.length > 0) {
-            const originalCount = allNumbers.length;
-            const finalCount = filteredNumbers.length;
-            const numbersList = filteredNumbers.join(', ');
-
-            messageText = `✅ **Read Numbers Success!**\n\n**File:** \`${fileName}\` (${fileSizeMB} MB)\n**Total Numbers Found:** ${originalCount}\n**Numbers (Excluding 98):** ${finalCount}\n\nList: \`${numbersList}\``;
-        } else if (allNumbers.length > 0) {
-            messageText = `⚠️ All ${allNumbers.length} numbers found in \`${fileName}\` were the number \`98\`. No remaining numbers to list.`;
-        } else {
-            messageText = `❌ Could not find any numbers in the file \`${fileName}\`. Please check the file content.`;
-        }
-        
-        // 6. 🗑️ Clean up the temporary file (important!)
-        fs.unlinkSync(fileBuffer);
-
-    } catch (error) {
-        console.error(`[ReadNumbers] Error processing file ${fileName}:`, error.message);
-        messageText = `🚨 **Error reading numbers!**\n\nAn unexpected error occurred while downloading or processing the file. Check the bot's console log for details: \`${error.message}\``;
-    }
-
-    // 7. 📤 Send the result back to the user
-    await bot.sendMessage(cid, messageText, { parse_mode: 'Markdown' });
-});
-
-
 // NEW: /askadmin command for users to initiate support
 bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     const userQuestion = match[1];
@@ -4276,25 +4204,6 @@ bot.onText(/^\/copydb$/, async (msg) => {
     });
 });
 
-// ADMIN COMMAND: A one-time command to fix a broken heroku_api_keys table.
-bot.onText(/^\/fixkeys$/, async (msg) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
-
-    try {
-        await bot.sendMessage(adminId, "Attempting to drop the broken `heroku_api_keys` table...");
-        
-        // This command deletes the old, incorrectly structured table.
-        await pool.query('DROP TABLE IF EXISTS heroku_api_keys;');
-        
-        await bot.sendMessage(adminId, "Table dropped successfully.\n\n**Please restart the bot now.** On the next startup, the table will be created correctly.");
-
-    } catch (error) {
-        console.error("Error during /fixkeys command:", error);
-        await bot.sendMessage(adminId, `An error occurred: ${error.message}`);
-    }
-});
-
 
 
 bot.onText(/^\/backupall$/, async (msg) => {
@@ -4532,15 +4441,13 @@ bot.onText(/^\/editvar (\S+) ([\s\S]*)$/, async (msg, match) => {
     const varName = match[1].toUpperCase();
     const varValue = match[2];
 
-    // 1. Security Check: Ensure the variable is in our editable list
     if (!EDITABLE_RENDER_VARS.includes(varName)) {
-        return bot.sendMessage(adminId, `❌ **Security Error:** The variable \`${varName}\` is not on the editable list.`);
+        return bot.sendMessage(adminId, `**Security Error:** The variable \`${varName}\` is not on the editable list.`);
     }
 
-    // 2. Prerequisite Check: Ensure Render API details are set
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
-        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** Please set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in your bot's environment to use this feature.");
+        return bot.sendMessage(adminId, "**Setup Incomplete:** Please set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in your bot's environment to use this feature.");
     }
 
     const workingMsg = await bot.sendMessage(adminId, `⚙️ Attempting to update \`${varName}\` on Render...`);
@@ -4551,27 +4458,31 @@ bot.onText(/^\/editvar (\S+) ([\s\S]*)$/, async (msg, match) => {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         };
-
-        // 3. Render's API requires us to GET the current variables first, then PUT the entire updated list back.
-        const serviceUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}`;
         
-        // GET existing variables
-        const { data: serviceData } = await axios.get(serviceUrl, { headers });
-        let envVars = serviceData.serviceDetails.envVars || [];
+        // This is the specific URL for managing environment variables
+        const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
 
-        // Find and update the variable, or add it if it's new
-        const varIndex = envVars.findIndex(v => v.key === varName);
+        // 1. GET the current list of variables from Render
+        const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
+
+        // 2. Find and update the variable in the list, or add it if it's new
+        // Render's API returns an array of { envVar: { key, value } } objects.
+        const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
         if (varIndex > -1) {
-            envVars[varIndex].value = varValue;
+            // Update existing variable
+            currentEnvVars[varIndex].envVar.value = varValue;
         } else {
-            envVars.push({ key: varName, value: varValue });
+            // Add new variable
+            currentEnvVars.push({ envVar: { key: varName, value: varValue } });
         }
-
-        // 4. PATCH the service with the updated list of environment variables
-        await axios.patch(serviceUrl, { envVars }, { headers });
+        
+        // 3. ❗️ FIX: PUT the entire updated list back to Render. This is the correct method.
+        // We send just the array, not nested objects.
+        const payload = currentEnvVars.map(item => item.envVar); // Extract the {key, value} objects
+        await axios.put(envVarsUrl, payload, { headers });
 
         await bot.editMessageText(
-            `**Success!**\n\nVariable \`${varName}\` has been updated.\n\nRender has automatically started a new deployment to apply the change. Your bot will restart in a minute or two.`,
+            `**Success!**\n\nVariable \`${varName}\` has been updated on Render.\n\nA new deployment has been automatically triggered to apply the change. Your bot will restart in a minute or two.`,
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
 
