@@ -4261,6 +4261,26 @@ bot.onText(/^\/copydb$/, async (msg) => {
     });
 });
 
+// ADMIN COMMAND: A one-time command to fix a broken heroku_api_keys table.
+bot.onText(/^\/fixkeys$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    try {
+        await bot.sendMessage(adminId, "Attempting to drop the broken `heroku_api_keys` table...");
+        
+        // This command deletes the old, incorrectly structured table.
+        await pool.query('DROP TABLE IF EXISTS heroku_api_keys;');
+        
+        await bot.sendMessage(adminId, "Table dropped successfully.\n\n**Please restart the bot now.** On the next startup, the table will be created correctly.");
+
+    } catch (error) {
+        console.error("Error during /fixkeys command:", error);
+        await bot.sendMessage(adminId, `An error occurred: ${error.message}`);
+    }
+});
+
+
 
 bot.onText(/^\/backupall$/, async (msg) => {
     const cid = msg.chat.id.toString();
