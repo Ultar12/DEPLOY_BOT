@@ -9821,6 +9821,8 @@ bot.on('channel_post', async msg => {
             } catch (emailError) {
                 console.error(`[Email] Failed to process email notification for ${appName}:`, emailError);
             }
+        }
+    }
 
 
 });
