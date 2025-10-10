@@ -739,7 +739,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             console.log('[Gemini Phase 2] Managing bot. Initializing model with tools...');
             bot.sendChatAction(chatId, 'typing');
 
-            const modelWithTools = genAI.getGenerativeModel({ model: "gemini-1.5-flash", tools: tools });
+            const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
             const chat = modelWithTools.startChat();
             const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
             const calls = toolResult.response.functionCalls();
