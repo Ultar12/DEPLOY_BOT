@@ -4506,14 +4506,6 @@ bot.on('message', async msg => {
         return;
     
 
-    // =========================================================================
-    //
-    // ALL YOUR OTHER TEXT-BASED LOGIC GOES HERE
-    // (For example: if (text === 'Deploy'), if (st && st.step === ...), etc.)
-    //
-    // ========================================================================
-
-
 
   // Now the rest of your code for handling text messages will run correctly
   await dbServices.updateUserActivity(cid); 
@@ -4523,6 +4515,22 @@ bot.on('message', async msg => {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
       return;
   }
+
+    // --- Step 3: THIS IS THE CRITICAL CHANGE ---
+    // Instead of many 'if' statements, we send the message DIRECTLY to the AI.
+    console.log(`[User Prompt] Passing to AI: "${msg.text}"`);
+
+    // This single line replaces all your old keyword-checking logic.
+    const finalResponse = await handleUserPrompt(msg.text, cid);
+
+    // --- Step 4: Send the AI's final response ---
+    if (finalResponse) {
+        // Your handleUserPrompt function may ask for clarification or give a final answer.
+        // If the AI asks for a bot list, your code needs to build the buttons.
+        // For now, this sends the AI's text response.
+        await bot.sendMessage(cid, finalResponse);
+    }
+
 
   // ... the rest of your message handler code (if (text === 'More Features'), etc.)
 
