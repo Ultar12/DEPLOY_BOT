@@ -4433,68 +4433,28 @@ bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
     }
 });
 
-// ADMIN COMMAND: /editvar [VAR_NAME] [NEW_VALUE]
-bot.onText(/^\/editvar (\S+) ([\s\S]*)$/, async (msg, match) => {
+// ADMIN COMMAND: /editvar to show the variable selection menu
+bot.onText(/^\/editvar$/, async (msg) => {
     const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return; // Admin only
+    if (adminId !== ADMIN_ID) return;
 
-    const varName = match[1].toUpperCase();
-    const varValue = match[2];
-
-    if (!EDITABLE_RENDER_VARS.includes(varName)) {
-        return bot.sendMessage(adminId, `**Security Error:** The variable \`${varName}\` is not on the editable list.`);
-    }
-
-    const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
-    if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+    // Check if the required Render keys are set up first
+    if (!process.env.RENDER_API_KEY || !process.env.RENDER_SERVICE_ID) {
         return bot.sendMessage(adminId, "**Setup Incomplete:** Please set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in your bot's environment to use this feature.");
     }
 
-    const workingMsg = await bot.sendMessage(adminId, `⚙️ Attempting to update \`${varName}\` on Render...`);
+    // Create a button for each editable variable
+    const buttons = EDITABLE_RENDER_VARS.map(varName => ([{
+        text: varName,
+        callback_data: `editvar_select:${varName}`
+    }]));
 
-    try {
-        const headers = {
-            'Authorization': `Bearer ${RENDER_API_KEY}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        };
-        
-        // This is the specific URL for managing environment variables
-        const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
-
-        // 1. GET the current list of variables from Render
-        const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
-
-        // 2. Find and update the variable in the list, or add it if it's new
-        // Render's API returns an array of { envVar: { key, value } } objects.
-        const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
-        if (varIndex > -1) {
-            // Update existing variable
-            currentEnvVars[varIndex].envVar.value = varValue;
-        } else {
-            // Add new variable
-            currentEnvVars.push({ envVar: { key: varName, value: varValue } });
+    await bot.sendMessage(adminId, "Please select the Render environment variable you wish to edit:", {
+        reply_markup: {
+            inline_keyboard: buttons
         }
-        
-        // 3. ❗️ FIX: PUT the entire updated list back to Render. This is the correct method.
-        // We send just the array, not nested objects.
-        const payload = currentEnvVars.map(item => item.envVar); // Extract the {key, value} objects
-        await axios.put(envVarsUrl, payload, { headers });
+    });
 
-        await bot.editMessageText(
-            `**Success!**\n\nVariable \`${varName}\` has been updated on Render.\n\nA new deployment has been automatically triggered to apply the change. Your bot will restart in a minute or two.`,
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-        );
-
-    } catch (error) {
-        console.error("Error updating Render env var:", error.response?.data || error.message);
-        const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
-        await bot.editMessageText(
-            `**Failed to update \`${varName}\`!**\n\n**Reason:** ${errorDetails}\n\nPlease check your Render API Key, Service ID, and the variable name.`,
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-        );
-    }
-});
 
 // ADMIN COMMAND: /delapi to start the key deletion process
 bot.onText(/^\/delapi$/, async (msg) => {
@@ -5124,6 +5084,57 @@ if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
     }
     return;
 }
+
+  // In bot.js, inside bot.on('message', async msg => { ... })
+
+if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
+    const { varName, messageId } = st.data;
+    const varValue = msg.text.trim();
+    const adminId = msg.chat.id.toString();
+
+    // Clean up the state and the previous message
+    delete userStates[adminId];
+    await bot.deleteMessage(adminId, messageId).catch(() => {});
+    
+    const workingMsg = await bot.sendMessage(adminId, `⚙️ Got it. Attempting to update \`${varName}\` on Render...`);
+
+    try {
+        const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
+        const headers = {
+            'Authorization': `Bearer ${RENDER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+        const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
+
+        const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
+
+        const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
+        if (varIndex > -1) {
+            currentEnvVars[varIndex].envVar.value = varValue;
+        } else {
+            currentEnvVars.push({ envVar: { key: varName, value: varValue } });
+        }
+        
+        const payload = currentEnvVars.map(item => item.envVar);
+        await axios.put(envVarsUrl, payload, { headers });
+
+        await bot.editMessageText(
+            `**Success!**\n\nVariable \`${varName}\` has been updated.\n\nA new deployment has been triggered on Render to apply the change.`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error("Error updating Render env var:", error.response?.data || error.message);
+        const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
+        await bot.editMessageText(
+            `**Failed to update \`${varName}\`!**\n\n**Reason:** ${errorDetails}`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+    return; // Stop further message processing
+}
+
 
 
   if (st && st.step === 'AWAITING_OVERWRITE_CONFIRMATION') {
@@ -6074,6 +6085,31 @@ if (action === 'bapp_select_type') {
     const botTypeToManage = payload;
     // Call the sendBappList function with the selected filter
     await sendBappList(cid, q.message.message_id, botTypeToManage);
+}
+
+
+  // In bot.js, inside bot.on('callback_query', async q => { ... })
+
+if (action === 'editvar_select') {
+    const varName = payload;
+    const cid = q.message.chat.id.toString();
+
+    // Set the state to wait for the user's next message
+    userStates[cid] = {
+        step: 'AWAITING_RENDER_VAR_VALUE',
+        data: {
+            varName: varName,
+            messageId: q.message.message_id // Store message ID to delete it later
+        }
+    };
+
+    // Ask the user for the new value
+    await bot.editMessageText(`Okay, please send the new value for \`${varName}\`:`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+    return;
 }
 
 
