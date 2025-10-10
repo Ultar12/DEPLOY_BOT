@@ -646,9 +646,9 @@ You have access to the following functions. Your job is to determine which funct
 - **'updateUserVariable(userId, botId, variableName, newValue)'**:
   - **Description:** Updates a specific variable for a specific user's bot.
   - **Parameters:**
-    - `botId`: The unique ID of the bot to update.
-    - `variableName`: The variable to change. Must be one of: 'session_id', 'auto_read_status', 'always_online', 'handlers', 'anti_delete', 'sudo'.
-    - `newValue`: The new value for the variable.
+    - 'botId': The unique ID of the bot to update.
+    - 'variableName': The variable to change. Must be one of: 'session_id', 'auto_read_status', 'always_online', 'handlers', 'anti_delete', 'sudo'.
+    - 'newValue': The new value for the variable.
   - **When to use:** When the user explicitly wants to set or change one of the allowed variables for a specific bot.
 
 - **'restartBot(userId, botId)'**:
