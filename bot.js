@@ -115,7 +115,7 @@ const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 // A strict allow-list of Render environment variables that the admin can edit remotely.
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
-    'ULTAR'
+    'ULTAR',
     'EMAIL_SERVICE_URL'
 ];
 
