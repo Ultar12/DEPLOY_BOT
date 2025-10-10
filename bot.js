@@ -188,9 +188,6 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`CREATE TABLE IF NOT EXISTS all_users_backup (user_id TEXT PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
       
         await client.query(`ALTER TABLE user_bots ADD COLUMN IF NOT EXISTS initial_tg_warning_sent BOOLEAN DEFAULT FALSE;`);
-
-        await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
-
         
         await client.query(`CREATE TABLE IF NOT EXISTS pre_verified_users (user_id TEXT PRIMARY KEY, ip_address TEXT NOT NULL, verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`);
 
@@ -309,6 +306,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE free_trial_numbers ADD COLUMN IF NOT EXISTS ip_address TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS email TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referred_by TEXT;`);
+        await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
