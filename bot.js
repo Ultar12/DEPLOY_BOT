@@ -1111,6 +1111,54 @@ function getAnimatedEmoji() {
 
 // In bot.js
 
+/**
+ * A reusable function to display the API key deletion menu.
+ * @param {string} chatId The admin's chat ID.
+ * @param {number|null} messageId The message to edit, if applicable.
+ */
+async function sendApiKeyDeletionList(chatId, messageId = null) {
+    if (String(chatId) !== ADMIN_ID) return;
+
+    try {
+        const result = await pool.query("SELECT id, api_key, is_active FROM heroku_api_keys ORDER BY added_at DESC");
+        const keys = result.rows;
+
+        if (keys.length === 0) {
+            const text = "No Heroku API keys are currently stored in the database.";
+            if (messageId) return bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
+            return bot.sendMessage(chatId, text);
+        }
+
+        const keyButtons = keys.map(k => {
+            const statusIcon = k.is_active ? '🟢' : '🔴';
+            const maskedKey = `${k.api_key.substring(0, 4)}...${k.api_key.substring(k.api_key.length - 4)}`;
+            return [{
+                text: `${statusIcon} ${maskedKey}`,
+                callback_data: `delapi_select:${k.id}` // Use the unique ID for selection
+            }];
+        });
+
+        const text = "Select a Heroku API key to delete:";
+        const options = {
+            chat_id: chatId,
+            text: text,
+            reply_markup: { inline_keyboard: keyButtons }
+        };
+
+        if (messageId) {
+            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, reply_markup: options.reply_markup });
+        } else {
+            await bot.sendMessage(chatId, text, { reply_markup: options.reply_markup });
+        }
+    } catch (error) {
+        console.error("Error sending API key deletion list:", error);
+        await bot.sendMessage(chatId, "An error occurred while fetching the key list.");
+    }
+}
+
+
+
+
 async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
     try {
         const result = await pool.query(`
@@ -4502,6 +4550,14 @@ bot.onText(/^\/editvar (\S+) ([\s\S]*)$/, async (msg, match) => {
     }
 });
 
+// ADMIN COMMAND: /delapi to start the key deletion process
+bot.onText(/^\/delapi$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    await sendApiKeyDeletionList(adminId);
+});
+
 
 bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
@@ -6099,6 +6155,59 @@ if (action === 'bapp_select_type') {
       });
       return;
   }
+
+  // Inside bot.on('callback_query', ...)
+
+if (action === 'delapi_select') {
+    const keyId = payload;
+
+    // Fetch the key to show a confirmation
+    const keyResult = await pool.query('SELECT api_key FROM heroku_api_keys WHERE id = $1', [keyId]);
+    if (keyResult.rows.length === 0) {
+        return bot.answerCallbackQuery(q.id, { text: "This key may have already been deleted.", show_alert: true });
+    }
+    const apiKey = keyResult.rows[0].api_key;
+    const maskedKey = `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`;
+
+    await bot.editMessageText(
+        `Are you sure you want to permanently delete the key \`${maskedKey}\`?`,
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, Delete Now", callback_data: `delapi_confirm:${keyId}` },
+                        { text: "No, Go Back", callback_data: `delapi_cancel` }
+                    ]
+                ]
+            }
+        }
+    );
+    return;
+}
+
+if (action === 'delapi_confirm') {
+    const keyId = payload;
+    try {
+        await pool.query('DELETE FROM heroku_api_keys WHERE id = $1', [keyId]);
+        await bot.answerCallbackQuery(q.id, { text: `API Key deleted successfully.` });
+        // Refresh the list to show the key is gone
+        await sendApiKeyDeletionList(cid, q.message.message_id);
+    } catch (dbError) {
+        console.error("Error deleting API key:", dbError);
+        await bot.answerCallbackQuery(q.id, { text: `Error: Could not delete key.`, show_alert: true });
+    }
+    return;
+}
+
+if (action === 'delapi_cancel') {
+    // Just go back to the list
+    await sendApiKeyDeletionList(cid, q.message.message_id);
+    return;
+}
+
 
 // --- ADD these handlers and REMOVE the old copydb ones ---
 
