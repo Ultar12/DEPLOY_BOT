@@ -477,42 +477,43 @@ const availableTools = {
     getBotLogs
 };
 
-// ✅ REPLACE your old handleUserPrompt function with this one
-
+// This function can now handle more complex requests.
 async function handleUserPrompt(prompt, userId) {
-    // This is the full prompt template we created before
-    const fullPrompt = `You are 'Ultar WBD', an intelligent assistant... The user's request is: "${prompt}" ... (and the rest of your detailed instructions)`;
-    
     const chat = geminiModel.startChat();
-    let result = await chat.sendMessage(fullPrompt);
+    const result = await chat.sendMessage(prompt);
+    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
 
-    while (true) {
-        const calls = result.response.functionCalls();
-        if (!calls || calls.length === 0) {
-            return result.response.text(); // No tool to call, just return the text.
-        }
-
-        const functionResponses = [];
-        for (const call of calls) {
-            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
-            if (availableTools[call.name]) {
-                const functionToCall = availableTools[call.name];
-                const args = { ...call.args, userId: userId };
-                
-                // --- THIS IS THE BUG FIX ---
-                // We now pass arguments dynamically and in the correct order.
-                const functionResult = await functionToCall(...Object.values(args));
-                
-                functionResponses.push({
-                    functionResponse: { name: call.name, response: functionResult },
-                });
-            }
-        }
-        
-        // Send the results of the functions back to the AI
-        result = await chat.sendMessage(functionResponses);
+    if (!calls || calls.length === 0) {
+        return result.response.text();
     }
+    
+    // The AI might ask to call multiple functions in one turn
+    const functionResponses = [];
+    for (const call of calls) {
+        if (availableTools[call.name]) {
+            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
+            const functionToCall = availableTools[call.name];
+            
+            // Add the userId from your bot's context
+            const args = { ...call.args, userId: userId };
+            
+            // Call your actual function
+            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
+            
+            functionResponses.push({
+                functionResponse: {
+                    name: call.name,
+                    response: functionResult,
+                },
+            });
+        }
+    }
+    
+    // Send all function results back to the AI
+    const result2 = await chat.sendMessage(functionResponses);
+    return result2.response.text();
 }
+
 
 /**
  * A list of database columns that the AI is permitted to update.
@@ -564,7 +565,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools:tools});
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 /**
  * An example function that tries to generate content.
@@ -4447,18 +4448,26 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 
 
 // REPLACE your entire bot.on('message', ...) function with this:
-// ✅ DELETE your entire old bot.on('message', ...) function and REPLACE it with this.
-
-bot.on('message', async (msg) => {
-    // This function now acts as a simple router. It does NOT try to be smart.
-
+bot.on('message', async msg => {
     const cid = msg.chat.id.toString();
 
-    // --- Step 1: Immediately filter out messages we don't want the AI to process ---
-    if (!msg || !msg.text || msg.text.startsWith('/')) {
-        // Ignore empty messages, non-text messages, and commands (like /start)
-        return;
+  if (msg.text && msg.text.startsWith('/')) {
+  return; 
+}
+
+
+    // --- Step 1: Universal Security Check ---
+    // This runs first for every message type to block banned users.
+    if (cid !== ADMIN_ID) {
+        const banned = await dbServices.isUserBanned(cid);
+        if (banned) {
+            console.log(`[Security] Banned user ${cid} (message_id: ${msg.message_id}) interaction blocked.`);
+            return;
+        }
     }
+
+    // --- Step 2: Handle High-Priority Special Data (from Mini App) ---
+    // This block is checked immediately after security. This is the key fix.
     if (msg.web_app_data) {
         try {
             const data = JSON.parse(msg.web_app_data.data);
@@ -4488,34 +4497,32 @@ bot.on('message', async (msg) => {
         return; // Stop processing after handling Mini App data
     }
 
-    // --- Step 2: Perform universal checks (like maintenance and ban status) ---
-    if (cid !== ADMIN_ID && await dbServices.isUserBanned(cid)) {
-        return; // Stop processing for banned users.
-    }
-    if (isMaintenanceMode && cid !== ADMIN_ID) {
-        return bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
-    }
+    // --- Step 3: Handle Regular Text-Based Commands ---
+    // This only runs if the message was not from the Mini App.
+    const text = msg.text?.trim();
 
-    // --- Step 3: THIS IS THE MOST IMPORTANT PART ---
-    // The message is valid. Immediately pass it to the AI's "brain" and do nothing else here.
+    // If the message has no text (e.g., a sticker, photo), ignore it.
+    if (!text) 
+        return;
     
-    await dbServices.updateUserActivity(cid); 
-    await notifyAdminUserOnline(msg); 
-    console.log(`[User Prompt -> AI Brain] Passing: "${msg.text}"`);
 
-    // The 'handleUserPrompt' function will now do ALL the thinking.
-    const finalResponse = await handleUserPrompt(msg.text, cid);
-
-    // --- Step 4: Send the AI's final response back to the user ---
-    if (finalResponse) {
-        // NOTE: Your 'handleUserPrompt' logic should be updated to handle showing buttons.
-        // If it returns special data, you would check for it here.
-        // For now, it sends the final text response.
-        await bot.sendMessage(cid, finalResponse);
-    }
-});
+    // =========================================================================
+    //
+    // ALL YOUR OTHER TEXT-BASED LOGIC GOES HERE
+    // (For example: if (text === 'Deploy'), if (st && st.step === ...), etc.)
+    //
+    // ========================================================================
 
 
+
+  // Now the rest of your code for handling text messages will run correctly
+  await dbServices.updateUserActivity(cid); 
+  await notifyAdminUserOnline(msg); 
+
+  if (isMaintenanceMode && cid !== ADMIN_ID) {
+      await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
+      return;
+  }
 
   // ... the rest of your message handler code (if (text === 'More Features'), etc.)
 
