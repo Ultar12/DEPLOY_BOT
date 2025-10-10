@@ -4405,13 +4405,25 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 });
 
 
-// REPLACE your entire bot.on('message', ...) function with this:
-bot.on('message', async msg => {
-    const cid = msg.chat.id.toString();
+bot.on('message', async (msg) => {
+    // Ignore any message that is empty or not text
+    if (!msg || !msg.text) return;
+    
+    // Ignore commands, so they can be handled by their own listeners (like bot.onText)
+    if (msg.text.startsWith('/')) return;
 
-  if (msg.text && msg.text.startsWith('/')) {
-  return; 
-}
+    const userId = msg.from.id.toString();
+    const userPrompt = msg.text;
+
+    console.log(`[User Prompt] Passing to AI: "${userPrompt}"`);
+
+    // Immediately send the user's message to your powerful AI brain
+    const finalResponse = await handleUserPrompt(userPrompt, userId);
+    
+    // Send the AI's final text response back to the user
+    if (finalResponse) {
+        await bot.sendMessage(userId, finalResponse);
+    }
 
 
     // --- Step 1: Universal Security Check ---
