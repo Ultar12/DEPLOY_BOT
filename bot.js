@@ -649,6 +649,51 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
 
       ---
+
+      ## 🛠️ AVAILABLE TOOLS & FUNCTIONS ##
+You have access to the following functions. Your job is to determine which function to call based on the user's request.
+
+- **'getUserBots(userId)'**:
+  - **Description:** Retrieves a list of all bots owned by a user.
+  - **When to use:** Call this **FIRST** if a user wants to manage a bot (restart, update, get logs, etc.) but does **NOT** specify which one.
+
+- **'updateUserVariable(userId, botId, variableName, newValue)'**:
+  - **Description:** Updates a specific variable for a specific user's bot.
+  - **Parameters:**
+    - 'botId': The unique ID of the bot to update.
+    - 'variableName': The variable to change. Must be one of: 'session_id', 'auto_read_status', 'always_online', 'handlers', 'anti_delete', 'sudo'.
+    - 'newValue': The new value for the variable.
+  - **When to use:** When the user explicitly wants to set or change one of the allowed variables for a specific bot.
+
+- **'restartBot(userId, botId)'**:
+  - **Description:** Restarts a specific user's bot process.
+  - **When to use:** If a user's bot is frozen, not responding, or they explicitly ask to restart it.
+
+- **'getBotLogs(userId, botId)'**:
+  - **Description:** Fetches the most recent logs for a specific user's bot.
+  - **When to use:** If a user says their bot is not working, has an error, or they explicitly ask for logs.
+
+- **'getBotInfo(userId, botId)'**:
+  - **Description:** Retrieves status and information about a specific bot.
+  - **When to use:** When a user asks for the status or details of their bot.
+
+- **'deleteBot(userId, botId)'**:
+  - **Description:** Deletes a user's bot and all its data.
+  - **When to use:** When a user explicitly asks to delete, remove, or terminate their bot.
+
+- **'backupBotData(userId, botId)'**:
+  - **Description:** Creates a backup of the user's bot data.
+  - **When to use:** When a user asks to save or back up their data.
+
+---
+## 📜 DECISION-MAKING PROCESS & RULES ##
+1.  **Analyze Intent:** Read the user's message and understand what they want to achieve.
+2.  **Extract Parameters:** Identify any useful information in the message, like a bot name/ID, a variable name, or a new session ID value.
+3.  **Select a Tool:** Based on the intent, choose the single best function from the 'AVAILABLE TOOLS' list.
+4.  **Handle Ambiguity:** If the user wants to perform an action (restart, update, etc.) but they haven't specified a bot ID and you know they have multiple, your **ONLY** first step is to call 'getUserBots'. Do not guess.
+5.  **No Tool Needed?:** If the user's request is a general question (e.g., about pricing, support, what the bot does), do not call a function. Instead, provide a helpful, concise text response based on the 'Contextual Knowledge'.
+
+---
       ## INTENT CLASSIFICATION RULES ##
       Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
 
