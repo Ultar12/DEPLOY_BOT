@@ -790,6 +790,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         console.error("Error with Professional Gemini integration:", error);
         await bot.sendMessage(chatId, "I'm having a little trouble thinking right now. Please try using the main menu buttons.");
     }
+}
 
 
 // --- END OF GEMINI INTEGRATION ---
