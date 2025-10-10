@@ -398,7 +398,7 @@ async function getBotLogs(userId, botId) {
 async function updateUserVariable(userId, botId, variableName, newValue) {
     // Step 1: Normalize the variable name from the AI to a consistent format for the security check.
     // Example: "Session ID" -> "session id" -> "session_id"
-    const normalizedVarName = variableName.toLowerCase().replace(/ /g, '_');
+    const normalizedVarName = variableName.toUpperCase().replace(/ /g, '_');
 
     // Step 2: Check if this normalized variable is in the allowed list.
     if (!allowedVariables.includes(normalizedVarName)) {
@@ -408,7 +408,7 @@ async function updateUserVariable(userId, botId, variableName, newValue) {
     
     // Step 3: Convert the variable to all capital letters for the Heroku API call.
     // Example: "session_id" -> "SESSION_ID"
-    const finalVarName = normalizedVarName.toUpperCase();
+    const finalVarName = normalizedVarName.toLowerCase();
 
     // Step 4: This is no longer a mock. It will now perform the real API call.
     try {
