@@ -115,6 +115,7 @@ const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 // A strict allow-list of Render environment variables that the admin can edit remotely.
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
+    'ULTAR'
     'EMAIL_SERVICE_URL'
 ];
 
@@ -4436,6 +4437,68 @@ bot.onText(/^\/ban (\d+)$/, async (msg, match) => {
         await bot.sendMessage(adminId, `Failed to ban user \`${targetUserId}\`. Check logs.`, { parse_mode: 'Markdown' });
     }
 });
+
+// ADMIN COMMAND: /editvar [VAR_NAME] [NEW_VALUE]
+bot.onText(/^\/editvar (\S+) ([\s\S]*)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return; // Admin only
+
+    const varName = match[1].toUpperCase();
+    const varValue = match[2];
+
+    // 1. Security Check: Ensure the variable is in our editable list
+    if (!EDITABLE_RENDER_VARS.includes(varName)) {
+        return bot.sendMessage(adminId, `❌ **Security Error:** The variable \`${varName}\` is not on the editable list.`);
+    }
+
+    // 2. Prerequisite Check: Ensure Render API details are set
+    const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
+    if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** Please set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in your bot's environment to use this feature.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, `⚙️ Attempting to update \`${varName}\` on Render...`);
+
+    try {
+        const headers = {
+            'Authorization': `Bearer ${RENDER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+
+        // 3. Render's API requires us to GET the current variables first, then PUT the entire updated list back.
+        const serviceUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}`;
+        
+        // GET existing variables
+        const { data: serviceData } = await axios.get(serviceUrl, { headers });
+        let envVars = serviceData.serviceDetails.envVars || [];
+
+        // Find and update the variable, or add it if it's new
+        const varIndex = envVars.findIndex(v => v.key === varName);
+        if (varIndex > -1) {
+            envVars[varIndex].value = varValue;
+        } else {
+            envVars.push({ key: varName, value: varValue });
+        }
+
+        // 4. PATCH the service with the updated list of environment variables
+        await axios.patch(serviceUrl, { envVars }, { headers });
+
+        await bot.editMessageText(
+            `**Success!**\n\nVariable \`${varName}\` has been updated.\n\nRender has automatically started a new deployment to apply the change. Your bot will restart in a minute or two.`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        console.error("Error updating Render env var:", error.response?.data || error.message);
+        const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
+        await bot.editMessageText(
+            `**Failed to update \`${varName}\`!**\n\n**Reason:** ${errorDetails}\n\nPlease check your Render API Key, Service ID, and the variable name.`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+});
+
 
 bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
