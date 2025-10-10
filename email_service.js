@@ -53,13 +53,19 @@ async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDel
   });
 }
 
-// You can add back the sendPaymentConfirmation function here in the same pattern if you need it.
+// In email_service.js of your main bot...
+
 async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
-  // This email type is not in the server.js example, but you can add it
-  // following the same switch-case pattern.
-  console.log('[Email Service] sendPaymentConfirmation is not currently configured in the microservice example.');
-  return false;
+  return sendEmailViaService('payment_confirmation', {
+    toEmail,
+    userName,
+    referenceId,
+    appName,
+    botType,
+    sessionId,
+  });
 }
+
 
 module.exports = {
   sendPaymentConfirmation,
