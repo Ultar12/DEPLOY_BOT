@@ -9786,6 +9786,7 @@ bot.on('channel_post', async msg => {
             }
 
             // --- Existing Email Logic (runs regardless of initial TG warning) ---
+                
             try {
                 const ownerInfoResult = await pool.query(
                     `SELECT b.last_email_notification_at, v.email
@@ -9797,11 +9798,14 @@ bot.on('channel_post', async msg => {
 
                 if (ownerInfoResult.rows.length > 0) {
                     const { last_email_notification_at, email } = ownerInfoResult.rows[0];
-                    const thirtyHoursAgo = new Date(Date.now() - 30 * 60 * 60 * 1000);
+                    
+                    // ❗️ FIX: Changed cooldown from 30 to 24 hours ❗️
+                    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-                    if (!last_email_notification_at || new Date(last_email_notification_at) < thirtyHoursAgo) {
+                    if (!last_email_notification_at || new Date(last_email_notification_at) < twentyFourHoursAgo) {
                         console.log(`[Email] Cooldown passed for ${appName}. Sending logged-out reminder to ${email}.`);
                         
+                        // ✅ This line correctly calls your new email service function
                         await sendLoggedOutReminder(email, appName, botUsername, 7);
                         
                         await pool.query(
@@ -9809,7 +9813,7 @@ bot.on('channel_post', async msg => {
                             [appName]
                         );
                     } else {
-                        console.log(`[Email] Skipping email for ${appName}. Last notification was sent less than 30 hours ago.`);
+                        console.log(`[Email] Skipping email for ${appName}. A reminder was already sent within the last 24 hours.`);
                     }
                 } else {
                     console.log(`[Email] Skipping email for ${appName}. Owner has no verified email.`);
@@ -9817,8 +9821,7 @@ bot.on('channel_post', async msg => {
             } catch (emailError) {
                 console.error(`[Email] Failed to process email notification for ${appName}:`, emailError);
             }
-        }
-    }
+
 
 });
 
