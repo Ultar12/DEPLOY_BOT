@@ -4402,27 +4402,13 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 });
 
 
-// ✅ THIS IS THE CORRECT WAY ✅
-bot.on('message', async (msg) => {
-    // 1. Ignore commands (like /start) so they don't get sent to the AI.
-    if (msg.text && msg.text.startsWith('/')) {
-        return;
-    }
+// REPLACE your entire bot.on('message', ...) function with this:
+bot.on('message', async msg => {
+    const cid = msg.chat.id.toString();
 
-    const userId = msg.from.id.toString();
-    const userPrompt = msg.text;
-
-    // 2. Immediately send the user's message to your powerful AI handler.
-    const finalResponse = await handleUserPrompt(userPrompt, userId);
-
-    // 3. The AI's response might be text, or your handleUserPrompt function
-    //    might have already sent buttons. For now, we'll send the final text.
-    //    (You will likely expand this part later).
-    if (finalResponse) {
-        await bot.sendMessage(userId, finalResponse);
-    }
-});
-
+  if (msg.text && msg.text.startsWith('/')) {
+  return; 
+}
 
 
     // --- Step 1: Universal Security Check ---
