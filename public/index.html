@@ -248,184 +248,119 @@
             </div>
     </div>
 
-    <script>
+    
+   <script>
     const API_BASE_URL = window.location.origin + '/api';
     const tg = window.Telegram.WebApp;
     tg.ready();
     tg.expand();
-    
-    // --- State Management ---
+
+    // --- State & Cache ---
     let deploymentState = {};
-    const viewCache = {}; // Cache views to make back navigation instant
 
-    // --- Main Render Function ---
-    function renderView(viewName, data = null, isBack = false) {
+    // --- Main Router / View Renderer ---
+    function renderView(viewName, data = null) {
         const viewContainer = document.getElementById('view-container');
-        
-        if (isBack && viewCache[viewName]) {
-            viewContainer.innerHTML = viewCache[viewName];
-            attachEventListeners(viewName); // Re-attach listeners for cached views
-            return;
-        }
-
         let newHtml = '';
-        if (viewName === 'myBots') {
-            newHtml = renderMyBotsView();
-        } else if (viewName === 'management') {
-            newHtml = renderBotManagementView(data);
-        } else if (viewName === 'variables') {
-            newHtml = renderVariablesView(data);
+        switch (viewName) {
+            case 'myBots': newHtml = getMyBotsViewHtml(); break;
+            case 'botTypeSelection': newHtml = getBotTypeSelectionViewHtml(); break;
+            case 'deploymentForm': newHtml = getDeploymentFormViewHtml(); break;
+            case 'management': newHtml = getBotManagementViewHtml(data); break;
+            case 'variables': newHtml = getVariablesViewHtml(data); break;
         }
-        // Add other views like deployment form here if needed
-
         viewContainer.innerHTML = newHtml;
-        viewCache[viewName] = newHtml;
-        
-        // Post-render logic (e.g., fetching data)
+
         if (viewName === 'myBots') fetchAndDisplayBots();
         if (viewName === 'variables') fetchAndDisplayVariables(data);
+        if (viewName === 'deploymentForm') attachDeploymentFormListeners();
     }
-    
-    // --- View Templates ---
-    function renderMyBotsView() {
+
+    // --- HTML Template Functions (getMyBotsViewHtml, getBotTypeSelectionViewHtml, etc.) ---
+    function getMyBotsViewHtml() {
         return `
             <div id="header-title">My Bots</div>
             <div class="bot-list" id="bot-list">
+                <div class="create-bot-card" data-action="render" data-view-name="botTypeSelection">
+                    <span class="icon-plus">+</span><div class="bot-details"><span class="bot-name">Create a New Bot</span></div>
+                </div>
                 <div id="bot-list-loading">Loading your bots...</div>
-            </div>
-        `;
+            </div>`;
     }
+    function getBotTypeSelectionViewHtml() { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="myBots"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">Select Bot Type</div><div class="inline-buttons"><button data-action="select-bot-type" data-bot-type="levanter">Levanter</button><button data-action="select-bot-type" data-bot-type="raganork">Raganork</button></div>`; }
+    function getDeploymentFormViewHtml() { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="botTypeSelection"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">New ${deploymentState.botType.charAt(0).toUpperCase()+deploymentState.botType.slice(1)} Bot</div><div id="deployment-view"><div class="form-group"><label for="appNameInput">App Name (unique, no spaces):</label><div class="input-container"><input type="text" id="appNameInput" placeholder="my-cool-bot-123"><span id="appNameStatus" class="input-status-icon"></span></div></div><div class="form-group"><label for="sessionIdInput">Session ID:</label><div class="input-container"><input type="text" id="sessionIdInput" placeholder="Paste your session ID here"><span id="sessionIdStatus" class="input-status-icon"></span></div></div><div class="form-group"><label>Auto Status View:</label><div class="inline-buttons" id="autoview-buttons"><button data-action="select-autostatus" data-value="yes">Yes</button><button data-action="select-autostatus" data-value="no" class="active">No</button></div></div><div class="form-group"><label for="deployKeyInput">Deploy Key:</label><div class="input-container"><input type="text" id="deployKeyInput" placeholder="Enter your paid deploy key"><span id="deployKeyStatus" class="input-status-icon"></span></div></div><button id="deploy-button" data-action="deploy-bot" class="deploy-button" disabled>Deploy</button></div>`; }
+    function getBotManagementViewHtml(bot) { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render" data-view-name="myBots"><span class="chevron-left">&lt;</span> Back</div><div id="header-title">${bot.appName}</div><div id="management-view"><div class="management-option" data-action="restart-bot" data-app-name="${bot.appName}"><div class="option-label">Restart Bot</div><div class="option-info">Restart the bot's server process.</div></div><div class="management-option" data-action="redeploy-bot" data-app-name="${bot.appName}"><div class="option-label">Redeploy Bot</div><div class="option-info">Update the bot to the latest version.</div></div><div class="management-option" data-action="render-variables" data-bot-json='${JSON.stringify(bot)}'><div class="option-label">Set Variables</div><div class="option-info">Edit your bot's configuration and settings.</div></div><div class="management-option" data-action="delete-bot" data-app-name="${bot.appName}"><div class="option-label">Delete Bot</div><div class="option-info">Permanently delete this bot.</div></div><div class="management-option" style="cursor: default;"><div class="option-label">Expiration Date</div><div class="option-info">${new Date(bot.expirationDate).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div></div>`; }
+    function getVariablesViewHtml(bot) { /* ... content from previous answer ... */ return `<div class="back-button" data-action="render-management" data-bot-json='${JSON.stringify(bot)}'><span class="chevron-left">&lt;</span> Back</div><div id="header-title">Bot Variables</div><div id="variables-list">Loading settings...</div>`; }
 
-    function renderBotManagementView(bot) {
-        return `
-            <div class="back-button" onclick="renderView('myBots', null, true)">
-                <span class="chevron-left">&lt;</span> Back
-            </div>
-            <div id="header-title">${bot.appName}</div>
-            <div id="management-view">
-                <div class="management-option" data-action="restart" data-app-name="${bot.appName}">
-                    <div class="option-label">Restart Bot</div>
-                    <div class="option-info">Restart the bot's server process if it's unresponsive.</div>
-                </div>
-                <div class="management-option" data-action="redeploy" data-app-name="${bot.appName}">
-                    <div class="option-label">Redeploy Bot</div>
-                    <div class="option-info">Update the bot to the latest version.</div>
-                </div>
-                <div class="management-option" data-action="variables" data-bot-json='${JSON.stringify(bot)}'>
-                    <div class="option-label">Set Variables</div>
-                    <div class="option-info">Edit your bot's configuration like Session ID, Prefix, etc.</div>
-                </div>
-                <div class="management-option" data-action="delete" data-app-name="${bot.appName}">
-                    <div class="option-label">Delete Bot</div>
-                    <div class="option-info">Permanently delete this bot from the server.</div>
-                </div>
-                 <div class="management-option" style="cursor: default;">
-                    <div class="option-label">Expiration Date</div>
-                    <div class="option-info" id="bot-expiration">${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-                </div>
-            </div>
-        `;
-    }
+    // --- Logic & Event Handlers ---
+    async function fetchAndDisplayBots() { /* ... content from previous answer ... */ const botListEl=document.getElementById("bot-list");try{const e=await fetch(`${API_BASE_URL}/bots`,{headers:{"X-Telegram-Init-Data":tg.initData}}),t=await e.json();if(document.getElementById("bot-list-loading").style.display="none",t.success&&t.bots.length>0)t.bots.forEach((e=>{const t=document.createElement("div");t.className="bot-card",t.dataset.action="render-management",t.dataset.botJson=JSON.stringify(e);const a=e.appName.charAt(0).toUpperCase(),o="Online"===e.status?"#34c759":"#ff3b30",n=Math.ceil((new Date(e.expirationDate)-new Date)/(1e3*60*60*24));t.innerHTML=`\n                        <div class="bot-icon-circle" style="background-color: ${o};">${a}</div>\n                        <div class="bot-details">\n                            <span class="bot-name">${e.appName}</span>\n                            <span class="bot-username">Status: ${e.status} | ${n>0?`Expires in ${n} days`:"Expired"}</span>\n                        </div>\n                        <div class="chevron">&gt;</div>\n                    `,botListEl.appendChild(t)}));else botListEl.insertAdjacentHTML("beforeend","<div>You have no bots deployed. Create one!</div>")}catch(e){tg.showAlert("Failed to load your bots.")} }
+    async function fetchAndDisplayVariables(bot) { /* ... content from previous answer ... */ const varListEl=document.getElementById("variables-list");try{const e=await fetch(`${API_BASE_URL}/bots/config-vars/${bot.appName}`,{headers:{"X-Telegram-Init-Data":tg.initData}}),t=await e.json();if(!t.success)throw new Error(t.message);let a="";for(const[o,n]of Object.entries(t.configVars)){const e=n&&n.length>20?n.substring(0,20)+"...":n;a+=`\n                        <div class="management-option" data-action="edit-variable" data-app-name="${bot.appName}" data-var-name="${o}" data-current-value="${n}">\n                            <div class="option-label">${o}</div>\n                            <div class="option-info">${e||"Not Set"}</div>\n                        </div>\n                    `}varListEl.innerHTML=a}catch(e){varListEl.innerHTML=`Error: ${e.message}`} }
+    function editVariable(appName, varName, currentValue) { /* ... content from previous answer ... */ const booleanVars=["ALWAYS_ONLINE","AUTO_READ_STATUS","AUTO_STATUS_VIEW","ANTI_DELETE"];booleanVars.includes(varName)?tg.showPopup({title:`Set ${varName}`,message:"Choose an option:",buttons:[{id:"enable",type:"default",text:"✅ Enable"},{id:"disable",type:"default",text:"🚫 Disable"},{type:"cancel"}]},(e=>{("enable"===e||"disable"===e)&&updateVariableOnServer(appName,varName,"enable"===e)})):tg.showPopup({title:`Edit ${varName}`,message:"Enter the new value:",buttons:[{id:"input",type:"input",placeholder:currentValue||"Enter value"},{id:"ok",type:"ok"},{type:"cancel"}]},((e,t)=>{ "ok"===e&&t&&updateVariableOnServer(appName,varName,t)}))}
+    async function updateVariableOnServer(appName, varName, varValue) { /* ... content from previous answer ... */ tg.showProgress(!0);try{const e=await fetch(`${API_BASE_URL}/bots/set-var`,{method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg.initData},body:JSON.stringify({appName,varName,varValue})}),t=await e.json();tg.hideProgress(),tg.showAlert(t.message),t.success&&renderView("variables",JSON.parse(document.querySelector('[data-action="render-variables"]').dataset.botJson))}catch(e){tg.hideProgress(),tg.showAlert("An error occurred while updating the variable.")}}
+    function attachDeploymentFormListeners() { /* ... content from previous answer ... */ deploymentState.autoStatusView="no",["appNameInput","sessionIdInput","deployKeyInput"].forEach((e=>{document.getElementById(e).addEventListener("input",checkAllInputs)}))}
+    async function checkAllInputs() { /* ... content from previous answer ... */ const e=document.getElementById("deploy-button"),t=document.getElementById("appNameInput").value.length>2,a=document.getElementById("sessionIdInput").value.length>9,o=document.getElementById("deployKeyInput").value.length>4;e.disabled=!(t&&a&&o),e.disabled?e.classList.remove("glowing-button"):e.classList.add("glowing-button")}
+    async function handleDeploy() { /* ... content from previous answer ... */ tg.showProgress("Deploying...");const e={botType:deploymentState.botType,appName:document.getElementById("appNameInput").value.trim(),sessionId:document.getElementById("sessionIdInput").value.trim(),autoStatusView:deploymentState.autoStatusView,deployKey:document.getElementById("deployKeyInput").value.trim()};try{const t=await fetch(`${API_BASE_URL}/deploy`,{method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":tg.initData},body:JSON.stringify(e)}),a=await t.json();tg.hideProgress(),tg.showAlert(a.message),a.success&&renderView("myBots")}catch(e){tg.hideProgress(),tg.showAlert("Failed to initiate deployment.")}}
+    
+    // ❗️ THIS IS THE UPDATED FUNCTION ❗️
+    async function handleBotAction(action, appName) {
+        const endpointMap = {
+            'restart-bot': 'bots/restart',
+            'redeploy-bot': 'bots/redeploy',
+            'delete-bot': 'bots/delete'
+        };
+        const verb = action.split('-')[0];
+        
+        tg.showConfirm(`Are you sure you want to ${verb} the bot "${appName}"?`, async (ok) => {
+            if (!ok) return;
 
-    function renderVariablesView(bot) {
-        return `
-            <div class="back-button" onclick="renderView('management', ${JSON.stringify(bot)}, true)">
-                 <span class="chevron-left">&lt;</span> Back
-            </div>
-            <div id="header-title">Variables</div>
-            <div id="variables-list">Loading settings...</div>
-        `;
-    }
+            const button = document.querySelector(`[data-action='${action}'][data-app-name='${appName}']`);
+            const label = button ? button.querySelector('.option-label') : null;
+            const originalText = label ? label.textContent : '';
 
-    // --- Data Fetching and Logic ---
-    async function fetchAndDisplayBots() {
-        try {
-            const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-            const data = await res.json();
-            const botListEl = document.getElementById('bot-list');
-            
-            document.getElementById('bot-list-loading').style.display = 'none';
+            // --- New UX for Restart ---
+            if (action === 'restart-bot' && label) {
+                label.textContent = '🔄 Restarting...';
+                button.style.pointerEvents = 'none';
+                button.style.opacity = '0.6';
 
-            if (data.success && data.bots.length > 0) {
-                data.bots.forEach(bot => {
-                    const card = document.createElement('div');
-                    card.className = 'bot-card';
-                    const botInitial = bot.appName.charAt(0).toUpperCase();
-                    const statusColor = bot.status === 'Online' ? '#34c759' : '#ff3b30';
-                    const expires = new Date(bot.expirationDate);
-                    const daysLeft = Math.ceil((expires - new Date()) / (1000 * 60 * 60 * 24));
-                    const expirationText = daysLeft > 0 ? `Expires in ${daysLeft} days` : 'Expired';
-
-                    card.innerHTML = `
-                        <div class="bot-icon-circle" style="background-color: ${statusColor};">${botInitial}</div>
-                        <div class="bot-details">
-                            <span class="bot-name">${bot.appName}</span>
-                            <span class="bot-username">Status: ${bot.status} | ${expirationText}</span>
-                        </div>
-                        <div class="chevron">&gt;</div>
-                    `;
-                    card.onclick = () => renderView('management', bot);
-                    botListEl.appendChild(card);
-                });
-            } else {
-                botListEl.innerHTML += '<div>You have no bots deployed.</div>';
-            }
-        } catch (e) {
-            tg.showAlert('Failed to load your bots.');
-        }
-    }
-
-    async function fetchAndDisplayVariables(bot) {
-        const varListEl = document.getElementById('variables-list');
-        try {
-            const res = await fetch(`${API_BASE_URL}/bots/config-vars/${bot.appName}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-            const data = await res.json();
-
-            if (data.success) {
-                let html = '';
-                for (const [key, value] of Object.entries(data.configVars)) {
-                    const displayValue = value.length > 20 ? value.substring(0, 20) + '...' : value;
-                    html += `
-                        <div class="management-option" onclick="editVariable('${bot.appName}', '${key}', '${value}')">
-                            <div class="option-label">${key}</div>
-                            <div class="option-info">${displayValue}</div>
-                        </div>
-                    `;
-                }
-                varListEl.innerHTML = html;
-            } else {
-                varListEl.innerHTML = `Error: ${data.message}`;
-            }
-        } catch (e) {
-            varListEl.innerHTML = 'Failed to load bot settings.';
-        }
-    }
-
-    function editVariable(appName, varName, currentValue) {
-        tg.showPopup({
-            title: `Edit ${varName}`,
-            message: `Enter the new value for ${varName}:`,
-            buttons: [
-                { type: 'input', text: 'Enter value here...', placeholder: currentValue },
-                { type: 'ok', text: 'Save' },
-                { type: 'cancel' }
-            ]
-        }, async (buttonId, value) => {
-            if (buttonId === 'ok' && value) {
-                tg.showProgress(true);
                 try {
-                    const res = await fetch(`${API_BASE_URL}/bots/set-var`, {
+                    const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
-                        body: JSON.stringify({ appName, varName, varValue: value })
+                        body: JSON.stringify({ appName })
+                    });
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.message);
+                    
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+                    label.textContent = '✅ Restarted!';
+
+                } catch (e) {
+                    label.textContent = '❌ Failed';
+                    tg.showAlert(e.message || 'An error occurred during restart.');
+                } finally {
+                    setTimeout(() => { // Revert button to original state
+                        if(label) label.textContent = originalText;
+                        if(button) {
+                            button.style.pointerEvents = 'auto';
+                            button.style.opacity = '1';
+                        }
+                    }, 2000);
+                }
+            } else {
+                // --- Original UX for Redeploy & Delete ---
+                tg.showProgress(true);
+                try {
+                    const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                        body: JSON.stringify({ appName })
                     });
                     const data = await res.json();
                     tg.hideProgress();
                     tg.showAlert(data.message);
                     if (data.success) {
-                        // Refresh the variables view
-                        const bot = JSON.parse(document.querySelector('[data-action="variables"]').dataset.botJson);
-                        renderView('variables', bot);
+                         setTimeout(() => renderView('myBots'), action === 'delete-bot' ? 500 : 3000);
                     }
                 } catch (e) {
                     tg.hideProgress();
@@ -434,76 +369,35 @@
             }
         });
     }
-    
-    function attachEventListeners(viewName) {
-        if (viewName === 'management') {
-            document.querySelectorAll('#management-view .management-option').forEach(el => {
-                const action = el.dataset.action;
-                if (!action) return;
 
-                if (action === 'variables') {
-                    el.onclick = () => renderView('variables', JSON.parse(el.dataset.botJson));
-                } else {
-                    el.onclick = () => handleBotAction(action, el.dataset.appName);
-                }
-            });
-        }
-    }
-    
-    // This function now handles all bot actions
-    function handleBotAction(action, appName) {
-        // Corrected endpoint mapping
-        const endpointMap = {
-            restart: 'bots/restart',
-            redeploy: 'bots/redeploy',
-            delete: 'bots/delete'
-        };
-
-        if (!endpointMap[action]) return;
-
-        tg.showConfirm(`Are you sure you want to ${action} the bot "${appName}"?`, async (ok) => {
-            if (!ok) return;
-            tg.showProgress(true);
-            try {
-                const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
-                    body: JSON.stringify({ appName })
-                });
-                const data = await res.json();
-                tg.hideProgress();
-                tg.showAlert(data.message);
-                if (data.success) {
-                    if (action === 'delete') {
-                        renderView('myBots'); // Go back to the list immediately after deletion
-                    } else {
-                        setTimeout(() => renderView('myBots'), 3000); // Wait a bit after restart/redeploy
-                    }
-                }
-            } catch (e) {
-                tg.hideProgress();
-                tg.showAlert('An error occurred.');
-            }
-        });
-    }
-
-    // Initial Load
+    // --- Central Event Listener ---
     document.addEventListener('DOMContentLoaded', () => {
-        renderView('myBots');
-        // Attach a global event listener for dynamic content
         document.getElementById('view-container').addEventListener('click', (event) => {
-            const target = event.target.closest('.management-option');
-            if (!target || !target.dataset.action) return;
-
-            const action = target.dataset.action;
-            if (action === 'variables') {
-                renderView('variables', JSON.parse(target.dataset.botJson));
-            } else if (target.dataset.appName){
-                handleBotAction(action, target.dataset.appName);
+            const target = event.target.closest('[data-action]');
+            if (!target) return;
+            const { action, viewName, botJson, appName, varName, currentValue, botType, value } = target.dataset;
+            switch (action) {
+                case 'render': renderView(viewName); break;
+                case 'render-management': renderView('management', JSON.parse(botJson)); break;
+                case 'render-variables': renderView('variables', JSON.parse(botJson)); break;
+                case 'restart-bot':
+                case 'redeploy-bot':
+                case 'delete-bot':
+                    handleBotAction(action, appName); break;
+                case 'edit-variable': editVariable(appName, varName, currentValue); break;
+                case 'select-bot-type': deploymentState.botType = botType; renderView('deploymentForm'); break;
+                case 'select-autostatus':
+                    deploymentState.autoStatusView = value;
+                    document.querySelectorAll('#autoview-buttons button').forEach(btn => btn.classList.remove('active'));
+                    target.classList.add('active');
+                    checkAllInputs(); break;
+                case 'deploy-bot': handleDeploy(); break;
             }
         });
+        renderView('myBots');
     });
 </script>
+     
     
 </body>
 </html>
