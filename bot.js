@@ -112,6 +112,13 @@ const RAGANORK_SESSION_PREFIX = 'RGNK';
 const LEVANTER_SESSION_SITE_URL = `https://levanter-delta.vercel.app/`;
 const RAGANORK_SESSION_SITE_URL = 'https://session.raganork.site/';
 
+// A strict allow-list of Render environment variables that the admin can edit remotely.
+const EDITABLE_RENDER_VARS = [
+    'HEROKU_API_KEY',
+    'EMAIL_SERVICE_URL'
+];
+
+
 // 4) Postgres setup & ensure tables exist
 const pool = new Pool({
   connectionString: DATABASE_URL,
