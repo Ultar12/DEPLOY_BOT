@@ -4522,8 +4522,6 @@ bot.on('message', async (msg) => {
         // For now, it sends the final text response.
         await bot.sendMessage(cid, finalResponse);
     }
-});
-
 
 
   // ... the rest of your message handler code (if (text === 'More Features'), etc.)
