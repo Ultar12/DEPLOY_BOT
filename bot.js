@@ -778,7 +778,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                     }
                     // Send the results back to Gemini to generate the final, user-facing text response.
                     const finalResult = await chat.sendMessage(functionResponses);
-                    await bot.sendMessage(chatId, finalResult.response.text(), { parse_mode: 'Markdown' });
+                    await bot.sendMessage(chatId, finalResult.response.text());
 
                 } else {
                     // Fallback: If the tool model couldn't find a specific function to call,
