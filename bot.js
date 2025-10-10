@@ -395,28 +395,29 @@ async function getBotLogs(userId, botId) {
 // Note: updateUserVariable also needs the botId to know which bot's variable to change.
 // REPLACE your mock 'updateUserVariable' function with this REAL one
 
-async function updateUserVariable(userId, botId, variableName, newValue) {
-    // Step 1: Normalize the variable name from the AI to a consistent format for the security check.
-    // Example: "Session ID" -> "session id" -> "session_id"
-    const normalizedVarName = variableName.toUpperCase().replace(/ /g, '_');
+// REPLACE your 'allowedVariables' const with this one. It MUST be uppercase.
 
-    // Step 2: Check if this normalized variable is in the allowed list.
-    if (!allowedVariables.includes(normalizedVarName)) {
-        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}" (Normalized to: "${normalizedVarName}")`);
+// REPLACE your 'updateUserVariable' function with this FINAL, WORKING version.
+async function updateUserVariable(userId, botId, variableName, newValue) {
+    // Step 1: Create the final, correct variable name in UPPERCASE.
+    // This handles inputs like "session id" and turns them into "SESSION_ID".
+    const finalVarName = variableName.toLowerCase().replace(/ /g, '_').toUpperCase();
+
+    // Step 2: Check the final uppercase name against your uppercase allowedVariables list.
+    if (!allowedVariables.includes(finalVarName)) {
+        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}" (Normalized to: "${finalVarName}")`);
         return { status: "error", message: `The variable '${variableName}' cannot be changed.` };
     }
     
-    // Step 3: Convert the variable to all capital letters for the Heroku API call.
-    // Example: "session_id" -> "SESSION_ID"
-    const finalVarName = normalizedVarName.toLowerCase();
-
-    // Step 4: This is no longer a mock. It will now perform the real API call.
+    // Step 3: Perform the REAL Heroku API call.
     try {
         console.log(`[Heroku API] Attempting to update config var for bot '${botId}': { "${finalVarName}": "..." }`);
 
+        // This is the real API call. It uses the uppercase variable name.
+        // It NEVER changes the newValue (the session id string itself).
         await axios.patch(
             `https://api.heroku.com/apps/${botId}/config-vars`,
-            { [finalVarName]: newValue }, // This sets the variable, e.g., { "SESSION_ID": "levanter_..." }
+            { [finalVarName]: newValue },
             {
                 headers: {
                     'Authorization': `Bearer ${HEROKU_API_KEY}`,
@@ -428,25 +429,21 @@ async function updateUserVariable(userId, botId, variableName, newValue) {
 
         console.log(`[Heroku API] Successfully updated "${finalVarName}" for bot '${botId}'.`);
         
-        // Return a success message for the AI to use.
         return { 
             status: "success", 
             message: `Success! The variable ${finalVarName} for your bot '${botId}' has been updated. The bot will now restart to apply the change.` 
         };
 
     } catch (error) {
-        // This will catch errors if the Heroku API fails (e.g., app not found).
         console.error(`[Heroku API] Error updating variable for bot '${botId}':`, error.response?.data || error.message);
-        
         const errorMessage = error.response?.data?.message || 'An unknown API error occurred.';
-        
-        // Return a detailed error message for the AI.
         return { 
             status: "error", 
             message: `I couldn't update the variable for bot '${botId}'. The server responded with an error: ${errorMessage}` 
         };
     }
 }
+
 
 
 
@@ -573,6 +570,7 @@ const allowedVariables = [
     'ANTI_DELETE',
     'SUDO' 
 ];
+
 
 
 
