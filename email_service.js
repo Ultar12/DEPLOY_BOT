@@ -1,177 +1,65 @@
-const { MailerSend, EmailParams, Sender, Recipient } = require("mailersend");
+const axios = require('axios');
 
-// ❌ Removed: const nodemailer = require('nodemailer');
-// ❌ Removed: const GMAIL_USER = process.env.GMAIL_USER;
-// ❌ Removed: const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+// Get the URL and secret key from your bot's environment variables
+const EMAIL_SERVICE_URL = process.env.EMAIL_SERVICE_URL;
+const EMAIL_SERVICE_API_KEY = process.env.EMAIL_SERVICE_API_KEY;
 
-// --- NEW CONFIGURATION ---
-const MAILERSEND_API_KEY = process.env.MAILERSEND_API_KEY;
-const SENDER_ADDRESS = process.env.SENDER_EMAIL; // Must be a verified sender in MailerSend
-
-if (!MAILERSEND_API_KEY || !SENDER_ADDRESS) {
-  console.warn('MAILERSEND_API_KEY or SENDER_EMAIL is not set. Email functionality will be disabled.');
-}
-
-const mailersend = new MailerSend({
-  apiKey: MAILERSEND_API_KEY,
-});
-
-// ❌ Removed: const transporter = nodemailer.createTransport({...});
-// -------------------------
-
-async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
-  if (!MAILERSEND_API_KEY || !SENDER_ADDRESS || !toEmail) {
-    console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
-    return false; // ✨ Improvement: Return false on check failure
-  }
-  
-  const formattedBotType = botType.toUpperCase();
-  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
-  const recipients = [new Recipient(toEmail, userName)];
-
-  // The HTML content is updated to include the userName
-  const emailHtml = `
-      <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <p style="font-size: 18px; color: #fff; margin-bottom: 0;">Hey ${userName},</p>
-        <h1 style="font-size: 24px; font-weight: bold; margin-top: 5px;">Ultar received your payment of</h1>
-        <h1 style="font-size: 40px; font-weight: bold; color: #69F0AE; margin: 10px 0;">NGN 1,500.00</h1>
-        
-        <div style="background-color: #121212; border-radius: 8px; padding: 15px; margin: 20px 0;">
-          <h2 style="font-size: 18px; color: #fff; margin-top: 0;">Transaction Details</h2>
-          <table width="100%" cellpadding="0" cellspacing="0" style="color: #ccc; font-size: 14px;">
-            <tr>
-              <td style="padding: 5px 0;">Reference</td>
-              <td style="padding: 5px 0; text-align: right; word-break: break-all;">${referenceId}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px 0;">Date</td>
-              <td style="padding: 5px 0; text-align: right;">${new Date().toLocaleDateString('en-US', { timeZone: 'Africa/Lagos' })}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px 0;">Bot Name</td>
-              <td style="padding: 5px 0; text-align: right;">${appName}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px 0;">Bot Type</td>
-              <td style="padding: 5px 0; text-align: right;">${formattedBotType}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px 0;">Session ID</td>
-              <td style="padding: 5px 0; text-align: right; word-break: break-all;">${sessionId}</td>
-            </tr>
-          </table>
-        </div>
-        
-        <p style="font-size: 16px;">We are thrilled to confirm that your payment has been received and your bot deployment has been initiated. You will receive a notification in Telegram once it's ready.</p>
-        
-        <a href="https://t.me/ultarbotdeploybot" style="display: inline-block; padding: 12px 24px; margin-top: 20px; background-color: #69F0AE; color: #121212; text-decoration: none; border-radius: 50px; font-weight: bold;">GO TO YOUR BOT</a>
-        
-        <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
-      </div>
-    `;
-
-  const emailParams = new EmailParams()
-    .setFrom(sender)
-    .setTo(recipients)
-    .setSubject(`Payment Confirmed: Your Bot Deployment`)
-    .setHtml(emailHtml);
-
-
-  try {
-    await mailersend.email.send(emailParams);
-    console.log(`Email successfully sent to ${toEmail}`);
-    return true; // ✨ Improvement: Return true on success
-  } catch (error) {
-    console.error(`Error sending email to ${toEmail}:`, error);
-    return false; // ✨ Improvement: Return false on error
-  }
-}
-
-// --- VERIFICATION EMAIL UPDATED HERE ---
-async function sendVerificationEmail(toEmail, verificationCode) {
-  if (!MAILERSEND_API_KEY || !SENDER_ADDRESS || !toEmail) {
-    console.error('Email service is not fully configured or recipient email is missing. Skipping sending email.');
+/**
+ * A helper function to communicate with the external email service.
+ * @param {string} type - The type of email to send (e.g., 'verification').
+ * @param {object} payload - The data needed to construct the email.
+ */
+async function sendEmailViaService(type, payload) {
+  if (!EMAIL_SERVICE_URL || !EMAIL_SERVICE_API_KEY) {
+    console.error('[Email Service] URL or API Key is not configured. Cannot send email.');
     return false;
   }
-  
-  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
-  const recipients = [new Recipient(toEmail)];
-
-  const emailHtml = `
-      <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <p style="font-size: 16px;">Please use the code below to complete your registration. This code is valid for 10 minutes.</p>
-        
-        <div style="background-color: #121212; border-radius: 8px; padding: 15px; margin: 20px auto; max-width: 200px;">
-            <p style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #69F0AE; margin: 0;">
-                ${verificationCode}
-            </p>
-        </div>
-        
-        <p style="font-size: 12px; color: #aaa; margin-top: 20px;">If you did not request this code, you can safely ignore this email.</p>
-      </div>
-    `;
-
-  const emailParams = new EmailParams()
-    .setFrom(sender)
-    .setTo(recipients)
-    .setSubject(`Your Verification Code`)
-    .setHtml(emailHtml);
-
 
   try {
-    await mailersend.email.send(emailParams);
-    console.log(`Verification email successfully sent to ${toEmail}`);
+    await axios.post(`${EMAIL_SERVICE_URL}/send-email`, 
+      {
+        type: type,
+        payload: payload,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': EMAIL_SERVICE_API_KEY, // The secret key for security
+        },
+      }
+    );
+    console.log(`[Email Service] Successfully requested '${type}' email for ${payload.toEmail}`);
     return true;
   } catch (error) {
-    console.error(`Error sending verification email to ${toEmail}:`, error);
+    console.error(`[Email Service] Error calling external email service for '${type}':`, error.response?.data || error.message);
     return false;
   }
 }
 
-// In email_service.js
+// Your old functions now just prepare data and call the helper.
+async function sendVerificationEmail(toEmail, verificationCode) {
+  return sendEmailViaService('verification', { 
+    toEmail, 
+    verificationCode 
+  });
+}
 
 async function sendLoggedOutReminder(toEmail, appName, botUsername, daysUntilDeletion) {
-  if (!toEmail || !MAILERSEND_API_KEY || !SENDER_ADDRESS) {
-    console.warn(`[Email] Skipping logged-out reminder. Email service not configured or recipient is missing.`);
-    return false;
-  }
-  
-  const sender = new Sender(SENDER_ADDRESS, "ULTAR'S WBD");
-  const recipients = [new Recipient(toEmail)];
-
-  const emailHtml = `
-      <div style="background-color: #000; padding: 20px; font-family: sans-serif; color: #fff; text-align: center; border-radius: 10px;">
-        <h1 style="font-size: 24px; font-weight: bold; color: #ff3b30;">Your Bot (${appName}) is Offline</h1>
-        
-        <div style="background-color: #4d2f00; border: 1px solid #ff9500; border-radius: 8px; padding: 15px; margin: 20px auto; max-width: 90%;">
-          <h2 style="font-size: 18px; color: #ff9500; margin-top: 0;">Deletion Warning</h2>
-          <p style="font-size: 16px; margin: 0;">To prevent wasting resources, this bot will be automatically and permanently deleted in <strong>${daysUntilDeletion} days</strong> if it remains offline.</p>
-        </div>
-        
-        <p style="font-size: 17px;">Please update your session ID to bring it back online.</p>
-        <a href="https://t.me/${botUsername}" style="display: inline-block; padding: 12px 24px; margin-top: 10px; background-color: #007aff; color: #fff; text-decoration: none; border-radius: 50px; font-weight: bold;">UPDATE SESSION ID</a>
-        
-        <p style="font-size: 14px; margin-top: 20px;">Sincerely,<br><strong>ULTAR'S WBD</strong></p>
-      </div>
-    `;
-
-  const emailParams = new EmailParams()
-    .setFrom(sender)
-    .setTo(recipients)
-    .setSubject(`Action Required: Your Bot (${appName}) is Offline`)
-    .setHtml(emailHtml);
-
-
-  try {
-    await mailersend.email.send(emailParams);
-    console.log(`Sent logged-out reminder email to ${toEmail} for bot ${appName}`);
-    return true;
-  } catch (error) {
-    console.error(`Error sending logged-out reminder email to ${toEmail}:`, error);
-    return false;
-  }
+   return sendEmailViaService('logout_reminder', {
+    toEmail,
+    appName,
+    botUsername,
+    daysUntilDeletion,
+  });
 }
 
+// You can add back the sendPaymentConfirmation function here in the same pattern if you need it.
+async function sendPaymentConfirmation(toEmail, userName, referenceId, appName, botType, sessionId) {
+  // This email type is not in the server.js example, but you can add it
+  // following the same switch-case pattern.
+  console.log('[Email Service] sendPaymentConfirmation is not currently configured in the microservice example.');
+  return false;
+}
 
 module.exports = {
   sendPaymentConfirmation,
