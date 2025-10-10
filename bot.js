@@ -523,8 +523,6 @@ async function handleUserPrompt(userMessage, userId) {
     }
 }
 
-}
-
 /**
  * A list of database columns that the AI is permitted to update.
  * This is a critical security measure.
