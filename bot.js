@@ -474,8 +474,7 @@ const availableTools = {
     deleteBot,
     getUserBots,
     restartBot,
-    getBotLogs,
-    backupBotData
+    getBotLogs
 };
 
 // This function can now handle more complex requests.
