@@ -477,41 +477,37 @@ const availableTools = {
     getBotLogs
 };
 
-// This function can now handle more complex requests.
 async function handleUserPrompt(prompt, userId) {
     const chat = geminiModel.startChat();
-    const result = await chat.sendMessage(prompt);
-    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
+    let result = await chat.sendMessage(prompt);
 
-    if (!calls || calls.length === 0) {
-        return result.response.text();
-    }
-    
-    // The AI might ask to call multiple functions in one turn
-    const functionResponses = [];
-    for (const call of calls) {
+    // This loop allows the AI to use tools and then respond in one turn
+    while (true) {
+        const call = result.response.functionCalls()?.[0];
+        
+        // If there is NO function call, the AI is done. Return its text.
+        if (!call) {
+            return result.response.text();
+        }
+
+        console.log(`[AI] Recommending call to: ${call.name}`);
+        
+        // If the AI recommends a function and it exists in our list...
         if (availableTools[call.name]) {
-            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
             const functionToCall = availableTools[call.name];
-            
-            // Add the userId from your bot's context
             const args = { ...call.args, userId: userId };
             
-            // Call your actual function
-            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
+            // Execute your actual JavaScript function
+            const functionResult = await functionToCall(args.userId, args.botId, args.variableName, args.newValue);
             
-            functionResponses.push({
-                functionResponse: {
-                    name: call.name,
-                    response: functionResult,
-                },
-            });
+            // Send the result of your function back to the AI
+            result = await chat.sendMessage([
+                { functionResponse: { name: call.name, response: functionResult } },
+            ]);
+        } else {
+            return "An internal error occurred: The AI recommended an unknown function.";
         }
     }
-    
-    // Send all function results back to the AI
-    const result2 = await chat.sendMessage(functionResponses);
-    return result2.response.text();
 }
 
 
