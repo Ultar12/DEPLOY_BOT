@@ -477,50 +477,42 @@ const availableTools = {
     getBotLogs
 };
 
-// ✅ THIS IS THE CORRECT AND COMPLETE FUNCTION
-async function handleUserPrompt(userMessage, userId) {
-    
-    // Step 1: Combine your detailed prompt (the "recipe book") with the user's message (the "order").
-    const fullPrompt = `
-      You are 'Ultar WBD', an intelligent and efficient assistant...
-      ... (all the rules, knowledge, and tools we defined in the big prompt) ...
-      ...
-      The user's request is: "${userMessage}"
-
-      Now, analyze the user's request and respond by either calling the appropriate function or providing a direct text answer.
-    `;
-    
-    // Step 2: Send the FULL combined prompt to the AI.
+// This function can now handle more complex requests.
+async function handleUserPrompt(prompt, userId) {
     const chat = geminiModel.startChat();
-    let result = await chat.sendMessage(fullPrompt);
+    const result = await chat.sendMessage(prompt);
+    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
 
-    // Step 3: The rest of the function-calling logic handles the AI's response.
-    while (true) {
-        const call = result.response.functionCalls()?.[0];
-        
-        if (!call) {
-            // If there is no function call, return the AI's final text response.
-            return result.response.text();
-        }
-
-        console.log(`[AI] Recommending call to: ${call.name}`);
-        
+    if (!calls || calls.length === 0) {
+        return result.response.text();
+    }
+    
+    // The AI might ask to call multiple functions in one turn
+    const functionResponses = [];
+    for (const call of calls) {
         if (availableTools[call.name]) {
+            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
             const functionToCall = availableTools[call.name];
+            
+            // Add the userId from your bot's context
             const args = { ...call.args, userId: userId };
             
-            const functionResult = await functionToCall(args.userId, args.botId, args.variableName, args.newValue);
+            // Call your actual function
+            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
             
-            // Send the function's result back to the AI for it to form a final response
-            result = await chat.sendMessage([
-                { functionResponse: { name: call.name, response: functionResult } },
-            ]);
-        } else {
-            return "An internal error occurred: The AI recommended an unknown function.";
+            functionResponses.push({
+                functionResponse: {
+                    name: call.name,
+                    response: functionResult,
+                },
+            });
         }
     }
+    
+    // Send all function results back to the AI
+    const result2 = await chat.sendMessage(functionResponses);
+    return result2.response.text();
 }
-
 
 
 /**
@@ -575,6 +567,53 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+/**
+ * An example function that tries to generate content.
+ * If the model isn't found, it fetches and lists available models.
+ */
+async function generateContentWithFallback() {
+    // ❗ Using a wrong model name on purpose to trigger the error
+    const modelName = "gemini-1.5-flash-latest"; 
+
+    try {
+        console.log(`🚀 Trying to use model: ${modelName}`);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent("Hello!");
+        console.log("✅ Success!", result.response.text());
+
+    } catch (error) {
+        // Check if the error is because the model was not found (a 404 error)
+        if (error.toString().includes('404')) {
+            console.error(`❌ Error: Model "${modelName}" not found.`);
+            console.log("\n📋 Fetching list of available models...\n");
+
+            try {
+                // Manually call the REST API to list models
+                const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                const response = await fetch(listModelsUrl);
+                const data = await response.json();
+
+                // Filter for models that can generate content and print their names
+                const availableModels = data.models
+                    .filter(m => m.supportedGenerationMethods.includes("generateContent"))
+                    .map(m => m.name.replace('models/', '')); // Clean up the name
+
+                console.log("✅ You can use one of these models:");
+                availableModels.forEach(name => console.log(`   - ${name}`));
+
+            } catch (listError) {
+                console.error("🚨 Failed to fetch the model list:", listError);
+            }
+        } else {
+            // Handle other potential errors
+            console.error("An unexpected error occurred:", error);
+        }
+    }
+}
+
+// Run the function
+generateContentWithFallback();
+
 
 // REPLACE your old 'handleFallbackWithGemini' function with this one
 async function handleFallbackWithGemini(chatId, userMessage) {
@@ -582,67 +621,60 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
     // This new prompt is much more detailed and professional
     const professionalPrompt = `
-You are 'Ultar WBD', an intelligent and efficient assistant for the Ultar Bot Deployer on Telegram.
-Your primary purpose is to understand a user's request and help them by calling the appropriate function or providing a direct answer.
-You must be concise, helpful, and strictly follow all rules.
+      You are 'Ultar WBD', the intelligent assistant for the Ultar Bot Deployer on Telegram.
+      Your primary purpose is to understand a user's request and classify their intent based on the bot's features.
+      You must be concise, helpful, and professional.
+      Your entire response MUST be a single, valid JSON object and nothing else.
 
-The user's request is: "${userMessage}"
+      The user's request is: "${userMessage}"
 
----
-## 🧠 Contextual Knowledge ##
-- **Bot's Main Function:** The bot deploys and manages WhatsApp bots. The main types are 'Levanter' and 'Raganork'.
-- **Session ID Formats:** Levanter IDs look like 'levanter_xxxxxxxx', while Raganork IDs look like 'RGNK~xxxxxxxx'.
-- **Key Features:** Users can deploy bots, get a session ID, manage their bots (restart, get logs, update variables), get a free trial, and refer friends.
-- **Support:** The admin for support is ${SUPPORT_USERNAME}.
-- **CRITICAL RULE:** You must **NEVER** mention specific hosting platforms like Heroku, Render, AWS, etc. Always refer to it as "our deployment platform" or "our service".
+      ---
+      ## KNOWLEDGE BASE ##
+      - **Bot's Main Function:** The bot deploys two types of WhatsApp bots: 'Levanter' and 'Raganork'. This is done on a platform called Heroku.
+       - 'CRITICAL': Do NOT mention any specific hosting platforms like Heroku, Render, AWS, or any other brand name.** Focus on the ease and power of our generic service.
+       - 'Bot session id type': Levanter session id looks like this levanter_kansjsjssjsbsbsns while raganork own is like this RGNK~lsjsnskslwmskss
+      - **Key Features:**
+        - 'Deploy': The main function to start creating a new bot.
+        - 'Get Session ID': A required step for deployment. Users get a special string (session ID) from an external website to link their WhatsApp account.
+        - 'My Bots': A menu where users can see a list of all bots they have deployed. From here, they can manage them (restart, get logs, check status, set variables, or delete).
+        - 'Free Trial': A one-time offer for new users to test the service. It has limitations and requires joining a Telegram channel.
+        - 'Referrals': Users can invite friends to earn extra days on their bot's subscription.
+        - 'Support': Users can contact the admin (${SUPPORT_USERNAME}) for help.
+      - **Pricing & Payment:**
+        - Deploying a bot requires a paid key or a free trial.
+        - Plans include: Basic (₦500/10 Days), Standard (₦1500/30 Days), Premium (₦2000/50 Days).
+        - Users can pay with Paystack or Flutterwave.
+      - **Common Issues:**
+        - "Logged Out" status: This means the user's Session ID has expired, and they need to get a new one and update it in the 'My Bots' menu.
+        - "Bot not working": The first steps are to check the status in 'My Bots', try restarting it, and then check the logs.
 
----
-## 🛠️ AVAILABLE TOOLS & FUNCTIONS ##
-You have access to the following functions. Your job is to determine which function to call based on the user's request.
+      ---
+      ## INTENT CLASSIFICATION RULES ##
+      Based on the user's request and the knowledge base, classify the intent into ONE of the following categories:
 
-- **'getUserBots(userId)'**:
-  - **Description:** Retrieves a list of all bots owned by a user.
-  - **When to use:** Call this **FIRST** if a user wants to manage a bot (restart, update, get logs, etc.) but does **NOT** specify which one.
+      - "DEPLOY": User wants to create, make, build, or deploy a new bot.
+      - "GET_SESSION": User is asking for a session ID, pairing code, or how to get one.
+      - "LIST_BOTS": User wants to see, check, or find their list of existing bots.
+      - "MANAGE_BOT": User is having a problem with an existing bot (e.g., "it's not working," "it crashed," "how to restart," "how to see logs," "update session").
+      - "FREE_TRIAL": User is asking about the free trial, how to get it, or its rules.
+      - "PRICING": User is asking about cost, payment, or subscription plans.
+      - "SUPPORT": User wants to contact the admin, report a serious bug, or is asking for general help.
+      - "GENERAL_QUERY": User is asking a general question not directly related to a bot feature (e.g., "what is Heroku?").
 
-- **'updateUserVariable(userId, botId, variableName, newValue)'**:
-  - **Description:** Updates a specific variable for a specific user's bot.
-  - **Parameters:**
-    - 'botId': The unique ID of the bot to update.
-    - 'variableName': The variable to change. Must be one of: 'session_id', 'auto_read_status', 'always_online', 'handlers', 'anti_delete', 'sudo'.
-    - 'newValue': The new value for the variable.
-  - **When to use:** When the user explicitly wants to set or change one of the allowed variables for a specific bot.
+      ---
+      ## RESPONSE FORMAT ##
+      Your response MUST be a JSON object with two keys: "intent" and "response".
+      - "intent": The category you classified from the list above.
+      - "response": A short, helpful text to send back to the user that guides them.
 
-- **'restartBot(userId, botId)'**:
-  - **Description:** Restarts a specific user's bot process.
-  - **When to use:** If a user's bot is frozen, not responding, or they explicitly ask to restart it.
+      ## EXAMPLES ##
+      - User: "how do I make a bot" -> {"intent": "DEPLOY", "response": "It sounds like you want to deploy a new bot. You can start by using the 'Deploy' button from the main menu."}
+      - User: "my bot isn't responding" -> {"intent": "MANAGE_BOT", "response": "I'm sorry to hear that. You can manage your bot, including restarting it or checking its logs, from the 'My Bots' menu."}
+      - User: "is this free" -> {"intent": "PRICING", "response": "We offer a one-time Free Trial. For continuous service, paid plans start at ₦1500 for 30 days."}
+      - User: "i need my session id" -> {"intent": "GET_SESSION", "response": "You can generate a new Session ID by using the 'Get Session ID' button from the main menu."}
 
-- **'getBotLogs(userId, botId)'**:
-  - **Description:** Fetches the most recent logs for a specific user's bot.
-  - **When to use:** If a user says their bot is not working, has an error, or they explicitly ask for logs.
-
-- **'getBotInfo(userId, botId)'**:
-  - **Description:** Retrieves status and information about a specific bot.
-  - **When to use:** When a user asks for the status or details of their bot.
-
-- **'deleteBot(userId, botId)'**:
-  - **Description:** Deletes a user's bot and all its data.
-  - **When to use:** When a user explicitly asks to delete, remove, or terminate their bot.
-
-- **'backupBotData(userId, botId)'**:
-  - **Description:** Creates a backup of the user's bot data.
-  - **When to use:** When a user asks to save or back up their data.
-
----
-## 📜 DECISION-MAKING PROCESS & RULES ##
-1.  **Analyze Intent:** Read the user's message and understand what they want to achieve.
-2.  **Extract Parameters:** Identify any useful information in the message, like a bot name/ID, a variable name, or a new session ID value.
-3.  **Select a Tool:** Based on the intent, choose the single best function from the 'AVAILABLE TOOLS' list.
-4.  **Handle Ambiguity:** If the user wants to perform an action (restart, update, etc.) but they haven't specified a bot ID and you know they have multiple, your **ONLY** first step is to call 'getUserBots'. Do not guess.
-5.  **No Tool Needed?:** If the user's request is a general question (e.g., about pricing, support, what the bot does), do not call a function. Instead, provide a helpful, concise text response based on the 'Contextual Knowledge'.
-
-Now, analyze the user's request and respond by either calling the appropriate function or providing a direct text answer.
-`;
-
+      Now, analyze the user's request and provide the JSON output.
+    `;
     
     try {
         const result = await geminiModel.generateContent(professionalPrompt);
@@ -4370,25 +4402,13 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 });
 
 
-bot.on('message', async (msg) => {
-    // Ignore any message that is empty or not text
-    if (!msg || !msg.text) return;
-    
-    // Ignore commands, so they can be handled by their own listeners (like bot.onText)
-    if (msg.text.startsWith('/')) return;
+// REPLACE your entire bot.on('message', ...) function with this:
+bot.on('message', async msg => {
+    const cid = msg.chat.id.toString();
 
-    const userId = msg.from.id.toString();
-    const userPrompt = msg.text;
-
-    console.log(`[User Prompt] Passing to AI: "${userPrompt}"`);
-
-    // Immediately send the user's message to your powerful AI brain
-    const finalResponse = await handleUserPrompt(userPrompt, userId);
-    
-    // Send the AI's final text response back to the user
-    if (finalResponse) {
-        await bot.sendMessage(userId, finalResponse);
-    }
+  if (msg.text && msg.text.startsWith('/')) {
+  return; 
+}
 
 
     // --- Step 1: Universal Security Check ---
