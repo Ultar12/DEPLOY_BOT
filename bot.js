@@ -4447,26 +4447,18 @@ bot.onText(/^\/restoreall$/, async (msg) => {
 
 
 // REPLACE your entire bot.on('message', ...) function with this:
-bot.on('message', async msg => {
+// ✅ DELETE your entire old bot.on('message', ...) function and REPLACE it with this.
+
+bot.on('message', async (msg) => {
+    // This function now acts as a simple router. It does NOT try to be smart.
+
     const cid = msg.chat.id.toString();
 
-  if (msg.text && msg.text.startsWith('/')) {
-  return; 
-}
-
-
-    // --- Step 1: Universal Security Check ---
-    // This runs first for every message type to block banned users.
-    if (cid !== ADMIN_ID) {
-        const banned = await dbServices.isUserBanned(cid);
-        if (banned) {
-            console.log(`[Security] Banned user ${cid} (message_id: ${msg.message_id}) interaction blocked.`);
-            return;
-        }
+    // --- Step 1: Immediately filter out messages we don't want the AI to process ---
+    if (!msg || !msg.text || msg.text.startsWith('/')) {
+        // Ignore empty messages, non-text messages, and commands (like /start)
+        return;
     }
-
-    // --- Step 2: Handle High-Priority Special Data (from Mini App) ---
-    // This block is checked immediately after security. This is the key fix.
     if (msg.web_app_data) {
         try {
             const data = JSON.parse(msg.web_app_data.data);
@@ -4496,39 +4488,33 @@ bot.on('message', async msg => {
         return; // Stop processing after handling Mini App data
     }
 
-    // --- Step 3: Handle Regular Text-Based Commands ---
-    // This only runs if the message was not from the Mini App.
-    const text = msg.text?.trim();
+    // --- Step 2: Perform universal checks (like maintenance and ban status) ---
+    if (cid !== ADMIN_ID && await dbServices.isUserBanned(cid)) {
+        return; // Stop processing for banned users.
+    }
+    if (isMaintenanceMode && cid !== ADMIN_ID) {
+        return bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
+    }
 
-    // If the message has no text (e.g., a sticker, photo), ignore it.
-    if (!text) 
-        return;
+    // --- Step 3: THIS IS THE MOST IMPORTANT PART ---
+    // The message is valid. Immediately pass it to the AI's "brain" and do nothing else here.
     
+    await dbServices.updateUserActivity(cid); 
+    await notifyAdminUserOnline(msg); 
+    console.log(`[User Prompt -> AI Brain] Passing: "${msg.text}"`);
 
-
-  // Now the rest of your code for handling text messages will run correctly
-  await dbServices.updateUserActivity(cid); 
-  await notifyAdminUserOnline(msg); 
-
-  if (isMaintenanceMode && cid !== ADMIN_ID) {
-      await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
-      return;
-  }
-
-    // --- Step 3: THIS IS THE CRITICAL CHANGE ---
-    // Instead of many 'if' statements, we send the message DIRECTLY to the AI.
-    console.log(`[User Prompt] Passing to AI: "${msg.text}"`);
-
-    // This single line replaces all your old keyword-checking logic.
+    // The 'handleUserPrompt' function will now do ALL the thinking.
     const finalResponse = await handleUserPrompt(msg.text, cid);
 
-    // --- Step 4: Send the AI's final response ---
+    // --- Step 4: Send the AI's final response back to the user ---
     if (finalResponse) {
-        // Your handleUserPrompt function may ask for clarification or give a final answer.
-        // If the AI asks for a bot list, your code needs to build the buttons.
-        // For now, this sends the AI's text response.
+        // NOTE: Your 'handleUserPrompt' logic should be updated to handle showing buttons.
+        // If it returns special data, you would check for it here.
+        // For now, it sends the final text response.
         await bot.sendMessage(cid, finalResponse);
     }
+});
+
 
 
   // ... the rest of your message handler code (if (text === 'More Features'), etc.)
