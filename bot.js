@@ -4421,7 +4421,6 @@ bot.on('message', async (msg) => {
     if (finalResponse) {
         await bot.sendMessage(userId, finalResponse);
     }
-});
 
 
 
