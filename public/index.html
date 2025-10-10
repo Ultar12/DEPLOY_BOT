@@ -249,365 +249,261 @@
     </div>
 
     <script>
-        const API_BASE_URL = window.location.origin + '/api';
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
+    const API_BASE_URL = window.location.origin + '/api';
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    
+    // --- State Management ---
+    let deploymentState = {};
+    const viewCache = {}; // Cache views to make back navigation instant
 
-        let deploymentState = {
-            botType: null,
-            appName: null,
-            sessionId: null,
-            autoStatusView: null,
-            deployKey: null,
-            isAppNameAvailable: false,
-            isSessionIdValid: false,
-            isDeployKeyValid: false
-        };
-
-        function renderView(viewName, data = null) {
-            const viewContainer = document.getElementById('view-container');
-            viewContainer.innerHTML = '';
-            
-            if (viewName === 'myBots') {
-                renderMyBotsView();
-            } else if (viewName === 'botTypeSelection') {
-                renderBotTypeSelectionView();
-            } else if (viewName === 'deploymentForm') {
-                renderDeploymentFormView();
-            } else if (viewName === 'management') {
-                renderBotManagement(data);
-            }
+    // --- Main Render Function ---
+    function renderView(viewName, data = null, isBack = false) {
+        const viewContainer = document.getElementById('view-container');
+        
+        if (isBack && viewCache[viewName]) {
+            viewContainer.innerHTML = viewCache[viewName];
+            attachEventListeners(viewName); // Re-attach listeners for cached views
+            return;
         }
 
-        async function renderMyBotsView() {
-            document.getElementById('view-container').innerHTML = `
-                <div id="header-title">.ULTAR WBD</div>
-                <div class="bot-list" id="bot-list">
-                    <div class="create-bot-card" onclick="renderView('botTypeSelection')">
-                        <span class="icon-plus">+</span>
-                        <div class="bot-details">
-                            <span class="bot-name">Create a New Bot</span>
-                        </div>
-                    </div>
+        let newHtml = '';
+        if (viewName === 'myBots') {
+            newHtml = renderMyBotsView();
+        } else if (viewName === 'management') {
+            newHtml = renderBotManagementView(data);
+        } else if (viewName === 'variables') {
+            newHtml = renderVariablesView(data);
+        }
+        // Add other views like deployment form here if needed
+
+        viewContainer.innerHTML = newHtml;
+        viewCache[viewName] = newHtml;
+        
+        // Post-render logic (e.g., fetching data)
+        if (viewName === 'myBots') fetchAndDisplayBots();
+        if (viewName === 'variables') fetchAndDisplayVariables(data);
+    }
+    
+    // --- View Templates ---
+    function renderMyBotsView() {
+        return `
+            <div id="header-title">My Bots</div>
+            <div class="bot-list" id="bot-list">
+                <div id="bot-list-loading">Loading your bots...</div>
+            </div>
+        `;
+    }
+
+    function renderBotManagementView(bot) {
+        return `
+            <div class="back-button" onclick="renderView('myBots', null, true)">
+                <span class="chevron-left">&lt;</span> Back
+            </div>
+            <div id="header-title">${bot.appName}</div>
+            <div id="management-view">
+                <div class="management-option" data-action="restart" data-app-name="${bot.appName}">
+                    <div class="option-label">Restart Bot</div>
+                    <div class="option-info">Restart the bot's server process if it's unresponsive.</div>
                 </div>
-            `;
+                <div class="management-option" data-action="redeploy" data-app-name="${bot.appName}">
+                    <div class="option-label">Redeploy Bot</div>
+                    <div class="option-info">Update the bot to the latest version.</div>
+                </div>
+                <div class="management-option" data-action="variables" data-bot-json='${JSON.stringify(bot)}'>
+                    <div class="option-label">Set Variables</div>
+                    <div class="option-info">Edit your bot's configuration like Session ID, Prefix, etc.</div>
+                </div>
+                <div class="management-option" data-action="delete" data-app-name="${bot.appName}">
+                    <div class="option-label">Delete Bot</div>
+                    <div class="option-info">Permanently delete this bot from the server.</div>
+                </div>
+                 <div class="management-option" style="cursor: default;">
+                    <div class="option-label">Expiration Date</div>
+                    <div class="option-info" id="bot-expiration">${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderVariablesView(bot) {
+        return `
+            <div class="back-button" onclick="renderView('management', ${JSON.stringify(bot)}, true)">
+                 <span class="chevron-left">&lt;</span> Back
+            </div>
+            <div id="header-title">Variables</div>
+            <div id="variables-list">Loading settings...</div>
+        `;
+    }
+
+    // --- Data Fetching and Logic ---
+    async function fetchAndDisplayBots() {
+        try {
+            const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+            const data = await res.json();
             const botListEl = document.getElementById('bot-list');
             
-            const loadingEl = document.createElement('div');
-            loadingEl.textContent = 'Loading...';
-            botListEl.appendChild(loadingEl);
+            document.getElementById('bot-list-loading').style.display = 'none';
 
-            try {
-                const res = await fetch(`${API_BASE_URL}/bots`, {
-                    headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData }
+            if (data.success && data.bots.length > 0) {
+                data.bots.forEach(bot => {
+                    const card = document.createElement('div');
+                    card.className = 'bot-card';
+                    const botInitial = bot.appName.charAt(0).toUpperCase();
+                    const statusColor = bot.status === 'Online' ? '#34c759' : '#ff3b30';
+                    const expires = new Date(bot.expirationDate);
+                    const daysLeft = Math.ceil((expires - new Date()) / (1000 * 60 * 60 * 24));
+                    const expirationText = daysLeft > 0 ? `Expires in ${daysLeft} days` : 'Expired';
+
+                    card.innerHTML = `
+                        <div class="bot-icon-circle" style="background-color: ${statusColor};">${botInitial}</div>
+                        <div class="bot-details">
+                            <span class="bot-name">${bot.appName}</span>
+                            <span class="bot-username">Status: ${bot.status} | ${expirationText}</span>
+                        </div>
+                        <div class="chevron">&gt;</div>
+                    `;
+                    card.onclick = () => renderView('management', bot);
+                    botListEl.appendChild(card);
                 });
-                const data = await res.json();
-                botListEl.removeChild(loadingEl);
-
-                if (data.success && data.bots.length > 0) {
-                    data.bots.forEach(bot => {
-                        const card = document.createElement('div');
-                        card.className = 'bot-card';
-                        card.setAttribute('data-app-name', bot.appName);
-                        card.onclick = () => renderView('management', bot);
-
-                        const botInitial = bot.appName.charAt(0).toUpperCase();
-                        const statusColor = bot.status === 'Online' ? '#34c759' : '#ff3b30';
-
-                        let expirationText = 'N/A';
-                        if (bot.expirationDate) {
-                            const expires = new Date(bot.expirationDate);
-                            const now = new Date();
-                            const diffTime = expires.getTime() - now.getTime();
-                            const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                            if (daysLeft > 0) {
-                                expirationText = `Expires in ${daysLeft} days`;
-                            } else {
-                                expirationText = `Expired`;
-                            }
-                        }
-
-                        card.innerHTML = `
-                            <div class="bot-icon-circle" style="background-color: ${statusColor};">${botInitial}</div>
-                            <div class="bot-details">
-                                <span class="bot-name">${bot.appName}</span>
-                                <span class="bot-username">Status: ${bot.status} | ${expirationText}</span>
-                            </div>
-                            <div class="chevron">&gt;</div>
-                        `;
-                        botListEl.appendChild(card);
-                    });
-                }
-            } catch (e) {
-                botListEl.removeChild(loadingEl);
-                console.error('Error fetching bots:', e);
-                Telegram.WebApp.showAlert('Failed to load bots.');
+            } else {
+                botListEl.innerHTML += '<div>You have no bots deployed.</div>';
             }
+        } catch (e) {
+            tg.showAlert('Failed to load your bots.');
         }
-        
-        async function renderBotManagement(bot) {
-            document.getElementById('view-container').innerHTML = `
-                <div class="back-button" onclick="renderMyBotsView()">
-                    <span class="chevron-left">&lt;</span> Back
-                </div>
-                <div id="header-title">${bot.appName}</div>
-                <div id="management-view">
-                    <div class="management-option" onclick="handleBotAction('restart', '${bot.appName}')">
-                        <div class="option-label">Restart Bot</div>
-                        <div class="option-info">Restart the bot's server process.</div>
-                    </div>
-                    <div class="management-option" onclick="handleBotAction('redeploy', '${bot.appName}')">
-                        <div class="option-label">Redeploy Bot</div>
-                        <div class="option-info">Rebuild the bot from the latest source code.</div>
-                    </div>
-                    <div class="management-option" onclick="handleBotAction('delete', '${bot.appName}')">
-                        <div class="option-label">Delete Bot</div>
-                        <div class="option-info">Permanently delete this bot from the server.</div>
-                    </div>
-                    <div class="management-option" style="cursor: default;">
-                        <div class="option-label">Expiration Date</div>
-                        <div class="option-info">${new Date(bot.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-                    </div>
-                </div>
-            `;
+    }
+
+    async function fetchAndDisplayVariables(bot) {
+        const varListEl = document.getElementById('variables-list');
+        try {
+            const res = await fetch(`${API_BASE_URL}/bots/config-vars/${bot.appName}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+            const data = await res.json();
+
+            if (data.success) {
+                let html = '';
+                for (const [key, value] of Object.entries(data.configVars)) {
+                    const displayValue = value.length > 20 ? value.substring(0, 20) + '...' : value;
+                    html += `
+                        <div class="management-option" onclick="editVariable('${bot.appName}', '${key}', '${value}')">
+                            <div class="option-label">${key}</div>
+                            <div class="option-info">${displayValue}</div>
+                        </div>
+                    `;
+                }
+                varListEl.innerHTML = html;
+            } else {
+                varListEl.innerHTML = `Error: ${data.message}`;
+            }
+        } catch (e) {
+            varListEl.innerHTML = 'Failed to load bot settings.';
         }
+    }
 
-        async function handleBotAction(action, appName) {
-            const verb = action.charAt(0).toUpperCase() + action.slice(1);
-            const endpoint = action === 'delete' ? action : action === 'restart' ? 'bots/restart' : 'bots/redeploy';
-            
-            Telegram.WebApp.showConfirm(`Are you sure you want to ${action} ${appName}?`, async (ok) => {
-                if (!ok) return;
-
-                Telegram.WebApp.showProgress(`${verb}ing...`);
+    function editVariable(appName, varName, currentValue) {
+        tg.showPopup({
+            title: `Edit ${varName}`,
+            message: `Enter the new value for ${varName}:`,
+            buttons: [
+                { type: 'input', text: 'Enter value here...', placeholder: currentValue },
+                { type: 'ok', text: 'Save' },
+                { type: 'cancel' }
+            ]
+        }, async (buttonId, value) => {
+            if (buttonId === 'ok' && value) {
+                tg.showProgress(true);
                 try {
-                    const res = await fetch(`${API_BASE_URL}/${endpoint}`, {
+                    const res = await fetch(`${API_BASE_URL}/bots/set-var`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                        body: JSON.stringify({ appName })
+                        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                        body: JSON.stringify({ appName, varName, varValue: value })
                     });
                     const data = await res.json();
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(data.message);
-                    if (data.success) { setTimeout(renderMyBotsView, 5000); }
+                    tg.hideProgress();
+                    tg.showAlert(data.message);
+                    if (data.success) {
+                        // Refresh the variables view
+                        const bot = JSON.parse(document.querySelector('[data-action="variables"]').dataset.botJson);
+                        renderView('variables', bot);
+                    }
                 } catch (e) {
-                    Telegram.WebApp.hideProgress();
-                    Telegram.WebApp.showAlert(`An error occurred while trying to ${action} the bot.`);
-                }
-            });
-        }
-
-        function renderBotTypeSelectionView() {
-            document.getElementById('view-container').innerHTML = `
-                <div class="back-button" onclick="renderMyBotsView()">
-                    <span class="chevron-left">&lt;</span> Back
-                </div>
-                <div id="header-title">Select Bot Type</div>
-                <div class="inline-buttons">
-                    <button class="action-button" onclick="selectBotType('levanter')">Levanter</button>
-                    <button class="action-button" onclick="selectBotType('raganork')">Raganork</button>
-                </div>
-            `;
-        }
-
-        function selectBotType(botType) {
-            deploymentState.botType = botType;
-            renderView('deploymentForm');
-        }
-
-        function renderDeploymentFormView() {
-            document.getElementById('view-container').innerHTML = `
-                <div class="back-button" onclick="renderView('botTypeSelection')">
-                    <span class="chevron-left">&lt;</span> Back
-                </div>
-                <div id="header-title">New Bot</div>
-                <div id="deployment-view">
-                    <div class="form-group">
-                        <label>Bot Type:</label>
-                        <button class="action-button active">${deploymentState.botType.toUpperCase()}</button>
-                    </div>
-                    <div class="form-group">
-                        <label for="appNameInput">App Name:</label>
-                        <div class="input-container">
-                            <input type="text" id="appNameInput" placeholder="mybot123">
-                            <span id="appNameStatus" class="input-status-icon"></span>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="sessionIdInput">Session ID:</label>
-                        <div class="input-container">
-                            <input type="text" id="sessionIdInput" placeholder="Enter your session ID">
-                            <span id="sessionIdStatus" class="input-status-icon"></span>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="autoStatusView">Auto Status View:</label>
-                        <div class="inline-buttons" id="autoview-buttons">
-                            <button class="action-button" data-value="yes" onclick="selectAutoStatus('yes')">Yes</button>
-                            <button class="action-button" data-value="no" onclick="selectAutoStatus('no')">No</button>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="deployKeyInput">Deploy Key:</label>
-                        <div class="input-container">
-                            <input type="text" id="deployKeyInput" placeholder="Enter your deploy key">
-                            <span id="deployKeyStatus" class="input-status-icon"></span>
-                        </div>
-                    </div>
-                    <button id="deploy-button" class="deploy-button" disabled onclick="handleDeploy()">Deploy</button>
-                </div>
-            `;
-
-            const appNameInput = document.getElementById('appNameInput');
-            const sessionIdInput = document.getElementById('sessionIdInput');
-            const deployKeyInput = document.getElementById('deployKeyInput');
-            
-            appNameInput.addEventListener('input', checkAllInputs);
-            sessionIdInput.addEventListener('input', checkAllInputs);
-            deployKeyInput.addEventListener('input', checkAllInputs);
-
-            selectAutoStatus('no');
-        }
-
-        function selectAutoStatus(value) {
-            deploymentState.autoStatusView = value;
-            const buttons = document.querySelectorAll('#autoview-buttons button');
-            buttons.forEach(button => {
-                if (button.dataset.value === value) {
-                    button.classList.add('active');
-                } else {
-                    button.classList.remove('active');
-                }
-            });
-            checkAllInputs();
-        }
-
-        async function checkAllInputs() {
-            const appNameInput = document.getElementById('appNameInput');
-            const sessionIdInput = document.getElementById('sessionIdInput');
-            const deployKeyInput = document.getElementById('deployKeyInput');
-            const deployButton = document.getElementById('deploy-button');
-
-            // App Name Check
-            const appName = appNameInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-            const appNameStatus = document.getElementById('appNameStatus');
-            if (appName.length < 3 || appName.length > 30) {
-                appNameInput.classList.remove('status-green-border', 'status-red-border');
-                appNameStatus.innerHTML = '';
-                deploymentState.isAppNameAvailable = false;
-            } else {
-                appNameStatus.innerHTML = '&#x231B;'; // Hourglass emoji
-                appNameInput.classList.remove('status-green-border', 'status-red-border');
-                const res = await fetch(`${API_BASE_URL}/app-name-check/${appName}`, { headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData } });
-                const data = await res.json();
-                if (data.available) {
-                    appNameInput.classList.add('status-green-border');
-                    appNameStatus.innerHTML = '&#x2713;'; // Checkmark emoji
-                    appNameStatus.classList.add('status-icon-green');
-                    deploymentState.isAppNameAvailable = true;
-                } else {
-                    appNameInput.classList.add('status-red-border');
-                    appNameStatus.innerHTML = '&#x2717;'; // X emoji
-                    appNameStatus.classList.add('status-icon-red');
-                    deploymentState.isAppNameAvailable = false;
+                    tg.hideProgress();
+                    tg.showAlert('An error occurred.');
                 }
             }
-
-            // Session ID Check
-            const sessionId = sessionIdInput.value.trim();
-            const sessionIdStatus = document.getElementById('sessionIdStatus');
-            const prefix = deploymentState.botType === 'raganork' ? 'RGNK' : 'levanter_';
-            const isValidSession = sessionId.startsWith(prefix) && sessionId.length >= 10;
-            if (isValidSession) {
-                sessionIdInput.classList.add('status-green-border');
-                sessionIdInput.classList.remove('status-red-border');
-                sessionIdStatus.innerHTML = '&#x2713;';
-                sessionIdStatus.classList.add('status-icon-green');
-            } else {
-                sessionIdInput.classList.remove('status-green-border');
-                sessionIdInput.classList.add('status-red-border');
-                sessionIdStatus.innerHTML = '&#x2717;';
-                sessionIdStatus.classList.add('status-icon-red');
-            }
-            deploymentState.isSessionIdValid = isValidSession;
-
-            // Deploy Key Check
-            const deployKey = deployKeyInput.value.trim();
-            const deployKeyStatus = document.getElementById('deployKeyStatus');
-            if (deployKey.length > 0) {
-                deployKeyStatus.innerHTML = '&#x231B;';
-                deployKeyInput.classList.remove('status-green-border', 'status-red-border');
-                const res = await fetch(`${API_BASE_URL}/check-deploy-key/${deployKey}`, { headers: { 'X-Telegram-Init-Data': Telegram.WebApp.initData } });
-                const data = await res.json();
-                if (data.valid) {
-                    deployKeyInput.classList.add('status-green-border');
-                    deployKeyStatus.innerHTML = '&#x2713;';
-                    deployKeyStatus.classList.add('status-icon-green');
-                    deploymentState.isDeployKeyValid = true;
-                } else {
-                    deployKeyInput.classList.add('status-red-border');
-                    deployKeyStatus.innerHTML = '&#x2717;';
-                    deployKeyStatus.classList.add('status-icon-red');
-                    deploymentState.isDeployKeyValid = false;
-                }
-            } else {
-                deployKeyInput.classList.remove('status-green-border', 'status-red-border');
-                deployKeyStatus.innerHTML = '';
-                deploymentState.isDeployKeyValid = false;
-            }
-
-            // Update Deploy Button State
-            if (deploymentState.isAppNameAvailable && deploymentState.isSessionIdValid && deploymentState.isDeployKeyValid) {
-                deployButton.disabled = false;
-                deployButton.classList.add('glowing-button');
-            } else {
-                deployButton.disabled = true;
-                deployButton.classList.remove('glowing-button');
-            }
-        }
-        
-        async function handleDeploy() {
-            if (!deploymentState.isAppNameAvailable || !deploymentState.isSessionIdValid || !deploymentState.isDeployKeyValid) {
-                Telegram.WebApp.showAlert('Please ensure all fields are valid before deploying.');
-                return;
-            }
-
-            Telegram.WebApp.showProgress('Deploying...');
-            const payload = {
-                botType: deploymentState.botType,
-                appName: document.getElementById('appNameInput').value.trim(),
-                sessionId: document.getElementById('sessionIdInput').value.trim(),
-                autoStatusView: deploymentState.autoStatusView,
-                deployKey: document.getElementById('deployKeyInput').value.trim()
-            };
-
-            try {
-                const res = await fetch(`${API_BASE_URL}/deploy`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': Telegram.WebApp.initData },
-                    body: JSON.stringify(payload)
-                });
-                
-                const data = await res.json();
-                Telegram.WebApp.hideProgress();
-                
-                if (data.success) { 
-                    Telegram.WebApp.showAlert(data.message);
-                    renderView('myBots'); 
-                } else { 
-                    Telegram.WebApp.showAlert(data.message); 
-                }
-            } catch (e) { 
-                Telegram.WebApp.hideProgress(); 
-                Telegram.WebApp.showAlert('Failed to initiate deployment.'); 
-            }
-        }
-
-        // Initial render on load
-        document.addEventListener('DOMContentLoaded', () => {
-            renderView('myBots');
         });
+    }
+    
+    function attachEventListeners(viewName) {
+        if (viewName === 'management') {
+            document.querySelectorAll('#management-view .management-option').forEach(el => {
+                const action = el.dataset.action;
+                if (!action) return;
 
-    </script>
+                if (action === 'variables') {
+                    el.onclick = () => renderView('variables', JSON.parse(el.dataset.botJson));
+                } else {
+                    el.onclick = () => handleBotAction(action, el.dataset.appName);
+                }
+            });
+        }
+    }
+    
+    // This function now handles all bot actions
+    function handleBotAction(action, appName) {
+        // Corrected endpoint mapping
+        const endpointMap = {
+            restart: 'bots/restart',
+            redeploy: 'bots/redeploy',
+            delete: 'bots/delete'
+        };
+
+        if (!endpointMap[action]) return;
+
+        tg.showConfirm(`Are you sure you want to ${action} the bot "${appName}"?`, async (ok) => {
+            if (!ok) return;
+            tg.showProgress(true);
+            try {
+                const res = await fetch(`${API_BASE_URL}/${endpointMap[action]}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                    body: JSON.stringify({ appName })
+                });
+                const data = await res.json();
+                tg.hideProgress();
+                tg.showAlert(data.message);
+                if (data.success) {
+                    if (action === 'delete') {
+                        renderView('myBots'); // Go back to the list immediately after deletion
+                    } else {
+                        setTimeout(() => renderView('myBots'), 3000); // Wait a bit after restart/redeploy
+                    }
+                }
+            } catch (e) {
+                tg.hideProgress();
+                tg.showAlert('An error occurred.');
+            }
+        });
+    }
+
+    // Initial Load
+    document.addEventListener('DOMContentLoaded', () => {
+        renderView('myBots');
+        // Attach a global event listener for dynamic content
+        document.getElementById('view-container').addEventListener('click', (event) => {
+            const target = event.target.closest('.management-option');
+            if (!target || !target.dataset.action) return;
+
+            const action = target.dataset.action;
+            if (action === 'variables') {
+                renderView('variables', JSON.parse(target.dataset.botJson));
+            } else if (target.dataset.appName){
+                handleBotAction(action, target.dataset.appName);
+            }
+        });
+    });
+</script>
+    
 </body>
 </html>
