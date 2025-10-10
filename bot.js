@@ -5870,8 +5870,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
     }
   }
  // REPLACE the final 'else' block in your bot.on('message',...) handler with this
-
-  } else {
+  else {
         // If no other command or state matched, send the prompt to the tool-handling AI
         try {
             const userId = msg.chat.id.toString();
