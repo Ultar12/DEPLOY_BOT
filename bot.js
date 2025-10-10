@@ -5878,7 +5878,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
   }
   else {
         // If no other command or state matched, send it to Gemini
-        handleUserPrompt(cid, text);
+        handleFallbackWithGemini(cid, text);
   }
 });
 
