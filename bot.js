@@ -2648,38 +2648,49 @@ app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
 });
 
 
-  // POST /api/bots/delete - Deletes a bot from Heroku and the database
+// POST /api/bots/delete - Deletes a bot from Heroku and the database
 app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.body;
+    console.log(`[API /bots/delete] User ${userId} initiated deletion for '${appName}'.`);
+    
     try {
-        // Verify ownership
+        // First, verify the user actually owns this bot to prevent unauthorized deletions
         const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1 AND user_id = $2', [appName, userId]);
         if (ownerCheck.rows.length === 0) {
-            return res.status(403).json({ success: false, message: 'You do not own this bot or it does not exist.' });
+            console.warn(`[API /bots/delete] Auth Failure: User ${userId} does not own '${appName}'.`);
+            return res.status(403).json({ success: false, message: 'Authorization Failed: You are not the owner of this bot.' });
         }
         
-        // 1. Delete from Heroku
+        console.log(`[API /bots/delete] Ownership confirmed. Deleting '${appName}' from Heroku...`);
+        // 1. Send the delete request to the Heroku API
         await axios.delete(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
+        console.log(`[API /bots/delete] Heroku deletion successful for '${appName}'.`);
 
-        // 2. Clean up database records
+        // 2. Clean up all records from your local databases
+        console.log(`[API /bots/delete] Cleaning up database records for '${appName}'.`);
         await dbServices.deleteUserBot(userId, appName);
         await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
+        console.log(`[API /bots/delete] Database cleanup complete for '${appName}'.`);
 
-        res.json({ success: true, message: `Bot '${appName}' has been successfully deleted.` });
+        res.json({ success: true, message: `Bot '${appName}' has been successfully and permanently deleted.` });
+
     } catch (e) {
+        // This handles cases where the bot was already deleted on Heroku but still in your DB
         if (e.response && e.response.status === 404) {
-            // If it's already gone from Heroku, just clean up the DB
+            console.log(`[API /bots/delete] Bot '${appName}' not found on Heroku. Cleaning up DB records anyway.`);
             await dbServices.deleteUserBot(userId, appName);
             await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
-            return res.json({ success: true, message: `Bot '${appName}' was already deleted from the server. Your list is now clean.` });
+            return res.json({ success: true, message: `Bot '${appName}' was already deleted from the server. Your list has been updated.` });
         }
-        console.error(`[MiniApp V2] Error deleting bot ${appName}:`, e.message);
-        res.status(500).json({ success: false, message: 'Failed to delete bot.' });
+        // Handle other potential errors (API keys, network, etc.)
+        console.error(`[API /bots/delete] CRITICAL ERROR deleting bot '${appName}':`, e.response?.data || e.message);
+        res.status(500).json({ success: false, message: 'A server error occurred. Failed to delete the bot.' });
     }
 });
+
 
 
 
