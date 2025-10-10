@@ -477,30 +477,39 @@ const availableTools = {
     getBotLogs
 };
 
-// ✅ REPLACE your old handleUserPrompt function with this one
+// ✅ REPLACE your function with this complete, correct version.
 
-async function handleUserPrompt(prompt, userId) {
-    // This is the full prompt template we created before
-    const fullPrompt = `You are 'Ultar WBD', an intelligent assistant... The user's request is: "${prompt}" ... (and the rest of your detailed instructions)`;
+async function handleUserPrompt(userMessage, userId) {
+    // 1. Combine your detailed instructions with the user's message.
+    const fullPrompt = `You are 'Ultar WBD'... The user's request is: "${userMessage}"... (and the rest of your prompt)`;
     
     const chat = geminiModel.startChat();
     let result = await chat.sendMessage(fullPrompt);
 
+    // This loop handles the back-and-forth with the AI
     while (true) {
         const calls = result.response.functionCalls();
+        
+        // If there's no function call, the conversation is over. Return the text.
         if (!calls || calls.length === 0) {
-            return result.response.text(); // No tool to call, just return the text.
+            return result.response.text();
         }
 
+        // The AI wants to call one or more functions.
         const functionResponses = [];
         for (const call of calls) {
             console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
+
             if (availableTools[call.name]) {
                 const functionToCall = availableTools[call.name];
-                const args = { ...call.args, userId: userId };
                 
-                // --- THIS IS THE BUG FIX ---
-                // We now pass arguments dynamically and in the correct order.
+                // --- THIS IS THE CRITICAL FIX ---
+                // We create a new 'args' object. It takes whatever arguments the AI
+                // figured out (like botId) and we MANUALLY add the 'userId' that our bot already knows.
+                const args = { ...call.args, userId: userId };
+                // ---------------------------------
+
+                // Now we call your function with the complete and correct arguments.
                 const functionResult = await functionToCall(...Object.values(args));
                 
                 functionResponses.push({
@@ -509,9 +518,11 @@ async function handleUserPrompt(prompt, userId) {
             }
         }
         
-        // Send the results of the functions back to the AI
+        // Send the results of your functions back to the AI so it can form a final sentence.
         result = await chat.sendMessage(functionResponses);
     }
+}
+
 }
 
 /**
