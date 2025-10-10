@@ -3811,7 +3811,6 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     }
 });
 
-// bot.js (New command to list stored Heroku API keys)
 bot.onText(/^\/apilist$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -3824,22 +3823,30 @@ bot.onText(/^\/apilist$/, async (msg) => {
             return bot.sendMessage(adminId, "No Heroku API keys stored in the database.");
         }
 
-        let message = "*Stored Heroku API Keys:*\n\n";
+        let message = "*Security Warning:* This message contains sensitive API keys. Please delete it after use.\n\n";
+        message += "*Stored Heroku API Keys:*\n\n";
+        
         keys.forEach((k, index) => {
             const status = k.is_active ? '🟢 (Active)' : '🔴 (Inactive)';
-            const addedDate = new Date(k.added_at).toLocaleDateString();
-            const maskedKey = `${k.api_key.substring(0, 4)}...${k.api_key.substring(k.api_key.length - 4)}`;
-            message += `${index + 1}. \`${maskedKey}\` - ${status} (Added: ${addedDate})\n`;
+            const addedDate = new Date(k.added_at).toLocaleDateString('en-US', { timeZone: 'Africa/Lagos' });
+            
+            // ❗️ FIX: Using the full API key directly instead of masking it.
+            const fullApiKey = k.api_key;
+            
+            message += `*${index + 1}.* \`${fullApiKey}\`\n`;
+            message += `   - *Status:* ${status}\n`;
+            message += `   - *Added:* ${addedDate}\n\n`;
         });
         
-        message += "\n_The bot will attempt to use the most recent active key upon failure._";
+        message += "_The bot will attempt to use the most recent active key upon failure._";
 
         await bot.sendMessage(adminId, message, { parse_mode: 'Markdown' });
     } catch (e) {
         console.error("Error listing API keys:", e);
-        await bot.sendMessage(adminId, `❌ Failed to list API keys: ${e.message}`);
+        await bot.sendMessage(adminId, `Failed to list API keys: ${e.message}`);
     }
 });
+
 
 
 
