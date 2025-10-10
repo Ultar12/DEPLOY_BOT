@@ -676,7 +676,7 @@ You have access to the following functions. Your job is to determine which funct
 1.  **Analyze Intent:** Read the user's message and understand what they want to achieve.
 2.  **Extract Parameters:** Identify any useful information in the message, like a bot name/ID, a variable name, or a new session ID value.
 3.  **Select a Tool:** Based on the intent, choose the single best function from the 'AVAILABLE TOOLS' list.
-4.  **Handle Ambiguity:** If the user wants to perform an action (restart, update, etc.) but they haven't specified a bot ID and you know they have multiple, your **ONLY** first step is to call `getUserBots`. Do not guess.
+4.  **Handle Ambiguity:** If the user wants to perform an action (restart, update, etc.) but they haven't specified a bot ID and you know they have multiple, your **ONLY** first step is to call 'getUserBots'. Do not guess.
 5.  **No Tool Needed?:** If the user's request is a general question (e.g., about pricing, support, what the bot does), do not call a function. Instead, provide a helpful, concise text response based on the 'Contextual Knowledge'.
 
 Now, analyze the user's request and respond by either calling the appropriate function or providing a direct text answer.
