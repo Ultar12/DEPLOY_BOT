@@ -701,7 +701,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             case 'MANAGE_BOT':
                 console.log('[Gemini Phase 2] Intent is MANAGE_BOT. Attempting direct function execution...');
                 
-                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest", tools: tools });
+                const modelWithTools = genAI.getGenerativeModel({ model: "gemini-2.5-flash", tools: tools });
                 const chat = modelWithTools.startChat();
                 const toolResult = await chat.sendMessage(`My user ID is ${chatId}. My request is: "${userMessage}"`);
                 const calls = toolResult.response.functionCalls();
