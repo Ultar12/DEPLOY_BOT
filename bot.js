@@ -4454,6 +4454,7 @@ bot.onText(/^\/editvar$/, async (msg) => {
             inline_keyboard: buttons
         }
     });
+});
 
 
 // ADMIN COMMAND: /delapi to start the key deletion process
