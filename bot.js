@@ -477,43 +477,71 @@ const availableTools = {
     getBotLogs
 };
 
-// This function can now handle more complex requests.
+// REPLACE your entire handleUserPrompt function with this one
+
 async function handleUserPrompt(prompt, userId) {
     const chat = geminiModel.startChat();
     const result = await chat.sendMessage(prompt);
-    const calls = result.response.functionCalls(); // Use functionCalls() to handle multiple actions
+    const calls = result.response.functionCalls();
 
     if (!calls || calls.length === 0) {
-        return result.response.text();
+        return result.response.text(); // Return the AI's text response if no tool is called
     }
-    
-    // The AI might ask to call multiple functions in one turn
+
     const functionResponses = [];
     for (const call of calls) {
-        if (availableTools[call.name]) {
-            console.log(`[AI] Recommending call to: ${call.name} with args:`, call.args);
-            const functionToCall = availableTools[call.name];
-            
-            // Add the userId from your bot's context
+        const functionName = call.name;
+        if (availableTools[functionName]) {
+            console.log(`[AI] Recommending call to: ${functionName} with args:`, call.args);
+            const functionToCall = availableTools[functionName];
+
+            // Ensure the userId from the bot's context is always included
             const args = { ...call.args, userId: userId };
             
-            // Call your actual function
-            const functionResult = await functionToCall(args.userId, args.variableName, args.newValue);
-            
-            functionResponses.push({
-                functionResponse: {
-                    name: call.name,
-                    response: functionResult,
-                },
-            });
+            let functionResult;
+            try {
+                // This switch statement correctly calls each function with its specific arguments
+                switch (functionName) {
+                    case 'getUserBots':
+                        functionResult = await functionToCall(args.userId);
+                        break;
+                    case 'updateUserVariable':
+                        functionResult = await functionToCall(args.userId, args.botId, args.variableName, args.newValue);
+                        break;
+                    case 'redeployBot':
+                    case 'getBotInfo':
+                    case 'deleteBot':
+                    case 'restartBot':
+                    case 'getBotLogs':
+                        functionResult = await functionToCall(args.userId, args.botId);
+                        break;
+                    default:
+                        throw new Error(`Function ${functionName} is not handled in the switch case.`);
+                }
+
+                functionResponses.push({
+                    functionResponse: {
+                        name: functionName,
+                        response: functionResult,
+                    },
+                });
+
+            } catch (e) {
+                console.error(`Error executing tool ${functionName}:`, e);
+                functionResponses.push({
+                    functionResponse: {
+                        name: functionName,
+                        response: { status: 'error', message: `Execution failed: ${e.message}` },
+                    },
+                });
+            }
         }
     }
-    
-    // Send all function results back to the AI
+
+    // Send all function results back to the AI for a final response
     const result2 = await chat.sendMessage(functionResponses);
     return result2.response.text();
 }
-
 
 /**
  * A list of database columns that the AI is permitted to update.
@@ -527,37 +555,50 @@ const allowedVariables = [
     'anti_delete',
     'sudo'
 ];
+
+// REPLACE your placeholder updateUserVariable function with this one
+
 /**
- * Updates a specific variable for a given user in the database.
+ * Updates a specific variable for a given user's bot in the database.
  * @param {string} userId - The ID of the user to update.
+ * @param {string} botId - The unique name/ID of the bot to update.
  * @param {string} variableName - The name of the variable/column to update.
- * @param {string | number} newValue - The new value to set.
+ * @param {string} newValue - The new value to set.
  * @returns {object} An object indicating the status of the operation.
  */
-async function updateUserVariable(userId, variableName, newValue) {
+async function updateUserVariable(userId, botId, variableName, newValue) {
     // Security Check: Ensure the variable is on the allowed list.
     if (!allowedVariables.includes(variableName)) {
         console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}".`);
         return { status: "error", message: "This variable cannot be changed." };
     }
 
-    console.log(`[ACTION] Updating "${variableName}" for user ${userId} to: ${newValue}`);
+    console.log(`[ACTION] Updating "${variableName}" for bot ${botId} (User: ${userId}) to: ${newValue}`);
 
-    // --- Your Database Logic Goes Here ---
-    // Example using a database pool (remember to use parameterized queries to prevent SQL injection!)
-    // try {
-    //   await pool.query(`UPDATE users SET ${variableName} = $1 WHERE user_id = $2`, [newValue, userId]);
-    // } catch (dbError) {
-    //   console.error("Database update failed:", dbError);
-    //   return { status: "error", message: "Failed to update the database." };
-    // }
-    
-    return { 
-        status: "success", 
-        message: `The variable "${variableName}" was successfully updated.` 
-    };
+    try {
+      // --- THIS IS THE REAL DATABASE LOGIC ---
+      // Use parameterized queries to prevent SQL injection!
+      const result = await pool.query(
+        // The query dynamically sets the column name, which is safe here
+        // because we already validated it against the 'allowedVariables' list.
+        `UPDATE user_bots SET ${variableName} = $1 WHERE user_id = $2 AND bot_name = $3`,
+        [newValue, userId, botId]
+      );
+
+      if (result.rowCount === 0) {
+        return { status: "error", message: `Bot named "${botId}" was not found for your account.` };
+      }
+      
+      return { 
+          status: "success", 
+          message: `The variable "${variableName}" for bot "${botId}" was successfully updated.` 
+      };
+
+    } catch (dbError) {
+      console.error("Database update failed:", dbError);
+      return { status: "error", message: "Failed to update the database." };
+    }
 }
-
 
 
 // --- NEW GEMINI INTEGRATION ---
@@ -5828,11 +5869,28 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       return bot.sendMessage(cid, `Error updating variable: ${errorMsg}`);
     }
   }
-  else {
-        // If no other command or state matched, send it to Gemini
-        handleFallbackWithGemini(cid, text);
+ // REPLACE the final 'else' block in your bot.on('message',...) handler with this
+
+  } else {
+        // If no other command or state matched, send the prompt to the tool-handling AI
+        try {
+            const userId = msg.chat.id.toString();
+            const userPrompt = msg.text;
+            
+            bot.sendChatAction(userId, 'typing');
+            
+            // Call the powerful tool-using function instead of the old one
+            const finalResponse = await handleUserPrompt(userPrompt, userId);
+            
+            await bot.sendMessage(userId, finalResponse, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            console.error("[handleUserPrompt Error] Failed to process user prompt:", error);
+            await bot.sendMessage(msg.chat.id.toString(), "I'm having trouble understanding that request right now. Please try again or use the menu buttons.");
+        }
   }
 });
+ 
 
 // 11) Callback query handler for inline buttons
 bot.on('callback_query', async q => {
