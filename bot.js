@@ -566,12 +566,12 @@ async function handleUserPrompt(prompt, userId) {
  * This is a critical security measure.
  */
 const allowedVariables = [
-    'SESSION_ID,
-    'AUTO_READ_STATUS,
-    'ALWAYS_ONLINE,
-    'HANDLERS,
-    'ANTI_DELETE,
-    'SUDO 
+    'SESSION_ID',
+    'AUTO_READ_STATUS',
+    'ALWAYS_ONLINE',
+    'HANDLERS',
+    'ANTI_DELETE',
+    'SUDO' 
 ];
 
 
