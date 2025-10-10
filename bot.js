@@ -477,30 +477,41 @@ const availableTools = {
     getBotLogs
 };
 
-async function handleUserPrompt(prompt, userId) {
-    const chat = geminiModel.startChat();
-    let result = await chat.sendMessage(prompt);
+// ✅ THIS IS THE CORRECT AND COMPLETE FUNCTION
+async function handleUserPrompt(userMessage, userId) {
+    
+    // Step 1: Combine your detailed prompt (the "recipe book") with the user's message (the "order").
+    const fullPrompt = `
+      You are 'Ultar WBD', an intelligent and efficient assistant...
+      ... (all the rules, knowledge, and tools we defined in the big prompt) ...
+      ...
+      The user's request is: "${userMessage}"
 
-    // This loop allows the AI to use tools and then respond in one turn
+      Now, analyze the user's request and respond by either calling the appropriate function or providing a direct text answer.
+    `;
+    
+    // Step 2: Send the FULL combined prompt to the AI.
+    const chat = geminiModel.startChat();
+    let result = await chat.sendMessage(fullPrompt);
+
+    // Step 3: The rest of the function-calling logic handles the AI's response.
     while (true) {
         const call = result.response.functionCalls()?.[0];
         
-        // If there is NO function call, the AI is done. Return its text.
         if (!call) {
+            // If there is no function call, return the AI's final text response.
             return result.response.text();
         }
 
         console.log(`[AI] Recommending call to: ${call.name}`);
         
-        // If the AI recommends a function and it exists in our list...
         if (availableTools[call.name]) {
             const functionToCall = availableTools[call.name];
             const args = { ...call.args, userId: userId };
             
-            // Execute your actual JavaScript function
             const functionResult = await functionToCall(args.userId, args.botId, args.variableName, args.newValue);
             
-            // Send the result of your function back to the AI
+            // Send the function's result back to the AI for it to form a final response
             result = await chat.sendMessage([
                 { functionResponse: { name: call.name, response: functionResult } },
             ]);
@@ -509,6 +520,7 @@ async function handleUserPrompt(prompt, userId) {
         }
     }
 }
+
 
 
 /**
@@ -562,53 +574,6 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-/**
- * An example function that tries to generate content.
- * If the model isn't found, it fetches and lists available models.
- */
-async function generateContentWithFallback() {
-    // ❗ Using a wrong model name on purpose to trigger the error
-    const modelName = "gemini-1.5-flash-latest"; 
-
-    try {
-        console.log(`🚀 Trying to use model: ${modelName}`);
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent("Hello!");
-        console.log("✅ Success!", result.response.text());
-
-    } catch (error) {
-        // Check if the error is because the model was not found (a 404 error)
-        if (error.toString().includes('404')) {
-            console.error(`❌ Error: Model "${modelName}" not found.`);
-            console.log("\n📋 Fetching list of available models...\n");
-
-            try {
-                // Manually call the REST API to list models
-                const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-                const response = await fetch(listModelsUrl);
-                const data = await response.json();
-
-                // Filter for models that can generate content and print their names
-                const availableModels = data.models
-                    .filter(m => m.supportedGenerationMethods.includes("generateContent"))
-                    .map(m => m.name.replace('models/', '')); // Clean up the name
-
-                console.log("✅ You can use one of these models:");
-                availableModels.forEach(name => console.log(`   - ${name}`));
-
-            } catch (listError) {
-                console.error("🚨 Failed to fetch the model list:", listError);
-            }
-        } else {
-            // Handle other potential errors
-            console.error("An unexpected error occurred:", error);
-        }
-    }
-}
-
-// Run the function
-generateContentWithFallback();
 
 
 // REPLACE your old 'handleFallbackWithGemini' function with this one
