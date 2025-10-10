@@ -5300,9 +5300,17 @@ if (text === 'Deploy' || text === 'Free Trial') {
         return;
 
     } else {
-        // --- THIS IS THE "DEPLOY" BUTTON FLOW (NOW SKIPS VERIFICATION) ---
-        // The previous verification and email prompt have been removed.
-        
+        // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
+        const isVerified = await isUserVerified(cid);
+    
+        if (!isVerified) {
+            // **Step 1: User is NOT verified, so we start the registration process.**
+            userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
+            return; // Stop and wait for their email
+        }
+    
+        // **Step 2: User IS verified, so we proceed with the normal deployment flow.**
         delete userStates[cid];
         userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: false } };
         await bot.sendMessage(cid, 'Which bot type would you like to deploy?', {
