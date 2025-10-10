@@ -10159,17 +10159,33 @@ console.log('[Countdown] Scheduled daily logged-out bot countdown reminders.');
 setInterval(checkAndPruneLoggedOutBots, 60 * 60 * 1000);
 
 
-// --- NEW SCHEDULED TASK TO EMAIL LOGGED-OUT USERS ---
 async function checkAndSendLoggedOutReminders() {
     console.log('[Email] Running daily logged-out bot email check...');
-    const botsToEmail = await dbServices.getLoggedOutBotsForEmail();
+    try {
+        // This function should get bots that need an email reminder
+        const botsToEmail = await dbServices.getLoggedOutBotsForEmail();
 
-    for (const botInfo of botsToEmail) {
-        const { bot_name, email } = botInfo;
-        // The bot's username is stored in bot.username
-        await sendLoggedOutReminder(email, bot_name, bot.username);
+        for (const botInfo of botsToEmail) {
+            // Make sure your DB query returns these fields
+            const { bot_name, email, status_changed_at } = botInfo;
+            
+            if (email && status_changed_at) {
+                // Calculate how many days are left before the 7-day auto-deletion
+                const timeSinceLogout = Date.now() - new Date(status_changed_at).getTime();
+                const daysElapsed = Math.floor(timeSinceLogout / (24 * 60 * 60 * 1000));
+                const daysRemaining = Math.max(0, 7 - daysElapsed);
+
+                // Only send the email if there's still time left
+                if (daysRemaining > 0) {
+                    await sendLoggedOutReminder(email, bot_name, bot.username, daysRemaining);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[Email] Error in scheduled logged-out reminder task:', error);
     }
 }
+
 
 // Run the check for inactive users every 24 hours
 setInterval(pruneInactiveUsers, ONE_DAY_IN_MS);
