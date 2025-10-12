@@ -1912,7 +1912,7 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
-      ['Get Session ID', 'Deploy'],
+      ['**Get Session ID**', '**Deploy**'],
       ['My Bots', 'Free Trial'],
       ['FAQ', 'Referrals'],
       ['Support', 'More Features'] 
@@ -4683,6 +4683,52 @@ ${ownerDetails}
         await bot.sendMessage(cid, `An error occurred while searching for the bot.`);
     }
 });
+
+
+// ADMIN COMMAND: /restart to restart the bot's own Render service remotely
+bot.onText(/^\/restart$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    // Security: Only the admin can use this command.
+    if (adminId !== ADMIN_ID) return;
+
+    // Check if the necessary API keys are configured in your environment.
+    const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
+    if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** `RENDER_API_KEY` and `RENDER_SERVICE_ID` must be set in your bot's environment to use this feature.");
+    }
+
+    const workingMsg = await bot.sendMessage(adminId, "⚙️ Sending restart command to Render...");
+
+    try {
+        const headers = {
+            'Authorization': `Bearer ${RENDER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        };
+        
+        // This is the Render API endpoint to trigger a new deployment (which restarts the app).
+        const deployUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys`;
+        
+        // We send a POST request with an empty body to trigger the restart.
+        await axios.post(deployUrl, {}, { headers });
+
+        // On success, notify the admin.
+        await bot.editMessageText(
+            "**Restart Triggered!**\n\nRender has started a new deployment. The bot will go offline and should be back online within a minute or two.",
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+
+    } catch (error) {
+        // If the API call fails, report the error.
+        console.error("Error restarting Render service:", error.response?.data || error.message);
+        const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
+        await bot.editMessageText(
+            `**Failed to trigger restart!**\n\n**Reason:** ${errorDetails}\n\nPlease check your Render API Key and Service ID.`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+        );
+    }
+});
+
 
 // NEW CODE
 bot.onText(/^\/unban$/, async (msg) => {
