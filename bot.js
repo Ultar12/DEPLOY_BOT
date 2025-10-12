@@ -5269,6 +5269,40 @@ if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
     return;
 }
 
+
+  // In bot.js, inside the bot.on('message', async msg => { ... }) function
+
+    // --- NEW: Proactive Session ID Detection ---
+    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
+    if (!st && text && !text.startsWith('/') && sessionRegex.test(text)) {
+        
+        // The message looks like a session ID, and the user is not in another process.
+        // Let's confirm what they want to do.
+        userStates[cid] = {
+            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
+            data: { sessionId: text.trim() } // Store the session ID to use later
+        };
+
+        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use it to update your bot session?", {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, update", callback_data: 'confirm_session_update' },
+                        { text: "No, cancel", callback_data: 'cancel_session_update' }
+                    ]
+                ]
+            }
+        });
+        return; // Stop the message from going to the Gemini fallback
+    }
+
+    // This should be the last thing in your message handler
+    else {
+        handleFallbackWithGemini(cid, text);
+    }
+//...
+
+
   // In bot.js, inside bot.on('message', async msg => { ... })
 
 if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
@@ -8323,6 +8357,83 @@ if (action === 'resend_otp') {
         console.error('[Resend OTP] Error:', error);
         await bot.answerCallbackQuery(q.id, { text: 'Failed to resend code. Please try again.', show_alert: true });
     }
+    return;
+}
+
+
+  // In bot.js, inside the bot.on('callback_query', async q => { ... }) function
+
+// This runs when the user clicks "✅ Yes, update"
+if (action === 'confirm_session_update') {
+    if (!st || st.step !== 'AWAITING_SESSION_UPDATE_CONFIRMATION') return;
+    
+    const { sessionId } = st.data;
+    const userBots = await dbServices.getUserBots(cid); // Fetches bot names like ['bot1', 'bot2']
+
+    if (userBots.length === 0) {
+        delete userStates[cid];
+        return bot.editMessageText("You don't have any bots to update.", {
+            chat_id: cid, message_id: q.message.message_id
+        });
+    }
+
+    if (userBots.length === 1) {
+        // User has only one bot, update it directly.
+        const botName = userBots[0];
+        await bot.editMessageText(`Updating session for your bot *${botName}*...`, {
+            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+        });
+
+        // Use your existing function to perform the update
+        const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
+
+        await bot.sendMessage(cid, result.message);
+        delete userStates[cid];
+
+    } else {
+        // User has multiple bots, ask them to choose.
+        const botButtons = userBots.map(botName => ({
+            text: botName,
+            callback_data: `apply_session_update:${botName}`
+        }));
+        
+        // Arrange buttons in rows of 3
+        const keyboard = chunkArray(botButtons, 3);
+
+        await bot.editMessageText("You have multiple bots. Please select which one to update:", {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    }
+    return;
+}
+
+// This runs when the user selects a specific bot to update
+if (action === 'apply_session_update') {
+    if (!st || st.step !== 'AWAITING_SESSION_UPDATE_CONFIRMATION') return;
+
+    const botName = payload;
+    const { sessionId } = st.data;
+
+    await bot.editMessageText(`Updating session for *${botName}*...`, {
+        chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+    });
+    
+    const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
+    
+    await bot.sendMessage(cid, result.message);
+    delete userStates[cid];
+    return;
+}
+
+// This runs when the user clicks "❌ No, cancel"
+if (action === 'cancel_session_update') {
+    delete userStates[cid];
+    await bot.editMessageText("Action cancelled.", {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
     return;
 }
 
