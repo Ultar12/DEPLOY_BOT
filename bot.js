@@ -5372,40 +5372,7 @@ if (st && st.step === 'AWAITING_OTHER_VAR_NAME') {
 }
 
 
-  // In bot.js, inside the bot.on('message', async msg => { ... }) function
-
-    // --- NEW: Proactive Session ID Detection ---
-    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
-    if (!st && text && !text.startsWith('/') && sessionRegex.test(text)) {
-        
-        // The message looks like a session ID, and the user is not in another process.
-        // Let's confirm what they want to do.
-        userStates[cid] = {
-            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
-            data: { sessionId: text.trim() } // Store the session ID to use later
-        };
-
-        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use it to update your bot session?", {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: "Yes, update", callback_data: 'confirm_session_update' },
-                        { text: "No, cancel", callback_data: 'cancel_session_update' }
-                    ]
-                ]
-            }
-        });
-        return; // Stop the message from going to the Gemini fallback
-    }
-
-    // This should be the last thing in your message handler
-    else {
-        handleFallbackWithGemini(cid, text);
-    }
-//...
-
-
-  // In bot.js, inside bot.on('message', async msg => { ... })
+  
 
 if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
     const { varName, messageId } = st.data;
