@@ -412,57 +412,30 @@ async function getBotLogs(userId, botId) {
 }
 
 // Note: updateUserVariable also needs the botId to know which bot's variable to change.
-// REPLACE your mock 'updateUserVariable' function with this REAL one
-
-// REPLACE your 'allowedVariables' const with this one. It MUST be uppercase.
-
-// REPLACE your 'updateUserVariable' function with this FINAL, WORKING version.
+// In bot.js, find and replace this entire function
 async function updateUserVariable(userId, botId, variableName, newValue) {
-    // Step 1: Create the final, correct variable name in UPPERCASE.
-    // This handles inputs like "session id" and turns them into "SESSION_ID".
     const finalVarName = variableName.toLowerCase().replace(/ /g, '_').toUpperCase();
 
-    // Step 2: Check the final uppercase name against your uppercase allowedVariables list.
     if (!allowedVariables.includes(finalVarName)) {
-        console.error(`[SECURITY] Blocked attempt to update disallowed variable "${variableName}" (Normalized to: "${finalVarName}")`);
         return { status: "error", message: `The variable '${variableName}' cannot be changed.` };
     }
     
-    // Step 3: Perform the REAL Heroku API call.
     try {
-        console.log(`[Heroku API] Attempting to update config var for bot '${botId}': { "${finalVarName}": "..." }`);
-
-        // This is the real API call. It uses the uppercase variable name.
-        // It NEVER changes the newValue (the session id string itself).
-        await axios.patch(
-            `https://api.heroku.com/apps/${botId}/config-vars`,
+        await herokuApi.patch(
+            `/apps/${botId}/config-vars`,
             { [finalVarName]: newValue },
-            {
-                headers: {
-                    'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                    'Accept': 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
-            }
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
-
         console.log(`[Heroku API] Successfully updated "${finalVarName}" for bot '${botId}'.`);
-        
-        return { 
-            status: "success", 
-            message: `Success! The variable ${finalVarName} for your bot '${botId}' has been updated. The bot will now restart to apply the change.` 
-        };
-
+        // ❗️ FIX: Return a simple status object, not a pre-formatted message.
+        return { status: "success" };
     } catch (error) {
-        console.error(`[Heroku API] Error updating variable for bot '${botId}':`, error.response?.data || error.message);
         const errorMessage = error.response?.data?.message || 'An unknown API error occurred.';
-        return { 
-            status: "error", 
-            message: `I couldn't update the variable for bot '${botId}'. The server responded with an error: ${errorMessage}` 
-        };
+        console.error(`[Heroku API] Error updating var for bot '${botId}':`, errorMessage);
+        // ❗️ FIX: Return the error message separately.
+        return { status: "error", message: errorMessage };
     }
 }
-
 
 
 
@@ -4791,52 +4764,54 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
 bot.onText(/^\/4k$/, async (msg) => {
     const cid = msg.chat.id.toString();
 
-    // 1. Check if the feature is enabled
-    if (!replicate) {
-        return bot.sendMessage(cid, "The image upscaling service is currently not configured. Please contact the admin.");
+    // 1. Check if the API token is configured
+    if (!process.env.REPLICATE_API_TOKEN || !replicate) {
+        return bot.sendMessage(cid, "The image upscaling service is not configured. Please contact the admin.");
     }
-
-    // 2. Check if the command is a reply to a photo
+    
     const repliedMsg = msg.reply_to_message;
     if (!repliedMsg || !repliedMsg.photo) {
         return bot.sendMessage(cid, "Please reply to an image with the `/4k` command to upscale it.");
     }
 
-    const workingMsg = await bot.sendMessage(cid, "Got it. Sending your image to the Topaz AI upscaler... 🤖", {
+    const workingMsg = await bot.sendMessage(cid, "Got it. Downloading image to send to the Topaz AI upscaler... 🤖", {
         reply_to_message_id: repliedMsg.message_id
     });
 
     try {
-        // 3. Get the image URL from Telegram
+        // ❗️ FIX: Download the image file content directly from Telegram's servers.
         const photo = repliedMsg.photo[repliedMsg.photo.length - 1];
-        const file = await bot.getFile(photo.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        const fileBuffer = await bot.downloadFile(photo.file_id, './'); // Downloads to a temporary buffer
+        
+        // Convert the image data to a Base64 string.
+        const base64Image = fs.readFileSync(fileBuffer).toString('base64');
+        const dataUri = `data:image/jpeg;base64,${base64Image}`;
+        
+        // Clean up the temporary file immediately.
+        fs.unlinkSync(fileBuffer);
 
         await bot.editMessageText("✨ Upscaling in progress... This professional model can take a minute or two.", {
             chat_id: cid,
             message_id: workingMsg.message_id
         });
 
-        // 4. ❗️ THIS IS THE UPDATED PART ❗️
-        // We are now calling the 'topazlabs/image-upscale' model you found.
+        // ❗️ FIX: Call the Replicate API using the Base64 data URI instead of a URL.
         const output = await replicate.run(
             "topazlabs/image-upscale:be64d1f0219c7f667c46113659c22998782ffd5aa5915d31201e74f4b2354e61",
             {
                 input: {
-                    image: imageUrl
-                    // This model doesn't have a 'scale' parameter, it upscales automatically.
+                    image: dataUri
                 }
             }
         );
         
         const upscaledImageUrl = output;
 
-        await bot.editMessageText("Upscaling complete! Sending the result back to you.", {
+        await bot.editMessageText("Upscaling complete! Sending the high-quality result back to you.", {
             chat_id: cid,
             message_id: workingMsg.message_id
         });
 
-        // 5. Send the upscaled image back as a document for full quality
         await bot.sendDocument(cid, upscaledImageUrl, {
             caption: "Here is your 4K upscaled image from Topaz AI!",
             reply_to_message_id: repliedMsg.message_id
@@ -4846,12 +4821,13 @@ bot.onText(/^\/4k$/, async (msg) => {
 
     } catch (error) {
         console.error("Error during /4k upscaling with Topaz:", error);
-        await bot.editMessageText("An error occurred while upscaling the image. This model may be under heavy load. Please try again later.", {
+        await bot.editMessageText("❌ An error occurred while upscaling the image. The AI model may be under heavy load or your free credits may have run out. Please try again later.", {
             chat_id: cid,
             message_id: workingMsg.message_id
         });
     }
 });
+
 
 
 
@@ -8499,21 +8475,17 @@ if (action === 'confirm_session_update') {
     return;
 }
 
-
-
-// This runs when the user selects a specific bot to update
+  
 if (action === 'apply_session_update') {
     if (!st || st.step !== 'AWAITING_SESSION_UPDATE_CONFIRMATION') return;
 
     const botName = payload;
     const { sessionId } = st.data;
 
-    // ❗️ FIX: The "Updating..." message is now stored to be edited later.
-    const workingMsg = await bot.editMessageText(`Updating session for *${botName}*...`, {
+    const workingMsg = await bot.editMessageText(`Validating and updating session for *${escapeMarkdown(botName)}*...`, {
         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     });
     
-    // ❗️ FIX: Validate the session ID against the bot's type.
     const botTypeResult = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, botName]);
     const botType = botTypeResult.rows[0]?.bot_type;
     const isLevanter = botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX);
@@ -8521,20 +8493,29 @@ if (action === 'apply_session_update') {
 
     if (!isLevanter && !isRaganork) {
         delete userStates[cid];
-        return bot.editMessageText(`**Validation Error:** The session ID you provided does not have the correct format for your *${botType}* bot. Action cancelled.`, {
+        return bot.editMessageText(`❌ **Validation Error:** The session ID is not valid for your *${botType}* bot named *${escapeMarkdown(botName)}*.`, {
             chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
         });
     }
 
+    // Call the updated function
     const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
     
-    // ❗️ FIX: Edit the "Updating..." message with the final result.
-    await bot.editMessageText(result.message, {
+    // ❗️ FIX: Create the final message here and use escapeMarkdown
+    let finalMessage;
+    if (result.status === 'success') {
+        finalMessage = `**Success!**\n\nThe session for your bot *${escapeMarkdown(botName)}* has been updated. The bot will now restart.`;
+    } else {
+        finalMessage = `**Failed!**\n\nCould not update the session for *${escapeMarkdown(botName)}*.\n*Reason:* ${escapeMarkdown(result.message)}`;
+    }
+
+    await bot.editMessageText(finalMessage, {
         chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
     });
     delete userStates[cid];
     return;
 }
+
 
 // ADD this new handler inside your bot.on('callback_query', ...) function
 
