@@ -4237,16 +4237,14 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-// --- FIX: Updated /sendall command to support text, photos, and videos ---
+// --- FIX: Updated /sendall command with correct function calling context ---
 bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
     
-    // ❗️ FIX: The user-provided text is now safely escaped.
     const caption = match[1] ? escapeMarkdown(match[1].trim()) : '';
-
     const repliedMsg = msg.reply_to_message;
     const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
     const isVideo = repliedMsg && repliedMsg.video;
@@ -4267,9 +4265,9 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     if (userIds.length === 0) {
         return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
     }
-    
-    const sendMethod = isPhoto ? bot.sendPhoto : isVideo ? bot.sendVideo : bot.sendMessage;
-    const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : isVideo ? repliedMsg.video.file_id : null;
+
+    // ❗️ FIX: Removed the 'sendMethod' variable. We will call the bot methods directly.
+    const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : (isVideo ? repliedMsg.video.file_id : null);
 
     for (const userId of userIds) {
         if (userId === adminId) continue;
@@ -4277,27 +4275,32 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
-            // The escaped 'caption' is now safely used here.
-            if (isPhoto || isVideo) {
-                await sendMethod(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
+            // ❗️ FIX: Use an if/else block to call the correct function directly on the 'bot' object.
+            // This preserves the internal context and prevents the '_request' error.
+            if (isPhoto) {
+                await bot.sendPhoto(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
+            } else if (isVideo) {
+                await bot.sendVideo(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await sendMethod(userId, `*Message from Admin:*\n\n${caption}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `*Broadcast:*\n\n${caption}`, { parse_mode: 'Markdown' });
             }
             
             successCount++;
             await new Promise(resolve => setTimeout(resolve, 100)); // Delay to avoid rate limits
         } catch (error) {
-            if (error.response?.body?.description.includes("bot was blocked")) {
+            // This error handling logic is now more specific for Telegram API errors.
+            const errorDescription = error.response?.body?.description || error.message;
+            if (errorDescription.includes("bot was blocked")) {
                 blockedCount++;
             } else {
-                console.error(`Error sending broadcast to user ${userId}:`, error.message);
+                console.error(`Error sending broadcast to user ${userId}:`, errorDescription);
                 failCount++;
             }
         }
     }
     
     await bot.sendMessage(adminId,
-        `Broadcast complete!\n\n` +
+        `✅ Broadcast complete!\n\n` +
         `*Successfully sent:* ${successCount}\n` +
         `*Blocked by user:* ${blockedCount}\n` +
         `*Other failures:* ${failCount}`,
