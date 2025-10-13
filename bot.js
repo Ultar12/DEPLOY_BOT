@@ -8361,14 +8361,12 @@ if (action === 'resend_otp') {
 }
 
 
-  // In bot.js, inside the bot.on('callback_query', async q => { ... }) function
 
-// This runs when the user clicks "✅ Yes, update"
 if (action === 'confirm_session_update') {
     if (!st || st.step !== 'AWAITING_SESSION_UPDATE_CONFIRMATION') return;
     
     const { sessionId } = st.data;
-    const userBots = await dbServices.getUserBots(cid); // Fetches bot names like ['bot1', 'bot2']
+    const userBots = await dbServices.getUserBots(cid);
 
     if (userBots.length === 0) {
         delete userStates[cid];
@@ -8378,36 +8376,45 @@ if (action === 'confirm_session_update') {
     }
 
     if (userBots.length === 1) {
-        // User has only one bot, update it directly.
         const botName = userBots[0];
-        await bot.editMessageText(`Updating session for your bot *${botName}*...`, {
+        // ❗️ FIX: The "Updating..." message is now stored to be edited later.
+        const workingMsg = await bot.editMessageText(`Updating session for your bot *${botName}*...`, {
             chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
         });
 
-        // Use your existing function to perform the update
-        const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
+        // ❗️ FIX: Validate the session ID against the bot's type.
+        const botTypeResult = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, botName]);
+        const botType = botTypeResult.rows[0]?.bot_type;
+        const isLevanter = botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX);
+        const isRaganork = botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX);
 
-        await bot.sendMessage(cid, result.message);
+        if (!isLevanter && !isRaganork) {
+            delete userStates[cid];
+            return bot.editMessageText(`**Validation Error:** The session ID you provided does not have the correct format for your *${botType}* bot. Kindly input the correct SESSION.`, {
+                chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+            });
+        }
+        
+        // If validation passes, perform the update.
+        const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
+        
+        // ❗️ FIX: Edit the "Updating..." message with the final result.
+        await bot.editMessageText(result.message, {
+            chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+        });
         delete userStates[cid];
 
     } else {
-        // User has multiple bots, ask them to choose.
-        const botButtons = userBots.map(botName => ({
-            text: botName,
-            callback_data: `apply_session_update:${botName}`
-        }));
-        
-        // Arrange buttons in rows of 3
+        // Multi-bot logic remains the same.
+        const botButtons = userBots.map(botName => ({ text: botName, callback_data: `apply_session_update:${botName}` }));
         const keyboard = chunkArray(botButtons, 3);
-
         await bot.editMessageText("You have multiple bots. Please select which one to update:", {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: { inline_keyboard: keyboard }
+            chat_id: cid, message_id: q.message.message_id, reply_markup: { inline_keyboard: keyboard }
         });
     }
     return;
 }
+
 
 // This runs when the user selects a specific bot to update
 if (action === 'apply_session_update') {
@@ -8416,24 +8423,31 @@ if (action === 'apply_session_update') {
     const botName = payload;
     const { sessionId } = st.data;
 
-    await bot.editMessageText(`Updating session for *${botName}*...`, {
+    // ❗️ FIX: The "Updating..." message is now stored to be edited later.
+    const workingMsg = await bot.editMessageText(`Updating session for *${botName}*...`, {
         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
     });
     
+    // ❗️ FIX: Validate the session ID against the bot's type.
+    const botTypeResult = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, botName]);
+    const botType = botTypeResult.rows[0]?.bot_type;
+    const isLevanter = botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX);
+    const isRaganork = botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX);
+
+    if (!isLevanter && !isRaganork) {
+        delete userStates[cid];
+        return bot.editMessageText(`**Validation Error:** The session ID you provided does not have the correct format for your *${botType}* bot. Action cancelled.`, {
+            chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+        });
+    }
+
     const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
     
-    await bot.sendMessage(cid, result.message);
-    delete userStates[cid];
-    return;
-}
-
-// This runs when the user clicks "❌ No, cancel"
-if (action === 'cancel_session_update') {
-    delete userStates[cid];
-    await bot.editMessageText("Action cancelled.", {
-        chat_id: cid,
-        message_id: q.message.message_id
+    // ❗️ FIX: Edit the "Updating..." message with the final result.
+    await bot.editMessageText(result.message, {
+        chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
     });
+    delete userStates[cid];
     return;
 }
 
