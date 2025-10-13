@@ -4771,6 +4771,75 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
     }
 });
 
+
+// Command handler for /4k using the Topaz Labs model
+bot.onText(/^\/4k$/, async (msg) => {
+    const cid = msg.chat.id.toString();
+
+    // 1. Check if the feature is enabled
+    if (!replicate) {
+        return bot.sendMessage(cid, "The image upscaling service is currently not configured. Please contact the admin.");
+    }
+
+    // 2. Check if the command is a reply to a photo
+    const repliedMsg = msg.reply_to_message;
+    if (!repliedMsg || !repliedMsg.photo) {
+        return bot.sendMessage(cid, "Please reply to an image with the `/4k` command to upscale it.");
+    }
+
+    const workingMsg = await bot.sendMessage(cid, "Got it. Sending your image to the Topaz AI upscaler... 🤖", {
+        reply_to_message_id: repliedMsg.message_id
+    });
+
+    try {
+        // 3. Get the image URL from Telegram
+        const photo = repliedMsg.photo[repliedMsg.photo.length - 1];
+        const file = await bot.getFile(photo.file_id);
+        const imageUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+        await bot.editMessageText("✨ Upscaling in progress... This professional model can take a minute or two.", {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+
+        // 4. ❗️ THIS IS THE UPDATED PART ❗️
+        // We are now calling the 'topazlabs/image-upscale' model you found.
+        const output = await replicate.run(
+            "topazlabs/image-upscale:be64d1f0219c7f667c46113659c22998782ffd5aa5915d31201e74f4b2354e61",
+            {
+                input: {
+                    image: imageUrl
+                    // This model doesn't have a 'scale' parameter, it upscales automatically.
+                }
+            }
+        );
+        
+        const upscaledImageUrl = output;
+
+        await bot.editMessageText("Upscaling complete! Sending the result back to you.", {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+
+        // 5. Send the upscaled image back as a document for full quality
+        await bot.sendDocument(cid, upscaledImageUrl, {
+            caption: "Here is your 4K upscaled image from Topaz AI!",
+            reply_to_message_id: repliedMsg.message_id
+        });
+
+        await bot.deleteMessage(cid, workingMsg.message_id).catch(() => {});
+
+    } catch (error) {
+        console.error("Error during /4k upscaling with Topaz:", error);
+        await bot.editMessageText("An error occurred while upscaling the image. This model may be under heavy load. Please try again later.", {
+            chat_id: cid,
+            message_id: workingMsg.message_id
+        });
+    }
+});
+
+
+
 // In bot.js, with your other admin commands
 
 bot.onText(/^\/restoreall$/, async (msg) => {
@@ -4862,6 +4931,39 @@ bot.on('message', async msg => {
   // Now the rest of your code for handling text messages will run correctly
   await dbServices.updateUserActivity(cid); 
   await notifyAdminUserOnline(msg); 
+
+// --- ❗️ FIX: HIGH-PRIORITY SESSION ID DETECTION ❗️ ---
+    // This now runs BEFORE any state checks or the Gemini fallback.
+    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
+    if (sessionRegex.test(text)) {
+        
+        // This message is a session ID. Immediately start the update flow.
+        // First, clear any previous state the user might have been in.
+        delete userStates[cid]; 
+
+        // Set the new state to wait for their confirmation.
+        userStates[cid] = {
+            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
+            data: { sessionId: text } // Store the session ID
+        };
+
+        // Ask for confirmation.
+        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use this to update one of your bots?", {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
+                        { text: "No, Cancel", callback_data: 'cancel_session_update' }
+                    ]
+                ]
+            }
+        });
+        
+        // IMPORTANT: Stop any other logic from running for this message.
+        return; 
+    }
+    
+     
 
   if (isMaintenanceMode && cid !== ADMIN_ID) {
       await bot.sendMessage(cid, "Bot is currently undergoing maintenance. Please check back later.");
@@ -5549,74 +5651,6 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
   
-// Command handler for /4k using the Topaz Labs model
-bot.onText(/^\/4k$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-
-    // 1. Check if the feature is enabled
-    if (!replicate) {
-        return bot.sendMessage(cid, "The image upscaling service is currently not configured. Please contact the admin.");
-    }
-
-    // 2. Check if the command is a reply to a photo
-    const repliedMsg = msg.reply_to_message;
-    if (!repliedMsg || !repliedMsg.photo) {
-        return bot.sendMessage(cid, "Please reply to an image with the `/4k` command to upscale it.");
-    }
-
-    const workingMsg = await bot.sendMessage(cid, "Got it. Sending your image to the Topaz AI upscaler... 🤖", {
-        reply_to_message_id: repliedMsg.message_id
-    });
-
-    try {
-        // 3. Get the image URL from Telegram
-        const photo = repliedMsg.photo[repliedMsg.photo.length - 1];
-        const file = await bot.getFile(photo.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
-        await bot.editMessageText("✨ Upscaling in progress... This professional model can take a minute or two.", {
-            chat_id: cid,
-            message_id: workingMsg.message_id
-        });
-
-        // 4. ❗️ THIS IS THE UPDATED PART ❗️
-        // We are now calling the 'topazlabs/image-upscale' model you found.
-        const output = await replicate.run(
-            "topazlabs/image-upscale:be64d1f0219c7f667c46113659c22998782ffd5aa5915d31201e74f4b2354e61",
-            {
-                input: {
-                    image: imageUrl
-                    // This model doesn't have a 'scale' parameter, it upscales automatically.
-                }
-            }
-        );
-        
-        const upscaledImageUrl = output;
-
-        await bot.editMessageText("Upscaling complete! Sending the result back to you.", {
-            chat_id: cid,
-            message_id: workingMsg.message_id
-        });
-
-        // 5. Send the upscaled image back as a document for full quality
-        await bot.sendDocument(cid, upscaledImageUrl, {
-            caption: "Here is your 4K upscaled image from Topaz AI!",
-            reply_to_message_id: repliedMsg.message_id
-        });
-
-        await bot.deleteMessage(cid, workingMsg.message_id).catch(() => {});
-
-    } catch (error) {
-        console.error("Error during /4k upscaling with Topaz:", error);
-        await bot.editMessageText("An error occurred while upscaling the image. This model may be under heavy load. Please try again later.", {
-            chat_id: cid,
-            message_id: workingMsg.message_id
-        });
-    }
-});
-
-
-// In bot.js, inside the bot.on('message', async msg => { ... }) handler
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 
