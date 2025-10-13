@@ -1347,6 +1347,21 @@ async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
 }
 
 
+// --- NEW FEATURE: 4K Image Upscaling ---
+const Replicate = require('replicate');
+
+// Initialize Replicate client if the API token exists
+let replicate;
+if (process.env.REPLICATE_API_TOKEN) {
+    replicate = new Replicate({
+        auth: process.env.REPLICATE_API_TOKEN,
+    });
+    console.log("🤖 Replicate AI for 4K upscaling initialized.");
+} else {
+    console.warn("⚠️ Replicate API token not found. /4k command will be disabled.");
+}
+
+
 // In bot.js
 
 async function sendRegisteredUserList(chatId, page = 1, messageId = null) {
@@ -1912,7 +1927,7 @@ function formatExpirationInfo(deployDateStr, expirationDateStr) {
 
 function buildKeyboard(isAdmin) {
   const baseMenu = [
-      ['**Get Session ID**', '**Deploy**'],
+      ['Get Session ID', 'Deploy'],
       ['My Bots', 'Free Trial'],
       ['FAQ', 'Referrals'],
       ['Support', 'More Features'] 
