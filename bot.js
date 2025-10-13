@@ -4244,7 +4244,8 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
     
-    const caption = match[1] ? match[1].trim() : '';
+    // ❗️ FIX: The user-provided text is now safely escaped.
+    const caption = match[1] ? escapeMarkdown(match[1].trim()) : '';
 
     const repliedMsg = msg.reply_to_message;
     const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
@@ -4254,17 +4255,13 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
          return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to broadcast.");
     }
 
-    await bot.sendMessage(adminId, "Broadcasting message to all users. This may take a while...");
+    await bot.sendMessage(adminId, "Broadcasting message to all active users. This may take a while...");
 
     let successCount = 0;
     let failCount = 0;
     let blockedCount = 0;
     
-    // --- THIS IS THE CRITICAL FIX ---
-    // Change the table from 'all_users_backup' to 'user_activity'
     const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
-    // --- END OF FIX ---
-    
     const userIds = allUserIdsResult.rows.map(row => row.user_id);
     
     if (userIds.length === 0) {
@@ -4280,19 +4277,20 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
+            // The escaped 'caption' is now safely used here.
             if (isPhoto || isVideo) {
-                await sendMethod(userId, fileId, { caption: `*Broadcast:*\n${caption}`, parse_mode: 'Markdown' });
+                await sendMethod(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await sendMethod(userId, `*Message from Admin:*\n${caption}`, { parse_mode: 'Markdown' });
+                await sendMethod(userId, `*Message from Admin:*\n\n${caption}`, { parse_mode: 'Markdown' });
             }
             
             successCount++;
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 100)); // Delay to avoid rate limits
         } catch (error) {
             if (error.response?.body?.description.includes("bot was blocked")) {
                 blockedCount++;
             } else {
-                console.error(`Error sending broadcast to user ${userId}:`, escapeMarkdown(error.message));
+                console.error(`Error sending broadcast to user ${userId}:`, error.message);
                 failCount++;
             }
         }
@@ -4306,6 +4304,7 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         { parse_mode: 'Markdown' }
     );
 });
+
 
 // ... other code ...
 
