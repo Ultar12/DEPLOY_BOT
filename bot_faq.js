@@ -1,81 +1,80 @@
-// bot_faq.js
-
 // --- Module-level variables for dependencies passed during init ---
 let moduleParams = {};
 
 /**
  * Initializes the FAQ module.
  * @param {object} params - Object containing dependencies from bot.js.
- * @param {object} params.bot - The TelegramBot instance.
- * @param {object} params.userStates - The userStates object for managing bot interactions.
- * @param {function} params.escapeMarkdown - Utility function to escape markdown characters.
  */
 function init(params) {
     moduleParams = params;
     console.log('--- bot_faq.js initialized! ---');
 }
 
-// --- FAQ Data ---
+// --- NEW FAQ Data ---
 const FAQ_QUESTIONS = [
+    // --- Section: Getting Started ---
     {
-        question: "How do I get a session ID?",
-        answer: "Tap 'Get Session ID' and follow the prompts. Alternatively, visit our website https://levanter-delta.vercel.app/ to generate one yourself."
+        question: "What does this bot do?",
+        answer: "This service allows you to deploy, manage, and host your own personal WhatsApp bots directly from Telegram with just a few taps."
     },
     {
-        question: "What is a 'Deploy Key'?",
-        answer: "A Deploy Key is a special code that authorizes you to use our service to deploy a bot. You might receive it from the admin or Purchase."
+        question: "What's the difference between Levanter and Raganork?",
+        answer: "They are two different types of WhatsApp bots with unique features.\n\n• *Levanter* is known for its stability and essential features.\n• *Raganork* often includes more advanced or experimental features.\n\nChoose the one that best fits your needs!"
     },
     {
-        question: "How do I deploy my bot after getting a session ID and/or deploy key?",
-        answer: "Tap 'Deploy', enter your Deploy Key (if required), then paste your session ID, and finally choose a unique name for your bot."
+        question: "How do I get a Session ID?",
+        answer: "A Session ID is required to link the Bot to your WhatsApp account. In the main menu, tap 'Get Session ID' and select your bot type (Levanter or Raganork) to visit the correct website to generate your code. The ID format will start with `levanter_` or `RGNK~`."
     },
     {
-        question: "What is the 'Free Trial' option?",
-        answer: "The Free Trial allows you to deploy a bot for 3 days to test the service. You can use it once every 14 days."
+        question: "What is a 'Deploy Key' and why do I need one?",
+        answer: "A Deploy Key is a one-time code used to authorize a paid deployment. You can get a key by making a payment through the bot's menu. This allows us to provide a stable and reliable hosting service."
     },
     {
-        question: "My bot failed to deploy, what should I do?",
-        answer: "Check the error message provided by the bot. Common issues are incorrect session IDs, app names already taken, or Server issues. Try again, or contact support if the issue persists."
+        question: "What is the 'Free Trial'?",
+        answer: "The Free Trial lets you test our service by deploying a bot for a limited time. To access it, you must first join our support channel. You can only use the free trial once per cooldown period."
+    },
+    // --- Section: Managing Your Bot ---
+    {
+        question: "How can I see and manage my bots?",
+        answer: "Tap the 'My Bots' button on the main menu or use our Mini App. This will show you a list of all your active bots, their status, and their expiration dates."
     },
     {
-        question: "How can I see my deployed bots?",
-        answer: "Tap the 'My Bots' button to see a list of all bots you have deployed through this service."
+        question: "How do I change my bot's settings (Variables)?",
+        answer: "Navigate to 'My Bots', select the bot you want to configure, and tap 'Set Variable'. This menu allows you to change your `SESSION_ID`, `PREFIX`, `SUDO` numbers, and other important settings."
     },
     {
-        question: "My bot is offline/logged out. How do I fix it?",
-        answer: "This usually means your session ID is invalid. Go to 'My Bots', select your bot, then choose 'Set Variable' and update the SESSION_ID with a new one from https://levanter-delta.vercel.app/."
+        question: "What do 'Restart', 'Redeploy', and 'Delete' do?",
+        answer: "• *Restart:* Turns your bot off and on again. This is the first thing to try if your bot is unresponsive.\n• *Redeploy:* Updates your bot with the latest source code, giving you new features or bug fixes without losing your settings.\n• *Delete:* Permanently removes your bot and all its data from our servers. This action cannot be undone."
     },
     {
-        question: "What do 'Restart', 'Logs', 'Redeploy' do?",
-        answer: "Restart: Restarts your bot application on server.\nLogs: Shows the recent activity and error logs of your bot, useful for debugging.\nRedeploy: Rebuilds and deploys your bot from the latest code on GitHub, useful for updates or fresh installs."
+        question: "What happens when my bot expires?",
+        answer: "Your bot will be automatically stopped. You will have a grace period to renew it. After the grace period, if the bot is not renewed, it will be permanently deleted from our servers to free up resources."
+    },
+    // --- Section: Troubleshooting ---
+    {
+        question: "My bot is 'Logged Out' or 'Offline'. How do I fix it?",
+        answer: "This is the most common issue and means your Session ID has expired. You must generate a new one.\n\n*Solution:* Go to 'My Bots' -> Select your bot -> 'Set Variable' -> 'SESSION_ID', and paste your new, valid Session ID.\n\n⚠️ *IMPORTANT:* A bot left in the 'Logged Out' state for more than **7 days** will be automatically deleted."
     },
     {
-        question: "How do I change my bot's settings/variables like AUTO_STATUS_VIEW or PREFIX?",
-        answer: "Go to 'My Bots', select your bot, then choose 'Set Variable'. You can then select common variables or 'Add/Set Other Variable' for any custom environment variables."
+        question: "My bot failed to deploy. What should I do?",
+        answer: "First, check the error message. Common reasons for failure are:\n1.  An app name that is already taken (it must be unique).\n2.  An invalid or expired Session ID.\n\nTry deploying again with a different name and a fresh Session ID."
     },
     {
-        question: "What is SUDO variable and how do I manage it?",
-        answer: "SUDO lists the WhatsApp numbers that have administrative control over your bot. You can add or remove numbers using the 'Set Variable' -> 'SUDO' options."
+        question: "Why does my bot sometimes go offline at the start of the month?",
+        answer: "Our service performs routine maintenance at the beginning of each month to ensure everything runs smoothly. This can cause a brief, temporary downtime for some bots. They typically come back online automatically shortly after."
+    },
+    // --- Section: General ---
+    {
+        question: "How do Referrals work?",
+        answer: "Tap the 'Referrals' button to get your unique invite link. When a friend uses your link to deploy their first paid bot, you will receive an extension on your own bot's subscription as a thank you!"
     },
     {
-        question: "How do I delete my bot?",
-        answer: "Go to 'My Bots', select the bot, then tap 'Delete'. Be careful, this action is permanent!"
+        question: "Is my data and Session ID safe?",
+        answer: "Yes. Your configuration, including your Session ID, is stored securely. We do not share your data or have access to your WhatsApp messages."
     },
     {
-        question: "I have a question not covered here. How do I get help?",
-        answer: "You can 'Ask Admin a Question' directly through the bot, or 'Contact Admin Directly' via Telegram using the button in the 'Support' menu."
-    },
-    {
-        question: "What is the 'Contact Admin to Get Key Dashboard' button for?",
-        answer: "This is for administrators or users looking to manage deploy keys or access admin-specific dashboards, usually for service providers."
-    },
-    {
-        question: "Who is the admin?",
-        answer: "The primary support contact is @star_ies1."
-    },
-    {
-        question: "When will my bot expire?",
-        answer: "This depends on your subscription plan. Please contact the admin for clarification regarding your specific bot's expiration."
+        question: "I need more help. How do I contact support?",
+        answer: "For any questions not covered here, please use the 'Support' button on the main menu. You can ask a question directly through the bot, and the admin will be notified. The admin's direct contact is @staries1."
     }
 ];
 
@@ -83,67 +82,54 @@ const FAQ_ITEMS_PER_PAGE = 5;
 
 // Function to send a specific page of FAQs
 async function sendFaqPage(chatId, messageId, page) {
-    const { bot, userStates, escapeMarkdown } = moduleParams; // Destructure parameters from moduleParams
+    const { bot, userStates, escapeMarkdown } = moduleParams;
 
     const startIndex = (page - 1) * FAQ_ITEMS_PER_PAGE;
     const endIndex = startIndex + FAQ_ITEMS_PER_PAGE;
     const currentQuestions = FAQ_QUESTIONS.slice(startIndex, endIndex);
 
-    let faqText = "";
+    let faqText = "*Frequently Asked Questions*\n\n";
     currentQuestions.forEach((faq, index) => {
         faqText += `*${startIndex + index + 1}. ${escapeMarkdown(faq.question)}*\n`;
-        faqText += `${escapeMarkdown(faq.answer)}\n\n`;
+        faqText += `_${escapeMarkdown(faq.answer)}_\n\n`;
     });
 
     const totalPages = Math.ceil(FAQ_QUESTIONS.length / FAQ_ITEMS_PER_PAGE);
-
     const keyboard = [];
     const navigationRow = [];
 
     if (page > 1) {
-        navigationRow.push({ text: 'Back', callback_data: `faq_page:${page - 1}` });
+        navigationRow.push({ text: '« Previous', callback_data: `faq_page:${page - 1}` });
     }
     if (page < totalPages) {
-        navigationRow.push({ text: 'Next', callback_data: `faq_page:${page + 1}` });
+        navigationRow.push({ text: 'Next »', callback_data: `faq_page:${page + 1}` });
     }
     if (navigationRow.length > 0) {
         keyboard.push(navigationRow);
     }
-
-    keyboard.push([{ text: 'Back to Main Menu', callback_data: 'back_to_main_menu' }]);
-
+    keyboard.push([{ text: '« Back to Main Menu', callback_data: 'back_to_main_menu' }]);
 
     const options = {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
-        reply_markup: {
-            inline_keyboard: keyboard
-        }
+        reply_markup: { inline_keyboard: keyboard }
     };
 
-    // Initialize userStates for chatId if it doesn't exist
     if (!userStates[chatId]) {
         userStates[chatId] = {};
     }
-
     userStates[chatId].step = 'VIEWING_FAQ';
     userStates[chatId].faqPage = page;
 
     if (messageId && userStates[chatId].faqMessageId === messageId) {
-        // Attempt to edit the existing message if ID matches the last sent FAQ message
-        await bot.editMessageText(faqText, {
-            chat_id: chatId,
-            message_id: messageId,
-            ...options
-        }).catch(err => {
-            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Sending new message instead.`);
-            // If message edit fails (e.g., message not found or too old), send new message
-            bot.sendMessage(chatId, faqText, options).then(sentMsg => {
-                userStates[chatId].faqMessageId = sentMsg.message_id; // Update to new message ID
-            }).catch(sendErr => console.error(`Error sending new FAQ message after edit failure: ${sendErr.message}`));
-        });
+        try {
+            await bot.editMessageText(faqText, { chat_id: chatId, message_id: messageId, ...options });
+        } catch (err) {
+            console.error(`Error editing FAQ message ${messageId}: ${err.message}. Sending new message.`);
+            const sentMsg = await bot.sendMessage(chatId, faqText, options);
+            userStates[chatId].faqMessageId = sentMsg.message_id;
+        }
     } else {
-        // Send a new message if no messageId is provided, or if the stored one doesn't match, or if it's the first time
         const sentMsg = await bot.sendMessage(chatId, faqText, options);
         userStates[chatId].faqMessageId = sentMsg.message_id;
     }
