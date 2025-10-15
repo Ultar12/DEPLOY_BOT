@@ -5571,7 +5571,7 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
     return;
   }
 
-   --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
+  // --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
     const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
     // This now ONLY runs if the user is NOT in a state, or is in a state that is NOT expecting a session ID.
     if (sessionRegex.test(text) && (!st || (st.step !== 'SESSION_ID' && st.step !== 'SETVAR_ENTER_VALUE'))) {
