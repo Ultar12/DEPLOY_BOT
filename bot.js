@@ -4925,34 +4925,25 @@ bot.on('message', async msg => {
   await dbServices.updateUserActivity(cid); 
   await notifyAdminUserOnline(msg); 
 
-// --- ❗️ FIX: HIGH-PRIORITY SESSION ID DETECTION ❗️ ---
-    // This now runs BEFORE any state checks or the Gemini fallback.
+// --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
     const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
-    if (sessionRegex.test(text)) {
+    // This now ONLY runs if the user is NOT in a state, or is in a state that is NOT expecting a session ID.
+    if (sessionRegex.test(text) && (!st || (st.step !== 'SESSION_ID' && st.step !== 'SETVAR_ENTER_VALUE'))) {
         
-        // This message is a session ID. Immediately start the update flow.
-        // First, clear any previous state the user might have been in.
         delete userStates[cid]; 
-
-        // Set the new state to wait for their confirmation.
         userStates[cid] = {
             step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
-            data: { sessionId: text } // Store the session ID
+            data: { sessionId: text }
         };
 
-        // Ask for confirmation.
         await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use this to update one of your bots?", {
             reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
-                        { text: "No, Cancel", callback_data: 'cancel_session_update' }
-                    ]
-                ]
+                inline_keyboard: [[
+                    { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
+                    { text: "No, Cancel", callback_data: 'cancel_session_update' }
+                ]]
             }
         });
-        
-        // IMPORTANT: Stop any other logic from running for this message.
         return; 
     }
     
