@@ -4910,42 +4910,12 @@ bot.on('message', async msg => {
     // If the message has no text (e.g., a sticker, photo), ignore it.
     if (!text) 
         return;
-    
-
-    // =========================================================================
-    //
-    // ALL YOUR OTHER TEXT-BASED LOGIC GOES HERE
-    // (For example: if (text === 'Deploy'), if (st && st.step === ...), etc.)
-    //
-    // ========================================================================
-
+  
 
 
   // Now the rest of your code for handling text messages will run correctly
   await dbServices.updateUserActivity(cid); 
   await notifyAdminUserOnline(msg); 
-
-// --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
-    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
-    // This now ONLY runs if the user is NOT in a state, or is in a state that is NOT expecting a session ID.
-    if (sessionRegex.test(text) && (!st || (st.step !== 'SESSION_ID' && st.step !== 'SETVAR_ENTER_VALUE'))) {
-        
-        delete userStates[cid]; 
-        userStates[cid] = {
-            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
-            data: { sessionId: text }
-        };
-
-        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use this to update one of your bots?", {
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
-                    { text: "No, Cancel", callback_data: 'cancel_session_update' }
-                ]]
-            }
-        });
-        return; 
-    }
     
      
 
@@ -5601,6 +5571,27 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
     return;
   }
 
+   --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
+    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
+    // This now ONLY runs if the user is NOT in a state, or is in a state that is NOT expecting a session ID.
+    if (sessionRegex.test(text) && (!st || (st.step !== 'SESSION_ID' && st.step !== 'SETVAR_ENTER_VALUE'))) {
+        
+        delete userStates[cid]; 
+        userStates[cid] = {
+            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
+            data: { sessionId: text }
+        };
+
+        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use this to update one of your bots?", {
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
+                    { text: "No, Cancel", callback_data: 'cancel_session_update' }
+                ]]
+            }
+        });
+        return; 
+    }
   
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
