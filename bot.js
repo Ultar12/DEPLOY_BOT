@@ -4317,25 +4317,23 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
     
-    // The new regex captures the bot type and the message separately
-    const botType = match[1]; // Will be 'levanter', 'raganork', or undefined
+    const botType = match[1]; 
     const messageText = match[2] ? match[2].trim() : '';
-
     const caption = escapeMarkdown(messageText);
     const repliedMsg = msg.reply_to_message;
     const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
     const isVideo = repliedMsg && repliedMsg.video;
     
     if (!isPhoto && !isVideo && !caption) {
-         return bot.sendMessage(adminId, "Please provide a message to broadcast, optionally targeting 'levanter' or 'raganork' users (e.g., `/sendall levanter Your message`).");
+         return bot.sendMessage(adminId, "Please provide a message to broadcast, optionally targeting 'levanter' or 'raganork' users.");
     }
 
     let userIds;
-    let targetAudience = "all active users";
+    let targetAudience = "all users with deployed bots";
 
     try {
         if (botType) {
-            // --- NEW: Fetch users who have deployed a specific bot type ---
+            // This part already works correctly for targeted messages.
             targetAudience = `all *${botType.toUpperCase()}* users`;
             const result = await pool.query(
                 'SELECT DISTINCT user_id FROM user_bots WHERE bot_type = $1',
@@ -4343,13 +4341,12 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
             );
             userIds = result.rows.map(row => row.user_id);
         } else {
-            // --- Original Logic: Fetch all users ---
-            const result = await pool.query('SELECT user_id FROM user_activity');
+            // ❗️ FIX: This now fetches only users who have at least one bot.
+            const result = await pool.query('SELECT DISTINCT user_id FROM user_bots');
             userIds = result.rows.map(row => row.user_id);
         }
     } catch (dbError) {
-        console.error("Error fetching user list for broadcast:", dbError);
-        return bot.sendMessage(adminId, `A database error occurred while fetching the user list: ${dbError.message}`);
+        return bot.sendMessage(adminId, `A database error occurred: ${dbError.message}`);
     }
 
     if (userIds.length === 0) {
@@ -4375,11 +4372,11 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
             } else if (isVideo) {
                 await bot.sendVideo(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await bot.sendMessage(userId, `*Message from Admin:*\n\n${caption}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `*Broadcast:*\n\n${caption}`, { parse_mode: 'Markdown' });
             }
             
             successCount++;
-            await new Promise(resolve => setTimeout(resolve, 100)); // Delay to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 100)); // Delay
         } catch (error) {
             const errorDescription = error.response?.body?.description || error.message;
             if (errorDescription.includes("bot was blocked")) {
@@ -4396,8 +4393,6 @@ bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, mat
         { parse_mode: 'Markdown' }
     );
 });
-
-
 
 // ... other code ...
 
