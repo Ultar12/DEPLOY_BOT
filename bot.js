@@ -101,6 +101,7 @@ const {
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7730944193:AAG1RKwymeGG1HlYZRvHcOZZy_St9c77Rg';
 const TELEGRAM_USER_ID = '7302005705';
 const TELEGRAM_CHANNEL_ID = '-1002892034574';
+const BACKUP_CHANNEL_ID = '-1003155469964';
 
 const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https://github.com/lyfe00011/levanter.git';
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
@@ -3402,14 +3403,15 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 });
 
 
-/// This new /id command works for both users and channels
+// This new /id command is smarter and provides guidance.
 bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
+    const repliedMsg = msg.reply_to_message;
 
-    // Check if the command is a reply to a forwarded message
-    if (msg.reply_to_message && msg.reply_to_message.forward_from_chat) {
-        const forwardInfo = msg.reply_to_message.forward_from_chat;
+    // --- Case 1: The user correctly replied to a forwarded message from a channel. ---
+    if (repliedMsg && repliedMsg.forward_from_chat) {
+        const forwardInfo = repliedMsg.forward_from_chat;
         
         const channelTitle = escapeMarkdown(forwardInfo.title);
         const channelId = forwardInfo.id; // This is the ID you need
@@ -3418,13 +3420,20 @@ bot.onText(/^\/id$/, async (msg) => {
             parse_mode: 'Markdown' 
         });
 
+    // --- Case 2: The user replied, but NOT to a forwarded message. ---
+    } else if (repliedMsg) {
+        await bot.sendMessage(cid, "It looks like you replied to a regular message. To get a channel ID, you must **reply to a forwarded message** from that channel.", {
+            parse_mode: 'Markdown'
+        });
+
+    // --- Case 3: The user did not reply to anything. ---
     } else {
-        // If it's not a reply to a forwarded message, just return the user's ID
-        await bot.sendMessage(cid, `Your Telegram User ID is: \`${cid}\``, { 
+        await bot.sendMessage(cid, `Your Telegram User ID is: \`${cid}\`\n\n*To get a channel ID, please forward a message from the channel here first, then reply to it with /id.*`, { 
             parse_mode: 'Markdown' 
         });
     }
 });
+
 
 
 // New /add <user_id> command for admin
@@ -4271,36 +4280,58 @@ bot.onText(/^\/bapp$/, (msg) => {
 
 
 
-// --- FIX: Updated /sendall command with correct function calling context ---
-bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
+// Replace your existing /sendall command handler with this one
+bot.onText(/^\/sendall(?:\s+(levanter|raganork))?\s*([\s\S]*)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
     
-    const caption = match[1] ? escapeMarkdown(match[1].trim()) : '';
+    // The new regex captures the bot type and the message separately
+    const botType = match[1]; // Will be 'levanter', 'raganork', or undefined
+    const messageText = match[2] ? match[2].trim() : '';
+
+    const caption = escapeMarkdown(messageText);
     const repliedMsg = msg.reply_to_message;
     const isPhoto = repliedMsg && repliedMsg.photo && repliedMsg.photo.length > 0;
     const isVideo = repliedMsg && repliedMsg.video;
     
     if (!isPhoto && !isVideo && !caption) {
-         return bot.sendMessage(adminId, "Please provide a message or reply to an image/video to broadcast.");
+         return bot.sendMessage(adminId, "Please provide a message to broadcast, optionally targeting 'levanter' or 'raganork' users (e.g., `/sendall levanter Your message`).");
     }
 
-    await bot.sendMessage(adminId, "Broadcasting message to all active users. This may take a while...");
+    let userIds;
+    let targetAudience = "all active users";
+
+    try {
+        if (botType) {
+            // --- NEW: Fetch users who have deployed a specific bot type ---
+            targetAudience = `all *${botType.toUpperCase()}* users`;
+            const result = await pool.query(
+                'SELECT DISTINCT user_id FROM user_bots WHERE bot_type = $1',
+                [botType]
+            );
+            userIds = result.rows.map(row => row.user_id);
+        } else {
+            // --- Original Logic: Fetch all users ---
+            const result = await pool.query('SELECT user_id FROM user_activity');
+            userIds = result.rows.map(row => row.user_id);
+        }
+    } catch (dbError) {
+        console.error("Error fetching user list for broadcast:", dbError);
+        return bot.sendMessage(adminId, `A database error occurred while fetching the user list: ${dbError.message}`);
+    }
+
+    if (userIds.length === 0) {
+        return bot.sendMessage(adminId, `No users found for the target audience: ${targetAudience}.`);
+    }
+    
+    await bot.sendMessage(adminId, `Broadcasting message to ${targetAudience} (${userIds.length} users). This may take a while...`, { parse_mode: 'Markdown' });
 
     let successCount = 0;
     let failCount = 0;
     let blockedCount = 0;
     
-    const allUserIdsResult = await pool.query('SELECT user_id FROM user_activity');
-    const userIds = allUserIdsResult.rows.map(row => row.user_id);
-    
-    if (userIds.length === 0) {
-        return bot.sendMessage(adminId, "No users found in the user_activity table to send messages to.");
-    }
-
-    // ❗️ FIX: Removed the 'sendMethod' variable. We will call the bot methods directly.
     const fileId = isPhoto ? repliedMsg.photo[repliedMsg.photo.length - 1].file_id : (isVideo ? repliedMsg.video.file_id : null);
 
     for (const userId of userIds) {
@@ -4309,20 +4340,17 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
         try {
             if (await dbServices.isUserBanned(userId)) continue;
             
-            // ❗️ FIX: Use an if/else block to call the correct function directly on the 'bot' object.
-            // This preserves the internal context and prevents the '_request' error.
             if (isPhoto) {
                 await bot.sendPhoto(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
             } else if (isVideo) {
                 await bot.sendVideo(userId, fileId, { caption: `*Broadcast from Admin:*\n\n${caption}`, parse_mode: 'Markdown' });
             } else {
-                await bot.sendMessage(userId, `*Broadcast:*\n\n${caption}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(userId, `*Message from Admin:*\n\n${caption}`, { parse_mode: 'Markdown' });
             }
             
             successCount++;
             await new Promise(resolve => setTimeout(resolve, 100)); // Delay to avoid rate limits
         } catch (error) {
-            // This error handling logic is now more specific for Telegram API errors.
             const errorDescription = error.response?.body?.description || error.message;
             if (errorDescription.includes("bot was blocked")) {
                 blockedCount++;
@@ -4334,13 +4362,11 @@ bot.onText(/^\/sendall ?(.+)?$/, async (msg, match) => {
     }
     
     await bot.sendMessage(adminId,
-        `✅ Broadcast complete!\n\n` +
-        `*Successfully sent:* ${successCount}\n` +
-        `*Blocked by user:* ${blockedCount}\n` +
-        `*Other failures:* ${failCount}`,
+        `Broadcast complete!\n\n*Target Audience:* ${targetAudience}\n*Successfully sent:* ${successCount}\n*Blocked by user:* ${blockedCount}\n*Other failures:* ${failCount}`,
         { parse_mode: 'Markdown' }
     );
 });
+
 
 
 // ... other code ...
@@ -4367,61 +4393,94 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 
 
+// Replace your existing /backupall command handler with this one
 bot.onText(/^\/backupall$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
 
-    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
+    const { BACKUP_CHANNEL_ID } = process.env;
+    if (!BACKUP_CHANNEL_ID) {
+        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** `BACKUP_CHANNEL_ID` is not set.");
+    }
+    const progressMsg = await bot.sendMessage(adminId, '**Starting Single-File Backup Process...**', { parse_mode: 'Markdown' });
 
     try {
-        const result = await dbServices.backupAllPaidBots();
-        
-        let finalMessage;
-        if (result.success && result.stats) {
-            const { levanter, raganork, unknown } = result.stats;
-            const { appsBackedUp, appsFailed } = result.miscStats;
+        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
+        let successCount = 0, failCount = 0, skippedCount = 0;
 
-            // Format the lists of app names
-            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
+        for (const [index, botInfo] of allBots.entries()) {
+            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            finalMessage = `
-*Backup Summary:*
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
+                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            }).catch(() => {});
 
-*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
-*Total Success:* ${appsBackedUp}
-*Total Failed:* ${appsFailed}
+            try {
+                // --- Part 1: Backup Config Vars (as before) ---
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
+                
+                // --- Part 2: Find and Delete Old Backup ---
+                const oldBackupResult = await pool.query("SELECT telegram_message_id FROM database_backups WHERE bot_name = $1", [appName]);
+                if (oldBackupResult.rows.length > 0) {
+                    const oldMessageId = oldBackupResult.rows[0].telegram_message_id;
+                    await bot.deleteMessage(BACKUP_CHANNEL_ID, oldMessageId).catch(err => {
+                        console.warn(`[Backup] Could not delete old backup message ${oldMessageId} for ${appName}. It may have been deleted manually. Error: ${err.message}`);
+                    });
+                }
+                
+                // --- Part 3: Create and Upload New Backup ---
+                const addonsRes = await herokuApi.get(`/apps/${appName}/addons`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                const dbAddon = addonsRes.data.find(addon => addon.addon_service.name.includes('heroku-postgresql'));
+                if (!dbAddon) { skippedCount++; successCount++; continue; }
 
-*Levanter Bots:*
-  - Success: ${levanter.backedUp.length}
-  - Failed: ${levanter.failed.length}
+                const backupStartRes = await herokuApi.post(`/apps/${appName}/database-backups`, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                
+                let backupStatus = '';
+                // ... (your existing while loop to wait for backup completion remains the same) ...
+                while (backupStatus !== 'completed') { /* ... same code ... */ }
 
-*Raganork Bots:*
-  - Success: ${raganork.backedUp.length}
-  - Failed: ${raganork.failed.length}
+                const backupDetailsRes = await herokuApi.post(`/apps/${appName}/database-backups/${backupStartRes.data.id}/actions/public-url`, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                const downloadUrl = backupDetailsRes.data.url;
+                const caption = `**Latest DB Backup**\n*Bot:* \`${appName}\`\n*Owner:* \`${ownerId}\``;
+                
+                const sentBackupMsg = await bot.sendDocument(BACKUP_CHANNEL_ID, downloadUrl, { caption: caption, parse_mode: 'Markdown' });
+                
+                // --- Part 4: Save the New Backup Info (UPSERT) ---
+                const { file_id } = sentBackupMsg.document;
+                const { message_id } = sentBackupMsg;
+                await pool.query(
+                    `INSERT INTO database_backups (bot_name, owner_id, telegram_file_id, telegram_message_id)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (bot_name) 
+                     DO UPDATE SET 
+                        owner_id = EXCLUDED.owner_id, 
+                        telegram_file_id = EXCLUDED.telegram_file_id, 
+                        telegram_message_id = EXCLUDED.telegram_message_id,
+                        backup_timestamp = NOW()`,
+                    [appName, ownerId, file_id, message_id]
+                );
 
-*Misc. Bots:*
-_The following apps were not found in the local database._
-  - **Success:** ${formatList(unknown.backedUp)}
-  - **Failed:** ${formatList(unknown.failed)}
-            `;
-        } else {
-            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
+                successCount++;
+            } catch (error) {
+                failCount++;
+                const errorMsg = error.response?.data?.message || error.message;
+                console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
+                await bot.sendMessage(adminId, `❌ Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+            }
         }
-        
-        await bot.editMessageText(finalMessage, {
-            chat_id: cid,
-            message_id: sentMsg.message_id,
-            parse_mode: 'Markdown'
-        });
+
+        await bot.editMessageText(
+            `**Backup Process Complete!**\n\n*Updated:* ${successCount}\n*Failed:* ${failCount}\n*Skipped (No DB):* ${skippedCount}\n\nYour backup channel now contains only the latest database file for each bot.`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+
     } catch (error) {
-        await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
-            chat_id: cid,
-            message_id: sentMsg.message_id
+        await bot.editMessageText(`**A critical error occurred during the backup process:**\n\n${error.message}`, {
+            chat_id: adminId, message_id: progressMsg.message_id
         });
     }
 });
-
-// bot.js (REPLACE the entire bot.onText(/^\/forward (\d+)$/, ...) function)
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
