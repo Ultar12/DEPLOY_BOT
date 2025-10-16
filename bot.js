@@ -3402,12 +3402,30 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
 });
 
 
-// New /id command
-bot.onText(/^\/id$/, async msg => {
+/// This new /id command works for both users and channels
+bot.onText(/^\/id$/, async (msg) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
-    await bot.sendMessage(cid, `Your Telegram Chat ID is: \`${cid}\``, { parse_mode: 'Markdown' });
+
+    // Check if the command is a reply to a forwarded message
+    if (msg.reply_to_message && msg.reply_to_message.forward_from_chat) {
+        const forwardInfo = msg.reply_to_message.forward_from_chat;
+        
+        const channelTitle = escapeMarkdown(forwardInfo.title);
+        const channelId = forwardInfo.id; // This is the ID you need
+
+        await bot.sendMessage(cid, `The ID for the channel **${channelTitle}** is:\n\n\`${channelId}\``, { 
+            parse_mode: 'Markdown' 
+        });
+
+    } else {
+        // If it's not a reply to a forwarded message, just return the user's ID
+        await bot.sendMessage(cid, `Your Telegram User ID is: \`${cid}\``, { 
+            parse_mode: 'Markdown' 
+        });
+    }
 });
+
 
 // New /add <user_id> command for admin
 bot.onText(/^\/add (\d+)$/, async (msg, match) => {
