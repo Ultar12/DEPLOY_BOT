@@ -17,6 +17,7 @@ const path = require('path');
 const mailListener = require('./mail_listener');
 const fs = require('fs');
 const fetch = require('node-fetch');
+const cron = require('node-cron');
 const express = require('express');
 
 // In bot.js (near the top)
@@ -1049,6 +1050,55 @@ function formatTimeLeft(expirationDateStr) {
 
     return ` (${timeLeftStr.trim()} left)`;
 }
+
+// --- Automated Daily Tasks Scheduler ---
+function startScheduledTasks() {
+    console.log('🕒 Initializing scheduled tasks...');
+
+    // This is the fake message object we'll use to trigger the commands.
+    // It pretends to be a message from you (the ADMIN).
+    const adminMsg = {
+        chat: { id: ADMIN_ID },
+        from: { id: ADMIN_ID }
+    };
+
+    // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
+    // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
+    cron.schedule('0 0 * * *', async () => {
+        console.log('[Scheduler]  Cron job triggered: Running /backupall');
+        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
+        
+        // Find the handler for /backupall and execute it with the fake admin message
+        const backupAllHandler = bot._events.find(e => e.regexp.source === /^\/backupall$/.source);
+        if (backupAllHandler) {
+            await backupAllHandler.callback(adminMsg, null); // Execute the command's logic
+        } else {
+            console.error('[Scheduler] Could not find the /backupall command handler!');
+        }
+    }, {
+        scheduled: true,
+        timezone: "Africa/Lagos" // Set to your local timezone
+    });
+
+    // Schedule 2: Run /copydb every day at 1:00 AM
+    cron.schedule('0 3 * * *', async () => {
+        console.log('[Scheduler] Cron job triggered: Running /copydb');
+        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily main database copy...");
+
+        const copyDbHandler = bot._events.find(e => e.regexp.source === /^\/copydb$/.source);
+        if (copyDbHandler) {
+            await copyDbHandler.callback(adminMsg, null);
+        } else {
+            console.error('[Scheduler] Could not find the /copydb command handler!');
+        }
+    }, {
+        scheduled: true,
+        timezone: "Africa/Lagos"
+    });
+
+    console.log('Daily backup and copydb tasks have been scheduled.');
+}
+
 
 // A reusable function to format a more precise countdown for the single bot menu.
 function formatPreciseCountdown(expirationDateStr) {
