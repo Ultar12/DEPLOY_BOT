@@ -99,17 +99,16 @@ const execPromise = util.promisify(exec);
  * @param {string} appName The name of the Heroku app.
  * @returns {Promise<{success: boolean, message: string}>}
  */
-// In bot_services.js, replace this function
 async function backupHerokuDbToRenderSchema(appName) {
-    // ❗️ FIX: Get the herokuApi tool from the module's parameters.
-    const { mainPool, herokuApi } = moduleParams;
+    // ❗️ FIX: Destructure tools from the correctly initialized moduleParams.
+    const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
     
     const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`;
+    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
 
     try {
         // Get the Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${process.env.HEROKU_API_KEY}` } });
+        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
         const herokuDbUrl = configRes.data.DATABASE_URL;
 
         if (!herokuDbUrl) {
@@ -125,6 +124,7 @@ async function backupHerokuDbToRenderSchema(appName) {
         }
 
         console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
+        // Use pg_dump to pipe from Heroku and psql to restore into the new schema
         const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
         
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
