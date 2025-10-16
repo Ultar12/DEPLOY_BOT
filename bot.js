@@ -4392,86 +4392,59 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 
 
-// Replace your existing /backupall command handler with this one
 bot.onText(/^\/backupall$/, async (msg) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
+    const cid = msg.chat.id.toString();
+    if (cid !== ADMIN_ID) return;
 
-    const { BACKUP_CHANNEL_ID, HEROKU_API_KEY } = process.env; // Added HEROKU_API_KEY for easier access
-    if (!BACKUP_CHANNEL_ID) {
-        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** `BACKUP_CHANNEL_ID` is not set.");
-    }
-    const progressMsg = await bot.sendMessage(adminId, '🚀 **Starting Full System Backup...**', { parse_mode: 'Markdown' });
+    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
 
     try {
-        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
-        let successCount = 0, failCount = 0, skippedCount = 0;
-
-        for (const [index, botInfo] of allBots.entries()) {
-            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
-            
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
-                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
-            }).catch(() => {});
-
-            try {
-                // --- Part 1: Backup Config Vars (This part was working correctly) ---
-                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                
-                // --- Part 2: Backup Database with Correct Headers ---
-                const addonsRes = await herokuApi.get(`/apps/${appName}/addons`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                const dbAddon = addonsRes.data.find(addon => addon.addon_service.name.includes('heroku-postgresql'));
-                if (!dbAddon) { skippedCount++; successCount++; continue; }
-
-                // ❗️ FIX: Define the required headers for all Postgres API calls
-                const pgApiHeaders = {
-                    'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                    'Accept': 'application/vnd.heroku+json; version=3'
-                };
-
-                const pgBackupUrl = `https://postgres-api.heroku.com/client/v11/databases/${dbAddon.id}/backups`;
-                const backupStartRes = await axios.post(pgBackupUrl, {}, { headers: pgApiHeaders });
-                
-                let backupInfo = backupStartRes.data;
-                while (backupInfo.finished_at === null) {
-                    await new Promise(resolve => setTimeout(resolve, 10000));
-                    const statusRes = await axios.get(`${pgBackupUrl}/${backupInfo.num}`, { headers: pgApiHeaders });
-                    backupInfo = statusRes.data;
-                    if (backupInfo.failed_at !== null) throw new Error(`Heroku DB backup failed: ${backupInfo.error_message}`);
-                }
-                
-                const publicUrlRes = await axios.post(`${pgBackupUrl}/${backupInfo.num}/public-url`, {}, { headers: pgApiHeaders });
-                const downloadUrl = publicUrlRes.data.url;
-
-                // Upload to Telegram and save the record (same as before)
-                const caption = `✅ **DB Backup** | *Bot:* \`${appName}\` | *Owner:* \`${ownerId}\``;
-                const sentBackupMsg = await bot.sendDocument(BACKUP_CHANNEL_ID, downloadUrl, { caption: caption, parse_mode: 'Markdown' });
-                const { file_id, message_id } = sentBackupMsg.document;
-                // ... (your DB INSERT/UPDATE logic for database_backups table)
-                
-                successCount++;
-            } catch (error) {
-                // This now correctly handles a real "Not Found" error vs. other failures
-                if (error.response && error.response.status === 404) {
-                    console.log(`[Backup] Bot ${appName} not found on Heroku. Deleting ghost record.`);
-                    await dbServices.deleteUserBot(ownerId, appName);
-                    await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
-                    await bot.sendMessage(adminId, `⚠️ Bot *${escapeMarkdown(appName)}* was not found on Heroku. Its records have been cleaned.`, { parse_mode: 'Markdown' });
-                } else {
-                    failCount++;
-                    const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message;
-                    console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
-                    await bot.sendMessage(adminId, `❌ Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
-                }
-            }
-        }
-
-        // ... (your final summary message remains the same) ...
+        const result = await dbServices.backupAllPaidBots();
         
-    } catch (error) { /* ... */ }
-});
+        let finalMessage;
+        if (result.success && result.stats) {
+            const { levanter, raganork, unknown } = result.stats;
+            const { appsBackedUp, appsFailed } = result.miscStats;
 
+            // Format the lists of app names
+            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
+            
+            finalMessage = `
+*Backup Summary:*
+
+*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
+*Total Success:* ${appsBackedUp}
+*Total Failed:* ${appsFailed}
+
+*Levanter Bots:*
+  - Success: ${levanter.backedUp.length}
+  - Failed: ${levanter.failed.length}
+
+*Raganork Bots:*
+  - Success: ${raganork.backedUp.length}
+  - Failed: ${raganork.failed.length}
+
+*Misc. Bots:*
+_The following apps were not found in the local database._
+  - **Success:** ${formatList(unknown.backedUp)}
+  - **Failed:** ${formatList(unknown.failed)}
+            `;
+        } else {
+            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
+        }
+        
+        await bot.editMessageText(finalMessage, {
+            chat_id: cid,
+            message_id: sentMsg.message_id,
+            parse_mode: 'Markdown'
+        });
+    } catch (error) {
+        await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
+            chat_id: cid,
+            message_id: sentMsg.message_id
+        });
+    }
+});
 
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
