@@ -3121,11 +3121,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
             // Log the completed payment
             await pool.query(
                 `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, 'NGN', NOW())`,
-                [reference, user_id, customer.email || pendingPayment.rows[0].email, amount]
+                [reference, userId, customer.email || pendingPayment.rows[0].email, amount]
             );
           await sendPaymentConfirmation(customer.email, `User ${userId}`, reference, metadata.appName || 'N/A', metadata.botType || 'N/A', 'N/A');
 
-            const userChat = await bot.getChat(user_id);
+            const userChat = await bot.getChat(userId);
             const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || ''}`;
 
             if (isRenewal) {
