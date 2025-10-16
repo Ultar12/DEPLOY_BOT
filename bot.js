@@ -3090,7 +3090,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
             return res.status(200).end(); 
         }
 
-        const { user_id, bot_type, app_name, session_id } = pendingPayment.rows[0];
+        const { user_id: userId, bot_type, app_name, session_id } = pendingPayment.rows[0];
 
         // --- Step 2: Determine if Renewal or New Deployment ---
         const isRenewal = app_name && app_name.startsWith('renewal_');
