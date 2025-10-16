@@ -146,6 +146,51 @@ async function backupHerokuDbToRenderSchema(appName) {
 }
 
 
+// In bot_services.js
+
+/**
+ * Restores a Heroku Postgres database by copying data from a schema in the Render database.
+ * @param {string} appName The name of the Heroku app to restore.
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function restoreHerokuDbFromRenderSchema(appName) {
+    const { herokuApi, HEROKU_API_KEY } = moduleParams;
+    const mainDbUrl = process.env.DATABASE_URL;
+    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name to match the backup schema
+
+    try {
+        // Get the NEW Heroku bot's DATABASE_URL from its config vars
+        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        const newHerokuDbUrl = configRes.data.DATABASE_URL;
+
+        if (!newHerokuDbUrl) {
+            throw new Error("Could not find DATABASE_URL for the newly created Heroku app.");
+        }
+
+        // Use pg_dump to pipe the schema from Render directly into the new Heroku DB
+        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${appName}...`);
+        
+        // This command dumps ONLY the specified schema from your Render DB and pipes it into the new Heroku DB.
+        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
+
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
+
+        // Ignore common, non-fatal warnings but throw on real errors.
+        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
+            // This specific warning is expected and can be ignored.
+            if (!stderr.includes(`schema "public" does not exist`)) {
+                 throw new Error(stderr);
+            }
+        }
+        
+        console.log(`[DB Restore] Successfully restored data for ${appName} from schema ${schemaName}.`);
+        return { success: true, message: 'Database restore successful.' };
+
+    } catch (error) {
+        console.error(`[DB Restore] FAILED to restore ${appName}:`, error.message);
+        return { success: false, message: error.message };
+    }
+}
 
 
 // bot_services.js
@@ -1895,6 +1940,7 @@ module.exports = {
     updateUserActivity,
     getUserLastSeen,
     isUserBanned,
+    restoreHerokuDbFromRenderSchema,
     banUser,
     addReferralAndSecondLevelReward,
     unbanUser,
