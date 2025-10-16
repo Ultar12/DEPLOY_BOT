@@ -2022,76 +2022,56 @@ async function handleRestoreAllSelection(query) {
     });
 }
 
-// In bot.js
-// In bot.js
-
+// In bot.js, replace your handleRestoreAllConfirm function
 async function handleRestoreAllConfirm(query) {
-    const chatId = query.message.chat.id; // This is the Admin's chat ID
+    const adminId = query.message.chat.id;
     const botType = query.data.split(':')[1];
     
-    await bot.editMessageText(`Confirmation received. Starting sequential restoration for all *${botType}* bots. This will take a long time...`, {
-        chat_id: chatId,
-        message_id: query.message.message_id,
-        parse_mode: 'Markdown'
-    });
+    const progressMsg = await bot.sendMessage(adminId, `**Starting Direct Restore: ${botType.toUpperCase()}**\n\nThis will recreate each bot and copy its data from the Render DB backup.`, { parse_mode: 'Markdown' });
 
     const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
     let successCount = 0;
     let failureCount = 0;
+    let progressLog = [];
 
     for (const [index, deployment] of deployments.entries()) {
         const appName = deployment.app_name;
-        const originalOwnerId = deployment.user_id; // Get the original owner's ID
+        const originalOwnerId = deployment.user_id;
         
-        await bot.sendMessage(chatId, `▶️ Processing bot ${index + 1}/${deployments.length}: \`${appName}\` for user \`${originalOwnerId}\``, { parse_mode: 'Markdown' });
+        progressLog.push(`**Processing ${index + 1}/${deployments.length}:** \`${appName}\``);
+        await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         
         try {
-            await axios.get(`https://api.heroku.com/apps/${appName}`, {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-            });
-            await bot.sendMessage(chatId, `App \`${appName}\` is already active on this Heroku account. Skipping.`, { parse_mode: 'Markdown' });
-            continue;
-        } catch (e) {
-            console.log(`[RestoreAll] App '${appName}' not found on current Heroku account. Proceeding with creation.`);
-        }
+            // --- Phase 1: Restore the App and Settings (creates the new empty DB) ---
+            const buildSuccess = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
+            if (!buildSuccess) throw new Error("App build process failed or timed out.");
 
-        try {
-            // ✅ FIX: Pass the original expiration date into the 'vars' object.
-            const vars = { 
-                ...deployment.config_vars, 
-                APP_NAME: deployment.app_name, 
-                SESSION_ID: deployment.session_id,
-                expiration_date: deployment.expiration_date // This is the crucial addition
-            };
-            
-            // ✅ FIX: Call buildWithProgress with the ORIGINAL owner's ID and the ADMIN'S chatId for progress updates.
-            const success = await dbServices.buildWithProgress(originalOwnerId, vars, false, true, botType, null, chatId);
+            progressLog.push(`   App created. Now copying data from Render DB...`);
+            await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
 
-            if (success) {
-                successCount++;
-                await bot.sendMessage(chatId, `✅ Successfully restored: \`${deployment.app_name}\``, { parse_mode: 'Markdown' });
-                // Also notify the original owner
-                //await bot.sendMessage(originalOwnerId, `Your bot "*${escapeMarkdown(deployment.app_name)}*" has been successfully restored by the admin.`, { parse_mode: 'Markdown' }).catch(()=>{});
-
-                if (index < deployments.length - 1) {
-                    await bot.sendMessage(chatId, `Waiting for 3 minutes before deploying the next app...`);
-                    await new Promise(resolve => setTimeout(resolve, 1 * 60 * 1000));
-                }
-            } else {
-                failureCount++;
-                await bot.sendMessage(chatId, `❌ Failed to restore: \`${deployment.app_name}\`. Check logs. Continuing...`, { parse_mode: 'Markdown' });
+            // --- Phase 2: Restore the Database from the Render Schema ---
+            const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(appName);
+            if (!restoreResult.success) {
+                throw new Error(restoreResult.message);
             }
+
+            progressLog.push(`   **Successfully Restored:** \`${appName}\``);
+            successCount++;
+
         } catch (error) {
             failureCount++;
-            console.error(error);
-            await bot.sendMessage(chatId, `CRITICAL ERROR while restoring \`${deployment.app_name}\`: ${error.message}.`, { parse_mode: 'Markdown' });
+            const errorMsg = error.response?.data?.message || error.message;
+            console.error(`[RestoreAll] CRITICAL ERROR while restoring ${appName}:`, errorMsg);
+            progressLog.push(`   **Failed to restore \`${appName}\`**: ${String(errorMsg).substring(0, 100)}...`);
         }
     }
     
-    await bot.sendMessage(chatId, `Restoration process complete!\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}`, { parse_mode: 'Markdown' });
+    await bot.editMessageText(
+        `**Direct Restore Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
+        { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+    );
 }
 
-// bot.js (Add this helper function in the utilities section)
 
 /**
  * Fetches all non-system user-created table names from the database.
@@ -4398,7 +4378,7 @@ bot.onText(/^\/backupall$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const progressMsg = await bot.sendMessage(adminId, '🚀 **Starting Direct Database Backup...**\nThis will copy each bot\'s live data into a separate schema in your Render database.', { parse_mode: 'Markdown' });
+    const progressMsg = await bot.sendMessage(adminId, '**Starting Direct Database Backup...**\nThis will copy each bot\'s live data into a separate schema in your Render database.', { parse_mode: 'Markdown' });
 
     try {
         const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
@@ -4408,7 +4388,7 @@ bot.onText(/^\/backupall$/, async (msg) => {
         for (const [index, botInfo] of allBots.entries()) {
             const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up settings & data for *${escapeMarkdown(appName)}*...`, {
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up settings & data for *${escapeMarkdown(appName)}*...`, {
                 chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
             }).catch(() => {});
 
@@ -4430,16 +4410,16 @@ bot.onText(/^\/backupall$/, async (msg) => {
                 failCount++;
                 const errorMsg = error.response?.data?.message || error.message;
                 console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
-                await bot.sendMessage(adminId, `❌ Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
             }
         }
 
         await bot.editMessageText(
-            `**✅ Direct Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nEach bot's settings and data have been copied into your Render database.`,
+            `**Direct Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nEach bot's settings and data have been copied into your Render database.`,
             { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
         );
     } catch (error) {
-        await bot.editMessageText(`🚨 **A critical error occurred:**\n\n${error.message}`, {
+        await bot.editMessageText(`**A critical error occurred:**\n\n${error.message}`, {
             chat_id: adminId, message_id: progressMsg.message_id
         });
     }
