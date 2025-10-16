@@ -1156,9 +1156,8 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
-// In bot.js
 /**
- * Updates a specific environment variable on Render using their API.
+ * Updates a specific environment variable on Render, sanitizing URLs automatically.
  * @param {string} varName The name of the variable to update.
  * @param {string} varValue The new value for the variable.
  * @returns {Promise<{success: boolean, message: string}>}
@@ -1167,6 +1166,16 @@ async function updateRenderVar(varName, varValue) {
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
         return { success: false, message: "Render API Key or Service ID is not set." };
+    }
+
+    // ❗️ NEW: Sanitize the value before sending it to Render.
+    let finalValue = varValue;
+    // We check if the variable name contains 'URL' to make this future-proof.
+    if (varName.includes('URL')) {
+        finalValue = varValue.replace(/\/$/, ''); // Removes the trailing slash, if it exists.
+        if (finalValue !== varValue) {
+            console.log(`[Sanitization] Automatically removed trailing slash from ${varName}.`);
+        }
     }
 
     try {
@@ -1181,9 +1190,10 @@ async function updateRenderVar(varName, varValue) {
         const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
 
         if (varIndex > -1) {
-            currentEnvVars[varIndex].envVar.value = varValue;
+            // Use the sanitized 'finalValue' here
+            currentEnvVars[varIndex].envVar.value = finalValue;
         } else {
-            currentEnvVars.push({ envVar: { key: varName, value: varValue } });
+            currentEnvVars.push({ envVar: { key: varName, value: finalValue } });
         }
         
         const payload = currentEnvVars.map(item => item.envVar);
