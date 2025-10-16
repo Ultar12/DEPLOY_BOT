@@ -89,6 +89,60 @@ async function addUserBot(u, b, s, botType) {
   }
 }
 
+// In bot_services.js
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
+
+/**
+ * Directly copies a Heroku Postgres database into a new schema in the main Render database.
+ * @param {string} appName The name of the Heroku app.
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function backupHerokuDbToRenderSchema(appName) {
+    const mainDbUrl = process.env.DATABASE_URL;
+    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name for schema
+
+    try {
+        // First, get the Heroku bot's DATABASE_URL from its config vars
+        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${process.env.HEROKU_API_KEY}` } });
+        const herokuDbUrl = configRes.data.DATABASE_URL;
+
+        if (!herokuDbUrl) {
+            throw new Error("DATABASE_URL not found in the bot's Heroku config vars.");
+        }
+
+        const client = await moduleParams.mainPool.connect();
+        try {
+            // Drop the old schema if it exists for a fresh backup
+            await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
+            // Create a new, empty schema
+            await client.query(`CREATE SCHEMA ${schemaName};`);
+        } finally {
+            client.release();
+        }
+
+        // Use pg_dump and psql to pipe the backup from Heroku directly into the new schema in the Render DB
+        console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
+        const command = `pg_dump "${herokuDbUrl}" | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
+        
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
+
+        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
+            throw new Error(stderr);
+        }
+        
+        console.log(`[DB Backup] Successfully backed up ${appName} to schema ${schemaName}.`);
+        return { success: true, message: 'Database backup successful.' };
+
+    } catch (error) {
+        console.error(`[DB Backup] FAILED to back up ${appName}:`, error.message);
+        return { success: false, message: error.message };
+    }
+}
+
+
+
 // bot_services.js
 
 // ... other code ...
@@ -1855,6 +1909,7 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     backupAllPaidBots,
+    backupHerokuDbToRenderSchema,
     removeMonitoredFreeTrial,
     syncDatabases,
     createAllTablesInPool,
