@@ -216,6 +216,22 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
 
+
+
+      // In createAllTablesInPool, find and replace the database_backups table definition
+
+   await client.query(`
+    CREATE TABLE IF NOT EXISTS database_backups (
+        id SERIAL PRIMARY KEY,
+        bot_name TEXT NOT NULL UNIQUE, -- Ensures one record per bot
+        owner_id TEXT NOT NULL,
+        telegram_file_id TEXT NOT NULL,
+        telegram_message_id BIGINT NOT NULL, -- To store the message ID for deletion
+        backup_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+`);
+
+
       await client.query(`
           CREATE TABLE IF NOT EXISTS heroku_api_keys (
             id SERIAL PRIMARY KEY,
