@@ -99,12 +99,16 @@ const execPromise = util.promisify(exec);
  * @param {string} appName The name of the Heroku app.
  * @returns {Promise<{success: boolean, message: string}>}
  */
+// In bot_services.js, replace this function
 async function backupHerokuDbToRenderSchema(appName) {
+    // ❗️ FIX: Get the herokuApi tool from the module's parameters.
+    const { mainPool, herokuApi } = moduleParams;
+    
     const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name for schema
+    const schemaName = `backup_${appName.replace(/-/g, '_')}`;
 
     try {
-        // First, get the Heroku bot's DATABASE_URL from its config vars
+        // Get the Heroku bot's DATABASE_URL from its config vars
         const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${process.env.HEROKU_API_KEY}` } });
         const herokuDbUrl = configRes.data.DATABASE_URL;
 
@@ -112,21 +116,18 @@ async function backupHerokuDbToRenderSchema(appName) {
             throw new Error("DATABASE_URL not found in the bot's Heroku config vars.");
         }
 
-        const client = await moduleParams.mainPool.connect();
+        const client = await mainPool.connect();
         try {
-            // Drop the old schema if it exists for a fresh backup
             await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
-            // Create a new, empty schema
             await client.query(`CREATE SCHEMA ${schemaName};`);
         } finally {
             client.release();
         }
 
-        // Use pg_dump and psql to pipe the backup from Heroku directly into the new schema in the Render DB
         console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
-        const command = `pg_dump "${herokuDbUrl}" | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
+        const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
         
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
         if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
             throw new Error(stderr);
@@ -140,6 +141,7 @@ async function backupHerokuDbToRenderSchema(appName) {
         return { success: false, message: error.message };
     }
 }
+
 
 
 
