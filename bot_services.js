@@ -17,6 +17,7 @@ let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
 let animateMessage;
+let moduleParams = {};
 let sendAnimatedMessage;
 let monitorSendTelegramAlert;
 let escapeMarkdown;
@@ -50,6 +51,7 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
+    moduleParams = params;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
     defaultEnvVars = params.defaultEnvVars;
     appDeploymentPromises = params.appDeploymentPromises;
@@ -62,6 +64,7 @@ function init(params) {
 
     console.log('--- bot_services.js initialized! ---');
 }
+
 
 // === DB helper functions (using 'pool' for main DB) ===
 
