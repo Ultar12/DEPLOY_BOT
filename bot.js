@@ -4399,9 +4399,9 @@ bot.onText(/^\/backupall$/, async (msg) => {
 
     const { BACKUP_CHANNEL_ID } = process.env;
     if (!BACKUP_CHANNEL_ID) {
-        return bot.sendMessage(adminId, "⚠️ **Setup Incomplete:** `BACKUP_CHANNEL_ID` is not set.");
+        return bot.sendMessage(adminId, "**Setup Incomplete:** `BACKUP_CHANNEL_ID` is not set.");
     }
-    const progressMsg = await bot.sendMessage(adminId, '**Starting Single-File Backup Process...**', { parse_mode: 'Markdown' });
+    const progressMsg = await bot.sendMessage(adminId, '**Starting Full System Backup...**', { parse_mode: 'Markdown' });
 
     try {
         const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
@@ -4419,53 +4419,46 @@ bot.onText(/^\/backupall$/, async (msg) => {
                 const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
                 
-                // --- Part 2: Find and Delete Old Backup ---
-                const oldBackupResult = await pool.query("SELECT telegram_message_id FROM database_backups WHERE bot_name = $1", [appName]);
-                if (oldBackupResult.rows.length > 0) {
-                    const oldMessageId = oldBackupResult.rows[0].telegram_message_id;
-                    await bot.deleteMessage(BACKUP_CHANNEL_ID, oldMessageId).catch(err => {
-                        console.warn(`[Backup] Could not delete old backup message ${oldMessageId} for ${appName}. It may have been deleted manually. Error: ${err.message}`);
-                    });
-                }
-                
-                // --- Part 3: Create and Upload New Backup ---
+                // --- Part 2: Backup Database using the NEW API ---
                 const addonsRes = await herokuApi.get(`/apps/${appName}/addons`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 const dbAddon = addonsRes.data.find(addon => addon.addon_service.name.includes('heroku-postgresql'));
                 if (!dbAddon) { skippedCount++; successCount++; continue; }
 
-                const backupStartRes = await herokuApi.post(`/apps/${appName}/database-backups`, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                // ❗️ FIX: Use the new Heroku Postgres API endpoint to start the backup.
+                const pgBackupUrl = `https://postgres-api.heroku.com/client/v11/databases/${dbAddon.id}/backups`;
+                const backupStartRes = await axios.post(pgBackupUrl, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 
-                let backupStatus = '';
-                // ... (your existing while loop to wait for backup completion remains the same) ...
-                while (backupStatus !== 'completed') { /* ... same code ... */ }
+                // ❗️ FIX: Poll the new endpoint for completion status.
+                let backupInfo = backupStartRes.data;
+                while (backupInfo.finished_at === null) {
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+                    const statusRes = await axios.get(`${pgBackupUrl}/${backupInfo.num}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                    backupInfo = statusRes.data;
+                    if (backupInfo.failed_at !== null) throw new Error(`Heroku database backup failed. Reason: ${backupInfo.error_message}`);
+                }
+                
+                // ❗️ FIX: Get the public URL from the new endpoint.
+                const publicUrlRes = await axios.post(`${pgBackupUrl}/${backupInfo.num}/public-url`, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                const downloadUrl = publicUrlRes.data.url;
 
-                const backupDetailsRes = await herokuApi.post(`/apps/${appName}/database-backups/${backupStartRes.data.id}/actions/public-url`, {}, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                const downloadUrl = backupDetailsRes.data.url;
-                const caption = `**Latest DB Backup**\n*Bot:* \`${appName}\`\n*Owner:* \`${ownerId}\``;
-                
+                // Upload to Telegram and save the record (same as before)
+                const caption = `**DB Backup** | *Bot:* \`${appName}\` | *Owner:* \`${ownerId}\``;
                 const sentBackupMsg = await bot.sendDocument(BACKUP_CHANNEL_ID, downloadUrl, { caption: caption, parse_mode: 'Markdown' });
                 
-                // --- Part 4: Save the New Backup Info (UPSERT) ---
                 const { file_id } = sentBackupMsg.document;
                 const { message_id } = sentBackupMsg;
                 await pool.query(
                     `INSERT INTO database_backups (bot_name, owner_id, telegram_file_id, telegram_message_id)
-                     VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (bot_name) 
-                     DO UPDATE SET 
-                        owner_id = EXCLUDED.owner_id, 
-                        telegram_file_id = EXCLUDED.telegram_file_id, 
-                        telegram_message_id = EXCLUDED.telegram_message_id,
-                        backup_timestamp = NOW()`,
+                     VALUES ($1, $2, $3, $4) ON CONFLICT (bot_name) DO UPDATE SET 
+                        telegram_file_id = EXCLUDED.telegram_file_id, telegram_message_id = EXCLUDED.telegram_message_id, backup_timestamp = NOW()`,
                     [appName, ownerId, file_id, message_id]
                 );
-
                 successCount++;
             } catch (error) {
                 failCount++;
-                const errorMsg = error.response?.data?.message || error.message;
+                const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message;
                 console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
-                await bot.sendMessage(adminId, `❌ Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
+                await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
             }
         }
 
@@ -4473,13 +4466,13 @@ bot.onText(/^\/backupall$/, async (msg) => {
             `**Backup Process Complete!**\n\n*Updated:* ${successCount}\n*Failed:* ${failCount}\n*Skipped (No DB):* ${skippedCount}\n\nYour backup channel now contains only the latest database file for each bot.`,
             { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
         );
-
     } catch (error) {
         await bot.editMessageText(`**A critical error occurred during the backup process:**\n\n${error.message}`, {
             chat_id: adminId, message_id: progressMsg.message_id
         });
     }
 });
+
 
 // bot.js (REPLACE the entire bot.onText(/^\/send (\d+)$/, ...) function)
 
