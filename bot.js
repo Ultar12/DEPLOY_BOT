@@ -4392,56 +4392,54 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 
 
+// In bot.js, replace your /backupall handler
 bot.onText(/^\/backupall$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
 
-    const sentMsg = await bot.sendMessage(cid, 'Starting backup process for all Heroku apps... This might take some time.');
+    const progressMsg = await bot.sendMessage(adminId, '🚀 **Starting Direct Database Backup...**\nThis will copy each bot\'s live data into a separate schema in your Render database.', { parse_mode: 'Markdown' });
 
     try {
-        const result = await dbServices.backupAllPaidBots();
-        
-        let finalMessage;
-        if (result.success && result.stats) {
-            const { levanter, raganork, unknown } = result.stats;
-            const { appsBackedUp, appsFailed } = result.miscStats;
+        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
+        let successCount = 0;
+        let failCount = 0;
 
-            // Format the lists of app names
-            const formatList = (list) => list.length > 0 ? list.map(name => `\`${escapeMarkdown(name)}\``).join('\n  - ') : 'None';
+        for (const [index, botInfo] of allBots.entries()) {
+            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            finalMessage = `
-*Backup Summary:*
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up settings & data for *${escapeMarkdown(appName)}*...`, {
+                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            }).catch(() => {});
 
-*Total Heroku Apps Scanned:* ${appsBackedUp + appsFailed}
-*Total Success:* ${appsBackedUp}
-*Total Failed:* ${appsFailed}
+            try {
+                // Step 1: Backup config vars (settings) to your user_deployments table
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
+                
+                // Step 2: Backup the database by copying it to a new schema
+                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName);
 
-*Levanter Bots:*
-  - Success: ${levanter.backedUp.length}
-  - Failed: ${levanter.failed.length}
+                if (backupResult.success) {
+                    successCount++;
+                } else {
+                    throw new Error(backupResult.message);
+                }
 
-*Raganork Bots:*
-  - Success: ${raganork.backedUp.length}
-  - Failed: ${raganork.failed.length}
-
-*Misc. Bots:*
-_The following apps were not found in the local database._
-  - **Success:** ${formatList(unknown.backedUp)}
-  - **Failed:** ${formatList(unknown.failed)}
-            `;
-        } else {
-            finalMessage = `An unexpected error occurred during the backup process: ${result.message}`;
+            } catch (error) {
+                failCount++;
+                const errorMsg = error.response?.data?.message || error.message;
+                console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
+                await bot.sendMessage(adminId, `❌ Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+            }
         }
-        
-        await bot.editMessageText(finalMessage, {
-            chat_id: cid,
-            message_id: sentMsg.message_id,
-            parse_mode: 'Markdown'
-        });
+
+        await bot.editMessageText(
+            `**✅ Direct Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nEach bot's settings and data have been copied into your Render database.`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
     } catch (error) {
-        await bot.editMessageText(`An unexpected error occurred during the backup process: ${error.message}`, {
-            chat_id: cid,
-            message_id: sentMsg.message_id
+        await bot.editMessageText(`🚨 **A critical error occurred:**\n\n${error.message}`, {
+            chat_id: adminId, message_id: progressMsg.message_id
         });
     }
 });
