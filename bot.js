@@ -1941,6 +1941,25 @@ async function loadMaintenanceStatus() {
     }
 }
 
+/**
+ * Explicitly triggers a new deployment (a restart) on Render.
+ */
+async function triggerRenderRestart() {
+    const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
+    if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+        console.error('[Restart] Cannot trigger restart: Render API details are not set.');
+        return;
+    }
+    try {
+        const deployUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys`;
+        const headers = { 'Authorization': `Bearer ${RENDER_API_KEY}` };
+        await axios.post(deployUrl, {}, { headers });
+        console.log('[Restart] Successfully triggered an explicit restart on Render.');
+    } catch (error) {
+        console.error('[Restart] Failed to trigger explicit restart:', error.message);
+    }
+}
+
 
 // REPLACE WITH THIS
 async function saveMaintenanceStatus(status) {
@@ -3986,65 +4005,76 @@ bot.onText(/^\/aa (\d+)\s+(\d+)$/, (msg, match) => {
 
 
 // ADMIN COMMAND: /deploy_email_service
-bot.onText(/^\/deployem$/, async (msg) => {
+// ADMIN COMMAND: /deploy_email_service <github_url>
+bot.onText(/^\/deploy_email_service(?:\s+(https?:\/\/[^\s]+))?$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    // 1. Prerequisite Check: Ensure the bot has the necessary credentials.
+    // 1. Get the GitHub URL from the user's command.
+    const userInputUrl = match[1];
+    if (!userInputUrl || !userInputUrl.toLowerCase().includes('github.com')) {
+        return bot.sendMessage(adminId, "⚠️ **Usage Error:**\nPlease provide a valid GitHub repository URL after the command.\n\n*Example:*\n`/deploy_email_service https://github.com/ultar1/Email-service-`", { parse_mode: 'Markdown' });
+    }
+
+    // 2. Prerequisite Check: Ensure the bot has the necessary credentials.
     const { 
         GMAIL_USER, 
         GMAIL_APP_PASSWORD, 
-        SECRET_API_KEY, // This is the key for securing the email service itself
-        HEROKU_API_KEY  // This is needed to deploy to Heroku
+        SECRET_API_KEY,
+        HEROKU_API_KEY
     } = process.env;
 
     if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY || !HEROKU_API_KEY) {
-        return bot.sendMessage(adminId, "**Setup Incomplete:**\nTo use this command, the main bot's environment must contain `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SECRET_API_KEY`, and a valid `HEROKU_API_KEY`.", { parse_mode: 'Markdown' });
+        return bot.sendMessage(adminId, "**Setup Incomplete:**\nMissing required credentials (`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SECRET_API_KEY`, `HEROKU_API_KEY`) in the bot's environment.", { parse_mode: 'Markdown' });
     }
 
-    const progressMsg = await bot.sendMessage(adminId, "⚙️ **Starting Automated Email Service Deployment...**\nThis will take a few minutes.", { parse_mode: 'Markdown' });
+    const progressMsg = await bot.sendMessage(adminId, "**Starting Automated Deployment...**", { parse_mode: 'Markdown' });
 
     try {
         const appName = `email-service-${crypto.randomBytes(4).toString('hex')}`;
         
         // --- Step 1: Create the Heroku app ---
-        await bot.editMessageText(`**Progress (1/4):** Creating new app \`${appName}\` on Heroku...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        await bot.editMessageText(`**Progress (1/4):** Creating app \`${appName}\` on Heroku...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
         const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
         const appWebUrl = createAppRes.data.web_url;
 
         // --- Step 2: Set the environment variables on the new app ---
-        await bot.editMessageText(`**Progress (2/4):** Setting required credentials on the new app...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
-        await herokuApi.patch(`/apps/${appName}/config-vars`, {
-            GMAIL_USER: GMAIL_USER,
-            GMAIL_APP_PASSWORD: GMAIL_APP_PASSWORD,
-            SECRET_API_KEY: SECRET_API_KEY
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        await bot.editMessageText(`**Progress (2/4):** Setting credentials...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
-        // --- Step 3: Trigger the build from your GitHub repo ---
-        await bot.editMessageText(`**Progress (3/4):** Building the app from GitHub...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        // --- Step 3: Trigger the build from the user-provided GitHub repo ---
+        await bot.editMessageText(`**Progress (3/4):** Building from GitHub...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        const sourceUrl = `${userInputUrl.replace(/\/$/, '')}/tarball/main/`; // Clean the URL
         await herokuApi.post(`/apps/${appName}/builds`, {
-            source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" }
+            source_blob: { url: sourceUrl }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
         
-        // --- Step 4: Automatically update the main bot's EMAIL_SERVICE_URL on Render ---
-        await bot.editMessageText(`**Progress (4/4):** Linking the new service to this bot...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
+        // --- Step 4: Link the new service and explicitly restart the main bot ---
+        await bot.editMessageText(`**Progress (4/4):** Linking service and restarting main bot...`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' });
         const updateResult = await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render variable: ${updateResult.message}`);
         }
+        
+        // Explicitly trigger a restart of the main bot on Render.
+        await triggerRenderRestart();
 
-        await bot.editMessageText(`**Deployment and Linking Successful!**\n\nYour new email service is active at:\n\`${appWebUrl}\`\n\nThis bot has been automatically configured to use it. A new deployment has started on Render to apply the change.`, {
+        await bot.editMessageText(
+            `**Deployment and Linking Successful!**\n\n` +
+            `The email service is active at:\n\`${appWebUrl}\`\n\n` +
+            `Your main bot is now **restarting** on Render to apply the changes.`, {
             chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
 
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
         console.error("Error during automated email service deployment:", errorMsg);
-        await bot.editMessageText(`❌ **Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}\n\nPlease check your credentials and Heroku account status.`, {
+        await bot.editMessageText(`**Deployment Failed!**\n\n*Reason:* ${escapeMarkdown(errorMsg)}\n\nPlease check your credentials and the GitHub URL.`, {
             chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
     }
 });
+
 
 // ... other code ...
 
