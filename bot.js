@@ -1157,7 +1157,7 @@ function getAnimatedEmoji() {
 }
 
 /**
- * Updates a specific environment variable on Render, sanitizing URLs automatically.
+ * Updates a specific environment variable on Render and explicitly triggers a restart.
  * @param {string} varName The name of the variable to update.
  * @param {string} varValue The new value for the variable.
  * @returns {Promise<{success: boolean, message: string}>}
@@ -1168,11 +1168,9 @@ async function updateRenderVar(varName, varValue) {
         return { success: false, message: "Render API Key or Service ID is not set." };
     }
 
-    // ❗️ NEW: Sanitize the value before sending it to Render.
     let finalValue = varValue;
-    // We check if the variable name contains 'URL' to make this future-proof.
     if (varName.includes('URL')) {
-        finalValue = varValue.replace(/\/$/, ''); // Removes the trailing slash, if it exists.
+        finalValue = varValue.replace(/\/$/, ''); // Removes trailing slash
         if (finalValue !== varValue) {
             console.log(`[Sanitization] Automatically removed trailing slash from ${varName}.`);
         }
@@ -1186,26 +1184,31 @@ async function updateRenderVar(varName, varValue) {
         };
         const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
 
+        // Step 1: Get current vars
         const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
         const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
 
         if (varIndex > -1) {
-            // Use the sanitized 'finalValue' here
             currentEnvVars[varIndex].envVar.value = finalValue;
         } else {
             currentEnvVars.push({ envVar: { key: varName, value: finalValue } });
         }
         
+        // Step 2: Update the variables
         const payload = currentEnvVars.map(item => item.envVar);
         await axios.put(envVarsUrl, payload, { headers });
         
-        return { success: true, message: `Successfully updated ${varName} on Render.` };
+        // ❗️ FIX: Explicitly trigger the restart after the variable update succeeds.
+        await triggerRenderRestart();
+        
+        return { success: true, message: `Successfully updated ${varName} on Render and triggered a restart.` };
     } catch (error) {
         const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
         console.error(`[Render API] Failed to update var ${varName}:`, errorDetails);
         return { success: false, message: errorDetails };
     }
 }
+
 
 
 let isRecoveryInProgress = false; // Global flag to prevent multiple recoveries at once
