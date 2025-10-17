@@ -2408,6 +2408,8 @@ async function notifyAdminUserOnline(msg) {
     // Run the check once on startup for immediate feedback
     checkHerokuApiKey();
 
+  startScheduledTasks();
+
     // Schedule the check to run every 5 minutes
     setInterval(checkHerokuApiKey, 5 * 60 * 1000);
     console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
