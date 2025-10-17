@@ -4008,7 +4008,7 @@ bot.onText(/^\/aa (\d+)\s+(\d+)$/, (msg, match) => {
 
 
 // ADMIN COMMAND: /deploy_email_service (with no arguments)
-bot.onText(/^\/deploy_email_service$/, async (msg) => {
+bot.onText(/^\/deployem$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
