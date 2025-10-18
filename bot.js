@@ -1113,21 +1113,16 @@ function startScheduledTasks() {
 
     // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
     // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
-    cron.schedule('0 0 * * *', async () => {
-        console.log('[Scheduler]  Cron job triggered: Running /backupall');
-        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
-        
-        // Find the handler for /backupall and execute it with the fake admin message
-        const backupAllHandler = bot._events.find(e => e.regexp.source === /^\/backupall$/.source);
-        if (backupAllHandler) {
-            await backupAllHandler.callback(adminMsg, null); // Execute the command's logic
-        } else {
-            console.error('[Scheduler] Could not find the /backupall command handler!');
-        }
-    }, {
-        scheduled: true,
-        timezone: "Africa/Lagos" // Set to your local timezone
-    });
+    // Inside startScheduledTasks function...
+cron.schedule('0 0 * * *', async () => {
+    console.log('[Scheduler] Cron job triggered: Running backupall task');
+    const startMsg = await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
+    await runBackupAllTask(ADMIN_ID, startMsg.message_id); // Call the new direct function
+}, {
+    scheduled: true,
+    timezone: "Africa/Lagos"
+});
+
 
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
@@ -1394,6 +1389,78 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
     }
 }
 
+// Add this new async function somewhere in your bot.js
+async function runBackupAllTask(adminId, initialMessageId = null) {
+    console.log('[Backup Task] Starting execution...'); // Add initial log
+    
+    let progressMsg;
+    if (initialMessageId) {
+        progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
+    } else {
+        progressMsg = await bot.sendMessage(adminId, '**Starting Manual Full System Backup...**', { parse_mode: 'Markdown' });
+    }
+
+    try {
+        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
+        let successCount = 0;
+        let failCount = 0;
+        let skippedCount = 0; // Added skipped count initialization
+
+        for (const [index, botInfo] of allBots.entries()) {
+            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
+            
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
+                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            }).catch(() => {});
+
+            try {
+                // Step 1: Backup config vars (settings)
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
+                
+                // Step 2: Backup the database
+                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName); // This now returns success/fail
+
+                if (backupResult.success) {
+                    successCount++;
+                } else if (backupResult.message.includes("DATABASE_URL not found")) {
+                    // Treat "DB not found" as a skip, not a hard failure
+                    console.log(`[Backup Task] Skipping DB backup for ${appName}: ${backupResult.message}`);
+                    skippedCount++; 
+                    successCount++; // Count settings backup as success
+                } else {
+                    throw new Error(backupResult.message); // Throw other DB backup errors
+                }
+
+            } catch (error) {
+                 if (error.response && error.response.status === 404) {
+                    // Handle ghost records if Heroku app itself not found
+                    console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
+                    await dbServices.deleteUserBot(ownerId, appName);
+                    await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
+                    // skippedCount++; // Or maybe a cleanedCount? Let's treat as skipped/cleaned for now.
+                    await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
+
+                } else {
+                    failCount++;
+                    const errorMsg = error.response?.data?.message || error.message;
+                    console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
+                    await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+                }
+            }
+        } // End of loop
+
+        await bot.editMessageText(
+            `**Direct Backup Complete!**\n\n*Successful Settings Backups:* ${successCount}\n*Failed Backups:* ${failCount}\n*DB Skipped (Not Found/Error):* ${skippedCount + failCount}\n\nData copied to Render DB schemas.`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error('[Backup Task] Critical error during backup:', error); // Log the top-level error
+        await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
+            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+        });
+    }
+}
 
 
 
@@ -4544,56 +4611,13 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 
 
-// In bot.js, replace your /backupall handler
+// In bot.js
 bot.onText(/^\/backupall$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const progressMsg = await bot.sendMessage(adminId, '**Starting Direct Database Backup...**\nThis will copy each bot\'s live data into a separate schema in your Render database.', { parse_mode: 'Markdown' });
-
-    try {
-        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
-        let successCount = 0;
-        let failCount = 0;
-
-        for (const [index, botInfo] of allBots.entries()) {
-            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
-            
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up settings & data for *${escapeMarkdown(appName)}*...`, {
-                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
-            }).catch(() => {});
-
-            try {
-                // Step 1: Backup config vars (settings) to your user_deployments table
-                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                
-                // Step 2: Backup the database by copying it to a new schema
-                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName);
-
-                if (backupResult.success) {
-                    successCount++;
-                } else {
-                    throw new Error(backupResult.message);
-                }
-
-            } catch (error) {
-                failCount++;
-                const errorMsg = error.response?.data?.message || error.message;
-                console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
-                await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
-            }
-        }
-
-        await bot.editMessageText(
-            `**Direct Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nEach bot's settings and data have been copied into your Render database.`,
-            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
-        );
-    } catch (error) {
-        await bot.editMessageText(`**A critical error occurred:**\n\n${error.message}`, {
-            chat_id: adminId, message_id: progressMsg.message_id
-        });
-    }
+    // Just call the main task function directly when triggered manually
+    runBackupAllTask(adminId); 
 });
 
 
