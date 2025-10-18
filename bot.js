@@ -1098,7 +1098,7 @@ function startScheduledTasks() {
         scheduled: true,
         timezone: "Africa/Lagos"
     });
-
+}
 
 
 // A reusable function to format a more precise countdown for the single bot menu.
