@@ -16,7 +16,6 @@ const { Pool } = require('pg');
 const path = require('path');
 const mailListener = require('./mail_listener');
 const fs = require('fs');
-tempfile = require('tempfile');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
 const express = require('express');
@@ -10680,47 +10679,42 @@ setInterval(runDailyBackup, 60 * 60 * 1000);
 console.log('[Backup] Scheduled hourly automatic database backup.');
 
 
-// In bot.js, replace this entire function
-
-// bot.js (Replace existing checkAndPruneLoggedOutBots function)
-
+// Replace this entire function in bot.js
 async function checkAndPruneLoggedOutBots() {
     console.log('[Prune] Running hourly check for long-term logged-out bots...');
     try {
-        // Define the correct threshold: 7 days ago
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); 
         
-        // 🚨 FIX: Correctly query bots logged out for more than 7 days
         const result = await pool.query(
             "SELECT user_id, bot_name FROM user_bots WHERE status = 'logged_out' AND status_changed_at <= $1",
-            [sevenDaysAgo] // Use the correctly calculated variable
+            [sevenDaysAgo] 
         );
 
         const botsToDelete = result.rows;
         if (botsToDelete.length === 0) {
-            console.log('[Prune] No logged-out bots found for deletion.');
+            console.log('[Prune] No logged-out bots found matching the 7-day deletion criteria.');
             return;
         }
 
+        console.log(`[Prune] Found ${botsToDelete.length} bot(s) to delete for being logged out over 7 days.`);
+
         for (const botInfo of botsToDelete) {
             const { user_id, bot_name } = botInfo;
-            console.log(`[Prune] Deleting bot "${bot_name}" for user ${user_id} due to being logged out for over 7 days.`);
+            console.log(`[Prune] Attempting to delete bot "${bot_name}" for user ${user_id}.`);
             
             try {
-                // 🚨 FIX: Ensure Heroku deletion command is correctly placed and executed
-                await axios.delete(`https://api.heroku.com/apps/${bot_name}`, {
-                    headers: { 
-                        Authorization: `Bearer ${HEROKU_API_KEY}`, 
-                        Accept: 'application/vnd.heroku+json; version=3' 
-                    }
+                // ❗️ FIX: Use herokuApi here instead of axios ❗️
+                await herokuApi.delete(`/apps/${bot_name}`, {
+                    headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
                 });
 
-                // This is your existing, correct database cleanup logic
+                // Database cleanup (this part was correct)
                 await dbServices.deleteUserBot(user_id, bot_name);
                 await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
 
                 await bot.sendMessage(user_id, `Your bot *${escapeMarkdown(bot_name)}* has been automatically deleted because it was logged out for more than 7 days.`, { parse_mode: 'Markdown' });
                 await bot.sendMessage(ADMIN_ID, `Auto-deleted bot "*${escapeMarkdown(bot_name)}*" (owner: \`${user_id}\`) for being logged out over 7 days.`, { parse_mode: 'Markdown' });
+                console.log(`[Prune] Successfully deleted bot "${bot_name}".`);
 
             } catch (error) {
                 if (error.response && error.response.status === 404) {
@@ -10728,9 +10722,10 @@ async function checkAndPruneLoggedOutBots() {
                     await dbServices.deleteUserBot(user_id, bot_name);
                     await dbServices.deleteUserDeploymentFromBackup(user_id, bot_name);
                 } else {
-                    // Send alert for critical failure if it's not a 404
-                    console.error(`[Prune] Failed to delete bot ${bot_name}:`, error.response?.data?.message || error.message);
-                    await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs.`, { parse_mode: 'Markdown' });
+                    // Log the specific error for debugging
+                    const errorMsg = error.response?.data?.message || error.message;
+                    console.error(`[Prune] Failed to delete bot ${bot_name}:`, errorMsg);
+                    await bot.sendMessage(ADMIN_ID, `Failed to auto-delete bot "*${escapeMarkdown(bot_name)}*". Please check logs. Reason: ${escapeMarkdown(errorMsg)}`, { parse_mode: 'Markdown' });
                 }
             }
         }
