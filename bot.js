@@ -35,8 +35,7 @@ const MINI_APP_URL = 'https://deploy-bot-2h5u.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
 const KEYBOARD_VERSION = 4; // Increment this number for every new keyboard update
-// --- END OF NEW GLOBAL CONSTANT ---
-
+// --- END OF NEW GLOBAL CONSTANT --
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
