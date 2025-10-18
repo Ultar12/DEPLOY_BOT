@@ -183,8 +183,6 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`CREATE TABLE IF NOT EXISTS app_settings (setting_key VARCHAR(50) PRIMARY KEY, setting_value VARCHAR(50) NOT NULL);`);
 
         await client.query(`CREATE TABLE IF NOT EXISTS key_rewards (user_id TEXT PRIMARY KEY, reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-
-        await client.query(`ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS action_history JSONB DEFAULT '[]'::jsonb;`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS all_users_backup (user_id TEXT PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
       
@@ -273,15 +271,7 @@ async function createAllTablesInPool(dbPool, dbName) {
           );
         `);
 
-      await client.query(`
-  CREATE TABLE IF NOT EXISTS heroku_api_keys (
-    id SERIAL PRIMARY KEY,
-    api_key TEXT NOT NULL UNIQUE,
-    added_by TEXT,
-    is_active BOOLEAN DEFAULT TRUE,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-`);
+      
         
         await client.query(`
           CREATE TABLE IF NOT EXISTS completed_payments (
