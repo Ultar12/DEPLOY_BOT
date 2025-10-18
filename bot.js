@@ -387,6 +387,25 @@ async function getUserBots(userId) {
     }
 }
 
+// Add this new function
+async function runCopyDbTask() {
+    console.log('[Scheduler] Executing core copydb logic...');
+    try {
+        // Directly call the syncDatabases service function
+        const result = await dbServices.syncDatabases(pool, backupPool);
+        if (result.success) {
+            console.log(`[Scheduler] copydb task successful: ${result.message}`);
+            await bot.sendMessage(ADMIN_ID, `Scheduled /copydb task completed successfully.`);
+        } else {
+            throw new Error(result.message);
+        }
+    } catch (error) {
+        console.error(`[Scheduler] Error during scheduled copydb task: ${error.message}`);
+        await bot.sendMessage(ADMIN_ID, `Error during scheduled /copydb task: ${error.message}`);
+    }
+}
+
+
 // All other functions now take a 'botId' parameter.
 async function redeployBot(userId, botId) {
     console.log(`[ACTION] Starting redeployment for bot ${botId} owned by user ${userId}...`);
@@ -1080,24 +1099,16 @@ function startScheduledTasks() {
         timezone: "Africa/Lagos" // Set to your local timezone
     });
 
-    // Schedule 2: Run /copydb every day at 1:00 AM
+    // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
-        console.log('[Scheduler] Cron job triggered: Running /copydb');
-        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily main database copy...");
-
-        const copyDbHandler = bot._events.find(e => e.regexp.source === /^\/copydb$/.source);
-        if (copyDbHandler) {
-            await copyDbHandler.callback(adminMsg, null);
-        } else {
-            console.error('[Scheduler] Could not find the /copydb command handler!');
-        }
+        console.log('[Scheduler] Cron job triggered: Running copydb task');
+        await bot.sendMessage(ADMIN_ID, "🤖 Starting scheduled daily main database copy...");
+        await runCopyDbTask(); // Call the new direct function
     }, {
         scheduled: true,
         timezone: "Africa/Lagos"
     });
 
-    console.log('Daily backup and copydb tasks have been scheduled.');
-}
 
 
 // A reusable function to format a more precise countdown for the single bot menu.
