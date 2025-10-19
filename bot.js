@@ -396,134 +396,46 @@ async function runCopyDbTask() {
 }
 
 
-// Replace the 5 placeholder functions with these:
-
-/**
- * Redeploys a specific bot by triggering a new build from GitHub.
- */
+// All other functions now take a 'botId' parameter.
 async function redeployBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
-    try {
-        // 1. Find the bot type to determine the correct repo
-        const botInfo = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, botId]);
-        if (botInfo.rows.length === 0) {
-            return { status: "error", message: `Could not find bot '${botId}' to redeploy.` };
-        }
-        const botType = botInfo.rows[0].bot_type;
-        const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
-
-        // 2. Trigger the build on Heroku
-        await herokuApi.post(`/apps/${botId}/builds`,
-            { source_blob: { url: `${repoUrl}/tarball/main` } },
-            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
-        return { status: "success", message: `Redeployment initiated for *${escapeMarkdown(botId)}*. It will restart once the build is complete.` };
-    } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Redeploy Error] Bot ${botId}:`, errorMsg);
-        return { status: "error", message: `Failed to start redeployment for *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
-    }
+    console.log(`[ACTION] Starting redeployment for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const bot_repo_url = await pool.query('SELECT repo_url FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.triggerRedeploy(bot_repo_url);
+    return { status: "success", message: `Redeployment has been initiated for bot ${botId}.` };
 }
 
-/**
- * Gets information about a specific bot from the database.
- */
 async function getBotInfo(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested info for bot ${botId}.`);
-    try {
-        const result = await pool.query(
-            `SELECT ub.bot_name, ub.bot_type, ub.status, ud.expiration_date, ud.deploy_date
-             FROM user_bots ub
-             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-             WHERE ub.user_id = $1 AND ub.bot_name = $2`,
-            [userId, botId]
-        );
-        if (result.rows.length === 0) {
-            return { status: "error", message: `I couldn't find a bot named *${escapeMarkdown(botId)}* registered under your account.` };
-        }
-        // Format data for better display if needed
-        const botData = result.rows[0];
-        botData.status = botData.status === 'online' ? 'Online' : 'Logged Out';
-        botData.expiration_date = botData.expiration_date ? new Date(botData.expiration_date).toLocaleDateString() : 'Not Set';
-        botData.deploy_date = botData.deploy_date ? new Date(botData.deploy_date).toLocaleDateString() : 'Unknown';
-
-        return { status: "success", data: botData };
-    } catch (dbError) {
-        console.error(`[GetInfo DB Error] Bot ${botId}:`, dbError);
-        return { status: "error", message: "A database error occurred while fetching bot info." };
-    }
+    console.log(`[ACTION] Fetching info for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const result = await pool.query('SELECT * FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // const botInfo = result.rows[0];
+    const botInfo = { bot_id: botId, bot_name: 'Stickers Bot', status: 'online', plan: 'premium' }; // Mock data
+    return { status: "success", data: botInfo };
 }
 
-
- 
 async function deleteBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested deletion for bot ${botId}.`);
-    try {
-        // 1. Attempt to delete from Heroku
-        await herokuApi.delete(`/apps/${botId}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        console.log(`[Delete] Successfully deleted ${botId} from Heroku.`);
-    } catch (error) {
-        if (error.response && error.response.status === 404) {
-            console.log(`[Delete] Bot ${botId} was already deleted from Heroku.`);
-        } else {
-            // If it's not a 404, report the error but still proceed with DB cleanup
-            const errorMsg = error.response?.data?.message || error.message;
-            console.error(`[Delete Error] Bot ${botId} (Heroku):`, errorMsg);
-            // Optionally notify admin or user about the Heroku API failure
-        }
-    }
-    // 2. Always clean up database records
-    try {
-        await dbServices.deleteUserBot(userId, botId); // Removes from user_bots
-        await dbServices.markDeploymentDeletedFromHeroku(userId, botId); // Marks in user_deployments
-        console.log(`[Delete] Cleaned up database records for ${botId}.`);
-        return { status: "success", message: `Bot *${escapeMarkdown(botId)}* has been permanently deleted.` };
-    } catch (dbError) {
-        console.error(`[Delete DB Error] Bot ${botId}:`, dbError);
-        return { status: "error", message: `Failed to clean up database records for *${escapeMarkdown(botId)}*. Please contact admin.` };
-    }
+    console.log(`[ACTION] Deleting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await pool.query('DELETE FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
+    // await your_hosting_api.destroyApp(botId);
+    return { status: "success", message: `Bot ${botId} has been scheduled for deletion.` };
 }
 
-/**
- * Restarts a specific bot by deleting its dynos on Heroku.
- */
 async function restartBot(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested restart for bot ${botId}.`);
-    try {
-        await herokuApi.delete(`/apps/${botId}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        return { status: "success", message: `Bot *${escapeMarkdown(botId)}* is restarting now.` };
-    } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[Restart Error] Bot ${botId}:`, errorMsg);
-        return { status: "error", message: `Failed to restart *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
-    }
+    console.log(`[ACTION] Restarting bot ${botId} for user ${userId}...`);
+    // Example logic:
+    // await your_hosting_api.restartDyno(botId);
+    return { status: "success", message: `Bot ${botId} is now restarting.` };
 }
 
-/**
- * Fetches the most recent logs for a specific bot from Heroku.
- */
 async function getBotLogs(userId, botId) {
-    console.log(`[ACTION] User ${userId} requested logs for bot ${botId}.`);
-    try {
-        // 1. Create a log session on Heroku
-        const sessRes = await herokuApi.post(`/apps/${botId}/log-sessions`,
-            { lines: 150, tail: false }, // Get last 150 lines
-            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
-        const logplexUrl = sessRes.data.logplex_url;
-
-        // 2. Fetch logs from the temporary URL (using standard axios is fine here)
-        const logRes = await axios.get(logplexUrl);
-        const logs = logRes.data.trim().slice(-4000); // Limit to Telegram's message size
-
-        return { status: "success", logs: logs || 'No recent logs found.' };
-    } catch (error) {
-        const errorMsg = error.response?.data?.message || error.message;
-        console.error(`[GetLogs Error] Bot ${botId}:`, errorMsg);
-        return { status: "error", message: `Failed to get logs for *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
-    }
+    console.log(`[ACTION] Fetching logs for bot ${botId} owned by user ${userId}...`);
+    // Example logic:
+    // const logs = await your_hosting_api.getLogs(botId);
+    const logs = `[${new Date().toISOString()}] INFO: Bot ${botId} started successfully.\n[${new Date().toISOString()}] WARN: High memory usage detected.`;
+    return { status: "success", logs: logs };
 }
-
 
 // Note: updateUserVariable also needs the botId to know which bot's variable to change.
 // In bot.js, find and replace this entire function
@@ -1113,16 +1025,21 @@ function startScheduledTasks() {
 
     // Schedule 1: Run /backupall every day at 12:00 AM (midnight)
     // Cron format: 'Minute Hour DayOfMonth Month DayOfWeek'
-    // Inside startScheduledTasks function...
-cron.schedule('0 0 * * *', async () => {
-    console.log('[Scheduler] Cron job triggered: Running backupall task');
-    const startMsg = await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
-    await runBackupAllTask(ADMIN_ID, startMsg.message_id); // Call the new direct function
-}, {
-    scheduled: true,
-    timezone: "Africa/Lagos"
-});
-
+    cron.schedule('0 0 * * *', async () => {
+        console.log('[Scheduler]  Cron job triggered: Running /backupall');
+        await bot.sendMessage(ADMIN_ID, "Starting scheduled daily full system backup...");
+        
+        // Find the handler for /backupall and execute it with the fake admin message
+        const backupAllHandler = bot._events.find(e => e.regexp.source === /^\/backupall$/.source);
+        if (backupAllHandler) {
+            await backupAllHandler.callback(adminMsg, null); // Execute the command's logic
+        } else {
+            console.error('[Scheduler] Could not find the /backupall command handler!');
+        }
+    }, {
+        scheduled: true,
+        timezone: "Africa/Lagos" // Set to your local timezone
+    });
 
     // Schedule 2: Run copydb logic every day at 3:00 AM (or your desired time)
     cron.schedule('0 3 * * *', async () => {
@@ -1263,7 +1180,7 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
 
     try {
         // 1. Alert Admin and enable Maintenance Mode
-        await bot.sendMessage(ADMIN_ID, "**CRITICAL: Heroku API Key Invalid!**\n\nStarting automated recovery process. The bot is now in maintenance mode.", { parse_mode: 'Markdown' });
+        await bot.sendMessage(ADMIN_ID, "🚨 **CRITICAL: Heroku API Key Invalid!**\n\nStarting automated recovery process. The bot is now in maintenance mode.", { parse_mode: 'Markdown' });
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
@@ -1389,78 +1306,6 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
     }
 }
 
-// Add this new async function somewhere in your bot.js
-async function runBackupAllTask(adminId, initialMessageId = null) {
-    console.log('[Backup Task] Starting execution...'); // Add initial log
-    
-    let progressMsg;
-    if (initialMessageId) {
-        progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
-    } else {
-        progressMsg = await bot.sendMessage(adminId, '**Starting Manual Full System Backup...**', { parse_mode: 'Markdown' });
-    }
-
-    try {
-        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
-        let successCount = 0;
-        let failCount = 0;
-        let skippedCount = 0; // Added skipped count initialization
-
-        for (const [index, botInfo] of allBots.entries()) {
-            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
-            
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
-                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
-            }).catch(() => {});
-
-            try {
-                // Step 1: Backup config vars (settings)
-                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
-                
-                // Step 2: Backup the database
-                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName); // This now returns success/fail
-
-                if (backupResult.success) {
-                    successCount++;
-                } else if (backupResult.message.includes("DATABASE_URL not found")) {
-                    // Treat "DB not found" as a skip, not a hard failure
-                    console.log(`[Backup Task] Skipping DB backup for ${appName}: ${backupResult.message}`);
-                    skippedCount++; 
-                    successCount++; // Count settings backup as success
-                } else {
-                    throw new Error(backupResult.message); // Throw other DB backup errors
-                }
-
-            } catch (error) {
-                 if (error.response && error.response.status === 404) {
-                    // Handle ghost records if Heroku app itself not found
-                    console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
-                    await dbServices.deleteUserBot(ownerId, appName);
-                    await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
-                    // skippedCount++; // Or maybe a cleanedCount? Let's treat as skipped/cleaned for now.
-                    await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
-
-                } else {
-                    failCount++;
-                    const errorMsg = error.response?.data?.message || error.message;
-                    console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
-                    await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
-                }
-            }
-        } // End of loop
-
-        await bot.editMessageText(
-            `**Direct Backup Complete!**\n\n*Successful Settings Backups:* ${successCount}\n*Failed Backups:* ${failCount}\n*DB Skipped (Not Found/Error):* ${skippedCount + failCount}\n\nData copied to Render DB schemas.`,
-            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
-        );
-    } catch (error) {
-        console.error('[Backup Task] Critical error during backup:', error); // Log the top-level error
-        await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
-            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
-        });
-    }
-}
 
 
 
@@ -1615,6 +1460,45 @@ async function sendPricingTiers(chatId, messageId) {
             inline_keyboard: pricingKeyboard
         }
     });
+}
+
+// In bot.js
+
+async function checkHerokuApiKey() {
+    if (!HEROKU_API_KEY) {
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
+        return;
+    }
+
+    try {
+        await axios.get('https://api.heroku.com/account', {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        });
+        console.log('[API Check] Heroku API key is valid.');
+
+    } catch (error) {
+        if (error.response && error.response.status === 401) {
+            console.error('[API Check] Status 401: The Heroku key is unauthorized.');
+            
+            await bot.sendMessage(ADMIN_ID,
+                '🚨 **CRITICAL ALERT: Heroku API Key Invalid** 🚨\n\n' +
+                'The bot cannot manage apps. Please provide a new key to continue.',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Update Heroku API Key', callback_data: 'change_heroku_key' }]
+                        ]
+                    }
+                }
+            );
+        } else {
+            console.error(`[API Check] An unexpected error occurred:`, error.message);
+        }
+    }
 }
 
 
@@ -1928,7 +1812,7 @@ async function sendBappList(chatId, messageId = null, botTypeFilter) {
         // Step 3: Verify each bot against Heroku and update its status in our list
         const verificationPromises = allDbBots.map(async (bot) => {
             try {
-                await herokuApi.get(`https://api.heroku.com/apps/${bot.app_name}`, {
+                await axios.get(`https://api.heroku.com/apps/${bot.app_name}`, {
                     headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
                 });
                 if (bot.deleted_from_heroku_at) {
@@ -2478,6 +2362,10 @@ async function notifyAdminUserOnline(msg) {
     checkHerokuApiKey();
 
   startScheduledTasks();
+
+    // Schedule the check to run every 5 minutes
+    setInterval(checkHerokuApiKey, 5 * 60 * 1000);
+    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
     
     // ... rest of your startup logic ...
 
@@ -2487,52 +2375,51 @@ async function notifyAdminUserOnline(msg) {
 const crypto = require('crypto');
 
 if (process.env.NODE_ENV === 'production') {
-    // --- Webhook Mode (for Render/Heroku) ---
+    // --- Webhook Mode (for Heroku) ---
     const app = express();
-    app.use(express.json());
-    app.use(express.static(path.join(__dirname, 'public'))); // Your static files
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
 
-    const APP_URL = process.env.APP_URL;
+const APP_URL = process.env.APP_URL;
+
     if (!APP_URL) {
-        console.error('CRITICAL ERROR: APP_URL environment variable is not set. Bot cannot start.');
+        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
     
     const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
+
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
     const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-    // ❗️ FIX: Start the server and open the port IMMEDIATELY.
-    // This is what Render needs to see.
-    app.listen(PORT, async () => {
+    await bot.setWebHook(fullWebhookUrl);
+    console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
+
+  // --- REPLACE the previous pinging block with this one ---
+
+    app.listen(PORT, () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
-        
-        // ❗️ FIX: Set the webhook AFTER the server is successfully running.
-        try {
-            await bot.setWebHook(fullWebhookUrl);
-            console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
-        } catch (webhookError) {
-            console.error(`[Webhook] CRITICAL ERROR: Failed to set webhook.`);
-            console.error(webhookError.message);
-            // Notify the admin that the webhook failed but the server is still running.
-            await bot.sendMessage(ADMIN_ID, `**CRITICAL: Webhook Failed!** \n\nBot server is running, but I failed to set the webhook at \`${fullWebhookUrl}\`.\n\n*Reason:* ${webhookError.message}\n\nPlease check your \`APP_URL\` and \`TELEGRAM_BOT_TOKEN\` and then restart.`);
-        }
     });
 
-    // --- Auto-Ping Logic (Render ONLY) ---
+    // --- START: Auto-Ping Logic (Render ONLY) ---
+
+    // This check now ensures it only runs if the APP_URL is set AND it's on Render
     if (process.env.APP_URL && process.env.RENDER === 'true') {
       const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+      
       setInterval(async () => {
         try {
+          // Send a GET request to the app's own URL
           await axios.get(APP_URL);
           console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
         } catch (error) {
+          // Log any errors without crashing the bot
           console.error(`[Pinger] Render self-ping failed: ${error.message}`);
         }
       }, PING_INTERVAL_MS);
-      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized.`);
-  
+      
+      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
     } else {
       console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
     }
@@ -2609,7 +2496,7 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
     }
 
     try {
-        await herokuApi.get(`https://api.heroku.com/apps/${appName}`, {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         // If Heroku API call succeeds, the name is taken.
@@ -2687,7 +2574,7 @@ app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
         if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
-        await herokuApi.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
+        await axios.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         res.json({ success: true, message: 'Bot restart initiated.' });
@@ -2733,7 +2620,7 @@ app.get('/api/bots/logs/:appName', validateWebAppInitData, async (req, res) => {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
         
-        const logSessionRes = await herokuApi.post(`https://api.heroku.com/apps/${appName}/log-sessions`, { tail: false, lines: 100 }, {
+        const logSessionRes = await axios.post(`https://api.heroku.com/apps/${appName}/log-sessions`, { tail: false, lines: 100 }, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         const logsRes = await axios.get(logSessionRes.data.logplex_url);
@@ -2757,7 +2644,7 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
         const botType = ownerCheck.rows[0].bot_type;
         const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
         
-        await herokuApi.post(
+        await axios.post(
             `https://api.heroku.com/apps/${appName}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } },
             {
@@ -2792,7 +2679,7 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
             return res.status(400).json({ success: false, message: `Invalid session ID format for ${botType}.` });
         }
 
-        await herokuApi.patch(
+        await axios.patch(
             `https://api.heroku.com/apps/${appName}/config-vars`,
             { SESSION_ID: sessionId },
             {
@@ -2818,7 +2705,7 @@ app.get('/api/bots/config-vars/:appName', validateWebAppInitData, async (req, re
         }
         const botType = ownerCheck.rows[0].bot_type;
 
-        const configRes = await herokuApi.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         
@@ -2854,7 +2741,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
     }
 
     try {
-        await herokuApi.get(`https://api.heroku.com/apps/${appName}`, {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         // If Heroku API call succeeds, the name is taken.
@@ -3038,7 +2925,7 @@ app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
         
         console.log(`[API /bots/delete] Ownership confirmed. Deleting '${appName}' from Heroku...`);
         // 1. Send the delete request to the Heroku API
-        await herokuApi.delete(`https://api.heroku.com/apps/${appName}`, {
+        await axios.delete(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         console.log(`[API /bots/delete] Heroku deletion successful for '${appName}'.`);
@@ -3078,7 +2965,7 @@ app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
         if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
-        await herokuApi.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varName]: varValue }, {
+        await axios.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varName]: varValue }, {
             headers: {
                 Authorization: `Bearer ${HEROKU_API_KEY}`,
                 Accept: 'application/vnd.heroku+json; version=3',
@@ -4608,13 +4495,56 @@ bot.onText(/^\/copydb$/, async (msg) => {
 
 
 
-// In bot.js
+// In bot.js, replace your /backupall handler
 bot.onText(/^\/backupall$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    // Just call the main task function directly when triggered manually
-    runBackupAllTask(adminId); 
+    const progressMsg = await bot.sendMessage(adminId, '**Starting Direct Database Backup...**\nThis will copy each bot\'s live data into a separate schema in your Render database.', { parse_mode: 'Markdown' });
+
+    try {
+        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const [index, botInfo] of allBots.entries()) {
+            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
+            
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up settings & data for *${escapeMarkdown(appName)}*...`, {
+                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            }).catch(() => {});
+
+            try {
+                // Step 1: Backup config vars (settings) to your user_deployments table
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
+                
+                // Step 2: Backup the database by copying it to a new schema
+                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName);
+
+                if (backupResult.success) {
+                    successCount++;
+                } else {
+                    throw new Error(backupResult.message);
+                }
+
+            } catch (error) {
+                failCount++;
+                const errorMsg = error.response?.data?.message || error.message;
+                console.error(`[Backup] Failed to back up bot ${appName}:`, errorMsg);
+                await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+            }
+        }
+
+        await bot.editMessageText(
+            `**Direct Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n\nEach bot's settings and data have been copied into your Render database.`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        await bot.editMessageText(`**A critical error occurred:**\n\n${error.message}`, {
+            chat_id: adminId, message_id: progressMsg.message_id
+        });
+    }
 });
 
 
@@ -6368,7 +6298,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
 
     try {
         // Check if the app name is already taken on Heroku.
-        await herokuApi.get(`https://api.heroku.com/apps/${appName}`, {
+        await axios.get(`https://api.heroku.com/apps/${appName}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         // If the request succeeds, the app exists.
@@ -6447,7 +6377,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       const updateMsg = await bot.sendMessage(cid, `Updating *${VAR_NAME}* for "*${APP_NAME}*"...`, { parse_mode: 'Markdown' });
 
       console.log(`[API_CALL] Patching Heroku config vars for ${APP_NAME}: { ${VAR_NAME}: '***' }`);
-      const patchResponse = await herokuApi.patch(
+      const patchResponse = await axios.patch(
           `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
           { [VAR_NAME]: newVal },
           {
@@ -6467,7 +6397,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       
       // NEW: Update config_vars in user_deployments backup
       // This logic needs to retrieve the full config and then save.
-      const herokuConfigVars = (await herokuApi.get( // Fetch latest config vars
+      const herokuConfigVars = (await axios.get( // Fetch latest config vars
           `https://api.heroku.com/apps/${APP_NAME}/config-vars`,
           { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
       )).data;
@@ -9163,7 +9093,7 @@ if (action === 'toggle_dyno') {
         // --- END NEW CHECK ---
 
         // Proceed with actual backup. If it was previously marked as deleted, saveUserDeployment will update it.
-        const appVars = (await herokuApi.get(
+        const appVars = (await axios.get(
             `https://api.heroku.com/apps/${appName}/config-vars`,
             { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
         )).data;
@@ -9226,7 +9156,7 @@ if (action === 'toggle_dyno') {
 
     try {
         // 1. Get the app's current config from Heroku. This also verifies it exists there.
-        const configRes = await herokuApi.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
+        const configRes = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         const configVars = configRes.data;
@@ -9361,9 +9291,9 @@ if (action === 'info') {
     
     try {
         const [appRes, configRes, dynoRes] = await Promise.all([
-            herokuApi.get(`https://api.heroku.com/apps/${appName}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
-            herokuApi.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
-            herokuApi.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })
+            axios.get(`https://api.heroku.com/apps/${appName}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }),
+            axios.get(`https://api.heroku.com/apps/${appName}/dynos`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })
         ]);
 
         const appData = appRes.data;
@@ -9445,7 +9375,7 @@ if (action === 'info') {
     });
 
     try {
-      await herokuApi.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
+      await axios.delete(`https://api.heroku.com/apps/${payload}/dynos`, {
         headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
       });
 
@@ -9491,7 +9421,7 @@ if (action === 'info') {
     await bot.sendChatAction(cid, 'typing');
     await bot.editMessageText('Fetching logs...', { chat_id: cid, message_id: messageId });
     try {
-      const sess = await herokuApi.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
+      const sess = await axios.post(`https://api.heroku.com/apps/${payload}/log-sessions`,
         { tail: false, lines: 100 },
         { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
       );
@@ -9621,7 +9551,7 @@ if (action === 'info') {
 
     await bot.editMessageText(`Deleting "*${escapeMarkdown(appToDelete)}*" from Heroku...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
     try {
-        await herokuApi.delete(`https://api.heroku.com/apps/${appToDelete}`, {
+        await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         const ownerId = await dbServices.getUserIdByBotName(appToDelete);
@@ -9963,7 +9893,7 @@ if (action === 'sudo_action') {
         try {
             const updateMsg = await bot.editMessageText(`Updating *${varKey}* for "*${appName}*"...`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown' });
             
-            await herokuApi.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varKey]: herokuValue }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+            await axios.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varKey]: herokuValue }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
             
             const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`,{ headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }})).data;
             const botType = (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, appName])).rows[0]?.bot_type || 'levanter';
@@ -10009,7 +9939,7 @@ if (action === 'setvarbool') {
     const updateMsg = await bot.sendMessage(cid, `Updating *${actualVarNameForHeroku}* for "*${appName}*"...`, { parse_mode: 'Markdown' }); 
 
     console.log(`[API_CALL] Patching Heroku config vars (boolean) for ${appName}: { ${actualVarNameForHeroku}: '${newVal}' }`); 
-    const patchResponse = await herokuApi.patch(
+    const patchResponse = await axios.patch(
       `https://api.heroku.com/apps/${appName}/config-vars`,
       { [actualVarNameForHeroku]: newVal }, 
       { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
@@ -10291,7 +10221,7 @@ if (action === 'change_session') {
         await buildPromise;
 
         // On successful redeploy, update deleted_from_heroku_at to NULL in user_deployments
-        const herokuConfigVars = (await herokuApi.get( // Fetch latest config vars
+        const herokuConfigVars = (await axios.get( // Fetch latest config vars
             `https://api.heroku.com/apps/${appName}/config-vars`,
             { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
         )).data;
@@ -10674,7 +10604,7 @@ async function checkAndManageExpirations() {
             await bot.sendMessage(botInfo.user_id, `Your bot *${escapeMarkdown(botInfo.app_name)}* has expired and has been permanently deleted. To use the service again, please deploy a new bot.`, { parse_mode: 'Markdown' });
             
             // Delete from Heroku
-            await herokuApi.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
+            await axios.delete(`https://api.heroku.com/apps/${botInfo.app_name}`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             }).catch(e => console.error(`[Expiration] Failed to delete Heroku app ${botInfo.app_name} (it may have already been deleted): ${e.message}`));
             
