@@ -1388,7 +1388,77 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
     }
 }
 
+async function runBackupAllTask(adminId, initialMessageId = null) {
+    console.log('[Backup Task] Starting execution...'); // Add initial log
+    
+    let progressMsg;
+    if (initialMessageId) {
+        progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
+    } else {
+        progressMsg = await bot.sendMessage(adminId, '**Starting Manual Full System Backup...**', { parse_mode: 'Markdown' });
+    }
 
+    try {
+        const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
+        let successCount = 0;
+        let failCount = 0;
+        let skippedCount = 0; // Added skipped count initialization
+
+        for (const [index, botInfo] of allBots.entries()) {
+            const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
+            
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
+                chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+            }).catch(() => {});
+
+            try {
+                // Step 1: Backup config vars (settings)
+                const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
+                
+                // Step 2: Backup the database
+                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName); // This now returns success/fail
+
+                if (backupResult.success) {
+                    successCount++;
+                } else if (backupResult.message.includes("DATABASE_URL not found")) {
+                    // Treat "DB not found" as a skip, not a hard failure
+                    console.log(`[Backup Task] Skipping DB backup for ${appName}: ${backupResult.message}`);
+                    skippedCount++; 
+                    successCount++; // Count settings backup as success
+                } else {
+                    throw new Error(backupResult.message); // Throw other DB backup errors
+                }
+
+            } catch (error) {
+                 if (error.response && error.response.status === 404) {
+                    // Handle ghost records if Heroku app itself not found
+                    console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
+                    await dbServices.deleteUserBot(ownerId, appName);
+                    await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
+                    // skippedCount++; // Or maybe a cleanedCount? Let's treat as skipped/cleaned for now.
+                    await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
+
+                } else {
+                    failCount++;
+                    const errorMsg = error.response?.data?.message || error.message;
+                    console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
+                    await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
+                }
+            }
+        } // End of loop
+
+        await bot.editMessageText(
+            `**Direct Backup Complete!**\n\n*Successful Settings Backups:* ${successCount}\n*Failed Backups:* ${failCount}\n*DB Skipped (Not Found/Error):* ${skippedCount + failCount}\n\nData copied to Render DB schemas.`,
+            { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error('[Backup Task] Critical error during backup:', error); // Log the top-level error
+        await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
+            chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
+        });
+    }
+}
 
 
 async function sendUnregisteredUserList(chatId, page = 1, messageId = null) {
@@ -1542,45 +1612,6 @@ async function sendPricingTiers(chatId, messageId) {
             inline_keyboard: pricingKeyboard
         }
     });
-}
-
-// In bot.js
-
-async function checkHerokuApiKey() {
-    if (!HEROKU_API_KEY) {
-        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
-        return;
-    }
-
-    try {
-        await axios.get('https://api.heroku.com/account', {
-            headers: {
-                'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                'Accept': 'application/vnd.heroku+json; version=3'
-            }
-        });
-        console.log('[API Check] Heroku API key is valid.');
-
-    } catch (error) {
-        if (error.response && error.response.status === 401) {
-            console.error('[API Check] Status 401: The Heroku key is unauthorized.');
-            
-            await bot.sendMessage(ADMIN_ID,
-                '🚨 **CRITICAL ALERT: Heroku API Key Invalid** 🚨\n\n' +
-                'The bot cannot manage apps. Please provide a new key to continue.',
-                {
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Update Heroku API Key', callback_data: 'change_heroku_key' }]
-                        ]
-                    }
-                }
-            );
-        } else {
-            console.error(`[API Check] An unexpected error occurred:`, error.message);
-        }
-    }
 }
 
 
