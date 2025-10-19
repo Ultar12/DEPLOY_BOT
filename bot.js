@@ -9072,7 +9072,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         message = `Manage app "*${appName}*".\n\n` +
                   `Status: *${finalStatusText}*\n` +
                   `Expires in: *${expirationCountdown}*\n\n` +
-                  `This bot is currently turned off. Turn it on to resume the expiration countdown.`;
+                  `This bot is currently turned off.`;
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
     }
     
