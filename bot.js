@@ -1409,7 +1409,7 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
         for (const [index, botInfo] of allBots.entries()) {
             const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\n⚙️ Backing up *${escapeMarkdown(appName)}*...`, {
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up *${escapeMarkdown(appName)}*...`, {
                 chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
             }).catch(() => {});
 
