@@ -4233,7 +4233,8 @@ bot.onText(/^\/apilist$/, async (msg) => {
 
 // NEW: /askadmin command for users to initiate support
 bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
-    const userQuestion = match[1];
+    // ❗️ FIX: Escape the user's question text immediately.
+    const userQuestion = escapeMarkdown(match[1]);
     const userChatId = msg.chat.id.toString();
     await dbServices.updateUserActivity(userChatId);
     const userMessageId = msg.message_id;
@@ -4245,7 +4246,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
             `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
-            `*Message:* ${userQuestion}\n\n` +
+            `*Message:* ${userQuestion}\n\n` + // This is now safe to send
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
         );
@@ -4255,7 +4256,6 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
             original_user_message_id: userMessageId,
             request_type: 'support_question'
         };
-        console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
         await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
     } catch (e) {
@@ -4263,6 +4263,7 @@ bot.onText(/^\/askadmin (.+)$/, async (msg, match) => {
         await bot.sendMessage(userChatId, 'Failed to send your question to the admin. Please try again later.');
     }
 });
+
 
 // Admin command to add a temporary number
 // Updated /addnum command handler
@@ -5765,14 +5766,15 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
   }
 
   if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
-    const userQuestion = msg.text;
+    // ❗️ FIX: Escape the user's question text immediately.
+    const userQuestion = escapeMarkdown(msg.text);
     const userChatId = cid;
     const userMessageId = msg.message_id;
 
     try {
         const adminMessage = await bot.sendMessage(ADMIN_ID,
             `*New Question from User:* \`${userChatId}\` (U: @${msg.from.username || msg.from.first_name || 'N/A'})\n\n` +
-            `*Message:* ${userQuestion}\n\n` +
+            `*Message:* ${userQuestion}\n\n` + // This is now safe to send
             `_Reply to this message to send your response back to the user._`,
             { parse_mode: 'Markdown' }
         );
@@ -5782,7 +5784,6 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
             original_user_message_id: userMessageId,
             request_type: 'support_question'
         };
-        console.log(`[Forwarding] Stored context for admin message ${adminMessage.message_id}:`, forwardingContext[adminMessage.message_id]);
 
         await bot.sendMessage(userChatId, 'Your question has been sent to the admin. You will be notified when they reply.');
     } catch (e) {
@@ -5792,29 +5793,8 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
         delete userStates[cid];
     }
     return;
-  }
+}
 
-  // --- ❗️ FIX: Proactive Session ID Detection (with state check) ❗️ ---
-    const sessionRegex = new RegExp(`^(${LEVANTER_SESSION_PREFIX}|${RAGANORK_SESSION_PREFIX})[a-zA-Z0-9~_-]{10,}`);
-    // This now ONLY runs if the user is NOT in a state, or is in a state that is NOT expecting a session ID.
-    if (sessionRegex.test(text) && (!st || (st.step !== 'SESSION_ID' && st.step !== 'SETVAR_ENTER_VALUE'))) {
-        
-        delete userStates[cid]; 
-        userStates[cid] = {
-            step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
-            data: { sessionId: text }
-        };
-
-        await bot.sendMessage(cid, "It looks like you sent a session ID. Do you want to use this to update one of your bots?", {
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: "Yes, Update Bot", callback_data: 'confirm_session_update' },
-                    { text: "No, Cancel", callback_data: 'cancel_session_update' }
-                ]]
-            }
-        });
-        return; 
-    }
   
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
