@@ -314,6 +314,7 @@ async function createAllTablesInPool(dbPool, dbName) {
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS referred_by TEXT;`);
         await client.query(`ALTER TABLE heroku_api_keys ADD COLUMN IF NOT EXISTS added_by TEXT;`);
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
+        await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
@@ -8990,51 +8991,51 @@ if (action === 'cancel_payment_and_deploy') {
 
 // REPLACE the existing "if (action === 'selectapp' || action === 'selectbot')" block with this one
 
+// ❗️ REPLACE this entire block in bot.on('callback_query', ...)
+
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
 
-    // Set user state to manage the selected app
     userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
-        chat_id: cid,
-        message_id: messageId,
-        parse_mode: 'Markdown'
+        chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
     
-    const dynoStatus = await dbServices.getDynoStatus(appName);
-
-    if (dynoStatus === 'deleted' || dynoStatus === 'error') {
-        return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown'
-        });
-    }
-    
-    // Determine the detailed final status
-    const botDbStatusResult = await pool.query('SELECT status FROM user_bots WHERE bot_name = $1', [appName]);
-    const botDbStatus = botDbStatusResult.rows[0]?.status;
-
-    let finalStatusText;
-    if (dynoStatus === 'on') {
-        finalStatusText = (botDbStatus === 'logged_out') ? 'Logged Out' : 'Connected';
-    } else {
-        finalStatusText = 'Off';
-    }
-
-    // Get the precise expiration countdown
-    const deploymentDetails = (await pool.query(
-        'SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', 
+    // Get bot status from all our DB tables
+    const dbBotInfo = (await pool.query(
+        'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status FROM user_deployments ud ' +
+        'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
+        'WHERE ud.user_id=$1 AND ud.app_name=$2', 
         [cid, appName]
     )).rows[0];
-    const expirationCountdown = formatPreciseCountdown(deploymentDetails?.expiration_date);
-    
-    let message;
+
+    const dynoStatus = await dbServices.getDynoStatus(appName);
+    if (dynoStatus === 'deleted' || dynoStatus === 'error') {
+        return bot.editMessageText(`Could not retrieve status for "*${appName}*". It may have been deleted.`, {
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+        });
+    }
+
+    let finalStatusText;
+    let expirationCountdown = formatPreciseCountdown(dbBotInfo?.expiration_date);
     const keyboard = [];
 
-    if (dynoStatus === 'on') {
+    if (dbBotInfo?.paused_at) {
+        // --- NEW: Bot is PAUSED ---
+        finalStatusText = 'Paused';
+        expirationCountdown += ' (Paused)';
+        
+        message = `Manage app "*${appName}*".\n\n` +
+                  `Status: *${finalStatusText}*\n` +
+                  `Expires in: *${expirationCountdown}*\n\n` +
+                  `This bot is turned off and its expiration timer is paused.`;
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
+        
+    } else if (dynoStatus === 'on') {
+        // --- Bot is ON ---
+        finalStatusText = (dbBotInfo?.wpp_status === 'logged_out') ? 'Logged Out' : 'Connected';
         message = `Manage app "*${appName}*".\n\n` +
                   `Status: *${finalStatusText}*\n` +
                   `Expires in: *${expirationCountdown}*`;
@@ -9045,9 +9046,8 @@ if (action === 'selectapp' || action === 'selectbot') {
             { text: 'Logs', callback_data: `logs:${appName}` }
         ];
 
-        // Add 'Renew' button if expiration is within 7 days
-        if (deploymentDetails && deploymentDetails.expiration_date) {
-            const daysLeft = Math.ceil((new Date(deploymentDetails.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
+        if (dbBotInfo && dbBotInfo.expiration_date) {
+            const daysLeft = Math.ceil((new Date(dbBotInfo.expiration_date) - new Date()) / (1000 * 60 * 60 * 24));
             if (daysLeft <= 7) {
                 mainRow.splice(2, 0, { text: 'Renew', callback_data: `renew_bot:${appName}` });
             }
@@ -9062,16 +9062,18 @@ if (action === 'selectapp' || action === 'selectbot') {
             ],
             [
                 { text: 'Backup', callback_data: `backup_app:${appName}` },
-                { text: 'Turn Bot Off', callback_data: `toggle_dyno:off:${appName}` }
+                { text: 'Turn Bot Off (Pause)', callback_data: `toggle_dyno:off:${appName}` }
             ]
         );
 
-    } else { // dynoStatus is 'off'
+    } else { 
+        // --- Bot is OFF (but not paused, e.g., crashed) ---
+        finalStatusText = 'Off';
         message = `Manage app "*${appName}*".\n\n` +
-                  `Status: *Off ⚪️*\n` +
+                  `Status: *${finalStatusText}*\n` +
                   `Expires in: *${expirationCountdown}*\n\n` +
-                  `This bot is currently turned off and will not respond to commands.`;
-        keyboard.push([{ text: 'Turn Bot On', callback_data: `toggle_dyno:on:${appName}` }]);
+                  `This bot is currently turned off. Turn it on to resume the expiration countdown.`;
+        keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}` }]);
     }
     
     keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list' }]);
@@ -9088,30 +9090,60 @@ if (action === 'selectapp' || action === 'selectbot') {
 
 
 
+
 // In bot.js, add this new handler inside the callback_query function
+
+// ❗️ REPLACE this entire block in bot.on('callback_query', ...)
 
 if (action === 'toggle_dyno') {
     const desiredState = payload; // 'on' or 'off'
     const appName = extra;
-    const quantity = (desiredState === 'on') ? 1 : 0; // 1 to turn on, 0 to turn off
+    const quantity = (desiredState === 'on') ? 1 : 0;
 
     await bot.answerCallbackQuery(q.id, { text: `Turning bot ${desiredState}...` });
     
     try {
-        await axios.patch(`https://api.heroku.com/apps/${appName}/formation/web`, 
-            { quantity: quantity },
-            {
-                headers: { 
-                    Authorization: `Bearer ${HEROKU_API_KEY}`, 
-                    Accept: 'application/vnd.heroku+json; version=3',
-                    'Content-Type': 'application/json'
-                }
+        // --- NEW PAUSE/RESUME LOGIC ---
+        if (desiredState === 'on') {
+            // Bot is being turned ON. We need to un-pause it.
+            const pauseData = await pool.query("SELECT paused_at, expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2", [cid, appName]);
+            
+            if (pauseData.rows.length > 0 && pauseData.rows[0].paused_at) {
+                const pausedAt = new Date(pauseData.rows[0].paused_at);
+                const expirationDate = new Date(pauseData.rows[0].expiration_date);
+                
+                // Calculate how long it was paused (in milliseconds)
+                const pausedDurationMs = Date.now() - pausedAt.getTime();
+                
+                // Add the paused time back to the original expiration date
+                const newExpirationDate = new Date(expirationDate.getTime() + pausedDurationMs);
+
+                // Update the database: set new expiry and remove the pause timestamp
+                await pool.query(
+                    "UPDATE user_deployments SET paused_at = NULL, expiration_date = $1 WHERE user_id = $2 AND app_name = $3",
+                    [newExpirationDate, cid, appName]
+                );
+                console.log(`[Dyno] Un-paused bot ${appName}. Paused duration: ${pausedDurationMs}ms. New expiry: ${newExpirationDate.toISOString()}`);
             }
+        } else {
+            // Bot is being turned OFF. We need to pause it.
+            await pool.query(
+                "UPDATE user_deployments SET paused_at = NOW() WHERE user_id = $1 AND app_name = $2",
+                [cid, appName]
+            );
+            console.log(`[Dyno] Paused bot ${appName}. Expiration countdown is now stopped.`);
+        }
+        // --- END OF NEW LOGIC ---
+
+        // This is the original Heroku API call
+        await herokuApi.patch(`/apps/${appName}/formation/web`, 
+            { quantity: quantity },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
         
-        // After the action, refresh the bot menu to show the new status
         await bot.answerCallbackQuery(q.id, { text: `Bot successfully turned ${desiredState}!` });
-        // We "fake" a new query to re-run the 'selectbot' logic and refresh the menu
+        
+        // Refresh the bot menu to show the new status
         q.data = `selectbot:${appName}`;
         bot.emit('callback_query', q);
 
@@ -9121,6 +9153,7 @@ if (action === 'toggle_dyno') {
     }
     return;
 }
+
 
 // ... (existing code within bot.on('callback_query', async q => { ... })) ...
 
