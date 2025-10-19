@@ -443,8 +443,11 @@ async function getUserBots(u) {
 async function getExpiringBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name, expiration_date FROM user_deployments 
-             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
+            `SELECT user_id, app_name, expiration_date 
+             FROM user_deployments 
+             WHERE warning_sent_at IS NULL 
+               AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
         );
         return result.rows;
     } catch (error) {
@@ -452,6 +455,7 @@ async function getExpiringBackups() {
         return [];
     }
 }
+
 
 async function setBackupWarningSent(userId, appName) {
     try {
@@ -467,7 +471,10 @@ async function setBackupWarningSent(userId, appName) {
 async function getExpiredBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name FROM user_deployments WHERE expiration_date <= NOW();`
+            `SELECT user_id, app_name 
+             FROM user_deployments 
+             WHERE expiration_date <= NOW()
+               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
         );
         return result.rows;
     } catch (error) {
