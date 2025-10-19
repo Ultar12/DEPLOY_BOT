@@ -1634,6 +1634,44 @@ async function sendBannedUsersList(chatId, messageId = null) {
 }
 
 
+async function checkHerokuApiKey() {
+    if (!HEROKU_API_KEY) {
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
+        return;
+    }
+
+    try {
+        await axios.get('https://api.heroku.com/account', {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        });
+        console.log('[API Check] Heroku API key is valid.');
+
+    } catch (error) {
+        if (error.response && error.response.status === 401) {
+            console.error('[API Check] Status 401: The Heroku key is unauthorized.');
+            
+            await bot.sendMessage(ADMIN_ID,
+                '🚨 **CRITICAL ALERT: Heroku API Key Invalid** 🚨\n\n' +
+                'The bot cannot manage apps. Please provide a new key to continue.',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Update Heroku API Key', callback_data: 'change_heroku_key' }]
+                        ]
+                    }
+                }
+            );
+        } else {
+            console.error(`[API Check] An unexpected error occurred:`, error.message);
+        }
+    }
+}
+
+
 // bot.js (Utilities section)
 
 /**
