@@ -2478,10 +2478,6 @@ async function notifyAdminUserOnline(msg) {
     checkHerokuApiKey();
 
   startScheduledTasks();
-
-    // Schedule the check to run every 5 minutes
-    setInterval(checkHerokuApiKey, 5 * 60 * 1000);
-    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
     
     // ... rest of your startup logic ...
 
@@ -2491,51 +2487,52 @@ async function notifyAdminUserOnline(msg) {
 const crypto = require('crypto');
 
 if (process.env.NODE_ENV === 'production') {
-    // --- Webhook Mode (for Heroku) ---
+    // --- Webhook Mode (for Render/Heroku) ---
     const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
+    app.use(express.json());
+    app.use(express.static(path.join(__dirname, 'public'))); // Your static files
 
-const APP_URL = process.env.APP_URL;
-
+    const APP_URL = process.env.APP_URL;
     if (!APP_URL) {
-        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
+        console.error('CRITICAL ERROR: APP_URL environment variable is not set. Bot cannot start.');
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
     
     const cleanedAppUrl = APP_URL.endsWith('/') ? APP_URL.slice(0, -1) : APP_URL;
-
     const webhookPath = `/bot${TELEGRAM_BOT_TOKEN}`;
     const fullWebhookUrl = `${cleanedAppUrl}${webhookPath}`;
 
-    await bot.setWebHook(fullWebhookUrl);
-    console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
-
-  // --- REPLACE the previous pinging block with this one ---
-
-    app.listen(PORT, () => {
+    // ❗️ FIX: Start the server and open the port IMMEDIATELY.
+    // This is what Render needs to see.
+    app.listen(PORT, async () => {
         console.log(`[Web Server] Server running on port ${PORT}`);
+        
+        // ❗️ FIX: Set the webhook AFTER the server is successfully running.
+        try {
+            await bot.setWebHook(fullWebhookUrl);
+            console.log(`[Webhook] Set successfully for URL: ${fullWebhookUrl}`);
+        } catch (webhookError) {
+            console.error(`[Webhook] CRITICAL ERROR: Failed to set webhook.`);
+            console.error(webhookError.message);
+            // Notify the admin that the webhook failed but the server is still running.
+            await bot.sendMessage(ADMIN_ID, `**CRITICAL: Webhook Failed!** \n\nBot server is running, but I failed to set the webhook at \`${fullWebhookUrl}\`.\n\n*Reason:* ${webhookError.message}\n\nPlease check your \`APP_URL\` and \`TELEGRAM_BOT_TOKEN\` and then restart.`);
+        }
     });
 
-    // --- START: Auto-Ping Logic (Render ONLY) ---
-
-    // This check now ensures it only runs if the APP_URL is set AND it's on Render
+    // --- Auto-Ping Logic (Render ONLY) ---
     if (process.env.APP_URL && process.env.RENDER === 'true') {
       const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-      
       setInterval(async () => {
         try {
-          // Send a GET request to the app's own URL
           await axios.get(APP_URL);
           console.log(`[Pinger] Render self-ping successful to ${APP_URL}`);
         } catch (error) {
-          // Log any errors without crashing the bot
           console.error(`[Pinger] Render self-ping failed: ${error.message}`);
         }
       }, PING_INTERVAL_MS);
-      
-      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized for ${APP_URL} every 10 minutes.`);
+      console.log(`[𝖀𝖑𝖙-𝕬𝕽] Render self-pinging service initialized.`);
+  
     } else {
       console.log('[𝖀𝖑𝖙-𝕬𝕽] Self-pinging service is disabled (not running on Render).');
     }
