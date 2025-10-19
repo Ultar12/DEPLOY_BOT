@@ -396,45 +396,127 @@ async function runCopyDbTask() {
 }
 
 
-// All other functions now take a 'botId' parameter.
 async function redeployBot(userId, botId) {
-    console.log(`[ACTION] Starting redeployment for bot ${botId} owned by user ${userId}...`);
-    // Example logic:
-    // const bot_repo_url = await pool.query('SELECT repo_url FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
-    // await your_hosting_api.triggerRedeploy(bot_repo_url);
-    return { status: "success", message: `Redeployment has been initiated for bot ${botId}.` };
+    console.log(`[ACTION] User ${userId} requested redeployment for bot ${botId}.`);
+    try {
+        // 1. Find the bot type to determine the correct repo
+        const botInfo = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, botId]);
+        if (botInfo.rows.length === 0) {
+            return { status: "error", message: `Could not find bot '${botId}' to redeploy.` };
+        }
+        const botType = botInfo.rows[0].bot_type;
+        const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
+
+        // 2. Trigger the build on Heroku
+        await herokuApi.post(`/apps/${botId}/builds`,
+            { source_blob: { url: `${repoUrl}/tarball/main` } },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+        return { status: "success", message: `Redeployment initiated for *${escapeMarkdown(botId)}*. It will restart once the build is complete.` };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Redeploy Error] Bot ${botId}:`, errorMsg);
+        return { status: "error", message: `Failed to start redeployment for *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
+    }
 }
 
+/**
+ * Gets information about a specific bot from the database.
+ */
 async function getBotInfo(userId, botId) {
-    console.log(`[ACTION] Fetching info for bot ${botId} owned by user ${userId}...`);
-    // Example logic:
-    // const result = await pool.query('SELECT * FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
-    // const botInfo = result.rows[0];
-    const botInfo = { bot_id: botId, bot_name: 'Stickers Bot', status: 'online', plan: 'premium' }; // Mock data
-    return { status: "success", data: botInfo };
+    console.log(`[ACTION] User ${userId} requested info for bot ${botId}.`);
+    try {
+        const result = await pool.query(
+            `SELECT ub.bot_name, ub.bot_type, ub.status, ud.expiration_date, ud.deploy_date
+             FROM user_bots ub
+             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+             WHERE ub.user_id = $1 AND ub.bot_name = $2`,
+            [userId, botId]
+        );
+        if (result.rows.length === 0) {
+            return { status: "error", message: `I couldn't find a bot named *${escapeMarkdown(botId)}* registered under your account.` };
+        }
+        // Format data for better display if needed
+        const botData = result.rows[0];
+        botData.status = botData.status === 'online' ? 'Online' : 'Logged Out';
+        botData.expiration_date = botData.expiration_date ? new Date(botData.expiration_date).toLocaleDateString() : 'Not Set';
+        botData.deploy_date = botData.deploy_date ? new Date(botData.deploy_date).toLocaleDateString() : 'Unknown';
+
+        return { status: "success", data: botData };
+    } catch (dbError) {
+        console.error(`[GetInfo DB Error] Bot ${botId}:`, dbError);
+        return { status: "error", message: "A database error occurred while fetching bot info." };
+    }
 }
 
+
+ 
 async function deleteBot(userId, botId) {
-    console.log(`[ACTION] Deleting bot ${botId} for user ${userId}...`);
-    // Example logic:
-    // await pool.query('DELETE FROM your_bots_table WHERE bot_id = $1 AND owner_id = $2', [botId, userId]);
-    // await your_hosting_api.destroyApp(botId);
-    return { status: "success", message: `Bot ${botId} has been scheduled for deletion.` };
+    console.log(`[ACTION] User ${userId} requested deletion for bot ${botId}.`);
+    try {
+        // 1. Attempt to delete from Heroku
+        await herokuApi.delete(`/apps/${botId}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        console.log(`[Delete] Successfully deleted ${botId} from Heroku.`);
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            console.log(`[Delete] Bot ${botId} was already deleted from Heroku.`);
+        } else {
+            // If it's not a 404, report the error but still proceed with DB cleanup
+            const errorMsg = error.response?.data?.message || error.message;
+            console.error(`[Delete Error] Bot ${botId} (Heroku):`, errorMsg);
+            // Optionally notify admin or user about the Heroku API failure
+        }
+    }
+    // 2. Always clean up database records
+    try {
+        await dbServices.deleteUserBot(userId, botId); // Removes from user_bots
+        await dbServices.markDeploymentDeletedFromHeroku(userId, botId); // Marks in user_deployments
+        console.log(`[Delete] Cleaned up database records for ${botId}.`);
+        return { status: "success", message: `Bot *${escapeMarkdown(botId)}* has been permanently deleted.` };
+    } catch (dbError) {
+        console.error(`[Delete DB Error] Bot ${botId}:`, dbError);
+        return { status: "error", message: `Failed to clean up database records for *${escapeMarkdown(botId)}*. Please contact admin.` };
+    }
 }
 
+/**
+ * Restarts a specific bot by deleting its dynos on Heroku.
+ */
 async function restartBot(userId, botId) {
-    console.log(`[ACTION] Restarting bot ${botId} for user ${userId}...`);
-    // Example logic:
-    // await your_hosting_api.restartDyno(botId);
-    return { status: "success", message: `Bot ${botId} is now restarting.` };
+    console.log(`[ACTION] User ${userId} requested restart for bot ${botId}.`);
+    try {
+        await herokuApi.delete(`/apps/${botId}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        return { status: "success", message: `Bot *${escapeMarkdown(botId)}* is restarting now.` };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Restart Error] Bot ${botId}:`, errorMsg);
+        return { status: "error", message: `Failed to restart *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
+    }
 }
 
+/**
+ * Fetches the most recent logs for a specific bot from Heroku.
+ */
 async function getBotLogs(userId, botId) {
-    console.log(`[ACTION] Fetching logs for bot ${botId} owned by user ${userId}...`);
-    // Example logic:
-    // const logs = await your_hosting_api.getLogs(botId);
-    const logs = `[${new Date().toISOString()}] INFO: Bot ${botId} started successfully.\n[${new Date().toISOString()}] WARN: High memory usage detected.`;
-    return { status: "success", logs: logs };
+    console.log(`[ACTION] User ${userId} requested logs for bot ${botId}.`);
+    try {
+        // 1. Create a log session on Heroku
+        const sessRes = await herokuApi.post(`/apps/${botId}/log-sessions`,
+            { lines: 150, tail: false }, // Get last 150 lines
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+        const logplexUrl = sessRes.data.logplex_url;
+
+        // 2. Fetch logs from the temporary URL (using standard axios is fine here)
+        const logRes = await axios.get(logplexUrl);
+        const logs = logRes.data.trim().slice(-4000); // Limit to Telegram's message size
+
+        return { status: "success", logs: logs || 'No recent logs found.' };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[GetLogs Error] Bot ${botId}:`, errorMsg);
+        return { status: "error", message: `Failed to get logs for *${escapeMarkdown(botId)}*: ${escapeMarkdown(errorMsg)}` };
+    }
 }
 
 // Note: updateUserVariable also needs the botId to know which bot's variable to change.
