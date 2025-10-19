@@ -1389,27 +1389,30 @@ async function sendApiKeyDeletionList(chatId, messageId = null) {
     }
 }
 
-// Add this new async function somewhere in your bot.js
+// In bot.js, replace your entire runBackupAllTask function with this:
+
 async function runBackupAllTask(adminId, initialMessageId = null) {
-    console.log('[Backup Task] Starting execution...'); // Add initial log
+    console.log('[Backup Task] Starting execution...');
     
     let progressMsg;
     if (initialMessageId) {
         progressMsg = { message_id: initialMessageId, chat: { id: adminId } };
     } else {
-        progressMsg = await bot.sendMessage(adminId, '**Starting Manual Full System Backup...**', { parse_mode: 'Markdown' });
+        progressMsg = await bot.sendMessage(adminId, '**Starting Full System Backup...**', { parse_mode: 'Markdown' });
     }
+
+    let backupSuccess = false; // Flag to check if backup was successful
+    let failCount = 0; // Track failures
 
     try {
         const allBots = (await pool.query("SELECT user_id, bot_name, bot_type FROM user_bots")).rows;
         let successCount = 0;
-        let failCount = 0;
-        let skippedCount = 0; // Added skipped count initialization
+        let skippedCount = 0;
 
         for (const [index, botInfo] of allBots.entries()) {
             const { user_id: ownerId, bot_name: appName, bot_type: botType } = botInfo;
             
-            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up *${escapeMarkdown(appName)}*...`, {
+            await bot.editMessageText(`**Progress: (${index + 1}/${allBots.length})**\n\nBacking up settings & data for *${escapeMarkdown(appName)}*...`, {
                 chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
             }).catch(() => {});
 
@@ -1419,30 +1422,27 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
                 await dbServices.saveUserDeployment(ownerId, appName, configRes.data.SESSION_ID, configRes.data, botType);
                 
                 // Step 2: Backup the database
-                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName); // This now returns success/fail
+                const backupResult = await dbServices.backupHerokuDbToRenderSchema(appName);
 
                 if (backupResult.success) {
                     successCount++;
                 } else if (backupResult.message.includes("DATABASE_URL not found")) {
-                    // Treat "DB not found" as a skip, not a hard failure
                     console.log(`[Backup Task] Skipping DB backup for ${appName}: ${backupResult.message}`);
-                    skippedCount++; 
+                    skippedCount++;
                     successCount++; // Count settings backup as success
                 } else {
-                    throw new Error(backupResult.message); // Throw other DB backup errors
+                    throw new Error(backupResult.message);
                 }
 
             } catch (error) {
                  if (error.response && error.response.status === 404) {
-                    // Handle ghost records if Heroku app itself not found
                     console.log(`[Backup Task] Bot ${appName} not found on Heroku. Cleaning ghost record.`);
                     await dbServices.deleteUserBot(ownerId, appName);
                     await dbServices.deleteUserDeploymentFromBackup(ownerId, appName);
-                    // skippedCount++; // Or maybe a cleanedCount? Let's treat as skipped/cleaned for now.
                     await bot.sendMessage(adminId, `Bot *${escapeMarkdown(appName)}* not found on Heroku. Records cleaned.`, { parse_mode: 'Markdown' });
 
                 } else {
-                    failCount++;
+                    failCount++; // Increment failure count
                     const errorMsg = error.response?.data?.message || error.message;
                     console.error(`[Backup Task] Failed to back up bot ${appName}:`, errorMsg);
                     await bot.sendMessage(adminId, `Failed to back up *${escapeMarkdown(appName)}*.\n*Reason:* ${escapeMarkdown(String(errorMsg).substring(0, 200))}`, { parse_mode: 'Markdown' });
@@ -1451,16 +1451,36 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
         } // End of loop
 
         await bot.editMessageText(
-            `**Direct Backup Complete!**\n\n*Successful Settings Backups:* ${successCount}\n*Failed Backups:* ${failCount}\n*DB Skipped (Not Found/Error):* ${skippedCount + failCount}\n\nData copied to Render DB schemas.`,
+            `**Bot Backup Complete!**\n\n*Successful:* ${successCount}\n*Failed:* ${failCount}\n*DB Skipped:* ${skippedCount}\n\nData copied to Render DB schemas.`,
             { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
         );
+        
+        if (failCount === 0) {
+             backupSuccess = true;
+        }
+
     } catch (error) {
-        console.error('[Backup Task] Critical error during backup:', error); // Log the top-level error
+        console.error('[Backup Task] Critical error during /backupall:', error);
         await bot.editMessageText(`**A critical error occurred during backup:**\n\n${escapeMarkdown(error.message)}`, {
             chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown'
         });
     }
+
+    // --- ❗️ NEW: PHASE 2 - Automatically Run /copydb ---
+    if (backupSuccess) { // Only run copydb if the backupall part had 0 failures
+        await bot.sendMessage(adminId, "**Starting Phase 2:** Automatically copying main database to backup database...");
+        try {
+            await runCopyDbTask(); // This is the core logic function for /copydb
+            await bot.sendMessage(adminId, "**Full System Maintenance Complete!**\n\nAll bot backups and the main database copy are finished.");
+        } catch (copyError) {
+            console.error("Error during automated /copydb task:", copyError);
+            await bot.sendMessage(adminId, `**Bot backup was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
+        }
+    } else {
+         await bot.sendMessage(adminId, "Main database copy was skipped because errors occurred during the bot backup phase.");
+    }
 }
+
 
 
 
