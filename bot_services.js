@@ -1,4 +1,12 @@
 const axios = require('axios');
+
+const herokuApi = axios.create({
+    baseURL: 'https://api.heroku.com',
+    headers: {
+        'Accept': 'application/vnd.heroku+json; version=3',
+        'Content-Type': 'application/json'
+    }
+});
 const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
 const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
 const { Pool } = require('pg'); // Not declared here, but passed in. Good practice to show dependency.
