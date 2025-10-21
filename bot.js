@@ -2054,6 +2054,45 @@ async function triggerRenderRestart() {
 }
 
 
+// In bot.js, replace your old checkHerokuApiKey function with this one
+
+async function checkHerokuApiKey() {
+    if (!HEROKU_API_KEY) {
+        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
+        return;
+    }
+
+    try {
+        // ❗️ FIX: Use the standard 'axios' to make the call.
+        // This is necessary so this function can catch the error itself,
+        // instead of the 'herokuApi' interceptor catching it.
+        await axios.get('https://api.heroku.com/account', {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        });
+        
+        // If the request succeeds, the key is valid.
+        console.log('[API Check] Periodic check: Heroku API key is valid.');
+
+    } catch (error) {
+        // ❗️ FIX: Check for the 401 error and MANUALLY start the workflow.
+        if (error.response && error.response.status === 401) {
+            console.error('[API Check] Status 401: The Heroku key is unauthorized. Triggering recovery workflow...');
+            
+            // Manually call the recovery function with the key that just failed.
+            await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
+
+        } else {
+            // Log any other errors (like 503, 500, etc.)
+            console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
+        }
+    }
+}
+
+
+
 // REPLACE WITH THIS
 async function saveMaintenanceStatus(status) {
     const statusValue = status ? 'on' : 'off';
@@ -2495,6 +2534,9 @@ async function notifyAdminUserOnline(msg) {
 
 
   startScheduledTasks();
+
+  setInterval(checkHerokuApiKey, 5 * 60 * 1000);
+    console.log('[API Check] Scheduled Heroku API key validation every 5 minutes.');
 
 
 // Check the environment to decide whether to use webhooks or polling
