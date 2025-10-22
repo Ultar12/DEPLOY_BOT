@@ -161,44 +161,60 @@ async function backupHerokuDbToRenderSchema(appName) {
  * @param {string} appName The name of the Heroku app to restore.
  * @returns {Promise<{success: boolean, message: string}>}
  */
-async function restoreHerokuDbFromRenderSchema(appName) {
-    const { herokuApi, HEROKU_API_KEY } = moduleParams;
+async function restoreHerokuDbFromRenderSchema(originalAppName, newAppName) {
+    const { herokuApi, HEROKU_API_KEY, bot } = moduleParams; // Added 'bot' for logging
     const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name to match the backup schema
+    const schemaName = `backup_${originalAppName.replace(/-/g, '_')}`; 
 
     try {
-        // Get the NEW Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const newHerokuDbUrl = configRes.data.DATABASE_URL;
+        let newHerokuDbUrl = null;
+        let configRes = null;
 
+        // --- ❗️ NEW: Polling loop to wait for the app to be ready ---
+        console.log(`[DB Restore] Waiting for app '${newAppName}' config vars to be available...`);
+        for (let i = 0; i < 18; i++) { // Poll for up to 3 minutes (18 * 10 seconds)
+            try {
+                configRes = await herokuApi.get(`/apps/${newAppName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+                newHerokuDbUrl = configRes.data.DATABASE_URL;
+                if (newHerokuDbUrl) {
+                    console.log(`[DB Restore] App '${newAppName}' is ready.`);
+                    break; // Success! Exit the loop.
+                }
+            } catch (e) {
+                if (e.response?.status !== 404) {
+                    throw e; // A real error, not just 'Not Found'
+                }
+                // It's a 404, so we wait and try again...
+                console.log(`[DB Restore] App '${newAppName}' not ready yet (404), retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+            }
+        }
+        
         if (!newHerokuDbUrl) {
-            throw new Error("Could not find DATABASE_URL for the newly created Heroku app.");
+            throw new Error(`Could not find DATABASE_URL for app '${newAppName}' after 3 minutes. The restore may have failed.`);
         }
 
-        // Use pg_dump to pipe the schema from Render directly into the new Heroku DB
-        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${appName}...`);
+        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
         
-        // This command dumps ONLY the specified schema from your Render DB and pipes it into the new Heroku DB.
         const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
 
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
-        // Ignore common, non-fatal warnings but throw on real errors.
         if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            // This specific warning is expected and can be ignored.
             if (!stderr.includes(`schema "public" does not exist`)) {
                  throw new Error(stderr);
             }
         }
         
-        console.log(`[DB Restore] Successfully restored data for ${appName} from schema ${schemaName}.`);
+        console.log(`[DB Restore] Successfully restored data for ${newAppName} from schema ${schemaName}.`);
         return { success: true, message: 'Database restore successful.' };
 
     } catch (error) {
-        console.error(`[DB Restore] FAILED to restore ${appName}:`, error.message);
+        console.error(`[DB Restore] FAILED to restore ${newAppName}:`, error.message);
         return { success: false, message: error.message };
     }
 }
+
 
 
 // bot_services.js
