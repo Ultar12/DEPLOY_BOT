@@ -892,13 +892,15 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
     }
 }
 
+// In bot_services.js, find and REPLACE this function
 async function getAllDeploymentsFromBackup(botType) {
     try {
         // --- THIS IS THE FIX ---
-        // It now fetches ALL bots of the specified type from your backup database,
-        // ignoring whether they are active or inactive.
+        // Removed "ip_address" from the SELECT query because the column
+        // does not exist in your database, causing the crash.
+        // "referred_by" is still needed.
         const result = await pool.query(
-            `SELECT user_id, app_name, session_id, config_vars, referred_by, ip_address
+            `SELECT user_id, app_name, session_id, config_vars, referred_by
              FROM user_deployments 
              WHERE bot_type = $1
              ORDER BY app_name ASC;`,
@@ -913,6 +915,7 @@ async function getAllDeploymentsFromBackup(botType) {
         return [];
     }
 }
+
 
 
 
