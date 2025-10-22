@@ -162,6 +162,7 @@ async function backupHerokuDbToRenderSchema(appName) {
  * @param {string} newAppName The name of the *new* Heroku app to restore data to.
  * @returns {Promise<{success: boolean, message: string}>}
  */
+// In bot_services.js, REPLACE this entire function
 async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
     const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams; 
     const mainDbUrl = process.env.DATABASE_URL;
@@ -169,7 +170,7 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
     let client; 
 
     try {
-        // --- ❗️ NEW FIX: Search for BOTH old ('backup_...') and new ('akpan...') schema names ---
+        // --- Find the correct schema ---
         console.log(`[DB Restore] Searching for schema matching base name: '${originalBaseName}'`);
         const baseNameForSearch = originalBaseName.replace(/-/g, '_');
         client = await mainPool.connect(); 
@@ -180,40 +181,40 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
                     OR nspname LIKE 'backup_' || $1 || '%' -- Matches old names like 'backup_akpan11_0372'
                  ORDER BY nspname DESC
                  LIMIT 1`,
-                [baseNameForSearch] // baseNameForSearch will be 'akpan', 'adams', etc.
+                [baseNameForSearch]
             );
 
             if (schemaRes.rowCount === 0) {
                 throw new Error(`No backup schema found matching '${baseNameForSearch}%' OR 'backup_${baseNameForSearch}%'.`);
             }
             
-            schemaName = schemaRes.rows[0].nspname; // e.g., 'backup_akpan11_0372'
+            schemaName = schemaRes.rows[0].nspname; 
             console.log(`[DB Restore] Found matching schema: '${schemaName}'`);
 
         } finally {
             if (client) client.release();
         }
-        // --- End of new logic ---
+        // --- End of schema search ---
 
         let newHerokuDbUrl = null;
         let configRes = null;
 
         // --- Polling loop to wait for the app to be ready ---
         console.log(`[DB Restore] Waiting for app '${newAppName}' config vars to be available...`);
-        for (let i = 0; i < 18; i++) { // Poll for up to 3 minutes (18 * 10 seconds)
+        for (let i = 0; i < 18; i++) { 
             try {
                 configRes = await herokuApi.get(`/apps/${newAppName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 newHerokuDbUrl = configRes.data.DATABASE_URL;
                 if (newHerokuDbUrl) {
                     console.log(`[DB Restore] App '${newAppName}' is ready.`);
-                    break; // Success! Exit the loop.
+                    break; 
                 }
             } catch (e) {
                 if (e.response?.status !== 404) {
-                    throw e; // A real error, not just 'Not Found'
+                    throw e; 
                 }
                 console.log(`[DB Restore] App '${newAppName}' not ready yet (404), retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+                await new Promise(resolve => setTimeout(resolve, 10000)); 
             }
         }
         
@@ -223,10 +224,12 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
 
         console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
         
-               // This command dumps the schema, uses grep to remove the schema creation/setting lines,
-        // and then forces psql to restore all tables/data into the 'public' schema.
-        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} --no-owner --clean | grep -v -E '(^CREATE SCHEMA "|^ALTER SCHEMA "|^SET search_path = )' | psql "${newHerokuDbUrl}" -c "SET search_path TO public;"`;
-
+        // ❗️❗️ THIS IS THE FINAL FIX ❗️❗️
+        // This sets the search_path for pg_dump, forcing it to dump tables
+        // without the schema prefix (e.g., 'users' instead of 'backup_adams12.users').
+        // The psql command on the other side will then restore them to the default 'public' schema.
+        const command = `PGOPTIONS="--search_path=${schemaName},public" pg_dump "${mainDbUrl}" --no-owner --clean | psql "${newHerokuDbUrl}"`;
+        // ❗️❗️ END OF FINAL FIX ❗️❗️
 
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
@@ -244,7 +247,6 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
         return { success: false, message: error.message };
     }
 }
-// ❗️❗️ END OF REPLACED FUNCTION ❗️❗️
 
 
 
