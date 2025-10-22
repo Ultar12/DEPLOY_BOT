@@ -111,6 +111,57 @@ const execPromise = util.promisify(exec);
  * @returns {Promise<{success: boolean, message: string}>}
  */
 // In bot_services.js, REPLACE this entire function
+async function backupHerokuDbToRenderSchema(appName) {
+    // ❗️ FIX: Destructure tools from the correctly initialized moduleParams.
+    const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
+    
+    const mainDbUrl = process.env.DATABASE_URL;
+    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
+
+    try {
+        // Get the Heroku bot's DATABASE_URL from its config vars
+        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        const herokuDbUrl = configRes.data.DATABASE_URL;
+
+        if (!herokuDbUrl) {
+            throw new Error("DATABASE_URL not found in the bot's Heroku config vars.");
+        }
+
+        const client = await mainPool.connect();
+        try {
+            await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
+            await client.query(`CREATE SCHEMA ${schemaName};`);
+        } finally {
+            client.release();
+        }
+
+        console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
+        // Use pg_dump to pipe from Heroku and psql to restore into the new schema
+        const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
+        
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
+
+        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
+            throw new Error(stderr);
+        }
+        
+        console.log(`[DB Backup] Successfully backed up ${appName} to schema ${schemaName}.`);
+        return { success: true, message: 'Database backup successful.' };
+
+    } catch (error) {
+        console.error(`[DB Backup] FAILED to back up ${appName}:`, error.message);
+        return { success: false, message: error.message };
+    }
+}
+
+
+
+/**
+ * Restores a Heroku Postgres database by copying data from a schema in the Render database.
+ * @param {string} originalBaseName The "base name" of the app to search for (e.g., 'akpan')
+ * @param {string} newAppName The name of the *new* Heroku app to restore data to.
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
 async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
     const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams; 
     const mainDbUrl = process.env.DATABASE_URL;
@@ -177,112 +228,6 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
         if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            if (!stderr.includes(`schema "public" does not exist`) && !stderr.includes('ACL objects') && !stderr.includes('owner')) {
-                 throw new Error(stderr);
-            }
-        }
-        
-        console.log(`[DB Restore] Successfully restored data for ${newAppName} from schema ${schemaName}.`);
-        return { success: true, message: 'Database restore successful.' };
-
-    } catch (error) {
-        console.error(`[DB Restore] FAILED to restore ${newAppName}:`, error.message);
-        return { success: false, message: error.message };
-    }
-}
-
-
-// In bot_services.js
-// ❗️❗️ REPLACED FUNCTION ❗️❗️
-/**
- * Restores a Heroku Postgres database by copying data from a schema in the Render database.
- * @param {string} originalBaseName The "base name" of the app to search for (e.g., 'akpan')
- * @param {string} newAppName The name of the *new* Heroku app to restore data to.
- * @returns {Promise<{success: boolean, message: string}>}
- */
-async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
-    // ❗️ FIX: Destructure from moduleParams to get all dependencies
-    const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams; 
-    const mainDbUrl = process.env.DATABASE_URL;
-    let schemaName = null;
-    let client; // Declare client here
-
-    try {
-        // --- ❗️ NEW: Find the correct schema using the base name ---
-        console.log(`[DB Restore] Searching for schema matching base name: '${originalBaseName}'`);
-        const baseNameForSearch = originalBaseName.replace(/-/g, '_');
-        client = await mainPool.connect(); // Use mainPool from moduleParams
-        try {
-            const schemaRes = await client.query(
-                // Find a schema that starts with the base name + an underscore (e.g., 'akpan_')
-                // This prevents 'akpan' from matching 'akpanbot'
-                `SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname LIKE $1 || '_%'`,
-                [baseNameForSearch]
-            );
-
-            if (schemaRes.rowCount === 0) {
-                // Fallback: search for base name without underscore, just in case
-                const fallbackRes = await client.query(
-                   `SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname LIKE $1 || '%'`,
-                   [baseNameForSearch]
-                );
-                if (fallbackRes.rowCount === 0) {
-                    throw new Error(`No backup schema found matching '${baseNameForSearch}_%' or '${baseNameForSearch}%'.`);
-                }
-                 if (fallbackRes.rowCount > 1) {
-                    console.warn(`[DB Restore] Found multiple schemas matching '${baseNameForSearch}%'. Using the first one: ${fallbackRes.rows[0].nspname}`);
-                }
-                schemaName = fallbackRes.rows[0].nspname; // e.g., 'akpan1233'
-            } else {
-                 if (schemaRes.rowCount > 1) {
-                    console.warn(`[DB Restore] Found multiple schemas matching '${baseNameForSearch}_%'. Using the first one: ${schemaRes.rows[0].nspname}`);
-                }
-                schemaName = schemaRes.rows[0].nspname; // e.g., 'akpan_1233'
-            }
-            
-            console.log(`[DB Restore] Found matching schema: '${schemaName}'`);
-
-        } finally {
-            if (client) client.release();
-        }
-        // --- End of new logic ---
-
-        let newHerokuDbUrl = null;
-        let configRes = null;
-
-        // --- Polling loop to wait for the app to be ready ---
-        console.log(`[DB Restore] Waiting for app '${newAppName}' config vars to be available...`);
-        for (let i = 0; i < 18; i++) { // Poll for up to 3 minutes (18 * 10 seconds)
-            try {
-                configRes = await herokuApi.get(`/apps/${newAppName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-                newHerokuDbUrl = configRes.data.DATABASE_URL;
-                if (newHerokuDbUrl) {
-                    console.log(`[DB Restore] App '${newAppName}' is ready.`);
-                    break; // Success! Exit the loop.
-                }
-            } catch (e) {
-                if (e.response?.status !== 404) {
-                    throw e; // A real error, not just 'Not Found'
-                }
-                // It's a 404, so we wait and try again...
-                console.log(`[DB Restore] App '${newAppName}' not ready yet (404), retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-            }
-        }
-        
-        if (!newHerokuDbUrl) {
-            throw new Error(`Could not find DATABASE_URL for app '${newAppName}' after 3 minutes. The restore may have failed.`);
-        }
-
-        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
-        
-        // ❗️ FIX: Use the 'schemaName' variable we found
-        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
-
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
-
-        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            // Ignore common, non-fatal pg_dump warnings
             if (!stderr.includes(`schema "public" does not exist`) && !stderr.includes('ACL objects') && !stderr.includes('owner')) {
                  throw new Error(stderr);
             }
