@@ -223,7 +223,10 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
 
         console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
         
-       const command = `pg_dump "${mainDbUrl}" -n ${schemaName} --no-owner | psql "${newHerokuDbUrl}"`;
+               // This command dumps the schema, uses grep to remove the schema creation/setting lines,
+        // and then forces psql to restore all tables/data into the 'public' schema.
+        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} --no-owner --clean | grep -v -E '(^CREATE SCHEMA "|^ALTER SCHEMA "|^SET search_path = )' | psql "${newHerokuDbUrl}" -c "SET search_path TO public;"`;
+
 
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
