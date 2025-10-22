@@ -2233,9 +2233,7 @@ async function handleRestoreAllSelection(query) {
     });
 }
 
-// In bot.js, replace your entire handleRestoreAllConfirm function
-// In bot.js, replace your entire handleRestoreAllConfirm function
-
+// In bot.js, find and REPLACE this entire function
 async function handleRestoreAllConfirm(query) {
     const adminId = query.message.chat.id;
     const botType = query.data.split(':')[1];
@@ -2243,11 +2241,11 @@ async function handleRestoreAllConfirm(query) {
     // Check if a message exists to edit, otherwise send a new one
     let progressMsg;
     if (query.message && query.message.message_id) {
-        progressMsg = await bot.editMessageText(`🚀 **Starting Full Restore: ${botType.toUpperCase()}**\n\nPreparing to process bots...`, {
+        progressMsg = await bot.editMessageText(`**Starting Full Restore: ${botType.toUpperCase()}**\n\nPreparing to process bots...`, {
             chat_id: adminId, message_id: query.message.message_id, parse_mode: 'Markdown'
-        }).catch(() => bot.sendMessage(adminId, "🚀 **Starting Full Restore...**", { parse_mode: 'Markdown' }));
+        }).catch(() => bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' }));
     } else {
-        progressMsg = await bot.sendMessage(adminId, "🚀 **Starting Full Restore...**", { parse_mode: 'Markdown' });
+        progressMsg = await bot.sendMessage(adminId, "**Starting Full Restore...**", { parse_mode: 'Markdown' });
     }
 
     const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
@@ -2256,54 +2254,57 @@ async function handleRestoreAllConfirm(query) {
     let progressLog = [];
 
     for (const [index, deployment] of deployments.entries()) {
-        const originalAppName = deployment.app_name; // The name from the backup
+        const originalAppName = deployment.app_name; // The name from the backup (e.g., adams12-8911)
         const originalOwnerId = deployment.user_id;
         
-        progressLog.push(`▶️ **Processing ${index + 1}/${deployments.length}:** \`${originalAppName}\``);
-        await bot.editMessageText(`🚀 **Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+        progressLog.push(`**Processing ${index + 1}/${deployments.length}:** \`${originalAppName}\``);
+        await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         
         try {
             // --- Phase 1: Restore the App and Settings ---
-            // ❗️ FIX: Correctly receive the 'buildResult' object
+            // FIX: 'buildWithProgress' now returns an object: { success: true, newAppName: '...' }
             const buildResult = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
             
-            // ❗️ FIX: Check the 'success' property of the result object
+            // FIX: We must check the 'success' property of the returned object
             if (!buildResult.success) {
                 throw new Error("App build process failed or timed out.");
             }
 
-            // ❗️ FIX: Get the 'newAppName' from the result object
+            // FIX: We must get the 'newAppName' from the result.
+            // This is the new, unique name (e.g., 'akpan11-0747')
             const newAppName = buildResult.newAppName;
 
-            progressLog.push(`   ✅ App created as \`${newAppName}\`. Copying data...`);
-            await bot.editMessageText(`🚀 **Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+            progressLog.push(`   App created as \`${newAppName}\`. Copying data...`);
+            await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
 
             // --- Phase 2: Restore the Database from the Render Schema ---
-            // ❗️ FIX: Pass both the original name (to find the backup) and the new name (to restore to)
+            // FIX: We tell the function the *original* name (to find the backup)
+            // and the *new* name (to restore the data to).
             const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(originalAppName, newAppName);
             if (!restoreResult.success) {
                 throw new Error(restoreResult.message);
             }
 
-            progressLog.push(`   ✅ **Successfully Restored:** \`${newAppName}\``);
+            progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
             successCount++;
 
         } catch (error) {
             failureCount++;
             const errorMsg = error.response?.data?.message || error.message;
             console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
-            progressLog.push(`   ❌ **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
+            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
         }
     }
     
-    // ... (rest of the function for Phase 3 & 4 remains the same) ...
+    // --- (The rest of the function for Phases 3 & 4 remains the same) ---
+    
     await bot.editMessageText(
-        `**✅ Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
+        `**Bot Restoration Complete!**\n\n*Success:* ${successCount}\n*Failed:* ${failureCount}\n\n--- Final Log ---\n${progressLog.slice(-10).join('\n')}`, 
         { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }
     );
 
-    if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "⚙️ **Starting Phase 3:** Automatically deploying and linking the email service...");
+    if (failureCount === 0 && successCount > 0) { 
+        await bot.sendMessage(adminId, "**Starting Phase 3:** Automatically deploying and linking the email service...");
         try {
             const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY } = process.env;
             if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !SECRET_API_KEY) {
@@ -2318,23 +2319,22 @@ async function handleRestoreAllConfirm(query) {
             }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             const updateResult = await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
             if (!updateResult.success) throw new Error(`Failed to update Render variable: ${updateResult.message}`);
-            await bot.sendMessage(adminId, `✅ **Email Service Deployed!**\n\nThe main bot is now restarting on Render to apply the changes.`);
+            await bot.sendMessage(adminId, `**Email Service Deployed!**\n\nThe main bot is now restarting on Render to apply the changes.`);
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
-            await bot.sendMessage(adminId, `🚨 **Bot restore was successful, but the email service deployment failed.**\n\n*Reason:* ${escapeMarkdown(errorMsg)}\n\nPlease run \`/deploy_email_service\` manually.`);
+            await bot.sendMessage(adminId, `**Bot restore was successful, but the email service deployment failed.**\n\n*Reason:* ${escapeMarkdown(errorMsg)}\n\nPlease run \`/deploy_email_service\` manually.`);
         }
     }
     if (failureCount === 0 && successCount > 0) {
-        await bot.sendMessage(adminId, "⚙️ **Starting Phase 4:** Automatically copying main database to backup database...");
+        await bot.sendMessage(adminId, "**Starting Phase 4:** Automatically copying main database to backup database...");
         try {
             await runCopyDbTask();
-            await bot.sendMessage(adminId, "✅ **Full System Recovery Complete!**\n\nAll restore and backup tasks are now finished.");
+            await bot.sendMessage(adminId, "**Full System Recovery Complete!**\n\nAll restore and backup tasks are now finished.");
         } catch (copyError) {
-            await bot.sendMessage(adminId, `🚨 **Bot/Email restore was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
+            await bot.sendMessage(adminId, `**Bot/Email restore was successful, but the final /copydb task failed.**\n\n*Reason:* ${escapeMarkdown(copyError.message)}`);
         }
     }
 }
-
 
 /**
  * Fetches all non-system user-created table names from the database.
