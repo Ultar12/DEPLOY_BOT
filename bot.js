@@ -2262,25 +2262,35 @@ async function handleRestoreAllConfirm(query) {
         
         try {
             // --- Phase 1: Restore the App and Settings ---
-            // FIX: 'buildWithProgress' now returns an object: { success: true, newAppName: '...' }
             const buildResult = await dbServices.buildWithProgress(originalOwnerId, deployment.config_vars, false, true, botType, deployment.referred_by, deployment.ip_address);
             
-            // FIX: We must check the 'success' property of the returned object
             if (!buildResult.success) {
                 throw new Error("App build process failed or timed out.");
             }
 
-            // FIX: We must get the 'newAppName' from the result.
-            // This is the new, unique name (e.g., 'akpan11-0747')
-            const newAppName = buildResult.newAppName;
+            const newAppName = buildResult.newAppName; // The new, unique name (e.g., 'akpan11-0747')
 
-            progressLog.push(`   App created as \`${newAppName}\`. Copying data...`);
+            progressLog.push(`   App created as \`${newAppName}\`. Finding backup data...`);
             await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
 
             // --- Phase 2: Restore the Database from the Render Schema ---
-            // FIX: We tell the function the *original* name (to find the backup)
-            // and the *new* name (to restore the data to).
-            const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(originalAppName, newAppName);
+
+            // ❗️❗️ NEW FIX: Extract the "base name" for searching.
+            // This strips all numbers and hyphens to get the root name.
+            // Example: "akpan1233" becomes "akpan"
+            // Example: "adams12-8911" becomes "adams"
+            const baseNameForSearch = originalAppName.replace(/[\-0-9]/g, '');
+            
+            progressLog.push(`   Base name is \`${baseNameForSearch}\`. Restoring data...`);
+            await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
+
+
+            // ❗️❗️ FIX: We now pass the 'baseNameForSearch' instead of 'originalAppName'.
+            // Your dbServices.restoreHerokuDbFromRenderSchema function MUST
+            // be updated to handle this, for example by using:
+            // "SELECT ... WHERE schema_name LIKE $1 || '%'" (using baseNameForSearch as $1)
+            const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(baseNameForSearch, newAppName);
+            
             if (!restoreResult.success) {
                 throw new Error(restoreResult.message);
             }
