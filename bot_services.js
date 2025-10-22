@@ -110,13 +110,15 @@ const execPromise = util.promisify(exec);
  * @param {string} appName The name of the Heroku app.
  * @returns {Promise<{success: boolean, message: string}>}
  */
-// In bot_services.js, REPLACE this entire function
+// ❗️❗️ REPLACED FUNCTION ❗️❗️
 async function backupHerokuDbToRenderSchema(appName) {
-    // ❗️ FIX: Destructure tools from the correctly initialized moduleParams.
     const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
     
     const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
+    
+    // ❗️ FIX: Removed the 'backup_' prefix.
+    // This allows the "LIKE 'adams%'" search to find 'adams_1234'
+    const schemaName = appName.replace(/-/g, '_'); // Sanitize name
 
     try {
         // Get the Heroku bot's DATABASE_URL from its config vars
@@ -153,6 +155,7 @@ async function backupHerokuDbToRenderSchema(appName) {
         return { success: false, message: error.message };
     }
 }
+// ❗️❗️ END OF REPLACED FUNCTION ❗️❗️
 
 
 
@@ -162,7 +165,6 @@ async function backupHerokuDbToRenderSchema(appName) {
  * @param {string} newAppName The name of the *new* Heroku app to restore data to.
  * @returns {Promise<{success: boolean, message: string}>}
  */
-// In bot_services.js, REPLACE this entire function
 async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
     const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams; 
     const mainDbUrl = process.env.DATABASE_URL;
@@ -224,12 +226,10 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
 
         console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
         
-        // ❗️❗️ THIS IS THE FINAL FIX ❗️❗️
         // This sets the search_path for pg_dump, forcing it to dump tables
         // without the schema prefix (e.g., 'users' instead of 'backup_adams12.users').
         // The psql command on the other side will then restore them to the default 'public' schema.
         const command = `PGOPTIONS="--search_path=${schemaName},public" pg_dump "${mainDbUrl}" --no-owner --clean | psql "${newHerokuDbUrl}"`;
-        // ❗️❗️ END OF FINAL FIX ❗️❗️
 
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
@@ -504,7 +504,7 @@ async function getExpiringBackups() {
              FROM user_deployments 
              WHERE warning_sent_at IS NULL 
                AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
+               AND paused_at IS NULL;`
         );
         return result.rows;
     } catch (error) {
@@ -531,7 +531,7 @@ async function getExpiredBackups() {
             `SELECT user_id, app_name 
              FROM user_deployments 
              WHERE expiration_date <= NOW()
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
+               AND paused_at IS NULL;`
         );
         return result.rows;
     } catch (error) {
@@ -595,7 +595,11 @@ async function permanentlyDeleteBotRecord(userId, appName) {
         
         // --- THIS IS THE NEW LOGIC ---
         // Also delete from the backup database (backupPool)
-        await backupPool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        if (backupPool) {
+            await backupPool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        } else {
+            console.warn('[DB-Cleanup] backupPool not initialized, skipping deletion from backup DB.');
+        }
         // --- END OF NEW LOGIC ---
 
         console.log(`[DB-Cleanup] Permanently deleted all records for app ${appName} from all databases.`);
@@ -619,7 +623,6 @@ async function updateUserSession(u, b, s) {
   }
 }
 
-// --- FIX: addDeployKey now accepts an optional userId ---
 async function addDeployKey(key, uses, createdBy, userId = null) {
   await pool.query(
     'INSERT INTO deploy_keys(key, uses_left, created_by, user_id) VALUES($1, $2, $3, $4)',
@@ -629,7 +632,6 @@ async function addDeployKey(key, uses, createdBy, userId = null) {
 }
 
 
-// --- FIX: useDeployKey now requires the user's ID for verification ---
 async function useDeployKey(key, userId) {
   const res = await pool.query(
     `UPDATE deploy_keys
@@ -653,7 +655,6 @@ async function useDeployKey(key, userId) {
 }
 
 
-// --- FIX: getAllDeployKeys now includes user_id ---
 async function getAllDeployKeys() {
     try {
         const res = await pool.query('SELECT key, uses_left, created_by, user_id, created_at FROM deploy_keys ORDER BY created_at DESC');
@@ -685,31 +686,23 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    // 🚨 FIX 1: Define the cooldown period as 90 days (3 months)
     const COOLDOWN_DAYS = 90; 
 
-    // 1. Get the timestamp of the user's last free deployment
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
     );
     
-    // If no record is found, the user can deploy.
     if (res.rows.length === 0) return { can: true };
     
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
     const now = new Date();
     
-    // 2. Calculate the exact future date when the cooldown ends
     const cooldownEnd = new Date(lastDeploy.getTime() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
     
-    // 3. Compare current time with the cooldown end date
     if (now >= cooldownEnd) {
-        // Cooldown period has passed.
         return { can: true };
     } else {
-        // Cooldown is still active. Return the future date.
-        // 🚨 FIX 2: Removed flawed "tenDaysAgo" logic and use "cooldownEnd" as the return value.
         return { can: false, cooldown: cooldownEnd };
     }
 }
@@ -724,7 +717,6 @@ async function recordFreeTrialDeploy(userId) {
     console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
 }
 
-// --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
     INSERT INTO user_activity(user_id, last_seen)
@@ -732,14 +724,12 @@ async function updateUserActivity(userId) {
     ON CONFLICT (user_id) DO UPDATE SET last_seen = NOW();
   `;
   try {
-    // Now only writes to the main pool (DATABASE_URL)
     await pool.query(query, [userId]);
     console.log(`[DB] User activity updated for ${userId}.`);
   } catch (error) {
     console.error(`[DB] Failed to update user activity for ${userId}:`, error.message);
   }
 }
-// --- END OF MODIFICATION ---
 
 async function getUserLastSeen(userId) {
   try {
@@ -798,7 +788,6 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
 
-        // Use a provided expiration date if it exists, otherwise calculate a new one.
         const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 35) * 24 * 60 * 60 * 1000);
 
                 const query = `
@@ -811,7 +800,6 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                deleted_from_heroku_at = NULL,
                is_free_trial = EXCLUDED.is_free_trial,
                email = EXCLUDED.email,
-               -- Keep the original deploy_date and expiration_date on update
                deploy_date = user_deployments.deploy_date,
                expiration_date = user_deployments.expiration_date;
         `;
@@ -873,13 +861,8 @@ async function markDeploymentDeletedFromHeroku(userId, appName) {
     }
 }
 
-// In bot_services.js, find and REPLACE this function
 async function getAllDeploymentsFromBackup(botType) {
     try {
-        // --- THIS IS THE FIX ---
-        // Removed "ip_address" from the SELECT query because the column
-        // does not exist in your database, causing the crash.
-        // "referred_by" is still needed.
         const result = await pool.query(
             `SELECT user_id, app_name, session_id, config_vars, referred_by
              FROM user_deployments 
@@ -887,7 +870,6 @@ async function getAllDeploymentsFromBackup(botType) {
              ORDER BY app_name ASC;`,
             [botType]
         );
-        // --- END OF FIX ---
 
         console.log(`[DB-Backup] Fetched all ${result.rows.length} deployments for mass restore from backup pool.`);
         return result.rows;
@@ -923,7 +905,6 @@ async function getMonitoredFreeTrials() {
     }
 }
 
-// This function replaces the previous grantReferralRewards function
 async function grantReferralRewards(referredUserId, deployedBotName) {
     const client = await pool.connect();
     try {
@@ -944,7 +925,6 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
             const inviterBots = inviterBotsResult.rows;
 
             if (inviterBots.length <= 2) {
-                // Inviter has two or fewer bots, apply the reward directly
                 const inviterBotName = inviterBots[0].bot_name;
                 await client.query(
                     `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
@@ -957,11 +937,9 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
                     { parse_mode: 'Markdown' }
                 );
 
-                // Add referral record and grant second-level reward
                 await addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName);
 
-            } else if (inviterBots.length > 2) { // THIS LINE WAS CHANGED
-                // Inviter has more than two bots, prompt for selection
+            } else if (inviterBots.length > 2) { 
                 await client.query(
                     `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending) VALUES ($1, $2, $3, TRUE)
                      ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
@@ -978,7 +956,6 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
                     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
                 );
             } else {
-                // Inviter has no bots to extend, just add the referral record
                 await client.query(
                     `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
                     [referredUserId, inviterId, deployedBotName]
@@ -991,11 +968,10 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
                 );
             }
 
-            // Clean up the temporary referral session
             await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
 
         } else {
-            // The user was not referred, nothing to do here
+            // The user was not referred
         }
         await client.query('COMMIT');
     } catch (e) {
@@ -1006,7 +982,6 @@ async function grantReferralRewards(referredUserId, deployedBotName) {
     }
 }
 
-// NEW HELPER FUNCTION to handle second-level rewards
 async function addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName) {
     await client.query(
         `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
@@ -1077,11 +1052,7 @@ async function removeMonitoredFreeTrial(userId) {
     }
 }
 
-// bot_services.js
 
-// ... other code ...
-
-// --- FIXED FUNCTION: NOW RETURNS A LIST OF APPS IN EACH CATEGORY ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
@@ -1090,9 +1061,9 @@ async function backupAllPaidBots() {
     const herokuAppList = [];
 
     const typeStats = {
-        levanter: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
-        raganork: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
-        unknown: { backedUp: [], failed: [] }   // <-- NOW ARRAYS
+        levanter: { backedUp: [], failed: [] }, 
+        raganork: { backedUp: [], failed: [] }, 
+        unknown: { backedUp: [], failed: [] }
     };
     
     try {
@@ -1143,18 +1114,18 @@ async function backupAllPaidBots() {
             
             backedUpCount++;
             if (typeStats[botType]) {
-                typeStats[botType].backedUp.push(appName); // <-- PUSH NAME
+                typeStats[botType].backedUp.push(appName); 
             } else {
-                typeStats.unknown.backedUp.push(appName); // <-- PUSH NAME
+                typeStats.unknown.backedUp.push(appName);
             }
             
         } catch (error) {
             console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
             failedCount++;
             if (typeStats[botType]) {
-                typeStats[botType].failed.push(appName); // <-- PUSH NAME
+                typeStats[botType].failed.push(appName); 
             } else {
-                typeStats.unknown.failed.push(appName); // <-- PUSH NAME
+                typeStats.unknown.failed.push(appName);
             }
         }
     }
@@ -1340,8 +1311,6 @@ async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
 
-// In bot_services.js, replace the entire syncDatabases function
-
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
@@ -1361,16 +1330,13 @@ async function syncDatabases(sourcePool, targetPool) {
         
         console.log('[Sync] Tables to clone:', sourceTableNames);
         
-        // Drop old tables in the target to ensure a clean slate
         for (const tableName of sourceTableNames) {
             await clientTarget.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE;`);
         }
 
-        // Recreate each table's schema AND primary keys in the target database
         for (const tableName of sourceTableNames) {
             console.log(`[Sync] Cloning schema for table "${tableName}"...`);
             
-            // Get column definitions
             const columnsResult = await clientSource.query(`
                 SELECT column_name, data_type, character_maximum_length, is_nullable 
                 FROM information_schema.columns 
@@ -1384,7 +1350,6 @@ async function syncDatabases(sourcePool, targetPool) {
                 (col.is_nullable === 'NO' ? ' NOT NULL' : '')
             ).join(', ');
 
-            // --- THIS IS THE FIX: Get and add the Primary Key ---
             const pkeyResult = await clientSource.query(`
                 SELECT conname AS constraint_name, 
                        pg_get_constraintdef(c.oid) AS constraint_definition
@@ -1396,13 +1361,11 @@ async function syncDatabases(sourcePool, targetPool) {
             if (pkeyResult.rows.length > 0) {
                 createTableScript += `, CONSTRAINT "${pkeyResult.rows[0].constraint_name}" ${pkeyResult.rows[0].constraint_definition}`;
             }
-            // --- END OF FIX ---
             
             createTableScript += ');';
             await clientTarget.query(createTableScript);
         }
 
-        // Copy data from source to target
         for (const tableName of sourceTableNames) {
             const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
             if (rows.length > 0) {
@@ -1759,7 +1722,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 message_id: createMsg.message_id
             });
             buildResult = false;
-            // ❗️❗️ FIX 1: Return the object on failure
+            // Return the object on failure
             return { success: buildResult, newAppName: name };
         }
     }
@@ -1767,8 +1730,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-                  if (isRestore) {
+      // ❗️❗️ THIS IS THE CORRECTED RESTORE LOGIC ❗️❗️
+      if (isRestore) {
         let expirationDateToUse = null; // Default to null
+        let dynoType = 'web'; // Heroku's default
 
         if (name !== originalName) { // 'name' = new name, 'originalName' = old name
             try {
@@ -1780,12 +1745,11 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                   console.log(`[Expiration Fix] Found expiration date from ${originalName}.`);
                 }
 
-                // 2. ❗️❗️ FIX: ALWAYS delete the old user_deployments record.
-                // This is the line that fixes your bug.
+                // 2. ALWAYS delete the old user_deployments record.
                 await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
                 console.log(`[DB Cleanup] Deleted old user_deployments record for ${originalName}.`);
 
-                // 3. ❗️❗️ FIX: ALWAYS rename the bot in the user_bots table.
+                // 3. ALWAYS rename the bot in the user_bots table.
                 await pool.query('UPDATE user_bots SET bot_name = $1, session_id = $2, bot_type = $3 WHERE user_id = $4 AND bot_name = $5', [name, vars.SESSION_ID, botType, chatId, originalName]);
                 console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
 
@@ -1801,24 +1765,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
         
-        // This next part saves the NEW app record (adams-2000)
-        const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-        await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
-
-        await bot.editMessageText(
-            `Restore successful! App *${escapeMarkdown(name)}* has been redeployed.`,
-            { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
-        );
-        
-        return { success: true, newAppName: name, dynoType: dynoType };
-      }
-      
-      // --- This is the end of the 'if (isRestore)' block ---
-      // The rest of your function for non-restore builds starts below
-
-
-                // ❗️❗️ NEW FIX: Find and scale the correct dyno to 0
-        let dynoType = 'web'; // Heroku's default for Node.js is 'web'
+        // Find and scale the correct dyno to 0
         try {
             console.log(`[Restore] Trying to scale 'web' dyno to 0 for "${name}"...`);
             await herokuApi.patch(`/apps/${name}/formation/web`, 
@@ -1840,10 +1787,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
                 console.warn(`[Restore] Could not scale any dyno for "${name}" to 0. It might start early.`);
             }
         }
-        // ❗️❗️ END OF NEW FIX
 
-        
+        // This next part saves the NEW app record (adams-2000)
         const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+        // We pass the saved expirationDateToUse here
         await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
 
         await bot.editMessageText(
@@ -1851,10 +1798,10 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
         );
         
-        // ❗️❗️ FIX 2: Return the object on success
-       return { success: true, newAppName: name, dynoType: dynoType };
-
+        // Return the new app name and the dyno type
+        return { success: true, newAppName: name, dynoType: dynoType };
       }
+      // ❗️❗️ END OF CORRECTED RESTORE LOGIC ❗️❗️
       
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
@@ -1879,7 +1826,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           const userHasReceivedReward = await hasReceivedReward(chatId);
 
           if (userBotCount >= 10 && !userHasReceivedReward) {
-              const newKey = generateKey();
+              const newKey = generateKey(); // Assuming generateKey() is defined elsewhere
               await addDeployKey(newKey, 1, 'AUTOMATIC_REWARD', chatId); 
               await recordReward(chatId);
 
@@ -2038,7 +1985,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           buildResult = false;
       } finally {
           appDeploymentPromises.delete(name);
-      
+      }
     } else {
       await bot.editMessageText(`Build status: ${buildStatus}. Contact Admin for support.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
@@ -2049,7 +1996,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     buildResult = false;
   }
 
-  // ❗️❗️ FIX 3: Return the object at the end
+  // Return the object at the end
   return { success: buildResult, newAppName: name };
 }
 // ❗️❗️ END OF REPLACED FUNCTION ❗️❗️
