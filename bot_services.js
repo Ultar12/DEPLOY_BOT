@@ -255,6 +255,28 @@ async function reconcileDatabaseWithHeroku(botType) {
     }
 }
 
+async function getDynoStatus(appName) {
+    try {
+        const response = await herokuApi.get(`/apps/${appName}/dynos`, {
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
+            }
+        });
+        // If there are any dynos and the first one is not 'crashed', the bot is on.
+        if (response.data.length > 0 && response.data[0].state !== 'crashed') {
+            return 'on';
+        }
+        return 'off'; // No dynos running means it's off.
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            return 'deleted'; // App doesn't exist on Heroku
+        }
+        console.error(`[Dyno Check] Error fetching dyno status for ${appName}:`, error.message);
+        return 'error'; // API or other error
+    }
+}
+
 
 
 // --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
@@ -1776,6 +1798,7 @@ module.exports = {
     getUserLastSeen,
     isUserBanned,
     banUser,
+    getDynoStatus,
     addReferralAndSecondLevelReward,
     unbanUser,
     saveUserDeployment,
