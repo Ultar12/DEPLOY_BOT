@@ -165,20 +165,21 @@ async function backupHerokuDbToRenderSchema(appName) {
  * @param {string} newAppName The name of the *new* Heroku app to restore data to.
  * @returns {Promise<{success: boolean, message: string}>}
  */
+// In bot_services.js, REPLACE this entire function
 async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
-    const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams; 
+    const { herokuApi, HEROKU_API_KEY, bot, mainPool } = moduleParams;
     const mainDbUrl = process.env.DATABASE_URL;
     let schemaName = null;
-    let client; 
+    let client;
 
     try {
         // --- Find the correct schema ---
         console.log(`[DB Restore] Searching for schema matching base name: '${originalBaseName}'`);
         const baseNameForSearch = originalBaseName.replace(/-/g, '_');
-        client = await mainPool.connect(); 
+        client = await mainPool.connect();
         try {
             const schemaRes = await client.query(
-                `SELECT nspname FROM pg_catalog.pg_namespace 
+                `SELECT nspname FROM pg_catalog.pg_namespace
                  WHERE nspname LIKE $1 || '%'      -- Matches new names like 'akpan11_0372'
                     OR nspname LIKE 'backup_' || $1 || '%' -- Matches old names like 'backup_akpan11_0372'
                  ORDER BY nspname DESC
@@ -189,8 +190,8 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
             if (schemaRes.rowCount === 0) {
                 throw new Error(`No backup schema found matching '${baseNameForSearch}%' OR 'backup_${baseNameForSearch}%'.`);
             }
-            
-            schemaName = schemaRes.rows[0].nspname; 
+
+            schemaName = schemaRes.rows[0].nspname;
             console.log(`[DB Restore] Found matching schema: '${schemaName}'`);
 
         } finally {
@@ -203,42 +204,55 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
 
         // --- Polling loop to wait for the app to be ready ---
         console.log(`[DB Restore] Waiting for app '${newAppName}' config vars to be available...`);
-        for (let i = 0; i < 18; i++) { 
+        for (let i = 0; i < 18; i++) {
             try {
                 configRes = await herokuApi.get(`/apps/${newAppName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
                 newHerokuDbUrl = configRes.data.DATABASE_URL;
                 if (newHerokuDbUrl) {
                     console.log(`[DB Restore] App '${newAppName}' is ready.`);
-                    break; 
+                    break;
                 }
             } catch (e) {
                 if (e.response?.status !== 404) {
-                    throw e; 
+                    throw e;
                 }
                 console.log(`[DB Restore] App '${newAppName}' not ready yet (404), retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 10000)); 
+                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
-        
+
         if (!newHerokuDbUrl) {
             throw new Error(`Could not find DATABASE_URL for app '${newAppName}' after 3 minutes. The restore may have failed.`);
         }
 
         console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
-        
-        // This sets the search_path for pg_dump, forcing it to dump tables
-        // without the schema prefix (e.g., 'users' instead of 'backup_adams12.users').
-        // The psql command on the other side will then restore them to the default 'public' schema.
-        const command = `PGOPTIONS="--search_path=${schemaName},public" pg_dump "${mainDbUrl}" --no-owner --clean | psql "${newHerokuDbUrl}"`;
+
+        // ❗️❗️ THIS IS THE FIX ❗️❗️
+        // Added --set ON_ERROR_STOP=off to psql. This tells psql to ignore
+        // errors like "relation does not exist" when the --clean flag tries
+        // to DROP tables in the empty target database.
+        const command = `PGOPTIONS="--search_path=${schemaName},public" pg_dump "${mainDbUrl}" --no-owner --clean | psql "${newHerokuDbUrl}" --set ON_ERROR_STOP=off`;
+        // ❗️❗️ END OF FIX ❗️❗️
 
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
+        // Check stderr for REAL errors, ignoring the expected "does not exist" warnings from DROP commands
         if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            if (!stderr.includes(`schema "public" does not exist`) && !stderr.includes('ACL objects') && !stderr.includes('owner')) {
-                 throw new Error(stderr);
+            // Filter out the non-fatal warnings we expect
+            const actualErrors = stderr.split('\n').filter(line =>
+                !line.includes('does not exist') && // Ignore "relation/schema does not exist" from DROP
+                !line.includes('ACL objects') && // Ignore harmless ACL warnings
+                !line.includes('owner') && // Ignore harmless owner warnings
+                (line.toLowerCase().includes('error') || line.toLowerCase().includes('fatal')) // Keep real errors
+            ).join('\n');
+
+            if (actualErrors) {
+                 throw new Error(actualErrors); // Throw if there are actual errors left
+            } else {
+                 console.log(`[DB Restore] pg_dump/psql completed with expected warnings (ignored).`);
             }
         }
-        
+
         console.log(`[DB Restore] Successfully restored data for ${newAppName} from schema ${schemaName}.`);
         return { success: true, message: 'Database restore successful.' };
 
@@ -247,6 +261,7 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
         return { success: false, message: error.message };
     }
 }
+
 
 
 
