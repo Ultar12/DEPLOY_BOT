@@ -17,7 +17,6 @@ let appDeploymentPromises;
 let RESTART_DELAY_MINUTES;
 let getAnimatedEmoji;
 let animateMessage;
-let moduleParams = {};
 let sendAnimatedMessage;
 let monitorSendTelegramAlert;
 let escapeMarkdown;
@@ -51,7 +50,6 @@ function init(params) {
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
-    moduleParams = params;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
     defaultEnvVars = params.defaultEnvVars;
     appDeploymentPromises = params.appDeploymentPromises;
@@ -64,7 +62,6 @@ function init(params) {
 
     console.log('--- bot_services.js initialized! ---');
 }
-
 
 // === DB helper functions (using 'pool' for main DB) ===
 
@@ -91,107 +88,6 @@ async function addUserBot(u, b, s, botType) {
     }
   }
 }
-
-// In bot_services.js
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
-
-/**
- * Directly copies a Heroku Postgres database into a new schema in the main Render database.
- * @param {string} appName The name of the Heroku app.
- * @returns {Promise<{success: boolean, message: string}>}
- */
-async function backupHerokuDbToRenderSchema(appName) {
-    // ❗️ FIX: Destructure tools from the correctly initialized moduleParams.
-    const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
-    
-    const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
-
-    try {
-        // Get the Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const herokuDbUrl = configRes.data.DATABASE_URL;
-
-        if (!herokuDbUrl) {
-            throw new Error("DATABASE_URL not found in the bot's Heroku config vars.");
-        }
-
-        const client = await mainPool.connect();
-        try {
-            await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
-            await client.query(`CREATE SCHEMA ${schemaName};`);
-        } finally {
-            client.release();
-        }
-
-        console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
-        // Use pg_dump to pipe from Heroku and psql to restore into the new schema
-        const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
-        
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
-
-        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            throw new Error(stderr);
-        }
-        
-        console.log(`[DB Backup] Successfully backed up ${appName} to schema ${schemaName}.`);
-        return { success: true, message: 'Database backup successful.' };
-
-    } catch (error) {
-        console.error(`[DB Backup] FAILED to back up ${appName}:`, error.message);
-        return { success: false, message: error.message };
-    }
-}
-
-
-// In bot_services.js
-
-/**
- * Restores a Heroku Postgres database by copying data from a schema in the Render database.
- * @param {string} appName The name of the Heroku app to restore.
- * @returns {Promise<{success: boolean, message: string}>}
- */
-async function restoreHerokuDbFromRenderSchema(appName) {
-    const { herokuApi, HEROKU_API_KEY } = moduleParams;
-    const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name to match the backup schema
-
-    try {
-        // Get the NEW Heroku bot's DATABASE_URL from its config vars
-        const configRes = await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-        const newHerokuDbUrl = configRes.data.DATABASE_URL;
-
-        if (!newHerokuDbUrl) {
-            throw new Error("Could not find DATABASE_URL for the newly created Heroku app.");
-        }
-
-        // Use pg_dump to pipe the schema from Render directly into the new Heroku DB
-        console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${appName}...`);
-        
-        // This command dumps ONLY the specified schema from your Render DB and pipes it into the new Heroku DB.
-        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
-
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
-
-        // Ignore common, non-fatal warnings but throw on real errors.
-        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
-            // This specific warning is expected and can be ignored.
-            if (!stderr.includes(`schema "public" does not exist`)) {
-                 throw new Error(stderr);
-            }
-        }
-        
-        console.log(`[DB Restore] Successfully restored data for ${appName} from schema ${schemaName}.`);
-        return { success: true, message: 'Database restore successful.' };
-
-    } catch (error) {
-        console.error(`[DB Restore] FAILED to restore ${appName}:`, error.message);
-        return { success: false, message: error.message };
-    }
-}
-
 
 // bot_services.js
 
@@ -360,29 +256,6 @@ async function reconcileDatabaseWithHeroku(botType) {
 }
 
 
-// In bot_services.js
-
-async function getDynoStatus(appName) {
-    try {
-        const response = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
-            headers: { 
-                Authorization: `Bearer ${HEROKU_API_KEY}`, 
-                Accept: 'application/vnd.heroku+json; version=3' 
-            }
-        });
-        // If there are any dynos and the first one is not 'crashed', the bot is on.
-        if (response.data.length > 0 && response.data[0].state !== 'crashed') {
-            return 'on';
-        }
-        return 'off'; // No dynos running means it's off.
-    } catch (error) {
-        if (error.response && error.response.status === 404) {
-            return 'deleted'; // App doesn't exist on Heroku
-        }
-        console.error(`[Dyno Check] Error fetching dyno status for ${appName}:`, error.message);
-        return 'error'; // API or other error
-    }
-}
 
 // --- NEW FUNCTIONS FOR EXPIRATION REMINDERS ---
 
@@ -621,35 +494,17 @@ async function deleteDeployKey(key) {
 }
 
 async function canDeployFreeTrial(userId) {
-    // 🚨 FIX 1: Define the cooldown period as 90 days (3 months)
-    const COOLDOWN_DAYS = 90; 
-
-    // 1. Get the timestamp of the user's last free deployment
+    const tenDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000); // 10 days cooldown
     const res = await pool.query(
         'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
         [userId]
     );
-    
-    // If no record is found, the user can deploy.
     if (res.rows.length === 0) return { can: true };
-    
     const lastDeploy = new Date(res.rows[0].last_deploy_at);
-    const now = new Date();
-    
-    // 2. Calculate the exact future date when the cooldown ends
-    const cooldownEnd = new Date(lastDeploy.getTime() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
-    
-    // 3. Compare current time with the cooldown end date
-    if (now >= cooldownEnd) {
-        // Cooldown period has passed.
-        return { can: true };
-    } else {
-        // Cooldown is still active. Return the future date.
-        // 🚨 FIX 2: Removed flawed "tenDaysAgo" logic and use "cooldownEnd" as the return value.
-        return { can: false, cooldown: cooldownEnd };
-    }
+    if (lastDeploy < tenDaysAgo) return { can: true };
+    const nextAvailable = new Date(lastDeploy.getTime() + 10 * 24 * 60 * 60 * 1000);
+    return { can: false, cooldown: nextAvailable };
 }
-
 
 async function recordFreeTrialDeploy(userId) {
     await pool.query(
@@ -1254,97 +1109,90 @@ async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] All tables checked/created successfully.`);
 }
 
-// In bot_services.js, replace the entire syncDatabases function
+// ... (other functions) ...
 
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
     
     try {
-        await clientTarget.query('BEGIN');
-
+        // Get list of tables from both source and target databases
         const sourceTablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables 
-            WHERE schemaname = 'public' AND tablename != 'sessions';
+            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
         `);
-        const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename);
-
-        if (sourceTableNames.length === 0) {
-            return { success: true, message: 'Source database has no tables to copy.' };
-        }
+        const targetTablesResult = await clientTarget.query(`
+            SELECT tablename FROM pg_catalog.pg_tables 
+            WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';
+        `);
         
-        console.log('[Sync] Tables to clone:', sourceTableNames);
+        const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename).filter(name => name.toLowerCase() !== 'sessions');
+        const targetTableNames = new Set(targetTablesResult.rows.map(row => row.tablename));
         
-        // Drop old tables in the target to ensure a clean slate
-        for (const tableName of sourceTableNames) {
-            await clientTarget.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE;`);
+        // Find tables that exist in both source and target
+        const commonTableNames = sourceTableNames.filter(name => targetTableNames.has(name));
+
+        if (commonTableNames.length === 0) {
+            await clientTarget.query('ROLLBACK');
+            return { success: false, message: 'No common tables found between the two databases. Sync aborted.' };
         }
 
-        // Recreate each table's schema AND primary keys in the target database
-        for (const tableName of sourceTableNames) {
-            console.log(`[Sync] Cloning schema for table "${tableName}"...`);
-            
-            // Get column definitions
-            const columnsResult = await clientSource.query(`
-                SELECT column_name, data_type, character_maximum_length, is_nullable 
-                FROM information_schema.columns 
-                WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;
-            `, [tableName]);
-            
-            let createTableScript = `CREATE TABLE "${tableName}" (`;
-            createTableScript += columnsResult.rows.map(col => 
-                `"${col.column_name}" ${col.data_type}` +
-                (col.character_maximum_length ? `(${col.character_maximum_length})` : '') +
-                (col.is_nullable === 'NO' ? ' NOT NULL' : '')
-            ).join(', ');
+        console.log('[Sync] Common tables to sync:', commonTableNames);
 
-            // --- THIS IS THE FIX: Get and add the Primary Key ---
-            const pkeyResult = await clientSource.query(`
-                SELECT conname AS constraint_name, 
-                       pg_get_constraintdef(c.oid) AS constraint_definition
-                FROM pg_constraint c
-                JOIN pg_namespace n ON n.oid = c.connamespace
-                WHERE contype = 'p' AND conrelid = '${tableName}'::regclass;
-            `);
+        await clientTarget.query('BEGIN');
 
-            if (pkeyResult.rows.length > 0) {
-                createTableScript += `, CONSTRAINT "${pkeyResult.rows[0].constraint_name}" ${pkeyResult.rows[0].constraint_definition}`;
+        // Step 1: Truncate tables in the target database in reverse order to respect dependencies
+        for (const tableName of commonTableNames.slice().reverse()) {
+            console.log(`[Sync] Clearing table "${tableName}" in target DB...`);
+            await clientTarget.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE;`);
+        }
+
+        // Step 2: Copy data, ensuring column names match
+        for (const tableName of commonTableNames) {
+            console.log(`[Sync] Copying data for table "${tableName}"...`);
+            
+            const sourceColumnsResult = await clientSource.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
+            const targetColumnsResult = await clientTarget.query(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;`, [tableName]);
+
+            const sourceColumns = sourceColumnsResult.rows.map(row => row.column_name);
+            const targetColumns = targetColumnsResult.rows.map(row => row.column_name);
+            
+            const commonColumns = sourceColumns.filter(col => targetColumns.includes(col));
+            
+            if (commonColumns.length === 0) {
+                console.warn(`[Sync] Skipping table "${tableName}" as no common columns were found.`);
+                continue;
             }
-            // --- END OF FIX ---
-            
-            createTableScript += ');';
-            await clientTarget.query(createTableScript);
-        }
 
-        // Copy data from source to target
-        for (const tableName of sourceTableNames) {
-            const { rows } = await clientSource.query(`SELECT * FROM "${tableName}";`);
+            const { rows } = await clientSource.query(`SELECT ${commonColumns.map(c => `"${c}"`).join(', ')} FROM "${tableName}";`);
+
             if (rows.length > 0) {
-                const columns = Object.keys(rows[0]);
-                const colNames = columns.map(c => `"${c}"`).join(', ');
-                const valuePlaceholders = columns.map((_, i) => `$${i + 1}`).join(', ');
-                const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
+                const colNames = commonColumns.map(c => `"${c}"`).join(', ');
+                const valuePlaceholders = commonColumns.map((_, i) => `$${i + 1}`).join(', ');
 
                 for (const row of rows) {
-                    const values = columns.map(col => row[col]);
+                    const values = commonColumns.map(col => row[col]);
+                    const insertQuery = `INSERT INTO "${tableName}" (${colNames}) VALUES (${valuePlaceholders});`;
                     await clientTarget.query(insertQuery, values);
                 }
-                console.log(`[Sync] Copied ${rows.length} rows to "${tableName}".`);
             }
+            console.log(`[Sync] Copied ${rows.length} rows to "${tableName}".`);
         }
 
         await clientTarget.query('COMMIT');
-        return { success: true, message: `Successfully cloned ${sourceTableNames.length} tables.` };
+        return { success: true, message: `Successfully synced ${commonTableNames.length} tables.` };
 
     } catch (error) {
         await clientTarget.query('ROLLBACK');
         console.error('[Sync] Database sync failed:', error);
-        return { success: false, message: `Sync failed: ${error.message}` };
+        return { success: false, message: error.message };
     } finally {
         clientSource.release();
         clientTarget.release();
     }
 }
+
+
 
 
 
@@ -1554,7 +1402,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
         ...finalConfigVars,
-        APP_NAME: name
+        APP_NAME: name,
+        HEROKU_API_KEY: HEROKU_API_KEY
       },
       {
         headers: {
@@ -1676,7 +1525,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-        if (isRestore) {
+        // --- START OF CORRECTED RESTORE LOGIC ---
+      if (isRestore) {
         let expirationDateToUse;
         if (name !== originalName) {
             try {
@@ -1707,31 +1557,9 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
       // --- END OF CORRECTED RESTORE LOGIC ---
 
-            await addUserBot(chatId, name, vars.SESSION_ID, botType);
+      await addUserBot(chatId, name, vars.SESSION_ID, botType);
       const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
-      
-      let expirationDate = null;
-      // ✅ Use a paid duration from 'vars.DAYS' if available. Otherwise, check for a free trial.
-      if (vars.DAYS) {
-        expirationDate = new Date();
-        expirationDate.setDate(expirationDate.getDate() + parseInt(vars.DAYS, 10));
-      } else if (isFreeTrial) {
-        expirationDate = new Date();
-        expirationDate.setDate(expirationDate.getDate() + 35); // Default to 35 days for free trials
-      }
-      
-      // ✅ Pass the calculated expirationDate to the function
-      await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDate, vars.email);
-
-
-      if (isFreeTrial) {
-        await recordFreeTrialDeploy(chatId);
-      }
-      
-      // --- NEW REWARD LOGIC START ---
-      try {
-          const userBotCount = await getUserBotCount(chatId);
-          const userHasReceivedReward = await hasReceivedReward(chatId);
+            await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, null, vars.email);
 
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
@@ -1915,7 +1743,7 @@ if (inviterId && !isRestore) {
       } finally {
           appDeploymentPromises.delete(name);
       }
-     else {
+    } else {
       await bot.editMessageText(`Build status: ${buildStatus}. Contact Admin for support.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
     }
@@ -1942,13 +1770,11 @@ module.exports = {
     useDeployKey,
     getAllDeployKeys,
     deleteDeployKey,
-    getDynoStatus,
     canDeployFreeTrial,
     recordFreeTrialDeploy,
     updateUserActivity,
     getUserLastSeen,
     isUserBanned,
-    restoreHerokuDbFromRenderSchema,
     banUser,
     addReferralAndSecondLevelReward,
     unbanUser,
@@ -1968,7 +1794,6 @@ module.exports = {
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
     backupAllPaidBots,
-    backupHerokuDbToRenderSchema,
     removeMonitoredFreeTrial,
     syncDatabases,
     createAllTablesInPool,
