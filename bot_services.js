@@ -1765,24 +1765,29 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-      if (isRestore) {
+            if (isRestore) {
         let expirationDateToUse;
         if (name !== originalName) {
             try {
-                const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
-                if (originalDeployment) {
-                  expirationDateToUse = originalDeployment.expiration_date;
-                  await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
-                  console.log(`[Expiration Fix] Transferred expiration date from original deployment (${originalName}) to new deployment (${name}).`);
-                }
-                await pool.query('UPDATE user_bots SET bot_name = $1, session_id = $2, bot_type = $3 WHERE user_id = $4 AND bot_name = $5', [name, vars.SESSION_ID, botType, chatId, originalName]);
-                console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
+                // ... (existing code)
             } catch (dbError) {
                 console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
             }
         } else {
             await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
+
+        // ❗️❗️ NEW FIX: Turn the bot OFF so it doesn't start with an empty DB
+        try {
+            console.log(`[Restore] Scaling dyno to 0 for "${name}" before data restore.`);
+            await herokuApi.patch(`/apps/${name}/formation/worker`, 
+                { quantity: 0 }, 
+                { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+            );
+        } catch (scaleError) {
+            console.warn(`[Restore] Could not scale "${name}" to 0. It might start early.`);
+        }
+        // ❗️❗️ END OF NEW FIX
         
         const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
         await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
