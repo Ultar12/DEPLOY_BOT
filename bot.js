@@ -2289,22 +2289,27 @@ async function handleRestoreAllConfirm(query) {
             // Your dbServices.restoreHerokuDbFromRenderSchema function MUST
             // be updated to handle this, for example by using:
             // "SELECT ... WHERE schema_name LIKE $1 || '%'" (using baseNameForSearch as $1)
+                        // --- Phase 2: Restore the Database from the Render Schema ---
             const restoreResult = await dbServices.restoreHerokuDbFromRenderSchema(baseNameForSearch, newAppName);
-            
             if (!restoreResult.success) {
                 throw new Error(restoreResult.message);
             }
 
+            // ❗️❗️ NEW FIX: Turn the bot ON now that the data is restored
+            try {
+                console.log(`[Restore] Scaling dyno to 1 for "${newAppName}".`);
+                await herokuApi.patch(`/apps/${newAppName}/formation/worker`, 
+                    { quantity: 1 }, 
+                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                );
+            } catch (scaleError) {
+                throw new Error(`DB restore success, but failed to scale dyno to 1.`);
+            }
+            // ❗️❗️ END OF NEW FIX
+
             progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
             successCount++;
 
-        } catch (error) {
-            failureCount++;
-            const errorMsg = error.response?.data?.message || error.message;
-            console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
-            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
-        }
-    }
     
     // --- (The rest of the function for Phases 3 & 4 remains the same) ---
     
