@@ -223,7 +223,7 @@ async function restoreHerokuDbFromRenderSchema(originalBaseName, newAppName) {
 
         console.log(`[DB Restore] Starting direct data pipe from schema ${schemaName} to ${newAppName}...`);
         
-        const command = `pg_dump "${mainDbUrl}" -n ${schemaName} | psql "${newHerokuDbUrl}"`;
+       const command = `pg_dump "${mainDbUrl}" -n ${schemaName} --no-owner | psql "${newHerokuDbUrl}"`;
 
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
 
