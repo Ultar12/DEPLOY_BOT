@@ -1,12 +1,4 @@
 const axios = require('axios');
-
-const herokuApi = axios.create({
-    baseURL: 'https://api.heroku.com',
-    headers: {
-        'Accept': 'application/vnd.heroku+json; version=3',
-        'Content-Type': 'application/json'
-    }
-});
 const fs = require('fs'); // Not directly used in functions, but good to keep if needed for other utils
 const path = require('path'); // Not directly used in functions, but good to keep if needed for other utils
 const { Pool } = require('pg'); // Not declared here, but passed in. Good practice to show dependency.
@@ -214,7 +206,7 @@ async function syncDatabaseWithHeroku() {
 
     try {
         // Step 1: Get all apps from Heroku
-        const herokuAppsResponse = await herokuApi.get('https://api.heroku.com/apps', {
+        const herokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
             headers: {
                 Authorization: `Bearer ${HEROKU_API_KEY}`,
                 Accept: 'application/vnd.heroku+json; version=3'
@@ -327,7 +319,7 @@ async function reconcileDatabaseWithHeroku(botType) {
     console.log(`[Sync] Starting database reconciliation for ${botType}...`);
     try {
         const [herokuAppsRes, dbAppsRes] = await Promise.all([
-            herokuApi.get('https://api.heroku.com/apps', {
+            axios.get('https://api.heroku.com/apps', {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             }),
             pool.query('SELECT app_name, user_id FROM user_deployments WHERE bot_type = $1', [botType])
@@ -372,7 +364,7 @@ async function reconcileDatabaseWithHeroku(botType) {
 
 async function getDynoStatus(appName) {
     try {
-        const response = await herokuApi.get(`https://api.heroku.com/apps/${appName}/dynos`, {
+        const response = await axios.get(`https://api.heroku.com/apps/${appName}/dynos`, {
             headers: { 
                 Authorization: `Bearer ${HEROKU_API_KEY}`, 
                 Accept: 'application/vnd.heroku+json; version=3' 
@@ -451,11 +443,8 @@ async function getUserBots(u) {
 async function getExpiringBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name, expiration_date 
-             FROM user_deployments 
-             WHERE warning_sent_at IS NULL 
-               AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
+            `SELECT user_id, app_name, expiration_date FROM user_deployments 
+             WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
         );
         return result.rows;
     } catch (error) {
@@ -463,7 +452,6 @@ async function getExpiringBackups() {
         return [];
     }
 }
-
 
 async function setBackupWarningSent(userId, appName) {
     try {
@@ -479,10 +467,7 @@ async function setBackupWarningSent(userId, appName) {
 async function getExpiredBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name 
-             FROM user_deployments 
-             WHERE expiration_date <= NOW()
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
+            `SELECT user_id, app_name FROM user_deployments WHERE expiration_date <= NOW();`
         );
         return result.rows;
     } catch (error) {
@@ -1044,7 +1029,7 @@ async function backupAllPaidBots() {
     };
     
     try {
-        const allHerokuAppsResponse = await herokuApi.get('https://api.heroku.com/apps', {
+        const allHerokuAppsResponse = await axios.get('https://api.heroku.com/apps', {
             headers: {
                 Authorization: `Bearer ${HEROKU_API_KEY}`,
                 Accept: 'application/vnd.heroku+json; version=3'
@@ -1502,7 +1487,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     // --- FIX ENDS HERE ---
     
     // Now, attempt to create the app once with the (potentially modified) name.
-    await herokuApi.post('https://api.heroku.com/apps', { name }, {
+    await axios.post('https://api.heroku.com/apps', { name }, {
       headers: {
         Authorization: `Bearer ${HEROKU_API_KEY}`,
         Accept: 'application/vnd.heroku+json; version=3'
@@ -1514,7 +1499,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     const configMsgAnimate = await animateMessage(chatId, createMsg.message_id, 'Configuring resources');
 
 
-    await herokuApi.post(
+    await axios.post(
       `https://api.heroku.com/apps/${name}/addons`,
       { plan: 'heroku-postgresql' },
       {
@@ -1526,7 +1511,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       }
     );
 
-    await herokuApi.put(
+    await axios.put(
       `https://api.heroku.com/apps/${name}/buildpack-installations`,
       {
         updates: [
@@ -1565,7 +1550,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         };
     }
 
-    await herokuApi.patch(
+    await axios.patch(
       `https://api.heroku.com/apps/${name}/config-vars`,
       {
         ...finalConfigVars,
@@ -1633,7 +1618,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
 
         const buildProgressInterval = setInterval(async () => {
             try {
-                const poll = await herokuApi.get(statusUrl, {
+                const poll = await axios.get(statusUrl, {
                     headers: {
                         Authorization: `Bearer ${HEROKU_API_KEY}`,
                         Accept: 'application/vnd.heroku+json; version=3'
@@ -1711,7 +1696,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
         
-        const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+        const herokuConfigVars = (await axios.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
         await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
 
         // Send success message immediately and exit
@@ -1888,7 +1873,7 @@ if (inviterId && !isRestore) {
             setTimeout(async () => {
                 try {
                     await bot.sendMessage(chatId, `Your Free Trial app "*${escapeMarkdown(name)}*" is being deleted as its 3-day runtime has ended.`);
-                    await herokuApi.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+                    await axios.delete(`https://api.heroku.com/apps/${name}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
                     await deleteUserBot(chatId, name);
                     await markDeploymentDeletedFromHeroku(chatId, name);
                     await bot.sendMessage(chatId, `Free Trial app "*${escapeMarkdown(name)}*" successfully deleted.`);
