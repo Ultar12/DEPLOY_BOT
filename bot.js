@@ -2309,6 +2309,14 @@ async function handleRestoreAllConfirm(query) {
 
             progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
             successCount++;
+          
+          } catch (error) {
+            failureCount++;
+            const errorMsg = error.response?.data?.message || error.message;
+            console.error(`[RestoreAll] CRITICAL ERROR while restoring ${originalAppName}:`, errorMsg);
+            progressLog.push(`   **Failed to restore \`${originalAppName}\`**: ${String(errorMsg).substring(0, 100)}...`);
+        }
+    }
 
     
     // --- (The rest of the function for Phases 3 & 4 remains the same) ---
