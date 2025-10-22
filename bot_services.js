@@ -1676,8 +1676,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-        // --- START OF CORRECTED RESTORE LOGIC ---
-      if (isRestore) {
+        if (isRestore) {
         let expirationDateToUse;
         if (name !== originalName) {
             try {
@@ -1724,6 +1723,15 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
       // ✅ Pass the calculated expirationDate to the function
       await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDate, vars.email);
 
+
+      if (isFreeTrial) {
+        await recordFreeTrialDeploy(chatId);
+      }
+      
+      // --- NEW REWARD LOGIC START ---
+      try {
+          const userBotCount = await getUserBotCount(chatId);
+          const userHasReceivedReward = await hasReceivedReward(chatId);
 
       if (isFreeTrial) {
         await recordFreeTrialDeploy(chatId);
