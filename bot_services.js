@@ -1777,17 +1777,31 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
             await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
 
-        // ❗️❗️ NEW FIX: Turn the bot OFF so it doesn't start with an empty DB
+                // ❗️❗️ NEW FIX: Find and scale the correct dyno to 0
+        let dynoType = 'web'; // Heroku's default for Node.js is 'web'
         try {
-            console.log(`[Restore] Scaling dyno to 0 for "${name}" before data restore.`);
-            await herokuApi.patch(`/apps/${name}/formation/worker`, 
+            console.log(`[Restore] Trying to scale 'web' dyno to 0 for "${name}"...`);
+            await herokuApi.patch(`/apps/${name}/formation/web`, 
                 { quantity: 0 }, 
                 { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
             );
-        } catch (scaleError) {
-            console.warn(`[Restore] Could not scale "${name}" to 0. It might start early.`);
+            console.log(`[Restore] Scaled 'web' dyno to 0.`);
+        } catch (webError) {
+            // If 'web' fails, try 'worker'
+            try {
+                console.warn(`[Restore] Failed to scale 'web', trying 'worker'...`);
+                await herokuApi.patch(`/apps/${name}/formation/worker`, 
+                    { quantity: 0 }, 
+                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                );
+                dynoType = 'worker'; // It's a worker dyno
+                console.log(`[Restore] Scaled 'worker' dyno to 0.`);
+            } catch (workerError) {
+                console.warn(`[Restore] Could not scale any dyno for "${name}" to 0. It might start early.`);
+            }
         }
         // ❗️❗️ END OF NEW FIX
+
         
         const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
         await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
@@ -1798,7 +1812,8 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
         );
         
         // ❗️❗️ FIX 2: Return the object on success
-        return { success: true, newAppName: name };
+       return { success: true, newAppName: name, dynoType: dynoType };
+
       }
       
       await addUserBot(chatId, name, vars.SESSION_ID, botType);
