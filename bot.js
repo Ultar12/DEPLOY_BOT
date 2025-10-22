@@ -2269,6 +2269,7 @@ async function handleRestoreAllConfirm(query) {
             }
 
             const newAppName = buildResult.newAppName; // The new, unique name (e.g., 'akpan11-0747')
+            const dynoType = buildResult.dynoType; 
 
             progressLog.push(`   App created as \`${newAppName}\`. Finding backup data...`);
             await bot.editMessageText(`**Restoring: ${botType.toUpperCase()}**\n\n${progressLog.slice(-5).join('\n')}`, { chat_id: adminId, message_id: progressMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
@@ -2295,17 +2296,18 @@ async function handleRestoreAllConfirm(query) {
                 throw new Error(restoreResult.message);
             }
 
-            // ❗️❗️ NEW FIX: Turn the bot ON now that the data is restored
+                        // ❗️❗️ NEW FIX: Turn the bot ON now that the data is restored
             try {
-                console.log(`[Restore] Scaling dyno to 1 for "${newAppName}".`);
-                await herokuApi.patch(`/apps/${newAppName}/formation/worker`, 
+                console.log(`[Restore] Scaling '${dynoType}' dyno to 1 for "${newAppName}".`);
+                await herokuApi.patch(`/apps/${newAppName}/formation/${dynoType}`, // <-- USE VARIABLE
                     { quantity: 1 }, 
                     { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
                 );
             } catch (scaleError) {
-                throw new Error(`DB restore success, but failed to scale dyno to 1.`);
+                // Add more detail to the error message
+                throw new Error(`DB restore success, but failed to scale '${dynoType}' dyno to 1.`);
             }
-            // ❗️❗️ END OF NEW FIX
+
 
             progressLog.push(`   **Successfully Restored:** \`${newAppName}\``);
             successCount++;
