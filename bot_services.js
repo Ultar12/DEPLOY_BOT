@@ -115,7 +115,11 @@ async function backupHerokuDbToRenderSchema(appName) {
     const { mainPool, herokuApi, HEROKU_API_KEY } = moduleParams;
     
     const mainDbUrl = process.env.DATABASE_URL;
-    const schemaName = `backup_${appName.replace(/-/g, '_')}`; // Sanitize name
+    
+    // ❗️ FIX: Removed the 'backup_' prefix.
+    // This is CRITICAL so the restore function's "base name" search
+    // (e.g., LIKE 'akpan%') can find the schema (e.g., 'akpan_1233').
+    const schemaName = appName.replace(/-/g, '_'); // Sanitize name
 
     try {
         // Get the Heroku bot's DATABASE_URL from its config vars
@@ -128,6 +132,7 @@ async function backupHerokuDbToRenderSchema(appName) {
 
         const client = await mainPool.connect();
         try {
+            // Use the updated schemaName
             await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE;`);
             await client.query(`CREATE SCHEMA ${schemaName};`);
         } finally {
@@ -136,6 +141,7 @@ async function backupHerokuDbToRenderSchema(appName) {
 
         console.log(`[DB Backup] Starting direct data pipe for ${appName}...`);
         // Use pg_dump to pipe from Heroku and psql to restore into the new schema
+        // Use the updated schemaName
         const command = `pg_dump "${herokuDbUrl}" --clean | psql "${mainDbUrl}" -c "SET search_path TO ${schemaName};"`;
         
         const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
@@ -152,6 +158,7 @@ async function backupHerokuDbToRenderSchema(appName) {
         return { success: false, message: error.message };
     }
 }
+
 
 
 // In bot_services.js
