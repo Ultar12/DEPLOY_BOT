@@ -1915,7 +1915,7 @@ if (inviterId && !isRestore) {
       } finally {
           appDeploymentPromises.delete(name);
       }
-    } else {
+     else {
       await bot.editMessageText(`Build status: ${buildStatus}. Contact Admin for support.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
     }
