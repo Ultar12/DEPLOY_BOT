@@ -1767,17 +1767,55 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
     if (buildStatus === 'succeeded') {
       console.log(`[Flow] buildWithProgress: Heroku build for "${name}" SUCCEEDED.`);
 
-            if (isRestore) {
-        let expirationDateToUse;
-        if (name !== originalName) {
+                  if (isRestore) {
+        let expirationDateToUse = null; // Default to null
+
+        if (name !== originalName) { // 'name' = new name, 'originalName' = old name
             try {
-                // ... (existing code)
+                // 1. Try to get the expiration date from the old record
+                const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+                
+                if (originalDeployment) { 
+                  expirationDateToUse = originalDeployment.expiration_date;
+                  console.log(`[Expiration Fix] Found expiration date from ${originalName}.`);
+                }
+
+                // 2. ❗️❗️ FIX: ALWAYS delete the old user_deployments record.
+                // This is the line that fixes your bug.
+                await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName]);
+                console.log(`[DB Cleanup] Deleted old user_deployments record for ${originalName}.`);
+
+                // 3. ❗️❗️ FIX: ALWAYS rename the bot in the user_bots table.
+                await pool.query('UPDATE user_bots SET bot_name = $1, session_id = $2, bot_type = $3 WHERE user_id = $4 AND bot_name = $5', [name, vars.SESSION_ID, botType, chatId, originalName]);
+                console.log(`[DB Rename Fix] Renamed bot in user_bots table from "${originalName}" to "${name}".`);
+
             } catch (dbError) {
-                console.error(`[Expiration Fix] Error fetching/deleting original deployment record for ${originalName}:`, dbError.message);
+                console.error(`[Restore DB-Cleanup] Error during DB rename/delete for ${originalName}:`, dbError.message);
             }
         } else {
+            // This code runs if the name didn't change (which is rare for a restore)
+            const originalDeployment = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id = $1 AND app_name = $2', [chatId, originalName])).rows[0];
+            if (originalDeployment) {
+                expirationDateToUse = originalDeployment.expiration_date;
+            }
             await addUserBot(chatId, name, vars.SESSION_ID, botType);
         }
+        
+        // This next part saves the NEW app record (adams-2000)
+        const herokuConfigVars = (await herokuApi.get(`https://api.heroku.com/apps/${name}/config-vars`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } })).data;
+        await saveUserDeployment(chatId, name, vars.SESSION_ID, herokuConfigVars, botType, isFreeTrial, expirationDateToUse);
+
+        await bot.editMessageText(
+            `Restore successful! App *${escapeMarkdown(name)}* has been redeployed.`,
+            { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' }
+        );
+        
+        return { success: true, newAppName: name, dynoType: dynoType };
+      }
+      
+      // --- This is the end of the 'if (isRestore)' block ---
+      // The rest of your function for non-restore builds starts below
+
 
                 // ❗️❗️ NEW FIX: Find and scale the correct dyno to 0
         let dynoType = 'web'; // Heroku's default for Node.js is 'web'
