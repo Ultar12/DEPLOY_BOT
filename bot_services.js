@@ -2038,7 +2038,7 @@ async function buildWithProgress(chatId, vars, isFreeTrial = false, isRestore = 
           buildResult = false;
       } finally {
           appDeploymentPromises.delete(name);
-      }
+      
     } else {
       await bot.editMessageText(`Build status: ${buildStatus}. Contact Admin for support.`, { chat_id: chatId, message_id: createMsg.message_id, parse_mode: 'Markdown' });
       buildResult = false;
