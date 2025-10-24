@@ -2092,7 +2092,8 @@ async function checkHerokuApiKey() {
 }
 
 
-// In bot.js
+// In bot.js, REPLACE this entire function
+
 /**
  * DANGEROUS: Copies data from a source URL to a target URL.
  * These URLs will be logged. Use with extreme caution.
@@ -2102,12 +2103,15 @@ async function runExternalDbCopy(adminId, sourceDbUrl, targetDbUrl) {
 
     try {
         console.log(`[DB Copy] Starting pg_dump pipe from source to destination...`);
-        // ❗️ WARNING: This command logs the full URLs, including passwords.
-        const command = `pg_dump "${sourceDbUrl}" --clean | psql "${targetDbUrl}"`;
         
-        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
+        // ❗️ FIX: Added --no-owner and --no-privileges to the pg_dump command
+        // This stops it from copying permission-related commands that crash the destination DB.
+        const command = `pg_dump "${sourceDbUrl}" --clean --no-owner --no-privileges | psql "${targetDbUrl}"`;
+        
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 }); // 10MB buffer
 
         if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
+            // Ignore common, harmless psql warnings
             if (!stderr.includes(`schema "public" does not exist`)) {
                  throw new Error(stderr);
             }
