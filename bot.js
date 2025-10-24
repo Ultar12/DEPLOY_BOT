@@ -2092,6 +2092,37 @@ async function checkHerokuApiKey() {
 }
 
 
+// In bot.js
+/**
+ * DANGEROUS: Copies data from a source URL to a target URL.
+ * These URLs will be logged. Use with extreme caution.
+ */
+async function runExternalDbCopy(adminId, sourceDbUrl, targetDbUrl) {
+    const msg = await bot.sendMessage(adminId, `Starting database copy... This will **overwrite all data** in the destination. This may take several minutes.`, { parse_mode: 'Markdown' });
+
+    try {
+        console.log(`[DB Copy] Starting pg_dump pipe from source to destination...`);
+        // ❗️ WARNING: This command logs the full URLs, including passwords.
+        const command = `pg_dump "${sourceDbUrl}" --clean | psql "${targetDbUrl}"`;
+        
+        const { stderr } = await execPromise(command, { maxBuffer: 1024 * 1024 * 10 });
+
+        if (stderr && (stderr.toLowerCase().includes('error') || stderr.toLowerCase().includes('fatal'))) {
+            if (!stderr.includes(`schema "public" does not exist`)) {
+                 throw new Error(stderr);
+            }
+        }
+        
+        console.log(`[DB Copy] Successfully copied database.`);
+        await bot.editMessageText(`**Copy Complete!**\n\nData has been copied and the destination database was overwritten.`, { chat_id: adminId, message_id: msg.message_id, parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(`[DB Copy] FAILED to copy database:`, error.message);
+        await bot.editMessageText(`**Copy Failed!**\n\n*Reason:* ${escapeMarkdown(error.message)}\n\nCheck your bot's logs for details.`, { chat_id: adminId, message_id: msg.message_id, parse_mode: 'Markdown' });
+    }
+}
+
+
 
 // REPLACE WITH THIS
 async function saveMaintenanceStatus(status) {
@@ -3993,6 +4024,23 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 });
 
 
+// In bot.js
+bot.onText(/^\/copy$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    // Check if pg_dump is available
+    try {
+        await execPromise('pg_dump --version');
+    } catch (e) {
+        return bot.sendMessage(adminId, "**Prerequisite Missing!**\nThis feature requires `pg_dump`. Please ensure your `render.yaml` file is set up correctly.", { parse_mode: 'Markdown' });
+    }
+
+    userStates[adminId] = { step: 'AWAITING_COPY_SOURCE_URL' };
+    await bot.sendMessage(adminId, "Please send the full URL for **Database 1 (Source)**.\n\n*his URL will be visible in your chat history and logs.*", { parse_mode: 'Markdown' });
+});
+
+
 // New /remove <user_id> command for admin
 bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
@@ -5585,6 +5633,43 @@ if (st && st.step === 'AWAITING_OTP') {
     return;
 }
 
+// In bot.js, inside bot.on('message', ...)
+
+if (st && st.step === 'AWAITING_COPY_SOURCE_URL') {
+    const sourceUrl = text.trim();
+    if (!sourceUrl.startsWith('postgres://')) {
+        return bot.sendMessage(cid, "Invalid format. Please send the full `postgres://...` URL for the **Source** database.");
+    }
+
+    st.data = { sourceUrl: sourceUrl };
+    st.step = 'AWAITING_COPY_DEST_URL';
+    await bot.sendMessage(cid, "Source DB URL received.\n\nNow, please send the full URL for **Database 2 (Destination)**.\n\n⚠️ *This database will be completely erased and overwritten.*", { parse_mode: 'Markdown' });
+    return;
+}
+
+if (st && st.step === 'AWAITING_COPY_DEST_URL') {
+    const destUrl = text.trim();
+    if (!destUrl.startsWith('postgres://')) {
+        return bot.sendMessage(cid, "Invalid format. Please send the full `postgres://...` URL for the **Destination** database.");
+    }
+
+    st.data.destUrl = destUrl;
+    st.step = 'AWAITING_COPY_FINAL_CONFIRM';
+
+    await bot.sendMessage(cid, 
+        `**Final Confirmation**\n\nYou are about to overwrite **Database 2** with all data from **Database 1**.\n\nThis action is irreversible.`, 
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Yes, Proceed with Copy", callback_data: "copy_external_confirm:YES" }],
+                    [{ text: "Cancel", callback_data: "copy_cancel" }]
+                ]
+            }
+        }
+    );
+    return;
+}
 
 
   // --- REPLACE this entire block in bot.js ---
@@ -7605,6 +7690,37 @@ if (action === 'confirm_restore_app') {
       // If you need immediate feedback before buildWithProgress, it's done by the first editMessageText.
       return; // Ensure this function exits
   }
+
+
+  // In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'copy_external_confirm') {
+    if (!st || st.step !== 'AWAITING_COPY_FINAL_CONFIRM') {
+        return bot.answerCallbackQuery(q.id, { text: "This action has expired.", show_alert: true });
+    }
+
+    const { sourceUrl, destUrl } = st.data;
+    
+    await bot.editMessageText("Starting database copy... This may take several minutes. You will be notified when it is complete.", {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+
+    // Run the task
+    runExternalDbCopy(cid, sourceUrl, destUrl);
+    delete userStates[cid];
+    return;
+}
+
+if (action === 'copy_cancel') {
+    delete userStates[cid];
+    await bot.editMessageText("Database copy cancelled.", {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
 
   // Add this new 'if' block inside your bot.on('callback_query', ...) function
 
