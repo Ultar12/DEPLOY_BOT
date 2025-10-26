@@ -1193,16 +1193,30 @@ function getAnimatedEmoji() {
 }
 
 
-// This function creates a new, empty database on your Neon project
-async function createNeonDatabase(newDbName) {
-    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID, NEON_DB_HOST, NEON_DB_USER, NEON_DB_PASSWORD } = process.env;
+// In bot.js, REPLACE this entire function
 
-    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
+/**
+ * Creates a new, empty database on your Neon project.
+ * @param {string} newDbName The name of the database to create.
+ * @returns {Promise<{success: boolean, db_name?: string, connection_string?: string, error?: string}>}
+ */
+async function createNeonDatabase(newDbName) {
+    const { 
+        NEON_API_KEY, 
+        NEON_PROJECT_ID, 
+        NEON_BRANCH_ID, 
+        NEON_DB_HOST, 
+        NEON_DB_USER, 
+        NEON_DB_PASSWORD 
+    } = process.env;
+
+    // ❗️ FIX: Added NEON_DB_USER to the check, as it's now required for the payload.
+    // Also added host/pass, which are needed to build the final connection string.
+    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID || !NEON_DB_USER || !NEON_DB_HOST || !NEON_DB_PASSWORD) {
         console.error("[Neon] API credentials are not fully configured.");
-        return { success: false, error: "Neon API credentials are not set." };
+        return { success: false, error: "One or more Neon environment variables (API_KEY, PROJECT_ID, BRANCH_ID, DB_USER, DB_HOST, DB_PASSWORD) are not set." };
     }
 
-    // This is the Neon API endpoint for creating a database
     const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases`;
     
     const headers = {
@@ -1211,10 +1225,11 @@ async function createNeonDatabase(newDbName) {
         'Accept': 'application/json'
     };
     
-    // This is the data we send to Neon
+    // ❗️ FIX: The 'owner_name' field is now correctly included in the payload.
     const payload = {
         database: {
-            name: newDbName
+            name: newDbName,
+            owner_name: NEON_DB_USER 
         }
     };
 
@@ -1223,15 +1238,15 @@ async function createNeonDatabase(newDbName) {
         
         const dbName = response.data.database.name;
         
-        // Manually construct the new connection string
-        const newConnectionString = `postgres://${NEON_DB_USER}:${NEON_DB_PASSWORD}@${NEON_DB_HOST}/v1/${dbName}`;
+        // ❗️ FIX: Manually construct the correct new connection string.
+        const newConnectionString = `postgres://${NEON_DB_USER}:${NEON_DB_PASSWORD}@${NEON_DB_HOST}/${dbName}?sslmode=require`;
         
         console.log(`[Neon] Successfully created database: ${dbName}`);
         
         return { 
             success: true, 
             db_name: dbName, 
-            connection_string: newConnectionString // Return the full URL
+            connection_string: newConnectionString // Return the full, correct URL
         };
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
@@ -1239,6 +1254,7 @@ async function createNeonDatabase(newDbName) {
         return { success: false, error: errorMsg };
     }
 }
+
 
 
 /**
