@@ -1192,6 +1192,55 @@ function getAnimatedEmoji() {
     return emoji;
 }
 
+
+// This function creates a new, empty database on your Neon project
+async function createNeonDatabase(newDbName) {
+    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID, NEON_DB_HOST, NEON_DB_USER, NEON_DB_PASSWORD } = process.env;
+
+    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
+        console.error("[Neon] API credentials are not fully configured.");
+        return { success: false, error: "Neon API credentials are not set." };
+    }
+
+    // This is the Neon API endpoint for creating a database
+    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases`;
+    
+    const headers = {
+        'Authorization': `Bearer ${NEON_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    };
+    
+    // This is the data we send to Neon
+    const payload = {
+        database: {
+            name: newDbName
+        }
+    };
+
+    try {
+        const response = await axios.post(apiUrl, payload, { headers });
+        
+        const dbName = response.data.database.name;
+        
+        // Manually construct the new connection string
+        const newConnectionString = `postgres://${NEON_DB_USER}:${NEON_DB_PASSWORD}@${NEON_DB_HOST}/v1/${dbName}`;
+        
+        console.log(`[Neon] Successfully created database: ${dbName}`);
+        
+        return { 
+            success: true, 
+            db_name: dbName, 
+            connection_string: newConnectionString // Return the full URL
+        };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Neon] Error creating database: ${errorMsg}`);
+        return { success: false, error: errorMsg };
+    }
+}
+
+
 /**
  * Updates a specific environment variable on Render and explicitly triggers a restart.
  * @param {string} varName The name of the variable to update.
@@ -5138,6 +5187,40 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
     } catch (error) {
         console.error(`Error with /updateall command:`, error.message);
         await bot.sendMessage(adminId, `An error occurred: ${error.message}`, { parse_mode: 'Markdown' });
+    }
+});
+
+
+bot.onText(/^\/createnewdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return; // Admin only
+
+    const newDbName = match[1];
+
+    const workingMsg = await bot.sendMessage(adminId, `Attempting to create new database: \`${newDbName}\`...`);
+
+    const result = await createNeonDatabase(newDbName);
+
+    if (result.success) {
+        await bot.editMessageText(
+            `**Database Created!**\n\n` +
+            `**Name:** \`${result.db_name}\`\n` +
+            `**Connection URL:** \`${result.connection_string}\``,
+            { 
+                chat_id: adminId, 
+                message_id: workingMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }
+        );
+    } else {
+        await bot.editMessageText(
+            `**Failed to create database!**\n\n*Reason:* ${escapeMarkdown(result.error)}`, 
+            { 
+                chat_id: adminId, 
+                message_id: workingMsg.message_id, 
+                parse_mode: 'Markdown' 
+            }
+        );
     }
 });
 
