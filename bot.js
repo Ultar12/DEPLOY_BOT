@@ -2682,6 +2682,7 @@ async function notifyAdminUserOnline(msg) {
     GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
+    createNeonDatabase: createNeonDatabase, 
     // --- CRITICAL CHANGE START ---
     defaultEnvVars: { // <-- Pass an object containing both
         levanter: levanterDefaultEnvVars,
