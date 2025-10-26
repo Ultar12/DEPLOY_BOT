@@ -1256,6 +1256,40 @@ async function createNeonDatabase(newDbName) {
 }
 
 
+/**
+ * Deletes a specific database from your Neon project. This is permanent.
+ * @param {string} dbName The name of the database to delete.
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function deleteNeonDatabase(dbName) {
+    const { NEON_API_KEY, NEON_PROJECT_ID, NEON_BRANCH_ID } = process.env;
+
+    if (!NEON_API_KEY || !NEON_PROJECT_ID || !NEON_BRANCH_ID) {
+        console.error("[Neon] API credentials are not fully configured.");
+        return { success: false, error: "Neon API credentials are not set." };
+    }
+
+    // The specific API endpoint for deleting a database
+    const apiUrl = `https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}/databases/${dbName}`;
+    
+    const headers = {
+        'Authorization': `Bearer ${NEON_API_KEY}`,
+        'Accept': 'application/json'
+    };
+
+    try {
+        await axios.delete(apiUrl, { headers });
+        console.log(`[Neon] Successfully deleted database: ${dbName}`);
+        return { success: true };
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.message;
+        console.error(`[Neon] Error deleting database: ${errorMsg}`);
+        return { success: false, error: errorMsg };
+    }
+}
+
+
+
 
 /**
  * Updates a specific environment variable on Render and explicitly triggers a restart.
@@ -5207,7 +5241,7 @@ bot.onText(/^\/updateall (levanter|raganork)$/, async (msg, match) => {
 });
 
 
-bot.onText(/^\/createnewdb (.+)$/, async (msg, match) => {
+bot.onText(/^\/createbotdb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return; // Admin only
 
@@ -5238,6 +5272,36 @@ bot.onText(/^\/createnewdb (.+)$/, async (msg, match) => {
             }
         );
     }
+});
+
+
+// ADMIN COMMAND: /delneondb <database_name>
+bot.onText(/^\/delbotdb (.+)$/, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const dbName = match[1];
+
+    // Send a confirmation message with a strong warning
+    await bot.sendMessage(adminId, 
+        `**EXTREME DANGER** \n\n` +
+        `Are you absolutely sure you want to permanently delete the database named \`${dbName}\` from your Neon project?\n\n` +
+        `This action is **irreversible** and all data will be lost.`, 
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        // The callback data includes the dbName to be deleted
+                        { text: `Yes, I am sure. Delete ${dbName}`, callback_data: `neon_del_confirm:${dbName}` }
+                    ],
+                    [
+                        { text: "No, do not delete", callback_data: `neon_del_cancel` }
+                    ]
+                ]
+            }
+        }
+    );
 });
 
 
@@ -8268,6 +8332,50 @@ if (action === 'levanter_wa_fallback') {
     
     return;
 }
+
+// In bot.js, inside bot.on('callback_query', ...)
+
+if (action === 'neon_del_confirm') {
+    const dbName = payload;
+
+    const workingMsg = await bot.editMessageText(`Deleting database \`${dbName}\`...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    const result = await deleteNeonDatabase(dbName);
+
+    if (result.success) {
+        await bot.editMessageText(
+            `**Database Deleted!**\n\nThe database \`${dbName}\` has been permanently deleted from your Neon project.`, 
+            {
+                chat_id: cid,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    } else {
+        await bot.editMessageText(
+            `**Failed to delete database!**\n\n*Reason:* ${escapeMarkdown(result.error)}`, 
+            {
+                chat_id: cid,
+                message_id: workingMsg.message_id,
+                parse_mode: 'Markdown'
+            }
+        );
+    }
+    return;
+}
+
+if (action === 'neon_del_cancel') {
+    await bot.editMessageText("Database deletion was cancelled.", {
+        chat_id: cid,
+        message_id: q.message.message_id
+    });
+    return;
+}
+
 
 // Add this inside bot.on('callback_query', ...)
 if (action === 'verify_join_after_miniapp') {
