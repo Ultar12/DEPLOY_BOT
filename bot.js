@@ -6233,54 +6233,6 @@ bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
 });
 
 
-bot.onText(/^\/dl (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    const url = match[1].trim();
-
-    const waitingMsg = await bot.sendMessage(cid, "**Processing link with yt-dlp...**", { parse_mode: 'Markdown' });
-
-    try {
-        // -j: dump JSON
-        // --flat-playlist: don't expand playlists
-        // --no-warnings: keep logs clean
-const command = `yt-dlp --cookies cookies.txt -j --flat-playlist --no-warnings "${url}"`;
-const { stdout } = await execPromise(command);
-
-        const info = JSON.parse(stdout);
-
-        // Handle Image Carousels (Instagram/TikTok slides)
-        if (info.entries || info.formats === undefined) {
-            const entries = info.entries || [info];
-            const mediaGroup = entries.map(e => ({
-                type: 'photo',
-                media: e.url || e.thumbnail
-            })).slice(0, 10);
-
-            await bot.sendMediaGroup(cid, mediaGroup);
-        } else {
-            // Handle Single Video or Image
-            const mediaUrl = info.url;
-            const isVideo = info.vcodec !== 'none';
-
-            if (isVideo) {
-                await bot.sendVideo(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
-            } else {
-                await bot.sendPhoto(cid, mediaUrl, { caption: `**Title:** ${info.title}`.replace(/[^\x00-\x7F]/g, ""), parse_mode: 'Markdown' });
-            }
-        }
-
-        await bot.deleteMessage(cid, waitingMsg.message_id);
-
-    } catch (error) {
-        console.error("[yt-dlp Error]:", error.message);
-        await bot.editMessageText("**Error:** link is private or yt-dlp needs an update.", {
-            chat_id: cid,
-            message_id: waitingMsg.message_id
-        });
-    }
-});
-
-
 
 
 // ADMIN COMMAND: /restartaws (Strict Rebuild Only)
@@ -6888,9 +6840,9 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 });
 
 
-// ... (Your existing bot.js content)
 
-bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
+
+bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     
     // --- 1. Admin Check ---
@@ -6898,30 +6850,26 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
         return bot.sendMessage(adminId, "You are not authorized to use this command.");
     }
 
-    const appName = match[1].trim();
+    const dbName = match[1].trim().toLowerCase();
     let workingMsg;
 
     try {
-        // --- 2. Send initial message and store reference ---
-        workingMsg = await bot.sendMessage(adminId, `Fetching AWS DB URL for \`${appName}\`...`, { parse_mode: 'Markdown' });
+        // --- 2. Send initial message ---
+        workingMsg = await bot.sendMessage(adminId, `Fetching details for \`${dbName}\`...`, { parse_mode: 'Markdown' });
 
-        // --- 3. Call the service function ---
-        const result = await dbServices.getAwsDbConnectionString(appName);
+        // --- 3. Call the Manager API ---
+        const response = await axios.get(`http://localhost:3000/getdb/${dbName}`, {
+            headers: { 'x-api-key': SERVICE_SECRET }
+        });
 
-        // --- 4. Handle success or failure ---
-        if (result.success) {
+        const data = response.data;
+
+        if (data.success) {
             await bot.editMessageText(
-                `**AWS Database Connection String** for \`${appName}\`:\n\n` +
-                `\`${result.dbUrl}\``,
-                {
-                    chat_id: adminId,
-                    message_id: workingMsg.message_id,
-                    parse_mode: 'Markdown'
-                }
-            );
-        } else {
-            await bot.editMessageText(
-                `**Failed to Retrieve URL** for \`${appName}\`.\n\n*Reason:* ${escapeMarkdown(result.message)}`,
+                `**Database Details Found**\n\n` +
+                `**Name:** \`${data.db_name}\`\n` +
+                `**User:** \`${data.db_user}\`\n\n` +
+                `**Connection String:**\n\`${data.connection_string}\``,
                 {
                     chat_id: adminId,
                     message_id: workingMsg.message_id,
@@ -6930,27 +6878,27 @@ bot.onText(/^\/getawsdb (.+)$/, async (msg, match) => {
             );
         }
     } catch (e) {
-        // --- 5. CRITICAL CATCH: Handle unexpected crashes ---
-        const rawErrorMessage = e.message || 'An unknown critical error occurred.';
-        // CRITICAL FIX: Escape the raw error message before wrapping it in backticks for display
-        const escapedErrorMessage = escapeMarkdown(rawErrorMessage); 
-        console.error(`Error processing /getawsdb for ${appName}:`, rawErrorMessage, e.stack);
+        let errorMessage = "Database not found or API error.";
+        
+        if (e.response && e.response.data && e.response.data.error) {
+            errorMessage = e.response.data.error;
+        }
 
-        if (workingMsg && workingMsg.message_id) {
-            // Edit the message with the escaped error wrapped in code block
-            await bot.editMessageText(`An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
-                chat_id: adminId,
-                message_id: workingMsg.message_id,
-                parse_mode: 'Markdown' // Still using Markdown for the outer formatting
-            }).catch(editError => console.error(`Failed to send error reply: ${editError.message}`));
-        } else {
-            // If the initial message failed, send a new one
-             await bot.sendMessage(adminId, `An unexpected critical error occurred:\n\n\`${escapedErrorMessage}\``, {
-                parse_mode: 'Markdown'
-            });
+        console.error(`Error fetching DB ${dbName}:`, e.message);
+
+        if (workingMsg) {
+            await bot.editMessageText(
+                `Error: ${errorMessage}`,
+                {
+                    chat_id: adminId,
+                    message_id: workingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            ).catch(err => console.error("Edit failed:", err.message));
         }
     }
 });
+
 
 
 // In bot.js, with your other command handlers (e.g., near /revenue)
@@ -8042,39 +7990,7 @@ bot.onText(/^\/addapi (.+)$/, async (msg, match) => {
     }
 });
 
-bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
 
-    const dbName = match[1].trim();
-    const dbPass = `Ultardatabase${dbName}`;
-    const workingMsg = await bot.sendMessage(cid, `Fetching connection string for *${dbName}*...`, { parse_mode: 'Markdown' });
-
-    // These should match your manager script constants
-    const PUBLIC_HOST = process.env.PUBLIC_HOST || 'localhost';
-    const PUBLIC_DB_PORT = process.env.PUBLIC_DB_PORT || 5432;
-
-    try {
-        const connString = `postgres://${dbName}:${dbPass}@${PUBLIC_HOST}:${PUBLIC_DB_PORT}/${dbName}?sslmode=disable`;
-
-        await bot.editMessageText(
-            `**Database Credentials Found**\n\n` +
-            `*DB Name:* \`${dbName}\`\n` +
-            `*Password:* \`${dbPass}\`\n\n` +
-            `**Connection String:**\n\`${connString}\``,
-            {
-                chat_id: cid,
-                message_id: workingMsg.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
-    } catch (e) {
-        await bot.editMessageText(`Error: ${e.message}`, {
-            chat_id: cid,
-            message_id: workingMsg.message_id
-        });
-    }
-});
 
 
 bot.onText(/^\/apilist$/, async (msg) => {
