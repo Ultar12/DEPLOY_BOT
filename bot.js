@@ -6857,12 +6857,16 @@ bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
         // --- 2. Send initial message ---
         workingMsg = await bot.sendMessage(adminId, `Fetching details for \`${dbName}\`...`, { parse_mode: 'Markdown' });
 
-        // --- 3. Call the Manager API ---
-        const response = await axios.get(`http://localhost:3000/getdb/${dbName}`, {
-            headers: { 'x-api-key': SERVICE_SECRET }
+        // --- 3. Call the Manager API using your sample variables ---
+        const apiUrl = process.env.SELF_HOSTED_DB_URL;
+        const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+
+        const res = await axios.get(`${apiUrl}/getdb/${dbName}`, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 5000 // 5s timeout
         });
 
-        const data = response.data;
+        const data = res.data;
 
         if (data.success) {
             await bot.editMessageText(
@@ -6880,8 +6884,13 @@ bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
     } catch (e) {
         let errorMessage = "Database not found or API error.";
         
+        // Handle Axios specific error responses
         if (e.response && e.response.data && e.response.data.error) {
             errorMessage = e.response.data.error;
+        } else if (e.code === 'ECONNABORTED') {
+            errorMessage = "Request timed out.";
+        } else if (!e.response) {
+            errorMessage = "Manager API is offline or unreachable.";
         }
 
         console.error(`Error fetching DB ${dbName}:`, e.message);
@@ -6898,6 +6907,7 @@ bot.onText(/^\/getdb (.+)$/, async (msg, match) => {
         }
     }
 });
+
 
 
 
