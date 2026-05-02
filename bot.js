@@ -10811,24 +10811,29 @@ if (text === 'Support') {
         
 if (st && st.step === 'AWAITING_PHONE_NUMBER') {
     // 1. Clean the input: remove everything that is not a digit (spaces, +, -, etc.)
+    // This turns "+234 701 656 5429" into "2347016565429"
     const targetNumber = text.replace(/\D/g, ''); 
 
-    // 2. Validate length (standard international numbers are between 10 and 15 digits)
+    // 2. Validate length (standard international numbers are 10 to 15 digits)
     if (targetNumber.length < 10 || targetNumber.length > 15) {
         const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `23491630000000`).';
         
-        // Return the error message without any buttons
+        // Return the error message WITHOUT any buttons
         return bot.sendMessage(cid, errorMessage, { parse_mode: 'Markdown' });
     }
 
     if (st.data.botType === 'levanter') {
-        const pairingUrl = process.env.PAIRING_URL;
+        // 3. Auto-complete the URL from the ENV variable
+        // Strips any accidental trailing slash from ENV and appends the endpoint
+        const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
+        const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
+        
         const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
-        // 1. Initial Loading Message
+        // 4. Initial Loading Message
         const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber} [|]`, { parse_mode: 'Markdown' });
 
-        // 2. Setup the "No-Emoji" Text Clock Animation
+        // 5. Setup the "No-Emoji" Text Clock Animation
         const frames = ['[ | ]', '[ / ]', '[ - ]', '[ \\ ]'];
         let frameIdx = 0;
         
@@ -10846,7 +10851,7 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             }).catch(() => {}); // Ignore rate-limit / unmodified errors
         }, 1500);
 
-        // 3. Save to Global Map
+        // 6. Save to Global Map
         global.levanterPairingRequests.set(targetNumber, { 
             cid, 
             messageId: loadingMsg.message_id, 
@@ -10854,17 +10859,18 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             baseText: `Processing ${targetNumber}` 
         });
 
-        // 4. Send request to the External PAIRING_URL
-        if (!pairingUrl) {
+        // 7. Send request to the auto-completed External PAIRING_URL
+        if (!basePairingUrl) {
             clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
-            return bot.editMessageText(`System Error: PAIRING_URL is not configured.`, {
+            return bot.editMessageText(`System Error: PAIRING_URL is not configured in ENV.`, {
                 chat_id: cid, message_id: loadingMsg.message_id,
                 reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
             });
         }
 
-        axios.post(pairingUrl, {
+        // Send POST to the dynamically built full URL
+        axios.post(fullPairingUrl, {
             number: targetNumber,
             callbackUrl: callbackUrl
         }).catch(err => {
@@ -10880,6 +10886,8 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         delete userStates[cid];
         return;
     }
+    
+
     
 
 
