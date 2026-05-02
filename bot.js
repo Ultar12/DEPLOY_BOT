@@ -5509,21 +5509,25 @@ app.post('/api/levanter-callback', async (req, res) => {
 
     try {
         if (status === 'pairing_code') {
-            // Updated message text exactly as requested with clipboard copy button
-            await bot.editMessageText(
-                `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
-                { 
-                    chat_id: cid, 
-                    message_id: messageId, 
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: 'Copy Code', copy_text: { text: code } }
-                        ]]
-                    }
-                }
-            );
-        } 
+    await bot.editMessageText(
+        `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
+        { 
+            chat_id: cid, 
+            message_id: messageId, 
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Copy Code', copy_text: { text: code } }],
+                    [
+                        { text: 'Regenerate Code', callback_data: `lev_regen:${number}` },
+                        { text: 'Wrong Number?', callback_data: `lev_wrong_num` }
+                    ]
+                ]
+            }
+        }
+    );
+}
+
         else if (status === 'session_id') {
             global.levanterPairingRequests.delete(number);
             // Clean Session ID delivery - No emojis, no extra text
@@ -12979,6 +12983,50 @@ if (action === 'apply_referral_reward') {
 }
 
 
+// --- 1. REGENERATE CODE ---
+if (action === 'lev_regen') {
+    const targetNumber = payload; // This is the 'number' we passed in callback_data
+    const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
+    const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
+    const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
+
+    // Edit current message to show we are restarting
+    await bot.editMessageText(`Processing ${targetNumber}...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    // Update the Map with the existing message ID
+    global.levanterPairingRequests.set(targetNumber, { cid, messageId: q.message.message_id });
+
+    // Re-fire the Axios request
+    axios.post(fullPairingUrl, {
+        number: targetNumber,
+        callbackUrl: callbackUrl
+    }).catch(err => {
+        bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
+            chat_id: cid, message_id: q.message.message_id
+        });
+    });
+    return;
+}
+
+// --- 2. WRONG NUMBER ---
+if (action === 'lev_wrong_num') {
+    // Reset user state to allow them to type a new number
+    userStates[cid] = { step: 'AWAITING_PHONE_NUMBER', data: { botType: 'levanter' } };
+
+    await bot.editMessageText(`Please send the correct WhatsApp number in full international format (e.g., 23491630000000).`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: 'Cancel', callback_data: 'back_to_main_menu' }]]
+        }
+    });
+    return;
+}
   
 
   // --- NEW: Handler for using a suggested app name ---
