@@ -5499,35 +5499,47 @@ app.get('/api/news', validateWebAppInitData, async (req, res) => {
 
 
 app.post('/api/levanter-callback', async (req, res) => {
-    // The external service must POST: { status, number, code, sessionId, error }
     const { status, number, code, sessionId, error } = req.body;
-    res.sendStatus(200); // Instantly reply to prevent timeouts
+    res.sendStatus(200); 
 
     const requestData = global.levanterPairingRequests.get(number);
     if (!requestData) return;
 
-    const { cid, messageId, intervalId } = requestData;
+    const { cid, messageId } = requestData;
 
     try {
         if (status === 'pairing_code') {
-            // Update the base text of the loading clock to show the code while it continues spinning
-            requestData.baseText = `**Pairing Code Ready!**\n\n\`${code}\`\n\nTap to copy and paste it into WhatsApp. Still waiting for session ID...`;
+            // Updated message text exactly as requested with clipboard copy button
+            await bot.editMessageText(
+                `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
+                { 
+                    chat_id: cid, 
+                    message_id: messageId, 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: 'Copy Code', copy_text: { text: code } }
+                        ]]
+                    }
+                }
+            );
         } 
         else if (status === 'session_id') {
-            // Stop the clock and deliver the session ID
-            clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
+            // Clean Session ID delivery - No emojis, no extra text
             await bot.editMessageText(
-                `**Session ID Generated!**\n\n\`${sessionId}\`\n\nCopy.`, 
-                { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }
+                `**Session ID Generated!**\n\n\`${sessionId}\``, 
+                { 
+                    chat_id: cid, 
+                    message_id: messageId, 
+                    parse_mode: 'Markdown' 
+                }
             );
         } 
         else if (status === 'error') {
-            // Stop the clock and show the error with the Levanter URL button
-            clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
             await bot.editMessageText(
-                `Automated pairing failed.\nReason: ${error}\n\nPlease generate your session manually.`, 
+                `Automated pairing failed.\nReason: ${error}`, 
                 {
                     chat_id: cid,
                     message_id: messageId,
@@ -5538,9 +5550,11 @@ app.post('/api/levanter-callback', async (req, res) => {
             );
         }
     } catch (e) {
-        console.error('[Webhook] Failed to update user:', e.message);
+        console.error('[Webhook Error]', e.message);
     }
 });
+
+
 
 
 app.post('/flutterwave/webhook', async (req, res) => {
@@ -10811,85 +10825,46 @@ if (text === 'Support') {
         
 
 if (st && st.step === 'AWAITING_PHONE_NUMBER') {
-    // 1. Clean the input: remove everything that is not a digit (spaces, +, -, etc.)
-    // This turns "+234 701 656 5429" into "2347016565429"
     const targetNumber = text.replace(/\D/g, ''); 
 
-    // 2. Validate length (standard international numbers are 10 to 15 digits)
     if (targetNumber.length < 10 || targetNumber.length > 15) {
-        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `23491630000000`).';
-        
-        // Return the error message WITHOUT any buttons
-        return bot.sendMessage(cid, errorMessage, { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `23491630000000`).', { parse_mode: 'Markdown' });
     }
 
     if (st.data.botType === 'levanter') {
-        // 3. Auto-complete the URL from the ENV variable
         const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
         const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
-        
         const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
-        // 4. Initial Loading Message
-        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber} [|]`, { parse_mode: 'Markdown' });
+        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber}...`, { parse_mode: 'Markdown' });
 
-        // 5. Setup the "No-Emoji" Text Clock Animation
-        const frames = ['[ | ]', '[ / ]', '[ - ]', '[ \\ ]'];
-        let frameIdx = 0;
-        
-        const intervalId = setInterval(() => {
-            const reqData = global.levanterPairingRequests.get(targetNumber);
-            if (!reqData) {
-                clearInterval(intervalId);
-                return;
-            }
-            frameIdx = (frameIdx + 1) % frames.length;
-            bot.editMessageText(`${reqData.baseText}\n\n${frames[frameIdx]}`, {
-                chat_id: cid,
-                message_id: loadingMsg.message_id,
-                parse_mode: 'Markdown'
-            }).catch(() => {}); // Ignore rate-limit / unmodified errors
-        }, 1500);
+        global.levanterPairingRequests.set(targetNumber, { cid, messageId: loadingMsg.message_id });
 
-        // 6. Save to Global Map
-        global.levanterPairingRequests.set(targetNumber, { 
-            cid, 
-            messageId: loadingMsg.message_id, 
-            intervalId,
-            baseText: `Processing ${targetNumber}` 
-        });
-
-        // 7. Send request to the auto-completed External PAIRING_URL
         if (!basePairingUrl) {
-            clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             return bot.editMessageText(`System Error: PAIRING_URL is not configured in ENV.`, {
-                chat_id: cid, 
-                message_id: loadingMsg.message_id,
-                parse_mode: 'Markdown'
+                chat_id: cid, message_id: loadingMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
             });
         }
 
-        // Send POST to the dynamically built full URL
         axios.post(fullPairingUrl, {
             number: targetNumber,
             callbackUrl: callbackUrl
         }).catch(err => {
-            clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
                 chat_id: cid, 
                 message_id: loadingMsg.message_id,
-                parse_mode: 'Markdown'
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
             });
         });
 
-        // Clear user state so the bot can accept other commands while waiting
         delete userStates[cid];
         return;
-    }
-
+    } 
 }
+
    
 
 
