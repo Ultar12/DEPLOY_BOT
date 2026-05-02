@@ -10809,6 +10809,7 @@ if (text === 'Support') {
 
   
         
+
 if (st && st.step === 'AWAITING_PHONE_NUMBER') {
     // 1. Clean the input: remove everything that is not a digit (spaces, +, -, etc.)
     // This turns "+234 701 656 5429" into "2347016565429"
@@ -10824,7 +10825,6 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
 
     if (st.data.botType === 'levanter') {
         // 3. Auto-complete the URL from the ENV variable
-        // Strips any accidental trailing slash from ENV and appends the endpoint
         const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
         const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
         
@@ -10864,8 +10864,9 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             return bot.editMessageText(`System Error: PAIRING_URL is not configured in ENV.`, {
-                chat_id: cid, message_id: loadingMsg.message_id,
-                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
+                chat_id: cid, 
+                message_id: loadingMsg.message_id,
+                parse_mode: 'Markdown'
             });
         }
 
@@ -10877,8 +10878,9 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
-                chat_id: cid, message_id: loadingMsg.message_id,
-                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
+                chat_id: cid, 
+                message_id: loadingMsg.message_id,
+                parse_mode: 'Markdown'
             });
         });
 
@@ -10886,9 +10888,7 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         delete userStates[cid];
         return;
     }
-    
-
-    
+   
 
 
 
