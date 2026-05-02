@@ -5488,15 +5488,21 @@ app.get('/api/news', validateWebAppInitData, async (req, res) => {
     }
 });
 
-// In bot.js (REPLACE the Flutterwave webhook)
 app.post('/api/raganork-callback', async (req, res) => {
-    // 1. Instantly accept the payload
     res.sendStatus(200); 
 
     const { status, number, code, sessionId, error } = req.body;
 
-    const requestData = global.raganorkPairingRequests.get(number);
-    if (!requestData) return;
+    // THE FIX: Strip all non-digits (like the '+' sign or spaces) from the incoming number
+    const cleanNumber = String(number).replace(/\D/g, '');
+
+    // Now look it up using the exact matching string of digits
+    const requestData = global.raganorkPairingRequests.get(cleanNumber);
+    
+    if (!requestData) {
+        console.log(`[Raganork] Unmatched callback received for: ${cleanNumber}`);
+        return;
+    }
 
     const { cid, messageId, intervalId } = requestData;
 
@@ -5514,7 +5520,7 @@ app.post('/api/raganork-callback', async (req, res) => {
                         inline_keyboard: [
                             [{ text: 'Copy Code', copy_text: { text: code } }],
                             [
-                                { text: 'Regenerate Code', callback_data: `rag_regen:${number}` },
+                                { text: 'Regenerate Code', callback_data: `rag_regen:${cleanNumber}` },
                                 { text: 'Wrong Number?', callback_data: `rag_wrong_num` }
                             ]
                         ]
@@ -5524,20 +5530,20 @@ app.post('/api/raganork-callback', async (req, res) => {
         } 
         else if (status === 'session_id') {
             if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(number);
+            global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
 
             await bot.editMessageText(
                 `**Session ID Generated!**\n\n\`${sessionId}\``, 
                 { 
                     chat_id: cid, 
-                    messageId: messageId, 
+                    message_id: messageId, 
                     parse_mode: 'Markdown' 
                 }
             );
         } 
         else if (status === 'error') {
             if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(number);
+            global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
 
             await bot.editMessageText(
                 `Automated pairing failed.\nReason: ${error}`, 
@@ -5554,6 +5560,7 @@ app.post('/api/raganork-callback', async (req, res) => {
         console.error('[Raganork Webhook Error]', e.message);
     }
 });
+
 
 
 
