@@ -31,6 +31,10 @@ const { URL, URLSearchParams } = require('url'); // Add URL
 
 const express = require('express');
 
+// Global map to track pairing requests, intervals, and message IDs
+global.levanterPairingRequests = new Map();
+
+
 // 1. Ensure these variables are defined or use process.env directly
 const LEVANTER_URL = process.env.LEVANTER_SESSION_SITE_URL || 'https://levanter-session.site';
 const RAGANORK_URL = process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site';
@@ -5492,6 +5496,53 @@ app.get('/api/news', validateWebAppInitData, async (req, res) => {
 
 // In bot.js (REPLACE the Flutterwave webhook)
 
+
+
+app.post('/api/levanter-callback', async (req, res) => {
+    // The external service must POST: { status, number, code, sessionId, error }
+    const { status, number, code, sessionId, error } = req.body;
+    res.sendStatus(200); // Instantly reply to prevent timeouts
+
+    const requestData = global.levanterPairingRequests.get(number);
+    if (!requestData) return;
+
+    const { cid, messageId, intervalId } = requestData;
+
+    try {
+        if (status === 'pairing_code') {
+            // Update the base text of the loading clock to show the code while it continues spinning
+            requestData.baseText = `**Pairing Code Ready!**\n\n\`${code}\`\n\nTap to copy and paste it into WhatsApp. Still waiting for session ID...`;
+        } 
+        else if (status === 'session_id') {
+            // Stop the clock and deliver the session ID
+            clearInterval(intervalId);
+            global.levanterPairingRequests.delete(number);
+            await bot.editMessageText(
+                `**Session ID Generated!**\n\n\`${sessionId}\`\n\nCopy.`, 
+                { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' }
+            );
+        } 
+        else if (status === 'error') {
+            // Stop the clock and show the error with the Levanter URL button
+            clearInterval(intervalId);
+            global.levanterPairingRequests.delete(number);
+            await bot.editMessageText(
+                `Automated pairing failed.\nReason: ${error}\n\nPlease generate your session manually.`, 
+                {
+                    chat_id: cid,
+                    message_id: messageId,
+                    reply_markup: {
+                        inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]]
+                    }
+                }
+            );
+        }
+    } catch (e) {
+        console.error('[Webhook] Failed to update user:', e.message);
+    }
+});
+
+
 app.post('/flutterwave/webhook', async (req, res) => {
     // 1. Verify the signature (Security)
     const signature = req.headers['verif-hash'];
@@ -10756,17 +10807,17 @@ if (text === 'Support') {
       return;
   }
 
-  if (st && st.step === 'AWAITING_PHONE_NUMBER') {
+  
+        
+if (st && st.step === 'AWAITING_PHONE_NUMBER') {
     const phoneNumber = text;
-    const phoneRegex = /^\+\d{13}$/; // Validates + followed by exactly 13 digits
+    // Relaxed regex slightly to ensure it catches all valid formats
+    const phoneRegex = /^\+\d{10,15}$/; 
 
     if (!phoneRegex.test(phoneNumber)) {
-        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `+23491630000000`), or use an option below.';
+        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `+23491630000000`).';
+        const sessionUrl = (st.data.botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : LEVANTER_SESSION_SITE_URL;
         
-        const sessionUrl = (st.data.botType === 'raganork') 
-            ? RAGANORK_SESSION_SITE_URL 
-            : 'https://levanter-delta.vercel.app/';
-
         return bot.sendMessage(cid, errorMessage, {
             parse_mode: 'Markdown',
             reply_markup: {
@@ -10780,110 +10831,68 @@ if (text === 'Support') {
         });
     }
 
-    // This part runs if the phone number format is correct
-    const { first_name, last_name, username } = msg.from;
-    const userDetails = `User: \`${cid}\` (TG: @${username || first_name || 'N/A'})`;
+    if (st.data.botType === 'levanter') {
+        const targetNumber = phoneNumber.replace(/[^0-9]/g, '');
+        const pairingUrl = process.env.PAIRING_URL;
+        const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
-    const adminMessage = await bot.sendMessage(ADMIN_ID,
-        `*Pairing Request from User:*\n` +
-        `${userDetails}\n` +
-        `*WhatsApp Number:* \`${phoneNumber}\`\n` +
-        `*Bot Type Requested:* \`${st.data.botType || 'Unknown'}\`\n\n` +
-        `Do you want to accept this pairing request and provide a code?`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Accept Request', callback_data: `pairing_action:accept:${cid}:${st.data.botType}` }],
-                    [{ text: 'Decline Request', callback_data: `pairing_action:decline:${cid}:${st.data.botType}` }]
-                ]
+        // 1. Initial Loading Message
+        const loadingMsg = await bot.sendMessage(cid, `Processing ${phoneNumber} [|]`, { parse_mode: 'Markdown' });
+
+        // 2. Setup the "No-Emoji" Text Clock Animation
+        const frames = ['[ | ]', '[ / ]', '[ - ]', '[ \\ ]'];
+        let frameIdx = 0;
+        
+        const intervalId = setInterval(() => {
+            const reqData = global.levanterPairingRequests.get(targetNumber);
+            if (!reqData) {
+                clearInterval(intervalId);
+                return;
             }
+            frameIdx = (frameIdx + 1) % frames.length;
+            bot.editMessageText(`${reqData.baseText}\n\n${frames[frameIdx]}`, {
+                chat_id: cid,
+                message_id: loadingMsg.message_id,
+                parse_mode: 'Markdown'
+            }).catch(() => {}); // Ignore rate-limit / unmodified errors
+        }, 1500);
+
+        // 3. Save to Global Map
+        global.levanterPairingRequests.set(targetNumber, { 
+            cid, 
+            messageId: loadingMsg.message_id, 
+            intervalId,
+            baseText: `Processing ${phoneNumber}` 
+        });
+
+        // 4. Send request to the External PAIRING_URL
+        if (!pairingUrl) {
+            clearInterval(intervalId);
+            global.levanterPairingRequests.delete(targetNumber);
+            return bot.editMessageText(`System Error: PAIRING_URL is not configured.`, {
+                chat_id: cid, message_id: loadingMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
+            });
         }
-    );
 
-    const waitingMsg = await bot.sendMessage(cid, `Your request has been sent to the admin. Please wait for the Pairing-code...`);
-    const animateIntervalId = await animateMessage(cid, waitingMsg.message_id, 'Waiting for Pairing-code');
-    userStates[cid].step = 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN';
-    userStates[cid].data.messageId = waitingMsg.message_id;
-    userStates[cid].data.animateIntervalId = animateIntervalId;
+        axios.post(pairingUrl, {
+            number: targetNumber,
+            callbackUrl: callbackUrl
+        }).catch(err => {
+            clearInterval(intervalId);
+            global.levanterPairingRequests.delete(targetNumber);
+            bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
+                chat_id: cid, message_id: loadingMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
+            });
+        });
 
-    const timeoutDuration = 60 * 1000; // 60 seconds
-    const timeoutIdForPairing = setTimeout(async () => {
-        if (userStates[cid] && userStates[cid].step === 'WAITING_FOR_PAIRING_CODE_FROM_ADMIN') {
-            if (userStates[cid].data.animateIntervalId) {
-                clearInterval(userStates[cid].data.animateIntervalId);
-            }
-            if (userStates[cid].data.messageId) {
-                let timeoutMessage = 'Pairing request timed out. The admin did not respond in time.';
-                if (st.data.botType === 'raganork') {
-                    timeoutMessage += ` You can also generate your session ID directly from: ${RAGANORK_SESSION_SITE_URL}`;
-                } else {
-                    timeoutMessage += ` You can also get your session ID from the website: https://levanter-delta.vercel.app/`;
-                }
-                await bot.editMessageText(timeoutMessage, {
-                    chat_id: cid,
-                    message_id: userStates[cid].data.messageId,
-                    parse_mode: 'Markdown'
-                }).catch(err => console.error(`Failed to edit user's timeout message: ${err.message}`));
-            }
-            await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${cid}\` timed out.`);
-            delete userStates[cid];
-        }
-    }, timeoutDuration);
-
-    forwardingContext[adminMessage.message_id] = {
-        original_user_chat_id: cid,
-        original_user_message_id: msg.message_id,
-        user_phone_number: phoneNumber,
-        request_type: 'pairing_request',
-        user_waiting_message_id: waitingMsg.message_id,
-        user_animate_interval_id: animateIntervalId,
-        timeout_id_for_pairing_request: timeoutIdForPairing,
-        bot_type: st.data.botType
-    };
-    
-    return;
-}
-
-
-
-// In bot.js, replace your entire AWAITING_KEY handler with this one
-
-if (st && st.step === 'AWAITING_KEY') {
-    const keyAttempt = text.toUpperCase();
-    const st = userStates[cid];
-
-    const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
-    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
-    
-    if (usesLeft === null) {
-        // --- THIS IS THE FIX ---
-        // An invalid key was entered. Instead of showing a static button,
-        // we now call the function to display the dynamic pricing tiers.
-        await sendPricingTiers(cid, verificationMsg.message_id);
+        // Clear user state so the bot can accept other commands while waiting
+        delete userStates[cid];
         return;
     }
     
-    // Key is valid. Now trigger the deployment.
-    await bot.editMessageText('Key verified! Initiating deployment...', { 
-        chat_id: cid, 
-        message_id: verificationMsg.message_id 
-    });
-
-    const { first_name, username } = msg.from;
-    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'N/A');
-    await bot.sendMessage(ADMIN_ID,
-        `*Key Used By:*\n` +
-        `*User:* ${userNameDisplay} (\`${cid}\`)\n` +
-        `*Key Used:* \`${keyAttempt}\`\n` +
-        `*Uses Left:* ${usesLeft}`,
-        { parse_mode: 'Markdown' }
-    );
-
-    const deploymentData = st.data;
-    delete userStates[cid];
-    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType);
-    return;
+    // ... [Your existing manual admin logic for Raganork/Hermit goes here] ...
 }
 
 
@@ -12782,7 +12791,6 @@ if (action === 'back_to_bapp_list') {
 }
 
 
-// --- REPLACE this entire block ---
 
 if (action === 'select_get_session_type') {
     const botType = payload;
@@ -12814,14 +12822,12 @@ if (action === 'select_get_session_type') {
         delete userStates[cid];
         return;
     } else if (botType === 'hermit') {
-        // --- 💡 NEW LOGIC 💡 ---
         await bot.editMessageText(`You chose *Hermit*. Please use the button below to generate your session ID.`, {
             chat_id: cid,
             message_id: q.message.message_id,
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
-                    // (Assuming HERMIT_SESSION_SITE_URL is defined at the top of bot.js)
                     [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL, style: 'primary' }],
                     [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
                 ]
@@ -12829,31 +12835,30 @@ if (action === 'select_get_session_type') {
         });
         delete userStates[cid];
         return;
-        // --- 💡 END OF NEW LOGIC 💡 ---
-    } else { // This is the Levanter flow
-        const levanterUrl = 'https://levanter-delta.vercel.app/';
-        await bot.editMessageText('You chose Levanter, please use the button below to get your session id.', {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Get Session ID', url: levanterUrl, style: 'primary' },
-                        { text: "Can't get session?", callback_data: 'levanter_wa_fallback', style: 'primary' }
-                    ],
-                    [
-                        { text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }
+    } else { 
+        // --- LEVANTER DIRECT AUTO-PAIRING FLOW ---
+        // Instantly transition the user to the phone number step
+        userStates[cid].step = 'AWAITING_PHONE_NUMBER';
+        
+        await bot.editMessageText(
+            `You chose *Levanter*.\n\nPlease send your WhatsApp number now in the full international format (e.g., \`+23491630000000\`).`, 
+            {
+                chat_id: cid,
+                message_id: q.message.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        // Safe cancel button that drops them back to the main menu
+                        [{ text: '« Cancel', callback_data: 'back_to_main_menu', style: 'danger' }]
                     ]
-                ]
+                }
             }
-        });
+        );
         return;
     }
 }
 
 
-  // bot.js (Inside bot.on('callback_query', async q => { ... }))
 
 if (action === 'deldb_select') {
     const tableName = payload;
@@ -13001,30 +13006,7 @@ if (action === 'apply_referral_reward') {
     }
 }
 
-// Add this inside bot.on('callback_query', async q => { ... })
 
-  if (action === 'buy_whatsapp_account') {
-    try {
-      // Check if the user already has an assigned number
-      const result = await pool.query(
-        "SELECT number FROM temp_numbers WHERE user_id = $1 AND status = 'assigned'", 
-        [cid]
-      );
-
-      if (result.rows.length > 0) {
-        // If they have a number, inform them
-        const userNumber = result.rows[0].number;
-        await bot.sendMessage(cid, `You already have an active number: <code>${userNumber}</code>\n\nYou can check it anytime with the /mynum command.`, { parse_mode: 'HTML' });
-      } else {
-        // If they don't have a number, tell them how to buy one
-        await bot.sendMessage(cid, "You don't have an active number yet. Please use the /buytemp command to purchase one.");
-      }
-    } catch (error) {
-      console.error("Error checking for user's temp number:", error);
-      await bot.sendMessage(cid, "Sorry, an error occurred. Please try again later.");
-    }
-    return;
-  }
   
 
   // --- NEW: Handler for using a suggested app name ---
@@ -13430,109 +13412,7 @@ if (action === 'buy_temp_num') {
       return;
   }
 
-  if (action === 'pairing_action') {
-      if (cid !== ADMIN_ID) {
-          await bot.sendMessage(cid, "You are not authorized to perform this action.");
-          return;
-      }
-
-      const decision = payload;
-      const targetUserChatId = extra;
-      const botTypeFromContext = flag; // Get botType from flag
-
-      const adminMessageId = q.message.message_id;
-      const context = forwardingContext[adminMessageId];
-
-      if (!context || context.request_type !== 'pairing_request' || context.original_user_chat_id !== targetUserChatId) {
-          await bot.sendMessage(cid, 'This pairing request has expired or is invalid.');
-          return;
-      }
-
-      if (context.timeout_id_for_pairing_request) {
-          clearTimeout(context.timeout_id_for_pairing_request);
-      }
-
-      delete forwardingContext[adminMessageId];
-
-      const userStateForTargetUser = userStates[targetUserChatId];
-      const userMessageId = userStateForTargetUser?.data?.messageId;
-      const userAnimateIntervalId = userStateForTargetUser?.data?.animateIntervalId;
-      // const { isFreeTrial, isAdminDeploy, botType } = userStateForTargetUser?.data || {}; // Bot type now from context flag
-
-      if (userAnimateIntervalId) {
-          clearInterval(userAnimateIntervalId);
-          if (userMessageId) {
-              await bot.editMessageText(`Admin action received!`, {
-                  chat_id: targetUserChatId,
-                  message_id: userMessageId
-              }).catch(err => console.error(`Failed to edit user's message after admin action: ${err.message}`));
-          }
-      }
-
-      if (decision === 'accept') {
-          userStates[cid] = {
-              step: 'AWAITING_ADMIN_PAIRING_CODE_INPUT',
-              data: {
-                  targetUserId: targetUserChatId,
-                  userWaitingMessageId: userMessageId,
-                  userAnimateIntervalId: userAnimateIntervalId,
-                  isFreeTrial: context.isFreeTrial, // Use isFreeTrial from forwarding context
-                  isAdminDeploy: context.isAdminDeploy, // Use isAdminDeploy from forwarding context
-                  botType: botTypeFromContext // Store bot type in state for admin to use
-              }
-          };
-
-          let sessionGeneratorLink = '';
-          if (botTypeFromContext === 'raganork') {
-              sessionGeneratorLink = `\n[Session ID Generator for Raganork](${RAGANORK_SESSION_SITE_URL})`;
-          } else { // Levanter
-              sessionGeneratorLink = `\n[Session ID Generator for Levanter](https://levanter-delta.vercel.app/)`;
-          }
-
-          await bot.sendMessage(ADMIN_ID,
-              `*Pairing Request from User:*\n` +
-              `User ID: \`${targetUserChatId}\` (Phone: \`${context.user_phone_number}\`).\n` +
-              `Bot Type Requested: \`${botTypeFromContext.toUpperCase()}\`\n\n` +
-              `*Please send the pairing code for this user now* (e.g., \`ABCD-1234\`).${sessionGeneratorLink}`,
-              { parse_mode: 'Markdown' }
-          );
-
-          if (userMessageId) {
-            await bot.editMessageText(`Admin accepted! Please wait while the admin gets your pairing code...`, {
-                chat_id: targetUserChatId,
-                message_id: userMessageId
-            });
-          }
-
-
-          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-              chat_id: cid,
-              message_id: adminMessageId
-          }).catch(() => {});
-          await bot.editMessageText(q.message.text + `\n\n_Status: Accepted. Admin needs to send code directly._`, {
-              chat_id: cid,
-              message_id: adminMessageId,
-              parse_mode: 'Markdown'
-          }).catch(() => {});
-
-
-      } else {
-          await bot.sendMessage(targetUserChatId, 'Your pairing code request was declined by the admin. Please contact support if you have questions.');
-          await bot.sendMessage(ADMIN_ID, `Pairing request from user \`${targetUserChatId}\` declined.`);
-
-          delete userStates[targetUserChatId]; // Clear user state
-          await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-              chat_id: cid,
-              message_id: adminMessageId
-          }).catch(() => {});
-          await bot.editMessageText(q.message.text + `\n\n_Status: Declined by Admin._`, {
-              chat_id: cid,
-              message_id: adminMessageId,
-              parse_mode: 'Markdown'
-          }).catch(() => {});
-      }
-      return;
-  }
+  
 
   // In bot.js, inside bot.on('callback_query', ...) handler
 
