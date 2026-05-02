@@ -5505,32 +5505,36 @@ app.post('/api/levanter-callback', async (req, res) => {
     const requestData = global.levanterPairingRequests.get(number);
     if (!requestData) return;
 
-    const { cid, messageId } = requestData;
+    const { cid, messageId, intervalId } = requestData;
 
     try {
         if (status === 'pairing_code') {
-    await bot.editMessageText(
-        `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
-        { 
-            chat_id: cid, 
-            message_id: messageId, 
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Copy Code', copy_text: { text: code } }],
-                    [
-                        { text: 'Regenerate Code', callback_data: `lev_regen:${number}` },
-                        { text: 'Wrong Number?', callback_data: `lev_wrong_num` }
-                    ]
-                ]
-            }
-        }
-    );
-}
+            // STOP the percentage counter immediately
+            if (intervalId) clearInterval(intervalId);
 
+            await bot.editMessageText(
+                `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
+                { 
+                    chat_id: cid, 
+                    message_id: messageId, 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Copy Code', copy_text: { text: code } }],
+                            [
+                                { text: 'Regenerate Code', callback_data: `lev_regen:${number}` },
+                                { text: 'Wrong Number?', callback_data: `lev_wrong_num` }
+                            ]
+                        ]
+                    }
+                }
+            );
+        } 
         else if (status === 'session_id') {
+            // Stop the counter if it's still running
+            if (intervalId) clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
-            // Clean Session ID delivery - No emojis, no extra text
+
             await bot.editMessageText(
                 `**Session ID Generated!**\n\n\`${sessionId}\``, 
                 { 
@@ -5541,7 +5545,9 @@ app.post('/api/levanter-callback', async (req, res) => {
             );
         } 
         else if (status === 'error') {
+            if (intervalId) clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
+
             await bot.editMessageText(
                 `Automated pairing failed.\nReason: ${error}`, 
                 {
@@ -5557,6 +5563,7 @@ app.post('/api/levanter-callback', async (req, res) => {
         console.error('[Webhook Error]', e.message);
     }
 });
+
 
 
 
@@ -10832,7 +10839,7 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
     const targetNumber = text.replace(/\D/g, ''); 
 
     if (targetNumber.length < 10 || targetNumber.length > 15) {
-        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `23491630000000`).', { parse_mode: 'Markdown' });
+        return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format (e.g., 23491630000000).', { parse_mode: 'Markdown' });
     }
 
     if (st.data.botType === 'levanter') {
@@ -10840,14 +10847,59 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
         const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
-        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber}...`, { parse_mode: 'Markdown' });
+        // 1. Send initial 0% message
+        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber}...\n0%`, { parse_mode: 'Markdown' });
 
-        global.levanterPairingRequests.set(targetNumber, { cid, messageId: loadingMsg.message_id });
+        // 2. Setup Progress Interval (45s / 10 steps = every 4.5s)
+        let percent = 0;
+        const intervalId = setInterval(() => {
+            percent += 10;
+            
+            if (percent < 100) {
+                bot.editMessageText(`Processing ${targetNumber}...\n${percent}%`, {
+                    chat_id: cid,
+                    message_id: loadingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }).catch(() => {}); 
+            } 
+            else if (percent >= 100) {
+                // --- TIMEOUT LOGIC AT 45 SECONDS ---
+                clearInterval(intervalId);
+                global.levanterPairingRequests.delete(targetNumber);
+
+                bot.editMessageText(
+                    `**Request Timed Out**\n\nThe pairing code is taking longer than expected. You can try regenerating it or use the site manually.`, 
+                    {
+                        chat_id: cid,
+                        message_id: loadingMsg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    { text: 'Regenerate Code', callback_data: `lev_regen:${targetNumber}` },
+                                    { text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }
+                                ],
+                                [{ text: 'Wrong Number?', callback_data: `lev_wrong_num` }]
+                            ]
+                        }
+                    }
+                ).catch(() => {});
+            }
+        }, 4500); // 4.5 seconds per 10%
+
+        // 3. Save to Global Map
+        global.levanterPairingRequests.set(targetNumber, { 
+            cid, 
+            messageId: loadingMsg.message_id,
+            intervalId: intervalId 
+        });
 
         if (!basePairingUrl) {
+            clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             return bot.editMessageText(`System Error: PAIRING_URL is not configured in ENV.`, {
-                chat_id: cid, message_id: loadingMsg.message_id,
+                chat_id: cid, 
+                message_id: loadingMsg.message_id,
                 reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]] }
             });
         }
@@ -10856,6 +10908,7 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             number: targetNumber,
             callbackUrl: callbackUrl
         }).catch(err => {
+            clearInterval(intervalId);
             global.levanterPairingRequests.delete(targetNumber);
             bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
                 chat_id: cid, 
@@ -10868,8 +10921,6 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         return;
     } 
 }
-
-   
 
 
 
