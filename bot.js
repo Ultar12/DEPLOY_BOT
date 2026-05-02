@@ -13000,41 +13000,16 @@ if (action === 'select_get_session_type') {
 
     st.data.botType = botType;
 
-    if (botType === 'raganork') {
-        await bot.editMessageText(`You chose *Raganork MD*. Please use the button below to generate your session ID.`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Get Session', url: RAGANORK_SESSION_SITE_URL, style: 'primary' }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
-                ]
-            }
-        });
-        delete userStates[cid];
-        return;
-    } else if (botType === 'hermit') {
-        await bot.editMessageText(`You chose *Hermit*. Please use the button below to generate your session ID.`, {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL, style: 'primary' }],
-                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot', style: 'success' }]
-                ]
-            }
-        });
-        delete userStates[cid];
-        return;
-    } else { 
-        // --- LEVANTER DIRECT AUTO-PAIRING FLOW ---
+    // --- AUTO-PAIRING FLOW (Levanter & Raganork) ---
+    if (botType === 'levanter' || botType === 'raganork') {
         // Instantly transition the user to the phone number step
         userStates[cid].step = 'AWAITING_PHONE_NUMBER';
         
+        // Format the display name nicely
+        const displayName = botType === 'raganork' ? 'Raganork MD' : 'Levanter';
+        
         await bot.editMessageText(
-            `You chose *Levanter*.\n\nPlease send your WhatsApp number now in the full international format (e.g., \`+23491630000000\`).`, 
+            `You chose *${displayName}*.\n\nPlease send your WhatsApp number now in the full international format (e.g., \`23491630000000\`).`, 
             {
                 chat_id: cid,
                 message_id: q.message.message_id,
@@ -13042,14 +13017,33 @@ if (action === 'select_get_session_type') {
                 reply_markup: {
                     inline_keyboard: [
                         // Safe cancel button that drops them back to the main menu
-                        [{ text: '« Cancel', callback_data: 'back_to_main_menu', style: 'danger' }]
+                        [{ text: '« Cancel', callback_data: 'back_to_main_menu' }]
                     ]
                 }
             }
         );
         return;
+    } 
+    // --- EXTERNAL URL FLOW (Hermit) ---
+    else if (botType === 'hermit') {
+        await bot.editMessageText(`You chose *Hermit*. Please use the button below to generate your session ID.`, {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Get Session', url: HERMIT_SESSION_SITE_URL }],
+                    [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
+                ]
+            }
+        });
+        
+        // Delete state because the flow ends here for Hermit
+        delete userStates[cid];
+        return;
     }
 }
+
 
 
 
