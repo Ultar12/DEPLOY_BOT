@@ -10810,34 +10810,23 @@ if (text === 'Support') {
   
         
 if (st && st.step === 'AWAITING_PHONE_NUMBER') {
-    const phoneNumber = text;
-    // Relaxed regex slightly to ensure it catches all valid formats
-    const phoneRegex = /^\+\d{10,15}$/; 
+    // 1. Clean the input: remove everything that is not a digit (spaces, +, -, etc.)
+    const targetNumber = text.replace(/\D/g, ''); 
 
-    if (!phoneRegex.test(phoneNumber)) {
-        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `+23491630000000`).';
-        const sessionUrl = (st.data.botType === 'raganork') ? RAGANORK_SESSION_SITE_URL : LEVANTER_SESSION_SITE_URL;
+    // 2. Validate length (standard international numbers are between 10 and 15 digits)
+    if (targetNumber.length < 10 || targetNumber.length > 15) {
+        const errorMessage = 'Invalid format. Please send your WhatsApp number in the full international format (e.g., `23491630000000`).';
         
-        return bot.sendMessage(cid, errorMessage, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: 'Get Session ID', url: sessionUrl },
-                        { text: 'Deploy Now', callback_data: 'deploy_first_bot' }
-                    ]
-                ]
-            }
-        });
+        // Return the error message without any buttons
+        return bot.sendMessage(cid, errorMessage, { parse_mode: 'Markdown' });
     }
 
     if (st.data.botType === 'levanter') {
-        const targetNumber = phoneNumber.replace(/[^0-9]/g, '');
         const pairingUrl = process.env.PAIRING_URL;
         const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
         // 1. Initial Loading Message
-        const loadingMsg = await bot.sendMessage(cid, `Processing ${phoneNumber} [|]`, { parse_mode: 'Markdown' });
+        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber} [|]`, { parse_mode: 'Markdown' });
 
         // 2. Setup the "No-Emoji" Text Clock Animation
         const frames = ['[ | ]', '[ / ]', '[ - ]', '[ \\ ]'];
@@ -10862,7 +10851,7 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
             cid, 
             messageId: loadingMsg.message_id, 
             intervalId,
-            baseText: `Processing ${phoneNumber}` 
+            baseText: `Processing ${targetNumber}` 
         });
 
         // 4. Send request to the External PAIRING_URL
@@ -10892,8 +10881,6 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         return;
     }
     
-    // ... [Your existing manual admin logic for Raganork/Hermit goes here] ...
-}
 
 
 
