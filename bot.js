@@ -158,8 +158,7 @@ const VCF_GROUP_LINK = 'https://t.me/wbdvcf1';
 const MINI_APP_URL = 'https://deploy-bot-1-xfd5.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 5; // Increment this number for every new keyboard update
-// --- END OF NEW GLOBAL CONSTANT --
+const KEYBOARD_VERSION = 6; 
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
@@ -4316,23 +4315,16 @@ function buildKeyboard(isAdmin) {
   // --- Bot API 9.4 Colored Buttons Integration ---
   
   const baseMenu = [
-      [
-        { text: 'Get Session ID', style: 'primary' }, // Blue
-        { text: 'Deploy', style: 'success' }         // Green
-      ],
-      [
-        { text: 'Free Trial', style: 'primary' },        // Green
-        { text: 'My Bots', style: 'success' }      // Blue
-      ],
-      [
-        { text: 'FAQ', style: 'primary' }, 
-        { text: 'Referrals', style: 'success' }
-      ],
-      [
-        { text: 'Support', style: 'danger' }, 
-        { text: 'More Features', style: 'success' }
-      ] 
-  ];
+    [
+      { text: 'Get Session ID', style: 'success' }, // Blue
+      { text: 'Deploy', style: 'success' }         // Green
+    ],
+    [
+      { text: 'My Bots', style: 'success' },       // Green
+      { text: 'Support', style: 'danger' }         // Red
+    ]
+];
+
 
   if (isAdmin) {
       return [
