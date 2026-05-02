@@ -33,6 +33,8 @@ const express = require('express');
 
 // Global map to track pairing requests, intervals, and message IDs
 global.levanterPairingRequests = new Map();
+global.raganorkPairingRequests = new Map();
+
 
 
 // 1. Ensure these variables are defined or use process.env directly
@@ -5487,6 +5489,71 @@ app.get('/api/news', validateWebAppInitData, async (req, res) => {
 });
 
 // In bot.js (REPLACE the Flutterwave webhook)
+app.post('/api/raganork-callback', async (req, res) => {
+    // 1. Instantly accept the payload
+    res.sendStatus(200); 
+
+    const { status, number, code, sessionId, error } = req.body;
+
+    const requestData = global.raganorkPairingRequests.get(number);
+    if (!requestData) return;
+
+    const { cid, messageId, intervalId } = requestData;
+
+    try {
+        if (status === 'pairing_code') {
+            if (intervalId) clearInterval(intervalId);
+
+            await bot.editMessageText(
+                `**Your Pairing Code is Ready!**\n\nCode: \`${code}\`\n\nPaste this code to your WhatsApp linked device.`, 
+                { 
+                    chat_id: cid, 
+                    message_id: messageId, 
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Copy Code', copy_text: { text: code } }],
+                            [
+                                { text: 'Regenerate Code', callback_data: `rag_regen:${number}` },
+                                { text: 'Wrong Number?', callback_data: `rag_wrong_num` }
+                            ]
+                        ]
+                    }
+                }
+            );
+        } 
+        else if (status === 'session_id') {
+            if (intervalId) clearInterval(intervalId);
+            global.raganorkPairingRequests.delete(number);
+
+            await bot.editMessageText(
+                `**Session ID Generated!**\n\n\`${sessionId}\``, 
+                { 
+                    chat_id: cid, 
+                    messageId: messageId, 
+                    parse_mode: 'Markdown' 
+                }
+            );
+        } 
+        else if (status === 'error') {
+            if (intervalId) clearInterval(intervalId);
+            global.raganorkPairingRequests.delete(number);
+
+            await bot.editMessageText(
+                `Automated pairing failed.\nReason: ${error}`, 
+                {
+                    chat_id: cid,
+                    message_id: messageId,
+                    reply_markup: {
+                        inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]]
+                    }
+                }
+            );
+        }
+    } catch (e) {
+        console.error('[Raganork Webhook Error]', e.message);
+    }
+});
 
 
 
@@ -10834,15 +10901,14 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         return bot.sendMessage(cid, 'Invalid format. Please send your WhatsApp number in the full international format (e.g., 23491630000000).', { parse_mode: 'Markdown' });
     }
 
+    // --- LEVANTER LOGIC ---
     if (st.data.botType === 'levanter') {
         const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
         const fullPairingUrl = `${basePairingUrl}/api/levanter-hook`; 
         const callbackUrl = `${process.env.APP_URL}/api/levanter-callback`;
 
-        // 1. Send initial 0% message
         const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber}...\n0%`, { parse_mode: 'Markdown' });
 
-        // 2. Setup Progress Interval (45s / 10 steps = every 4.5s)
         let percent = 0;
         const intervalId = setInterval(() => {
             percent += 10;
@@ -10855,7 +10921,6 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
                 }).catch(() => {}); 
             } 
             else if (percent >= 100) {
-                // --- TIMEOUT LOGIC AT 45 SECONDS ---
                 clearInterval(intervalId);
                 global.levanterPairingRequests.delete(targetNumber);
 
@@ -10877,9 +10942,8 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
                     }
                 ).catch(() => {});
             }
-        }, 4500); // 4.5 seconds per 10%
+        }, 4500);
 
-        // 3. Save to Global Map
         global.levanterPairingRequests.set(targetNumber, { 
             cid, 
             messageId: loadingMsg.message_id,
@@ -10912,7 +10976,84 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
         delete userStates[cid];
         return;
     } 
+    
+    // --- RAGANORK LOGIC ---
+    else if (st.data.botType === 'raganork') {
+        const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
+        const fullPairingUrl = `${basePairingUrl}/api/raganork-hook`; 
+        const callbackUrl = `${process.env.APP_URL}/api/raganork-callback`;
+
+        const loadingMsg = await bot.sendMessage(cid, `Processing ${targetNumber}...\n0%`, { parse_mode: 'Markdown' });
+
+        let percent = 0;
+        const intervalId = setInterval(() => {
+            percent += 10;
+            
+            if (percent < 100) {
+                bot.editMessageText(`Processing ${targetNumber}...\n${percent}%`, {
+                    chat_id: cid,
+                    message_id: loadingMsg.message_id,
+                    parse_mode: 'Markdown'
+                }).catch(() => {}); 
+            } 
+            else if (percent >= 100) {
+                clearInterval(intervalId);
+                global.raganorkPairingRequests.delete(targetNumber);
+
+                bot.editMessageText(
+                    `**Request Timed Out**\n\nThe pairing code is taking longer than expected. You can try regenerating it or use the site manually.`, 
+                    {
+                        chat_id: cid,
+                        message_id: loadingMsg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    { text: 'Regenerate Code', callback_data: `rag_regen:${targetNumber}` },
+                                    { text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }
+                                ],
+                                [{ text: 'Wrong Number?', callback_data: `rag_wrong_num` }]
+                            ]
+                        }
+                    }
+                ).catch(() => {});
+            }
+        }, 4500);
+
+        global.raganorkPairingRequests.set(targetNumber, { 
+            cid, 
+            messageId: loadingMsg.message_id,
+            intervalId: intervalId 
+        });
+
+        if (!basePairingUrl) {
+            clearInterval(intervalId);
+            global.raganorkPairingRequests.delete(targetNumber);
+            return bot.editMessageText(`System Error: PAIRING_URL is not configured in ENV.`, {
+                chat_id: cid, 
+                message_id: loadingMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]] }
+            });
+        }
+
+        axios.post(fullPairingUrl, {
+            number: targetNumber,
+            callbackUrl: callbackUrl
+        }).catch(err => {
+            clearInterval(intervalId);
+            global.raganorkPairingRequests.delete(targetNumber);
+            bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
+                chat_id: cid, 
+                message_id: loadingMsg.message_id,
+                reply_markup: { inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]] }
+            });
+        });
+
+        delete userStates[cid];
+        return;
+    }
 }
+
 
 
 
@@ -12260,6 +12401,7 @@ if (action === 'confirm_updateall') {
     }
 }
 
+
 if (action === 'get_session_start_flow') {
     // This starts the session ID flow (which is the same as the "Get Session ID" button)
     delete userStates[cid];
@@ -12276,13 +12418,15 @@ if (action === 'get_session_start_flow') {
                 ],
                 [ // Row 2
                     { text: 'Hermit', callback_data: `select_get_session_type:hermit` }
+                ],
+                [ // Row 3
+                    { text: 'Cancel', callback_data: 'back_to_main_menu' }
                 ]
             ]
         }
     });
     return;
 }
-
 
   // In bot.js, inside bot.on('callback_query', ...)
 
@@ -12494,6 +12638,36 @@ if (action === 'confirm_restore_app') {
     }
     return;
 }
+
+
+    // --- RAGANORK REGENERATE CODE ---
+if (action === 'rag_regen') {
+    const targetNumber = payload; 
+    // Uses the exact same PAIRING_URL as Levanter
+    const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
+    const fullPairingUrl = `${basePairingUrl}/api/raganork-hook`; 
+    const callbackUrl = `${process.env.APP_URL}/api/raganork-callback`;
+
+    await bot.editMessageText(`Processing ${targetNumber}...`, {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        parse_mode: 'Markdown'
+    });
+
+    global.raganorkPairingRequests.set(targetNumber, { cid, messageId: q.message.message_id });
+
+    axios.post(fullPairingUrl, {
+        number: targetNumber,
+        callbackUrl: callbackUrl
+    }).catch(err => {
+        bot.editMessageText(`Connection to pairing server failed: ${err.message}`, {
+            chat_id: cid, 
+            message_id: q.message.message_id
+        });
+    });
+    return;
+}
+
 
 
 
