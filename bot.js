@@ -11061,6 +11061,43 @@ if (st && st.step === 'AWAITING_PHONE_NUMBER') {
     }
 }
 
+if (st && st.step === 'AWAITING_KEY') {
+    const keyAttempt = text.toUpperCase();
+    const st = userStates[cid];
+
+    const verificationMsg = await sendAnimatedMessage(cid, 'Verifying key');
+    const usesLeft = await dbServices.useDeployKey(keyAttempt, cid);
+    
+    if (usesLeft === null) {
+        // --- THIS IS THE FIX ---
+        // An invalid key was entered. Instead of showing a static button,
+        // we now call the function to display the dynamic pricing tiers.
+        await sendPricingTiers(cid, verificationMsg.message_id);
+        return;
+    }
+    
+    // Key is valid. Now trigger the deployment.
+    await bot.editMessageText('Key verified! Initiating deployment...', { 
+        chat_id: cid, 
+        message_id: verificationMsg.message_id 
+    });
+
+    const { first_name, username } = msg.from;
+    const userNameDisplay = username ? `@${escapeMarkdown(username)}` : escapeMarkdown(first_name || 'N/A');
+    await bot.sendMessage(ADMIN_ID,
+        `*Key Used By:*\n` +
+        `*User:* ${userNameDisplay} (\`${cid}\`)\n` +
+        `*Key Used:* \`${keyAttempt}\`\n` +
+        `*Uses Left:* ${usesLeft}`,
+        { parse_mode: 'Markdown' }
+    );
+
+    const deploymentData = st.data;
+    delete userStates[cid];
+    await dbServices.buildWithProgress(cid, deploymentData, false, false, deploymentData.botType);
+    return;
+}
+
 
 
 
