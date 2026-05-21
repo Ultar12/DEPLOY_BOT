@@ -2142,6 +2142,10 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
+
+        if (process.env.PAIRING_URL) {
+            finalConfigVars.PLAY_URL = process.env.PAIRING_URL;
+        }
         
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { ...finalConfigVars, APP_NAME: appName },
