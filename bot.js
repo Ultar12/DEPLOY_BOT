@@ -11338,7 +11338,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
           appDeploymentPromises.set(APP_NAME, { resolve, reject, animateIntervalId });
       });
 
-      const STATUS_CHECK_TIMEOUT = 180 * 1000;
+      const STATUS_CHECK_TIMEOUT = 300 * 1000;
       let timeoutId;
 
       try {
@@ -16007,7 +16007,7 @@ if (action === 'setvarbool') {
         appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId });
     });
 
-    const STATUS_CHECK_TIMEOUT = 180 * 1000;
+    const STATUS_CHECK_TIMEOUT = 300 * 1000;
     let timeoutId;
 
     try {
