@@ -6736,121 +6736,8 @@ bot.onText(/^\/changessl\s+(no-verify|disable)$/i, async (msg, match) => {
 });
 
 
-bot.onText(/^\/mynum$/, async (msg) => {
-    const userId = msg.chat.id.toString();
-    try {
-        const result = await pool.query("SELECT number, status, assigned_at FROM temp_numbers WHERE user_id = $1 ORDER BY assigned_at DESC", [userId]);
-        const numbers = result.rows;
-        
-        if (numbers.length === 0) {
-            return bot.sendMessage(userId, "You dont have any number,  use /buytemp");
-        }
-        
-        let message = "<b>Your WhatsApp Numbers:</b>\n\n";
-        numbers.forEach(num => {
-            const statusEmoji = num.status === 'assigned' ? '🔵' : '🔴';
-            message += `${statusEmoji} <code>${num.number}</code> | <b>Status:</b> ${num.status}\n`;
-        });
-        
-        await bot.sendMessage(userId, message, { parse_mode: 'HTML' });
-    } catch (e) {
-        console.error(`Error fetching numbers for user ${userId}:`, e);
-        await bot.sendMessage(userId, "An error occurred while fetching your numbers.");
-    }
-});
-
-// This will track the current page for the admin
-const adminDashboardState = {
-    currentPage: 1
-};
-
-// Updated /num command handler
-bot.onText(/^\/num$/, async (msg) => {
-    adminDashboardState.currentPage = 1; // Reset to page 1 every time the command is run
-    await sendNumbersDashboard(msg.chat.id, 1);
-});
-
-// Callback handler for page navigation
-bot.on('callback_query', async (query) => {
-    if (query.data.startsWith('num_page:')) {
-        const page = parseInt(query.data.split(':')[1]);
-        adminDashboardState.currentPage = page;
-        await sendNumbersDashboard(query.message.chat.id, page, query.message.message_id);
-    }
-});
-
-// A new reusable function to send the dashboard
-async function sendNumbersDashboard(chatId, page = 1, messageId = null) {
-    if (chatId.toString() !== ADMIN_ID) return;
-    const NUMBERS_PER_PAGE = 10;
-    const offset = (page - 1) * NUMBERS_PER_PAGE;
-
-    try {
-        // Get counts for each status
-        const countsResult = await pool.query(`
-            SELECT
-                COUNT(*) FILTER (WHERE status = 'available') AS available_count,
-                COUNT(*) FILTER (WHERE status = 'pending_payment') AS pending_count,
-                COUNT(*) FILTER (WHERE status = 'assigned') AS assigned_count,
-                COUNT(*) AS total_count
-            FROM temp_numbers;
-        `);
-        const { available_count, pending_count, assigned_count, total_count } = countsResult.rows[0];
-
-        // Get the numbers for the current page
-        const pageResult = await pool.query(
-            "SELECT number, status, user_id FROM temp_numbers ORDER BY status DESC, number ASC LIMIT $1 OFFSET $2",
-            [NUMBERS_PER_PAGE, offset]
-        );
-        const numbersOnPage = pageResult.rows;
-
-        if (total_count == 0) {
-            return bot.sendMessage(chatId, "No temporary numbers found in the database.");
-        }
-
-        const totalPages = Math.ceil(total_count / NUMBERS_PER_PAGE);
-
-        let message = `<b>Numbers Dashboard (Page ${page}/${totalPages})</b>\n\n`;
-        message += `🟢 Available: <b>${available_count}</b>\n`;
-        message += `🟡 Pending: <b>${pending_count}</b>\n`;
-        message += `🔵 Assigned: <b>${assigned_count}</b>\n`;
-        message += `------------------------------\n`;
-
-        numbersOnPage.forEach(num => {
-            const statusEmoji = num.status === 'available' ? '🟢' : num.status === 'pending_payment' ? '🟡' : '🔵';
-            message += `${statusEmoji} <code>${num.number}</code> | <b>User:</b> ${num.user_id || 'N/A'}\n`;
-        });
-
-        // Create navigation buttons
-        const navButtons = [];
-        if (page > 1) {
-            navButtons.push({ text: 'Previous', callback_data: `num_page:${page - 1}` });
-        }
-        if (page < totalPages) {
-            navButtons.push({ text: 'Next', callback_data: `num_page:${page + 1}` });
-        }
-
-        const options = {
-            parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [navButtons]
-            }
-        };
-
-        if (messageId) {
-            await bot.editMessageText(message, { chat_id: chatId, message_id: messageId, ...options });
-        } else {
-            await bot.sendMessage(chatId, message, options);
-        }
-
-    } catch (e) {
-        console.error("Error fetching number dashboard:", e);
-        await bot.sendMessage(chatId, "An error occurred while fetching the number dashboard.");
-    }
-}
 
 
-// In bot.js (REPLACE the existing /expire handler)
 
 bot.onText(/^\/expire (\d+)$/, async (msg, match) => {
     const cid = msg.chat.id.toString();
@@ -7570,7 +7457,7 @@ bot.onText(/^\/deploytls$/, async (msg) => {
 
         // Retrieve exact URL for MessageBot to give to Scraper
         const msgAppInfo = await herokuApi.get(`/apps/${msgAppName}`);
-        const messageBotUrl = msgAppInfo.data.web_url; // Exact URL for Scraper config
+        const messageBotUrl = msgAppInfo.data.web_url; 
 
         // --- STEP 2: DEPLOY SCARPERBOT (SCRAPER) ---
         await bot.editMessageText("(2/3) Deploying ScraperBot...", { chat_id: adminId, message_id: progressMsg.message_id });
@@ -7587,13 +7474,17 @@ bot.onText(/^\/deploytls$/, async (msg) => {
             ]
         });
 
-        // 💡 Injects MessageBot URL into Scraper as APP_URL
+        // Injects MessageBot URL into Scraper as APP_URL
         await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
             APP_URL: messageBotUrl,
             SECRET_API_KEY 
         });
 
         await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+
+        // Retrieve exact URL for ScraperBot to save to Render
+        const scAppInfo = await herokuApi.get(`/apps/${scAppName}`);
+        const scraperUrl = scAppInfo.data.web_url;
 
         // --- STEP 3: DEPLOY EMAIL SERVICE ---
         await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
@@ -7607,10 +7498,11 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         const emailServiceUrl = emAppInfo.data.web_url;
 
         // --- FINAL SYNC TO RENDER & RESTART ---
-        await bot.editMessageText("Finalizing: Updating Render EMAIL_SERVICE_URL and restarting...", { chat_id: adminId, message_id: progressMsg.message_id });
+        await bot.editMessageText("Finalizing: Updating Render variables and restarting...", { chat_id: adminId, message_id: progressMsg.message_id });
 
-        // Update Render variable for Email Service
+        // Update Render variables
         await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl);
+        await updateRenderVar('PAIRING_URL', scraperUrl);
 
         // Explicitly trigger Render restart
         await triggerRenderRestart();
@@ -7619,8 +7511,9 @@ bot.onText(/^\/deploytls$/, async (msg) => {
             "Full TLS Stack Deployed Successfully\n\n" +
             "Message Bot URL: " + messageBotUrl + "\n" +
             "Scraper Bot: Configured with APP_URL = " + messageBotUrl + "\n" +
+            "PAIRING_URL set to: " + scraperUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
-            "Render is restarting to apply the new Email Service link.", 
+            "Render is restarting to apply the new links.", 
             { chat_id: adminId, message_id: progressMsg.message_id }
         );
 
@@ -7635,7 +7528,6 @@ bot.onText(/^\/deploytls$/, async (msg) => {
 
 
 
-// In bot.js (in the command handlers section, e.g., near line 5150)
 
 bot.onText(/^\/exp$/, async (msg) => {
     const adminId = msg.chat.id.toString();
