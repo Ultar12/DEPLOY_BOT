@@ -698,6 +698,27 @@ async function getDynoStatus(appName) {
     }
 }
 
+
+/**
+ * Pushes the expiration date to Heroku config variables.
+ */
+async function syncExpirationToHeroku(appName, newDateStr) {
+    try {
+        if (!HEROKU_API_KEY || !appName || !newDateStr) return false;
+        const isoDate = new Date(newDateStr).toISOString();
+        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+            { EXPIRATION_DATE: isoDate },
+            { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+        );
+        console.log(`[Expiration] Synced EXPIRATION_DATE to Heroku for ${appName}`);
+        return true;
+    } catch (e) {
+        console.error(`[Expiration] Failed to sync EXPIRATION_DATE to Heroku for ${appName}:`, e.message);
+        return false;
+    }
+}
+
+
 async function getExpiringBots() {
     try {
         const result = await pool.query(
@@ -1202,20 +1223,26 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         return;
     }
     try {
-        // --- FIX: Use the provided ID, defaulting to '1' only if the argument is truly undefined/null ---
         const accountId = neonAccountId ? String(neonAccountId) : '1';
         if (!neonAccountId) {
             console.warn(`[DB-Main] neonAccountId was not provided for ${appName}, defaulting to '1'.`);
         }
-        // --- END FIX ---
 
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
 
-        // Corrected calculation line (fixed earlier)
-        const finalExpirationDate = expirationDateToUse || new Date(deployDate.getTime() + (isFreeTrial ? 1 : 30) * 24 * 60 * 60 * 1000);
+        // 💡 RECOVERY LOGIC: Use Heroku's EXPIRATION_DATE if the database was wiped
+        let finalExpirationDate;
+        if (expirationDateToUse) {
+            finalExpirationDate = new Date(expirationDateToUse);
+        } else if (configVars && configVars.EXPIRATION_DATE) {
+            finalExpirationDate = new Date(configVars.EXPIRATION_DATE);
+        } else {
+            finalExpirationDate = new Date(deployDate.getTime() + (isFreeTrial ? 1 : 30) * 24 * 60 * 60 * 1000);
+        }
 
         const query = `
+
             INSERT INTO user_deployments(user_id, app_name, session_id, config_vars, bot_type, deploy_date, expiration_date, deleted_from_heroku_at, is_free_trial, email, neon_account_id)
             VALUES($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10)
             ON CONFLICT (user_id, app_name) DO UPDATE SET
@@ -2188,7 +2215,22 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         clearInterval(primaryAnimateIntervalId);
 
 
-                // --- Step 4: Set Environment Variables ---
+                        // --- 💡 PRE-CALCULATE EXPIRATION DATE 💡 ---
+        let expirationDateToUse = null;
+        if (isRestore) {
+            expirationDateToUse = vars.expiration_date ? new Date(vars.expiration_date) : (vars.EXPIRATION_DATE ? new Date(vars.EXPIRATION_DATE) : null);
+        } else {
+            if (vars.DAYS) {
+                const daysToAddVal = parseInt(vars.DAYS, 10);
+                if (!isNaN(daysToAddVal) && daysToAddVal > 0) {
+                    expirationDateToUse = new Date(Date.now() + daysToAddVal * 24 * 60 * 60 * 1000);
+                }
+            } else if (!isFreeTrial) {
+                expirationDateToUse = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
+            }
+        }
+
+        // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
         
@@ -2202,18 +2244,22 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
 
-        
         if (process.env.PAIRING_URL) {
+            finalConfigVars.PLAY_URL = process.env.PAIRING_URL;
             finalConfigVars.PAIRING_URL = process.env.PAIRING_URL;
-            finalConfigVars.PLAY_URL = process.env.PAIRING_URL; // Adding both to ensure compatibility
         }
-        
+
+        // 🚀 INJECT EXPIRATION DATE TO HEROKU 🚀
+        if (expirationDateToUse) {
+            finalConfigVars.EXPIRATION_DATE = expirationDateToUse.toISOString();
+        }
         
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { ...finalConfigVars, APP_NAME: appName },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
         clearInterval(primaryAnimateIntervalId);
+
 
 
         // --- Step 5: Trigger Build from GitHub ---
@@ -2330,26 +2376,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
 
-        // --- START OF EXPIRATION DATE UPDATE ---
-        let expirationDateToUse = null;
-
-        if (isRestore) {
-            expirationDateToUse = vars.expiration_date ? new Date(vars.expiration_date) : null;
-            console.log(`[Build Restore] Preserving expiration date: ${expirationDateToUse ? expirationDateToUse.toISOString() : 'Not Set'}`);
-        } else {
-            if (vars.DAYS) {
-                const daysToAddVal = parseInt(vars.DAYS, 10);
-                if (!isNaN(daysToAddVal) && daysToAddVal > 0) {
-                    const deployDate = new Date();
-                    expirationDateToUse = new Date(deployDate.getTime() + daysToAddVal * 24 * 60 * 60 * 1000);
-                }
-            } else if (isFreeTrial) {
-                expirationDateToUse = null;
-            } else {
-                expirationDateToUse = null;
-            }
-        }
-        // --- END OF EXPIRATION DATE UPDATE ---
+        
 
 
         await saveUserDeployment(
@@ -2860,6 +2887,7 @@ module.exports = {
     getLoggedOutBotsForEmail,
     grantReferralRewards,
     buildWithProgress,
+    syncExpirationToHeroku,
     recordFreeTrialForMonitoring,
     getMonitoredFreeTrials,
     updateFreeTrialWarning,
