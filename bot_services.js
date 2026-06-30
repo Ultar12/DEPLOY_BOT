@@ -2151,7 +2151,6 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 
 
         // --- Step 3: Set Buildpacks ---
-        // --- Step 3: Set Buildpacks ---
         let buildpacksToInstall = [];
         
         // --- 💡 START OF FIX 💡 ---
@@ -2188,10 +2187,8 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
 
-        // --- Step 4: Set Environment Variables ---
 
-
-        // --- Step 4: Set Environment Variables ---
+                // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
         
@@ -2205,15 +2202,19 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
 
+        
         if (process.env.PAIRING_URL) {
-            finalConfigVars.PLAY_URL = process.env.PAIRING_URL;
+            finalConfigVars.PAIRING_URL = process.env.PAIRING_URL;
+            finalConfigVars.PLAY_URL = process.env.PAIRING_URL; // Adding both to ensure compatibility
         }
+        
         
         await herokuApi.patch(`/apps/${appName}/config-vars`, 
             { ...finalConfigVars, APP_NAME: appName },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
         clearInterval(primaryAnimateIntervalId);
+
 
         // --- Step 5: Trigger Build from GitHub ---
                 // --- Step 5: Trigger Build from GitHub ---
