@@ -849,23 +849,62 @@ async function setGroupWelcomeMessage(chatId, message) {
 }
 
 
-// === Backup, Restore, and Sync Functions ===
-
 async function getUserIdByBotName(botName) {
     try {
-        const r = await pool.query(
-            'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1'
-            ,[botName]
+        // 1. Check the active bots table
+        let r = await pool.query(
+            'SELECT user_id FROM user_bots WHERE bot_name=$1 ORDER BY created_at DESC LIMIT 1',
+            [botName]
         );
-        const userId = r.rows.length > 0 ? r.rows[0].user_id : null;
-        console.log(`[DB] getUserIdByBotName: For bot "${botName}", found user_id: "${userId}".`);
-        return userId;
-    }
-    catch (error) {
+        if (r.rows.length > 0 && r.rows[0].user_id) {
+            return r.rows[0].user_id;
+        }
+
+        // 2. Check the deployments (backups) table
+        r = await pool.query(
+            'SELECT user_id FROM user_deployments WHERE app_name=$1 ORDER BY deploy_date DESC LIMIT 1',
+            [botName]
+        );
+        if (r.rows.length > 0 && r.rows[0].user_id) {
+            return r.rows[0].user_id;
+        }
+
+        // 3. IF STILL NOT FOUND, AUTO-ASSIGN TO ADMIN
+        console.warn(`[DB] getUserIdByBotName: Bot "${botName}" has no owner in DB. Auto-assigning to ADMIN_ID (${ADMIN_ID}).`);
+        
+        try {
+            // Fetch config from Heroku to restore it fully to the database
+            const response = await herokuApi.get(`/apps/${botName}/config-vars`, {
+                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
+            });
+            
+            const configVars = response.data;
+            const sessionId = configVars.SESSION_ID || 'N/A';
+            
+            // Determine bot type based on session prefixes
+            let botType = 'levanter'; // Default
+            if (sessionId.startsWith('RGNK')) botType = 'raganork';
+            else if (sessionId.startsWith('H')) botType = 'hermit';
+            
+            // Save it to the database under the Admin's ID automatically
+            await addUserBot(ADMIN_ID, botName, sessionId, botType);
+            await saveUserDeployment(ADMIN_ID, botName, sessionId, configVars, botType);
+            
+            console.log(`[DB] Successfully rescued orphaned bot "${botName}" and assigned it to Admin.`);
+        } catch (herokuErr) {
+            // If it fails (e.g., 404 not found on Heroku), still return ADMIN_ID 
+            // so the calling function can cleanly delete the ghost record.
+            console.warn(`[DB] Could not fetch Heroku config for "${botName}". Proceeding with Admin ID fallback.`);
+        }
+
+        return ADMIN_ID; // Fallback to Admin ID
+
+    } catch (error) {
         console.error(`[DB] getUserIdByBotName: Failed to get user ID by bot name "${botName}":`, error.message);
-        return null;
+        return ADMIN_ID; // Fallback to Admin ID on catastrophic DB failure
     }
 }
+
 
 async function getAllUserBots() {
     try {
