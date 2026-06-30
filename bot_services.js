@@ -1522,7 +1522,7 @@ async function getAllBotDeployments() {
 }
 
 
-// --- FIXED FUNCTION: NOW RETURNS A LIST OF APPS IN EACH CATEGORY ---
+// --- FIXED FUNCTION: NOW AUTO-DETECTS AND RESCUES UNKNOWN BOTS ---
 async function backupAllPaidBots() {
     console.log('[DB-Backup] Starting backup process for ALL Heroku apps...');
     let backedUpCount = 0;
@@ -1530,10 +1530,12 @@ async function backupAllPaidBots() {
     let notFoundCount = 0;
     const herokuAppList = [];
 
+    // 1. ADD HERMIT to the stats object to prevent undefined errors
     const typeStats = {
-        levanter: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
-        raganork: { backedUp: [], failed: [] }, // <-- NOW ARRAYS
-        unknown: { backedUp: [], failed: [] }   // <-- NOW ARRAYS
+        levanter: { backedUp: [], failed: [] }, 
+        raganork: { backedUp: [], failed: [] }, 
+        hermit: { backedUp: [], failed: [] }, // <-- ADDED HERMIT
+        unknown: { backedUp: [], failed: [] }   
     };
     
     try {
@@ -1559,6 +1561,7 @@ async function backupAllPaidBots() {
     for (const appName of herokuAppList) {
         let userId = ADMIN_ID;
         let botType = 'unknown';
+        let isOrphan = false; // 2. Track if it needs rescuing
 
         try {
             const localBotRecord = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1', [appName]);
@@ -1566,8 +1569,9 @@ async function backupAllPaidBots() {
                 userId = localBotRecord.rows[0].user_id;
                 botType = localBotRecord.rows[0].bot_type;
             } else {
-                console.warn(`[DB-Backup] App "${appName}" found on Heroku but not in local 'user_bots' table. Using ADMIN_ID as placeholder.`);
+                console.warn(`[DB-Backup] App "${appName}" found on Heroku but not in local 'user_bots' table. Rescuing to Admin.`);
                 notFoundCount++;
+                isOrphan = true; // Flag it!
             }
 
             const response = await axios.get(`https://api.heroku.com/apps/${appName}/config-vars`, {
@@ -1579,23 +1583,43 @@ async function backupAllPaidBots() {
             const configVars = response.data;
             const sessionId = configVars.SESSION_ID || 'N/A';
 
+            // 3. AUTO-DETECT BOT TYPE IF UNKNOWN
+            if (botType === 'unknown' || !botType) {
+                if (sessionId.startsWith('levanter_')) {
+                    botType = 'levanter';
+                } else if (sessionId.startsWith('RGNK')) {
+                    botType = 'raganork';
+                } else if (sessionId.startsWith('H') || sessionId.startsWith('HQ_')) {
+                    botType = 'hermit';
+                } else {
+                    botType = 'unknown';
+                }
+            }
+
+            // 4. RESCUE THE GHOST BOT TO ADMIN
+            if (isOrphan && botType !== 'unknown') {
+                await addUserBot(ADMIN_ID, appName, sessionId, botType);
+                console.log(`[DB-Backup] Orphaned bot "${appName}" automatically assigned to Admin.`);
+            }
+
+            // Back it up
             await saveUserDeployment(userId, appName, sessionId, configVars, botType);
-            console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId})`);
+            console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId}, Type: ${botType})`);
             
             backedUpCount++;
             if (typeStats[botType]) {
-                typeStats[botType].backedUp.push(appName); // <-- PUSH NAME
+                typeStats[botType].backedUp.push(appName); 
             } else {
-                typeStats.unknown.backedUp.push(appName); // <-- PUSH NAME
+                typeStats.unknown.backedUp.push(appName); 
             }
             
         } catch (error) {
             console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
             failedCount++;
             if (typeStats[botType]) {
-                typeStats[botType].failed.push(appName); // <-- PUSH NAME
+                typeStats[botType].failed.push(appName); 
             } else {
-                typeStats.unknown.failed.push(appName); // <-- PUSH NAME
+                typeStats.unknown.failed.push(appName); 
             }
         }
     }
@@ -1616,7 +1640,6 @@ async function backupAllPaidBots() {
         }
     };
 }
-
 
 
 
