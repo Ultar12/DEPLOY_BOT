@@ -2126,37 +2126,21 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
 
-                // Determine action text based on isRestore
-        let actionText = "Creating";
-        
-        // Edit message using primaryAnimChatId and primaryAnimMsgId
-        if (primaryAnimMsgId) { // Check if message ID exists before editing
+          let actionText = "Creating";
+        if (primaryAnimMsgId) {
             await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: Provisioning database...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         } else {
-             console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
+            console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
         }
 
-        const dbName = appName.replace(/-/g, '_'); // fallback, only used if we truly must create a new DB
+        const dbName = appName.replace(/-/g, '_');
 
         if (isRestore && vars.DATABASE_URL) {
-            actionText = "Checking for existing database";
-            const existingDbName = extractDbNameFromUrl(vars.DATABASE_URL) || originalAppName.replace(/-/g, '_');
-            const dbCheckResult = await checkIfDatabaseExists(existingDbName);
-
-            if (dbCheckResult.exists) {
-                actionText = "Re-using existing database";
-                vars.DATABASE_URL = dbCheckResult.connection_string;
-                neonAccountId = dbCheckResult.account_id;
-                console.log(`[Build/Restore] Re-using existing DB: ${existingDbName} (Account: ${neonAccountId}).`);
-            } else {
-                actionText = "Creating NEW database (Old one not found)";
-                console.log(`[Build/Restore] Old DB '${existingDbName}' not found. Creating NEW DB: ${dbName}`);
-                const neonResult = await createNeonDatabase(dbName);
-                if (!neonResult.success) throw new Error(`Database creation failed: ${neonResult.error}`);
-                vars.DATABASE_URL = neonResult.connection_string;
-                neonAccountId = neonResult.account_id;
-                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW DB (Account: ${neonAccountId}).`);
-            }
+            // Restore path: trust the DATABASE_URL already stored in user_deployments.
+            // Do NOT re-provision — just carry it forward as-is.
+            actionText = "Re-using existing database from backup record";
+            if (vars.neon_account_id) neonAccountId = vars.neon_account_id;
+            console.log(`[Build/Restore] Re-using stored DATABASE_URL for ${appName} (Account: ${neonAccountId}).`);
         } else {
             actionText = "Creating NEW database";
             console.log(`[Build/New] Creating NEW DB: ${dbName}`);
@@ -2166,22 +2150,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             neonAccountId = neonResult.account_id;
             console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW DB (Account: ${neonAccountId}).`);
         }
-        } else {
-            // --- NEW DEPLOY PATH: Always create new DB ---
-            actionText = "Creating NEW database";
-            console.log(`[Build/New] Creating NEW Neon DB: ${dbName}`);
-            
-            const neonResult = await createNeonDatabase(dbName);
 
-            if (!neonResult.success) {
-                throw new Error(`Neon DB creation failed: ${neonResult.error}`);
-            }
-            vars.DATABASE_URL = neonResult.connection_string;
-            neonAccountId = neonResult.account_id;
-            console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
-        }
-        
-        // Update message with final action text
         if (primaryAnimMsgId) {
              await bot.editMessageText(`Building ${appName}...\n\nStep 1/4: ${actionText}...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
         }
