@@ -13895,39 +13895,97 @@ if (action === 'apply_session_update') {
 
     const botName = payload;
     const { sessionId } = st.data;
+    const messageId = q.message.message_id;
 
-    const workingMsg = await bot.editMessageText(`Validating and updating session for *${escapeMarkdown(botName)}*...`, {
-        chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
+    await bot.editMessageText(`Validating and updating session for *${escapeMarkdown(botName)}*...`, {
+        chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
-    
+
     const botTypeResult = await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [cid, botName]);
     const botType = botTypeResult.rows[0]?.bot_type;
     const isLevanter = botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX);
     const isRaganork = botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX);
     const isHermit = botType === 'hermit' && sessionId.startsWith(HERMIT_SESSION_PREFIX);
 
-    if (!isLevanter && !isRaganork && !isHermit) { // <-- ADDED HERMIT
+    if (!isLevanter && !isRaganork && !isHermit) {
         delete userStates[cid];
         return bot.editMessageText(`**Validation Error:** The session ID is not valid for your *${botType}* bot named *${escapeMarkdown(botName)}*.`, {
-            chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
         });
     }
 
-    // Call the updated function
+    // Apply the update to Heroku
     const result = await updateUserVariable(cid, botName, 'SESSION_ID', sessionId);
-    
-    // ❗️ FIX: Create the final message here and use escapeMarkdown
-    let finalMessage;
-    if (result.status === 'success') {
-        finalMessage = `**Success!**\n\nThe session for your bot *${escapeMarkdown(botName)}* has been updated. The bot will now restart.`;
-    } else {
-        finalMessage = `**Failed!**\n\nCould not update the session for *${escapeMarkdown(botName)}*.\n*Reason:* ${escapeMarkdown(result.message)}`;
+
+    if (result.status !== 'success') {
+        delete userStates[cid];
+        return bot.editMessageText(`**Failed!**\n\nCould not update the session for *${escapeMarkdown(botName)}*.\n*Reason:* ${escapeMarkdown(result.message)}`, {
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
+        });
     }
 
-    await bot.editMessageText(finalMessage, {
-        chat_id: cid, message_id: workingMsg.message_id, parse_mode: 'Markdown'
+    // Keep local DB/backup in sync with the new session
+    await dbServices.addUserBot(cid, botName, sessionId, botType);
+    try {
+        const herokuConfigVars = (await herokuApi.get(
+            `https://api.heroku.com/apps/${botName}/config-vars`,
+            { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } }
+        )).data;
+        await dbServices.saveUserDeployment(cid, botName, herokuConfigVars.SESSION_ID, herokuConfigVars, botType);
+    } catch (e) {
+        console.error(`[apply_session_update] Failed to refresh backup config for ${botName}:`, e.message);
+    }
+
+    // 🔴 NEW: wait for real "connected" confirmation, same as buildWithProgress
+    const baseWaitingText = `Session updated for "${botName}". Waiting for bot to connect...`;
+    await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, {
+        chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
     });
-    delete userStates[cid];
+    const animateIntervalId = await animateMessage(cid, messageId, baseWaitingText);
+
+    const STATUS_CHECK_TIMEOUT = 300 * 1000; // 5 minutes
+    let timeoutId;
+
+    const appStatusPromise = new Promise((resolve, reject) => {
+        timeoutId = setTimeout(() => {
+            const appPromise = appDeploymentPromises.get(botName);
+            if (appPromise) {
+                appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds.`));
+                appDeploymentPromises.delete(botName);
+            }
+        }, STATUS_CHECK_TIMEOUT);
+
+        appDeploymentPromises.set(botName, { resolve, reject, animateIntervalId, timeoutId });
+    });
+
+    try {
+        await appStatusPromise;
+        clearTimeout(timeoutId);
+        clearInterval(animateIntervalId);
+
+        await bot.editMessageText(`Your bot *${escapeMarkdown(botName)}* is now live!`, {
+            chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: `selectapp:${botName}` }]] }
+        });
+    } catch (err) {
+        clearTimeout(timeoutId);
+        clearInterval(animateIntervalId);
+        await bot.editMessageText(
+            `Session updated for *${escapeMarkdown(botName)}*, but the bot failed to come online: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID again.`,
+            {
+                chat_id: cid, message_id: messageId, parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Change Session ID', callback_data: `change_session:${botName}:${cid}` }],
+                        [{ text: 'Back', callback_data: `selectapp:${botName}` }]
+                    ]
+                }
+            }
+        );
+    } finally {
+        appDeploymentPromises.delete(botName);
+        delete userStates[cid];
+    }
     return;
 }
 
