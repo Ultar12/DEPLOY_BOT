@@ -934,14 +934,12 @@ async function getBotLogs(userId, botId) {
 
 
 async function presentSessionApplyOptions(cid, messageId, sessionId, botType) {
-    // Fetch user's existing bots of this type
     const userBotsResult = await pool.query(
         "SELECT bot_name FROM user_bots WHERE user_id = $1 AND bot_type = $2",
         [cid, botType]
     );
     const userBots = userBotsResult.rows.map(r => r.bot_name);
 
-    // Stash the session so button taps can use it
     userStates[cid] = {
         step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
         data: { sessionId: sessionId }
@@ -962,15 +960,17 @@ async function presentSessionApplyOptions(cid, messageId, sessionId, botType) {
         bodyText = `You have no ${botType.toUpperCase()} bots yet. Tap below to deploy a new one with this session.`;
     }
 
-    await bot.editMessageText(
-        `**Session ID Generated!**\n\n\`${sessionId}\`\n\n${bodyText}`,
-        {
-            chat_id: cid,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: keyboard }
-        }
-    );
+    const messageText = `**Session ID Detected!**\n\n\`${sessionId}\`\n\n${bodyText}`;
+    const options = {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+    };
+
+    if (messageId) {
+        await bot.editMessageText(messageText, { chat_id: cid, message_id: messageId, ...options });
+    } else {
+        await bot.sendMessage(cid, messageText, options);
+    }
 }
 
 
@@ -11190,6 +11190,22 @@ if (st && st.step === 'AWAITING_APP_NAME') {
     }
 }
 
+
+      if (!st) {
+    let detectedBotType = null;
+    if (text.startsWith(LEVANTER_SESSION_PREFIX) && text.length >= 10) {
+        detectedBotType = 'levanter';
+    } else if (text.startsWith(RAGANORK_SESSION_PREFIX) && text.length >= 10) {
+        detectedBotType = 'raganork';
+    } else if (text.startsWith(HERMIT_SESSION_PREFIX) && text.length >= 10) {
+        detectedBotType = 'hermit';
+    }
+
+    if (detectedBotType) {
+        await presentSessionApplyOptions(cid, null, text, detectedBotType);
+        return;
+    }
+      }
   else {
         // If no other command or state matched, send it to Gemini
         handleFallbackWithGemini(cid, text);
@@ -13943,7 +13959,7 @@ if (action === 'apply_session_update') {
     });
     const animateIntervalId = await animateMessage(cid, messageId, baseWaitingText);
 
-    const STATUS_CHECK_TIMEOUT = 300 * 1000; // 5 minutes
+    const STATUS_CHECK_TIMEOUT = 10 * 60 * 1000; // 10 minutes
     let timeoutId;
 
     const appStatusPromise = new Promise((resolve, reject) => {
