@@ -7450,7 +7450,9 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         await herokuApi.patch(`/apps/${msgAppName}/config-vars`, { 
             SECRET_API_KEY, 
             MESSAGE_BOT_API_KEY,
-            DATABASE_URL: process.env.DATABASE_URL 
+            DATABASE_URL: process.env.DATABASE_URL,
+            HEROKU_API_KEY: HEROKU_API_KEY,
+            HEROKU_APP_NAME: msgAppName
         });
 
         await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
