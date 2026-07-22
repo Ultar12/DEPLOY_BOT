@@ -6126,54 +6126,7 @@ bot.onText(/^\/apps$/i, async msg => {
 });
 
 
-bot.onText(/^\/deploymsg$/, async (msg) => {
-    const cid = msg.chat.id.toString();
-    if (cid !== ADMIN_ID) return;
 
-    const appName = `msgbot-${Math.floor(Math.random() * 9000) + 1000}`;
-    const statusMsg = await bot.sendMessage(cid, `**Starting Build for ${appName}...**\nProvisioning Postgres database...`, { parse_mode: 'Markdown' });
-
-    try {
-        const body = {
-            source_blob: {
-                // ❗️ FIX: Added .tarball/master so Heroku can download the code
-                url: 'https://github.com/Ultar12/MESSAGEBOT/tarball/master'
-            },
-            app: {
-                name: appName,
-                region: 'us'
-            },
-        
-            // ❗️ FIX: Specific plan name for the new Heroku billing system
-            addons: [
-                { plan: "heroku-postgresql" } 
-            ]
-        };
-
-        const res = await herokuApi.post('/app-setups', body);
-        
-        await bot.editMessageText(`**Deployment Created!**\n\n**App Name:** \`${appName}\`\n**Status:** Building\n\nTrack progress: https://dashboard.heroku.com/apps/${appName}/activity`, {
-            chat_id: cid,
-            message_id: statusMsg.message_id,
-            parse_mode: 'Markdown'
-        });
-
-        // Save to DB so it shows up in your lists
-        await pool.query(
-            "INSERT INTO user_bots (user_id, bot_name, bot_type, status) VALUES ($1, $2, $3, $4)",
-            [cid, appName, 'messagebot', 'Building']
-        );
-
-    } catch (e) {
-        // Detailed error logging to tell us WHY it failed
-        const herokuError = e.response?.data?.message || e.message;
-        console.error("Deploy Error:", herokuError);
-        await bot.editMessageText(`**Deployment Failed**\n\nReason: ${herokuError}`, {
-            chat_id: cid,
-            message_id: statusMsg.message_id
-        });
-    }
-});
 
 
 // ADMIN COMMAND: /maintenance
@@ -6229,7 +6182,7 @@ bot.onText(/^\/key (\d+)$/, async (msg, match) => {
 
     } catch (error) {
         console.error("Error generating key via command:", error);
-        await bot.sendMessage(cid, "❌ Failed to generate key. Check logs.");
+        await bot.sendMessage(cid, "Failed to generate key. Check logs.");
     }
 });
 
@@ -7770,40 +7723,33 @@ bot.onText(/^\/getallaws$/, async (msg) => {
 
 
 
-// In bot.js (REPLACE the entire /dbstats function)
-
 bot.onText(/^\/dbstats$/, async (msg) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
     const workingMsg = await bot.sendMessage(adminId, "Fetching database lists (AWS + Neon)...");
 
-    // --- 0. FUZZY OWNER MAPPING WITH SIMILARITY MATCHING ---
-    // This query uses UNION to merge user_id and app/bot_name from both core tables
+    // --- 0. Build owner list ---
     const allBotsResult = await pool.query(`
         SELECT bot_name, user_id FROM user_bots
         UNION 
         SELECT app_name AS bot_name, user_id FROM user_deployments
     `);
-    
-    // Build owner list with canonical names for fuzzy matching
+
     const botList = allBotsResult.rows.map(bot => ({
         name: bot.bot_name,
         canonical: bot.bot_name.replace(/-/g, '_'),
         userId: bot.user_id
     }));
-    
-    // Similarity function: Levenshtein distance ratio
+
     function getSimilarity(str1, str2) {
         const longer = str1.length > str2.length ? str1 : str2;
         const shorter = str1.length > str2.length ? str2 : str1;
-        
         if (longer.length === 0) return 1.0;
-        
         const editDistance = getEditDistance(longer, shorter);
         return (longer.length - editDistance) / longer.length;
     }
-    
+
     function getEditDistance(s1, s2) {
         const costs = [];
         for (let i = 0; i <= s1.length; i++) {
@@ -7824,37 +7770,33 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         }
         return costs[s2.length];
     }
-    
-    // Function to find owner by exact or fuzzy match
+
+    /**
+     * Returns { userId, matchType } where matchType is one of:
+     * 'exact', 'prefix', 'fuzzy', or null (no match found at all)
+     */
     function findOwnerByName(dbName) {
-        // 1. Try exact match on canonical name
-        for (const bot of botList) {
-            if (bot.canonical === dbName) return bot.userId;
-        }
-        
-        // 2. Try exact match on original name (with underscores)
         const dbNameWithUnderscores = dbName.replace(/-/g, '_');
+
+        // 1. Exact match (canonical)
         for (const bot of botList) {
-            if (bot.canonical === dbNameWithUnderscores) return bot.userId;
-        }
-        
-        // 3. Try prefix matching (for renamed apps like mecusgift-4221 matching mecusgift)
-        // Check if DB name starts with any bot's base name
-        for (const bot of botList) {
-            // Extract base name (remove hex suffix if present)
-            const baseName = bot.canonical.replace(/_[a-f0-9]{4,}$/, '');
-            
-            // Check if database name matches the base name or is a renamed version
-            if (dbNameWithUnderscores.startsWith(baseName + '_') || 
-                dbNameWithUnderscores === baseName) {
-                return bot.userId;
+            if (bot.canonical === dbNameWithUnderscores) {
+                return { userId: bot.userId, matchType: 'exact' };
             }
         }
-        
-        // 4. Fuzzy match: find the most similar name with lower threshold > 65%
+
+        // 2. Prefix match (renamed apps like mecusgift-4221 -> mecusgift)
+        for (const bot of botList) {
+            const baseName = bot.canonical.replace(/_[a-f0-9]{4,}$/, '');
+            if (dbNameWithUnderscores.startsWith(baseName + '_') || dbNameWithUnderscores === baseName) {
+                return { userId: bot.userId, matchType: 'prefix' };
+            }
+        }
+
+        // 3. Fuzzy match — ONLY as a last resort, and only above a strict threshold.
+        // This is marked distinctly so it's never confused with a confirmed match.
         let bestMatch = null;
-        let bestSimilarity = 0.65; // 65% similarity threshold (lowered for better matching)
-        
+        let bestSimilarity = 0.85; // Raised threshold — fuzzy matches are now much stricter
         for (const bot of botList) {
             const similarity = getSimilarity(dbNameWithUnderscores, bot.canonical);
             if (similarity > bestSimilarity) {
@@ -7862,148 +7804,147 @@ bot.onText(/^\/dbstats$/, async (msg) => {
                 bestMatch = bot.userId;
             }
         }
-        
-        return bestMatch || 'Unknown';
+
+        if (bestMatch) {
+            return { userId: bestMatch, matchType: 'fuzzy' };
+        }
+
+        // 4. No match found at all
+        return { userId: null, matchType: null };
     }
 
-    // --- 1. AWS SELF-HOSTED REPORT ---
-    let awsReport = "";
-    let awsDbCount = 0;
-    
+    // Collections split by match status
+    const matchedEntries = [];   // { source, name, size, owner, matchType }
+    const unmatchedEntries = []; // { source, name, size }
+
+    // --- 1. AWS SELF-HOSTED ---
+    let awsHeaderReport = "";
     if (process.env.SELF_HOSTED_DB_URL) {
         try {
             const apiUrl = process.env.SELF_HOSTED_DB_URL;
             const apiKey = process.env.SELF_HOSTED_DB_SECRET;
-            
-            const res = await axios.get(`${apiUrl}/list`, {
-                headers: { 'x-api-key': apiKey },
-                timeout: 5000 // 5s timeout
-            });
+            const res = await axios.get(`${apiUrl}/list`, { headers: { 'x-api-key': apiKey }, timeout: 5000 });
 
             if (res.data.success) {
                 const awsDbs = res.data.databases;
-                awsDbCount = awsDbs.length;
-                
-                awsReport += `**AWS SELF-HOSTED (${awsDbCount} DBs)**\n`;
-                awsReport += `**Status:** Online | **Capacity:** Unlimited\n\n`;
-                
-                if (awsDbs.length > 0) {
-                    awsDbs.forEach((db, index) => {
-                        const dbName = db.name;
-                        const size = db.size;
-                        // Use fuzzy matching to find owner
-                        const owner = findOwnerByName(dbName);
-                        
-                        // Format: #1 dbname | size | ownerID
-                        awsReport += `▫️ #${index + 1} <code>${escapeHTML(dbName)}</code> | ${size} | <code>${owner}</code>\n`;
-                    });
-                } else {
-                    awsReport += `_No active databases found on AWS._\n`;
+                awsHeaderReport = `**AWS SELF-HOSTED (${awsDbs.length} DBs)**\n**Status:** Online | **Capacity:** Unlimited\n\n`;
+
+                for (const db of awsDbs) {
+                    const result = findOwnerByName(db.name);
+                    if (result.userId) {
+                        matchedEntries.push({ source: 'AWS', name: db.name, size: db.size, owner: result.userId, matchType: result.matchType });
+                    } else {
+                        unmatchedEntries.push({ source: 'AWS', name: db.name, size: db.size });
+                    }
                 }
-                awsReport += `\n----------------------------------------\n\n`;
             }
         } catch (e) {
-            awsReport = `**AWS SELF-HOSTED**\n` +
-                        `**Status:** Offline / Unreachable\n` + 
-                        `**Error:** ${e.message}\n` +
-                        `----------------------------------------\n\n`;
+            awsHeaderReport = `**AWS SELF-HOSTED**\n**Status:** Offline / Unreachable\n**Error:** ${escapeHTML(e.message)}\n\n`;
         }
     } else {
-        awsReport = `**AWS SELF-HOSTED**\n**Status:** Not Configured\n----------------------------------------\n\n`;
+        awsHeaderReport = `**AWS SELF-HOSTED**\n**Status:** Not Configured\n\n`;
     }
 
-    // --- 2. NEON ACCOUNTS REPORT ---
+    // --- 2. NEON ACCOUNTS ---
     async function getNeonAccountStats(accountConfig) {
         const accountId = accountConfig.id;
-        const USER_DB_LIMIT = 1; 
-        
-        const apiUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}`;
-        const dbsUrl = `${apiUrl}/databases`;
+        const dbsUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}/databases`;
         const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
-
         try {
-            const [dbsResponse, branchResponse] = await Promise.all([
-                axios.get(dbsUrl, { headers }),
-                axios.get(apiUrl, { headers })
-            ]);
-
-            const dbList = dbsResponse.data.databases;
-            const branchData = branchResponse.data.branch;
-            const logicalSizeMB = branchData.logical_size ? (branchData.logical_size / (1024 * 1024)).toFixed(2) : '0.00';
-            
-            const userDBs = dbList.filter(db => db.name !== 'neondb');
-            
-            return {
-                success: true, id: accountId, totalDBCount: dbList.length, userDBCount: userDBs.length,     
-                slotsLeft: USER_DB_LIMIT - userDBs.length, dbLimit: USER_DB_LIMIT, storageUsed: logicalSizeMB,
-                dbList: userDBs, error: null
-            };
+            const dbsResponse = await axios.get(dbsUrl, { headers });
+            const userDBs = dbsResponse.data.databases.filter(db => db.name !== 'neondb');
+            return { success: true, id: accountId, userDBCount: userDBs.length, dbList: userDBs };
         } catch (error) {
             return { success: false, id: accountId, error: error.response?.data?.message || error.message };
         }
     }
-    
-    const resultsPromises = NEON_ACCOUNTS.map(accountConfig => getNeonAccountStats(accountConfig));
-    const allResults = await Promise.all(resultsPromises);
-    
-    let totalStorageUsedMB = 0;
-    let totalUserDBs = 0; 
-    let totalSlotsLeft = 0; 
-    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * 1; 
+
+    const allResults = await Promise.all(NEON_ACCOUNTS.map(acc => getNeonAccountStats(acc)));
+
+    const USER_DB_LIMIT = 1;
+    let totalUserDBs = 0, totalSlotsLeft = 0;
+    const TOTAL_USER_SLOTS = NEON_ACCOUNTS.length * USER_DB_LIMIT;
     let accountsWithCapacity = 0;
-    let dbCounter = 1;
-    let consolidatedDBListMessage = ``; 
+    let neonErrors = [];
 
     for (const result of allResults) {
-        const accountId = result.id ? String(result.id) : 'N/A';
         if (result.success) {
-            totalUserDBs += result.userDBCount; 
-            totalSlotsLeft += Math.max(0, result.slotsLeft); 
-            totalStorageUsedMB += parseFloat(result.storageUsed || 0); 
-            if (result.slotsLeft > 0) accountsWithCapacity++;
-            
-            if (result.dbList && result.dbList.length > 0) {
-                result.dbList.forEach(db => {
-                    const dbNameSanitized = db.name.replace(/-/g, '_'); 
-                    // Use fuzzy matching to find owner
-                    const ownerUserId = findOwnerByName(dbNameSanitized); 
-                    consolidatedDBListMessage += `#${dbCounter++} (Acc ${accountId}) <code>${escapeHTML(db.name)}</code> | <code>${ownerUserId}</code>\n`;
-                });
+            totalUserDBs += result.userDBCount;
+            totalSlotsLeft += Math.max(0, USER_DB_LIMIT - result.userDBCount);
+            if ((USER_DB_LIMIT - result.userDBCount) > 0) accountsWithCapacity++;
+
+            for (const db of result.dbList) {
+                const matchResult = findOwnerByName(db.name.replace(/-/g, '_'));
+                if (matchResult.userId) {
+                    matchedEntries.push({ source: `Neon-${result.id}`, name: db.name, owner: matchResult.userId, matchType: matchResult.matchType });
+                } else {
+                    unmatchedEntries.push({ source: `Neon-${result.id}`, name: db.name });
+                }
             }
         } else {
-            consolidatedDBListMessage += `Account ${accountId} failed: ${escapeHTML(result.error || 'Unknown Error').substring(0, 30)}...\n`;
+            neonErrors.push(`Account ${result.id}: ${result.error?.substring(0, 40) || 'Unknown'}`);
         }
     }
-    
-    // --- 3. CONSTRUCT FINAL MESSAGE ---
-    let combinedMessage = awsReport;
-    
-    combinedMessage += `**NEON ACTIVE DATABASES (${totalUserDBs}):**\n\n`;
-    combinedMessage += consolidatedDBListMessage;
 
-    combinedMessage += `\n========================================\n`;
-    combinedMessage += `<b>NEON RESOURCE SUMMARY</b>\n`;
-    combinedMessage += `Neon Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b>\n`;
-    combinedMessage += `Neon Active DBs: <b>${totalUserDBs}</b>\n`;
-    combinedMessage += `Neon Accounts with Space: <b>${accountsWithCapacity} / ${NEON_ACCOUNTS.length}</b>\n`;
-    
-    // The total max storage should ideally be taken from NEON_ACCOUNTS config if specified, 
-    // but assuming 512MB default * number of accounts as per your configuration context.
-    const totalMaxStorage = NEON_ACCOUNTS.length * 512; 
-    const storageRemaining = Math.max(0, totalMaxStorage - totalStorageUsedMB);
-    combinedMessage += `Neon Storage Left: <b>${storageRemaining.toFixed(2)} MB</b>\n`;
-    combinedMessage += `========================================\n`;
+    // --- 3. BUILD FINAL MESSAGE ---
+    let msgOut = awsHeaderReport;
 
-    await bot.editMessageText(combinedMessage.trim(), {
-        chat_id: adminId,
-        message_id: workingMsg.message_id,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-    }).catch(err => {
-        console.error("Failed to edit /dbstats message:", err.message);
-        bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
-    });
+    msgOut += `<b>✅ MATCHED — WITH USER ID (${matchedEntries.length})</b>\n\n`;
+    if (matchedEntries.length > 0) {
+        matchedEntries.forEach((e, i) => {
+            const tag = e.matchType === 'fuzzy' ? ' <i>(fuzzy)</i>' : '';
+            const sizeStr = e.size ? ` | ${e.size}` : '';
+            msgOut += `#${i + 1} (${e.source}) <code>${escapeHTML(e.name)}</code>${sizeStr} → <code>${e.owner}</code>${tag}\n`;
+        });
+    } else {
+        msgOut += `<i>None found.</i>\n`;
+    }
+
+    msgOut += `\n<b>❓ NO USER ID FOUND (${unmatchedEntries.length})</b>\n\n`;
+    if (unmatchedEntries.length > 0) {
+        unmatchedEntries.forEach((e, i) => {
+            const sizeStr = e.size ? ` | ${e.size}` : '';
+            msgOut += `#${i + 1} (${e.source}) <code>${escapeHTML(e.name)}</code>${sizeStr} → <i>no owner match</i>\n`;
+        });
+    } else {
+        msgOut += `<i>None — every database is accounted for.</i>\n`;
+    }
+
+    if (neonErrors.length > 0) {
+        msgOut += `\n<b>Neon Account Errors:</b>\n${neonErrors.map(e => escapeHTML(e)).join('\n')}\n`;
+    }
+
+    msgOut += `\n========================================\n`;
+    msgOut += `<b>SUMMARY</b>\n`;
+    msgOut += `Total DBs Checked: <b>${matchedEntries.length + unmatchedEntries.length}</b>\n`;
+    msgOut += `Matched to User: <b>${matchedEntries.length}</b>\n`;
+    msgOut += `Unmatched (Orphaned): <b>${unmatchedEntries.length}</b>\n`;
+    msgOut += `Neon Slots Available: <b>${totalSlotsLeft} / ${TOTAL_USER_SLOTS}</b>\n`;
+    msgOut += `========================================\n`;
+
+    // Telegram message length safety — split if too long
+    const MAX_LEN = 3800;
+    if (msgOut.length <= MAX_LEN) {
+        await bot.editMessageText(msgOut.trim(), {
+            chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML', disable_web_page_preview: true
+        }).catch(err => {
+            console.error("Failed to edit /dbstats message:", err.message);
+            bot.sendMessage(adminId, "Error: Could not format all stats. Check logs.");
+        });
+    } else {
+        await bot.deleteMessage(adminId, workingMsg.message_id).catch(() => {});
+        let chunk = "";
+        for (const line of msgOut.split('\n')) {
+            if ((chunk + line + '\n').length > MAX_LEN) {
+                await bot.sendMessage(adminId, chunk, { parse_mode: 'HTML', disable_web_page_preview: true });
+                chunk = "";
+            }
+            chunk += line + '\n';
+        }
+        if (chunk.trim()) await bot.sendMessage(adminId, chunk, { parse_mode: 'HTML', disable_web_page_preview: true });
+    }
 });
+            
 
 // --- ADMIN COMMAND: /setbot <type> <on/off> ---
 bot.onText(/^\/setbot (levanter|raganork|hermit) (on|off)$/i, async (msg, match) => {
