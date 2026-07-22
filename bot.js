@@ -933,6 +933,47 @@ async function getBotLogs(userId, botId) {
 }
 
 
+async function presentSessionApplyOptions(cid, messageId, sessionId, botType) {
+    // Fetch user's existing bots of this type
+    const userBotsResult = await pool.query(
+        "SELECT bot_name FROM user_bots WHERE user_id = $1 AND bot_type = $2",
+        [cid, botType]
+    );
+    const userBots = userBotsResult.rows.map(r => r.bot_name);
+
+    // Stash the session so button taps can use it
+    userStates[cid] = {
+        step: 'AWAITING_SESSION_UPDATE_CONFIRMATION',
+        data: { sessionId: sessionId }
+    };
+
+    let keyboard;
+    let bodyText;
+
+    if (userBots.length > 0) {
+        keyboard = userBots.map(botName => ([{
+            text: botName,
+            callback_data: `apply_session_update:${botName}`
+        }]));
+        keyboard.push([{ text: 'Deploy New Bot Instead', callback_data: `deploy_new_with_session:${botType}` }]);
+        bodyText = `Select a bot below to automatically apply this session:`;
+    } else {
+        keyboard = [[{ text: 'Deploy New Bot', callback_data: `deploy_new_with_session:${botType}`, style: 'success' }]];
+        bodyText = `You have no ${botType.toUpperCase()} bots yet. Tap below to deploy a new one with this session.`;
+    }
+
+    await bot.editMessageText(
+        `**Session ID Generated!**\n\n\`${sessionId}\`\n\n${bodyText}`,
+        {
+            chat_id: cid,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        }
+    );
+}
+
+
 // Note: updateUserVariable also needs the botId to know which bot's variable to change.
 // In bot.js, find and replace this entire function
 async function updateUserVariable(userId, botId, variableName, newValue) {
@@ -5190,45 +5231,6 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
     }
 });
   
-  // bot.js (Around Line 1628)
-
-app.post('/pre-verify-user', validateWebAppInitData, async (req, res) => {
-    try {
-        const userId = req.telegramData.id.toString();
-        const country = req.body.country || 'NG';
-        const ipAddress = req.body.ip_address || req.socket.remoteAddress;
-        const city = req.body.city || 'Unknown';
-
-        console.log(`[Pre-Verify] User ${userId} | IP: ${ipAddress} | Country: ${country} | City: ${city}`);
-
-        // Block India and Pakistan ONLY
-        if (country === 'IN' || country === 'PK') {
-            console.warn(`[Pre-Verify] User ${userId} blocked from: ${country}`);
-            return res.json({ success: false, message: 'Service not available in your country.' });
-        }
-
-        // Save verification data to database
-        try {
-            await pool.query(
-                `INSERT INTO pre_verified_users (user_id, ip_address, city) 
-                 VALUES ($1, $2, $3) 
-                 ON CONFLICT (user_id) DO UPDATE 
-                 SET ip_address = $2, city = $3, verified_at = NOW()`,
-                [userId, ipAddress, city]
-            );
-            console.log(`[Pre-Verify] ✅ User ${userId} passed verification - data saved`);
-        } catch (dbErr) {
-            console.warn('[Pre-Verify] DB error:', dbErr.message);
-            // Don't fail - still approve the verification
-        }
-
-        return res.json({ success: true, message: 'Verified!', userId: userId, verified: true });
-
-    } catch (error) {
-        console.error("Error in /pre-verify-user:", error);
-        return res.status(500).json({ success: false, message: 'Server error' });
-    }
-});
 
 
 app.post('/nowpayments-webhook', express.json(), async (req, res) => {
@@ -5514,36 +5516,23 @@ app.post('/api/raganork-callback', async (req, res) => {
             );
         } 
                 else if (status === 'session_id') {
-            if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(cleanNumber);
+    if (intervalId) clearInterval(intervalId);
+    global.raganorkPairingRequests.delete(cleanNumber);
 
-            // 1. Send the Session ID to the User
-            await bot.editMessageText(
-                `**Session ID Generated!**\n\n\`${sessionId}\`\n\n_Please copy this ID and tap "Deploy" from the menu to continue._`, 
-                { 
-                    chat_id: cid, 
-                    message_id: messageId, 
-                    parse_mode: 'Markdown' 
-                }
-            );
+    // ✅ NEW
+    await presentSessionApplyOptions(cid, messageId, sessionId, 'raganork');
 
-            // 2. Fetch User Info & Send to Admin
-            try {
-                const userChat = await bot.getChat(cid);
-                const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
-                
-                await bot.sendMessage(ADMIN_ID, 
-                    `*New Session ID Generated!*\n\n` +
-                    `*Bot Type:* Raganork MD\n` +
-                    `*User:* ${userName} (\`${cid}\`)\n` +
-                    `*Phone:* \`+${cleanNumber}\`\n` +
-                    `*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
-                    { parse_mode: 'Markdown' }
-                );
-            } catch (err) {
-                console.error("[Raganork] Failed to notify admin about new session:", err.message);
-            }
-        } 
+    try {
+        const userChat = await bot.getChat(cid);
+        const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
+        await bot.sendMessage(ADMIN_ID, 
+            `*New Session ID Generated!*\n\n*Bot Type:* Raganork MD\n*User:* ${userName} (\`${cid}\`)\n*Phone:* \`+${cleanNumber}\`\n*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
+            { parse_mode: 'Markdown' }
+        );
+    } catch (err) {
+        console.error("[Raganork] Failed to notify admin about new session:", err.message);
+    }
+}
 
         else if (status === 'error') {
             if (intervalId) clearInterval(intervalId);
@@ -5601,37 +5590,24 @@ app.post('/api/levanter-callback', async (req, res) => {
             );
         } 
                 else if (status === 'session_id') {
-            // Stop the counter if it's still running
-            if (intervalId) clearInterval(intervalId);
-            global.levanterPairingRequests.delete(number);
+    if (intervalId) clearInterval(intervalId);
+    global.levanterPairingRequests.delete(number);
 
-            // 1. Send the Session ID to the User
-            await bot.editMessageText(
-                `**Session ID Generated!**\n\n\`${sessionId}\`\n\n_Please copy this ID and tap "Deploy" from the menu to continue._`, 
-                { 
-                    chat_id: cid, 
-                    message_id: messageId, 
-                    parse_mode: 'Markdown' 
-                }
-            );
+    // ✅ NEW: show bot-apply options instead of a plain text message
+    await presentSessionApplyOptions(cid, messageId, sessionId, 'levanter');
 
-            // 2. Fetch User Info & Send to Admin
-            try {
-                const userChat = await bot.getChat(cid);
-                const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
-                
-                await bot.sendMessage(ADMIN_ID, 
-                    `*New Session ID Generated!*\n\n` +
-                    `*Bot Type:* Levanter\n` +
-                    `*User:* ${userName} (\`${cid}\`)\n` +
-                    `*Phone:* \`+${number}\`\n` +
-                    `*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
-                    { parse_mode: 'Markdown' }
-                );
-            } catch (err) {
-                console.error("[Levanter] Failed to notify admin about new session:", err.message);
-            }
-        } 
+    // Admin notification (unchanged)
+    try {
+        const userChat = await bot.getChat(cid);
+        const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : escapeMarkdown(userChat.first_name || 'Unknown');
+        await bot.sendMessage(ADMIN_ID, 
+            `*New Session ID Generated!*\n\n*Bot Type:* Levanter\n*User:* ${userName} (\`${cid}\`)\n*Phone:* \`+${number}\`\n*Session ID:* \`${escapeMarkdown(sessionId)}\``, 
+            { parse_mode: 'Markdown' }
+        );
+    } catch (err) {
+        console.error("[Levanter] Failed to notify admin about new session:", err.message);
+    }
+}
 
         else if (status === 'error') {
             if (intervalId) clearInterval(intervalId);
@@ -11923,118 +11899,38 @@ if (action === 'set_auto_status_choice') {
 
 // In bot.js (inside bot.on('callback_query', ...))
 
-// --- 1. GROUP FILLER START / DESCRIPTION ---
-if (action === 'group_filler_start') {
-    delete userStates[cid];
-    
-    const description = 
-        `**Group Filler Service**\n\n` +
-        `Fill your group instantly with our verified bot members at a decent rate.\n\n` +
-        `*NOTE:* We only add numbers.\n\n` +
-        `Tap **Proceed** to start the order process.`;
-
-    await bot.editMessageText(description, {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Proceed to Order', callback_data: 'group_filler_proceed' }],
-                [{ text: '« Back', callback_data: 'more_features_menu' }]
-            ]
-        }
-    });
-    return;
-}
-
-// --- 2. PROCEED: Ask for Link ---
-if (action === 'group_filler_proceed') {
-    delete userStates[cid];
-    userStates[cid] = { step: 'AWAITING_GROUP_LINK', data: {} };
-    
-    await bot.editMessageText("Please send the full **WhatsApp Group Invite Link**", {
-        chat_id: cid,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
-    });
-    return;
-}
-
-// --- 3. PAYMENT TRIGGER ---
-if (action === 'group_filler_pay') {
-    const priceNgn = parseInt(payload, 10);
+if (action === 'deploy_new_with_session') {
+    const botType = payload;
     const st = userStates[cid];
-    
-    if (!st || st.step !== 'AWAITING_GROUP_CONFIRM') {
-        return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start over.", show_alert: true });
+
+    if (!st || st.step !== 'AWAITING_SESSION_UPDATE_CONFIRMATION' || !st.data.sessionId) {
+        return bot.answerCallbackQuery(q.id, { text: "This session has expired. Please regenerate your session ID.", show_alert: true });
     }
-    
-    // Call function to show payment options (Flutterwave only, as requested)
-    const messageId = q.message.message_id;
-    
-    // We reuse showPaymentOptions but customize the metadata for the webhook
-    
-    const reference = `flw_fill_${crypto.randomBytes(8).toString('hex')}`;
-    const metadata = {
-        user_id: cid,
-        product: 'Group Filler',
-        link: st.data.groupLink,
-        amount: st.data.totalPrice,
-        members: st.data.memberAmount
+
+    const sessionId = st.data.sessionId;
+
+    // Skip bot-type selection AND session-id entry — go straight to app naming
+    userStates[cid] = {
+        step: 'AWAITING_APP_NAME',
+        data: {
+            botType: botType,
+            SESSION_ID: sessionId,
+            isFreeTrial: false
+        }
     };
 
-    // We do NOT use initiateFlutterwavePayment here as we need a direct link to the external webhook.
-    // Instead, we store PENDING and send user to pay.
-
-    try {
-        // Store PENDING payment (only if the user has a verified email)
-        const userEmail = await getUserEmail(cid);
-        if (!userEmail) {
-             return bot.editMessageText("You must verify your email address before making a payment. Please use the menu to verify first.", { chat_id: cid, message_id: messageId });
+    await bot.editMessageText(
+        `Great, let's deploy your *${botType.toUpperCase()}* bot.\n\nPlease enter a unique name for your bot (e.g., mybot123):`,
+        {
+            chat_id: cid,
+            message_id: q.message.message_id,
+            parse_mode: 'Markdown'
         }
-        
-        await pool.query(
-            'INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id) VALUES ($1, $2, $3, $4, $5, $6)',
-            [reference, cid, userEmail, 'group_filler', st.data.memberAmount.toString(), st.data.groupLink]
-        );
-        
-        // --- Generate FLUTTERWAVE link directly for this service ---
-        const response = await axios.post('https://api.flutterwave.com/v3/payments', {
-            tx_ref: reference,
-            amount: priceNgn,
-            currency: "NGN",
-            redirect_url: `https://t.me/${botUsername}`,
-            customer: {
-                email: userEmail,
-                name: `Group Filler User ${cid}`
-            },
-            meta: metadata,
-            customizations: {
-                title: "Group Filler",
-                description: `Adding ${metadata.members} members to group.`
-            }
-        }, {
-            headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }
-        });
-
-        const paymentUrl = response.data.data.link;
-
-        await bot.editMessageText(
-            `Click the button below to complete your payment (₦${priceNgn.toLocaleString()}).`, {
-                chat_id: cid,
-                message_id: messageId,
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Pay with Flutterwave', url: paymentUrl }]]
-                }
-            }
-        );
-        
-    } catch (error) {
-        console.error("[Group Filler Payment] Error:", error.response?.data || error.message);
-        await bot.editMessageText(`Payment failed. Try again later.`, { chat_id: cid, message_id: messageId });
-    }
+    );
     return;
 }
+
+
 
 // Add these new `if` blocks inside your bot.on('callback_query', ...) handler
 
