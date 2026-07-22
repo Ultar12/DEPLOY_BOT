@@ -79,6 +79,13 @@ function init(params) {
 }
 
 
+function extractDbNameFromUrl(dbUrl) {
+    if (!dbUrl || typeof dbUrl !== 'string') return null;
+    const match = dbUrl.match(/\/([^/?]+)(?:\?.*)?$/);
+    return match ? match[1] : null;
+}
+
+
 // === DB helper functions (using 'pool' for main DB) ===
 
 async function addUserBot(u, b, s, botType) {
@@ -1040,32 +1047,37 @@ async function getAllDeployKeys() {
 async function checkIfDatabaseExists(dbName) {
     const neonDbName = dbName.replace(/-/g, '_');
 
+    if (process.env.SELF_HOSTED_DB_URL && process.env.SELF_HOSTED_DB_SECRET) {
+        try {
+            const res = await axios.get(`${process.env.SELF_HOSTED_DB_URL}/getdb/${neonDbName}`, {
+                headers: { 'x-api-key': process.env.SELF_HOSTED_DB_SECRET },
+                timeout: 8000
+            });
+            if (res.data && res.data.success) {
+                console.log(`[DB Check] Found existing AWS DB '${neonDbName}'.`);
+                return { exists: true, account_id: 'AWS_MAIN', connection_string: res.data.connection_string };
+            }
+        } catch (error) {
+            if (!(error.response && error.response.status === 404)) {
+                console.warn(`[DB Check] AWS lookup failed for '${neonDbName}': ${error.message.substring(0, 80)}`);
+            }
+        }
+    }
+
     for (const accountConfig of NEON_ACCOUNTS) {
         const accountId = String(accountConfig.id);
         const { api_key, project_id, branch_id, db_user, db_password, db_host } = accountConfig;
-        
-        // Use the API endpoint to list databases
         const dbsUrl = `https://console.neon.tech/api/v2/projects/${project_id}/branches/${branch_id}/databases`;
         const headers = { 'Authorization': `Bearer ${api_key}`, 'Accept': 'application/json' };
-
         try {
             const dbsResponse = await axios.get(dbsUrl, { headers });
-            
             const foundDb = dbsResponse.data.databases.find(db => db.name === neonDbName);
-
             if (foundDb) {
-                // Database exists! Return its details and connection string
                 const connectionString = `postgresql://${db_user}:${db_password}@${db_host}/${neonDbName}?sslmode=require`;
-                
                 console.log(`[Neon Check] Found existing DB '${neonDbName}' on Account ${accountId}.`);
-                return { 
-                    exists: true, 
-                    account_id: accountId, 
-                    connection_string: connectionString 
-                };
+                return { exists: true, account_id: accountId, connection_string: connectionString };
             }
         } catch (error) {
-            // Log API failure but continue to the next account
             console.warn(`[Neon Check] Failed to check Account ${accountId}: ${error.message.substring(0, 50)}`);
         }
     }
@@ -2124,36 +2136,36 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
              console.log(`[Build] Step 1/4: Provisioning database... (No message to edit)`);
         }
 
-        const dbName = appName.replace(/-/g, '_'); // Canonical database name
+        const dbName = appName.replace(/-/g, '_'); // fallback, only used if we truly must create a new DB
 
         if (isRestore && vars.DATABASE_URL) {
-            // --- RESTORE PATH: Check if the OLD DB still exists ---
             actionText = "Checking for existing database";
-
-            // 1. Check the old database name (underscored) for existence
-            const dbCheckResult = await checkIfDatabaseExists(dbName); 
+            const existingDbName = extractDbNameFromUrl(vars.DATABASE_URL) || originalAppName.replace(/-/g, '_');
+            const dbCheckResult = await checkIfDatabaseExists(existingDbName);
 
             if (dbCheckResult.exists) {
-                // 2. Database found! Use the existing connection string and account ID.
                 actionText = "Re-using existing database";
-                vars.DATABASE_URL = dbCheckResult.connection_string; // Ensure connection string is correct
+                vars.DATABASE_URL = dbCheckResult.connection_string;
                 neonAccountId = dbCheckResult.account_id;
-                console.log(`[Build/Restore] Re-using existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
-                
+                console.log(`[Build/Restore] Re-using existing DB: ${existingDbName} (Account: ${neonAccountId}).`);
             } else {
-                // 3. Database not found or deleted. Proceed to create a new one.
                 actionText = "Creating NEW database (Old one not found)";
-                console.log(`[Build/Restore] Old Neon DB not found. Creating NEW Neon DB: ${dbName}`);
-                
+                console.log(`[Build/Restore] Old DB '${existingDbName}' not found. Creating NEW DB: ${dbName}`);
                 const neonResult = await createNeonDatabase(dbName);
-
-                if (!neonResult.success) {
-                    throw new Error(`Neon DB creation failed: ${neonResult.error}`);
-                }
+                if (!neonResult.success) throw new Error(`Database creation failed: ${neonResult.error}`);
                 vars.DATABASE_URL = neonResult.connection_string;
                 neonAccountId = neonResult.account_id;
-                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW Neon DB (Account: ${neonAccountId}).`);
+                console.log(`[Build/Restore] Set DATABASE_URL for ${appName} to NEW DB (Account: ${neonAccountId}).`);
             }
+        } else {
+            actionText = "Creating NEW database";
+            console.log(`[Build/New] Creating NEW DB: ${dbName}`);
+            const neonResult = await createNeonDatabase(dbName);
+            if (!neonResult.success) throw new Error(`Database creation failed: ${neonResult.error}`);
+            vars.DATABASE_URL = neonResult.connection_string;
+            neonAccountId = neonResult.account_id;
+            console.log(`[Build/New] Set DATABASE_URL for ${appName} to NEW DB (Account: ${neonAccountId}).`);
+        }
         } else {
             // --- NEW DEPLOY PATH: Always create new DB ---
             actionText = "Creating NEW database";
