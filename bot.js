@@ -1478,22 +1478,6 @@ async function getBotStatusAuto(botName, userId) {
     return { status: 'Unknown', lastActive: 'N/A' };
 }
 
-async function checkFreeTrialEligibility(userId) {
-    try {
-        // Check if already used free trial
-        const result = await pool.query(
-            'SELECT COUNT(*) as count FROM user_deployments WHERE user_id = $1 AND is_free_trial = TRUE',
-            [userId]
-        );
-        if (result.rows[0].count > 0) {
-            return { eligible: false, reason: 'You have already used the free trial' };
-        }
-        return { eligible: true, reason: 'You are eligible!' };
-    } catch (err) {
-        console.error('[Trial Check Error]', err);
-        return { eligible: false, reason: 'Error checking eligibility' };
-    }
-}
 
 /**
  * Old fallback handler - kept for backwards compatibility
@@ -2662,7 +2646,7 @@ async function deleteBotCompletely(userId, appName) {
  * @param {string} varValue The new value for the variable.
  * @returns {Promise<{success: boolean, message: string}>}
  */
-async function updateRenderVar(varName, varValue) {
+async function updateRenderVar(varName, varValue, restart = true) {
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
         return { success: false, message: "Render API Key or Service ID is not set." };
@@ -2670,10 +2654,7 @@ async function updateRenderVar(varName, varValue) {
 
     let finalValue = varValue;
     if (varName.includes('URL')) {
-        finalValue = varValue.replace(/\/$/, ''); // Removes trailing slash
-        if (finalValue !== varValue) {
-            console.log(`[Sanitization] Automatically removed trailing slash from ${varName}.`);
-        }
+        finalValue = varValue.replace(/\/$/, '');
     }
 
     try {
@@ -2684,7 +2665,6 @@ async function updateRenderVar(varName, varValue) {
         };
         const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
 
-        // Step 1: Get current vars
         const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
         const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
 
@@ -2693,15 +2673,20 @@ async function updateRenderVar(varName, varValue) {
         } else {
             currentEnvVars.push({ envVar: { key: varName, value: finalValue } });
         }
-        
-        // Step 2: Update the variables
+
         const payload = currentEnvVars.map(item => item.envVar);
         await axios.put(envVarsUrl, payload, { headers });
-        
-        // ❗️ FIX: Explicitly trigger the restart after the variable update succeeds.
-        await triggerRenderRestart();
-        
-        return { success: true, message: `Successfully updated ${varName} on Render and triggered a restart.` };
+
+        // ✅ Update the LIVE process immediately so this running instance
+        // uses the correct value right away, without waiting for a restart.
+        process.env[varName] = finalValue;
+
+        // Only restart if explicitly asked to (default true keeps old callers working)
+        if (restart) {
+            await triggerRenderRestart();
+        }
+
+        return { success: true, message: `Successfully updated ${varName} on Render${restart ? ' and triggered a restart' : ''}.` };
     } catch (error) {
         const errorDetails = error.response?.data?.message || 'An unknown API error occurred.';
         console.error(`[Render API] Failed to update var ${varName}:`, errorDetails);
@@ -10181,10 +10166,9 @@ if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
     const varValue = msg.text.trim();
     const adminId = msg.chat.id.toString();
 
-    // Clean up the state and the previous message
     delete userStates[adminId];
     await bot.deleteMessage(adminId, messageId).catch(() => {});
-    
+
     const workingMsg = await bot.sendMessage(adminId, `⚙️ Got it. Attempting to update \`${varName}\` on Render...`);
 
     try {
@@ -10197,19 +10181,24 @@ if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
         const envVarsUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`;
 
         const { data: currentEnvVars } = await axios.get(envVarsUrl, { headers });
-
         const varIndex = currentEnvVars.findIndex(item => item.envVar.key === varName);
         if (varIndex > -1) {
             currentEnvVars[varIndex].envVar.value = varValue;
         } else {
             currentEnvVars.push({ envVar: { key: varName, value: varValue } });
         }
-        
+
         const payload = currentEnvVars.map(item => item.envVar);
         await axios.put(envVarsUrl, payload, { headers });
 
+        // FIX: apply locally right away
+        process.env[varName] = varValue;
+
+        // FIX: actually trigger the restart — this was missing entirely
+        await triggerRenderRestart();
+
         await bot.editMessageText(
-            `**Success!**\n\nVariable \`${varName}\` has been updated.\n\nA new deployment has been triggered on Render to apply the change.`,
+            `**Success!**\n\nVariable \`${varName}\` has been updated and a restart has been triggered on Render.`,
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
 
@@ -10221,7 +10210,7 @@ if (st && st.step === 'AWAITING_RENDER_VAR_VALUE') {
             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
         );
     }
-    return; // Stop further message processing
+    return;
 }
 
 
