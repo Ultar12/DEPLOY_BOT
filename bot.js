@@ -5535,20 +5535,33 @@ app.post('/api/raganork-callback', async (req, res) => {
 }
 
         else if (status === 'error') {
-            if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
+    if (intervalId) clearInterval(intervalId);
+    global.raganorkPairingRequests.delete(cleanNumber);
 
-            await bot.editMessageText(
-                `Automated pairing failed.\nReason: ${error}`, 
-                {
-                    chat_id: cid,
-                    message_id: messageId,
-                    reply_markup: {
-                        inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]]
-                    }
-                }
-            );
+    const isAdminChat = String(cid) === ADMIN_ID;
+
+    if (!isAdminChat) {
+        await bot.sendMessage(ADMIN_ID, 
+            `*[Raganork] Automated Pairing Failed*\n\n*User:* \`${cid}\`\n*Number:* \`+${cleanNumber}\`\n\n*Raw Error:*\n\`\`\`\n${String(error).substring(0, 3000)}\n\`\`\``, 
+            { parse_mode: 'Markdown' }
+        ).catch(err => console.error('[Raganork] Failed to alert admin of pairing error:', err.message));
+    }
+
+    const userFacingMessage = isAdminChat
+        ? `Automated pairing failed.\nReason: ${error}`
+        : `Failed to obtain session automatically. Please get your session manually.`;
+
+    await bot.editMessageText(
+        userFacingMessage, 
+        {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]]
+            }
         }
+    );
+}
     } catch (e) {
         console.error('[Raganork Webhook Error]', e.message);
     }
@@ -5610,20 +5623,33 @@ app.post('/api/levanter-callback', async (req, res) => {
 }
 
         else if (status === 'error') {
-            if (intervalId) clearInterval(intervalId);
-            global.levanterPairingRequests.delete(number);
+    if (intervalId) clearInterval(intervalId);
+    global.levanterPairingRequests.delete(number);
 
-            await bot.editMessageText(
-                `Automated pairing failed.\nReason: ${error}`, 
-                {
-                    chat_id: cid,
-                    message_id: messageId,
-                    reply_markup: {
-                        inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]]
-                    }
-                }
-            );
+    const isAdminChat = String(cid) === ADMIN_ID;
+
+    if (!isAdminChat) {
+        await bot.sendMessage(ADMIN_ID, 
+            `*[Levanter] Automated Pairing Failed*\n\n*User:* \`${cid}\`\n*Number:* \`+${number}\`\n\n*Raw Error:*\n\`\`\`\n${String(error).substring(0, 3000)}\n\`\`\``, 
+            { parse_mode: 'Markdown' }
+        ).catch(err => console.error('[Levanter] Failed to alert admin of pairing error:', err.message));
+    }
+
+    const userFacingMessage = isAdminChat
+        ? `Automated pairing failed.\nReason: ${error}`
+        : `Failed to obtain session automatically. Please get your session manually.`;
+
+    await bot.editMessageText(
+        userFacingMessage, 
+        {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]]
+            }
         }
+    );
+}
     } catch (e) {
         console.error('[Webhook Error]', e.message);
     }
