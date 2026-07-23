@@ -10290,11 +10290,12 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
               console.error('Error forwarding admin reply (support question):', e);
               await bot.sendMessage(cid, 'Failed to send your reply to the user. They might have blocked the bot or the chat no longer exists.');
           }
-          return;
+          return; // Only exit here — this reply was fully handled as a forward.
       }
-      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply or not from admin. Ignoring.`);
-      return;
-  }
+
+    
+      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply. Continuing normal processing.`);
+}
 
   if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
     // ❗️ FIX: Escape the user's question text immediately.
