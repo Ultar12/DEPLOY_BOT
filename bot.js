@@ -2810,68 +2810,52 @@ async function findAndDeleteNeonDatabase(dbName) {
 
 
 
-/**
- * Handles the entire automated workflow when a Heroku API key is found to be invalid.
- * @param {string} failingKey The API key that just failed.
- */
-// In bot.js (REPLACE the handleInvalidHerokuKeyWorkflow function)
-
 async function handleInvalidHerokuKeyWorkflow(failingKey) {
     if (isRecoveryInProgress) {
-        console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
+        console.log('[Recovery] Recovery already in progress. Ignoring trigger.');
         return;
     }
     isRecoveryInProgress = true;
-    console.log('[Recovery] Invalid Heroku API key detected! Starting automated recovery workflow.');
+    console.log('[Recovery] Invalid Heroku API key detected! Starting recovery workflow.');
 
     try {
-        // 1. Alert Admin and enable Maintenance Mode
-        await bot.sendMessage(ADMIN_ID, "**CRITICAL: Heroku API Key Invalid!**\n\nStarting automated recovery process. The bot is now in maintenance mode.", { parse_mode: 'Markdown' });
+        await bot.sendMessage(ADMIN_ID, "**CRITICAL: Heroku API Key Invalid!**\n\nStarting recovery. Bot is now in maintenance mode.", { parse_mode: 'Markdown' });
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
-        // 2. Get a new, valid key from the database 
         const newKeyResult = await pool.query(
             "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
             [failingKey]
         );
 
         if (newKeyResult.rows.length === 0) {
-            throw new Error("No alternative Heroku API keys found in the database. Manual intervention required.");
+            // ✅ NEW: no dead end — give admin a button
+            await bot.sendMessage(ADMIN_ID,
+                `**No Backup Key Found**\n\nNo alternative Heroku API key is stored. Tap below to enter one manually — recovery will resume automatically once it's applied.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: [[{ text: 'Change Heroku API Key', callback_data: 'recovery_manual_key_input' }]] }
+                }
+            );
+            return; // stay in maintenance + isRecoveryInProgress=true; the button handler takes over
         }
+
         const newKey = newKeyResult.rows[0].api_key;
         const newKeyId = newKeyResult.rows[0].id;
-        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
-        
-        // 3. Update the HEROKU_API_KEY on Render (This triggers the first restart)
+        await bot.sendMessage(ADMIN_ID, `Found a backup key: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
+
         const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
-        if (!updateResult.success) {
-            throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
-        }
-        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
+        if (!updateResult.success) throw new Error(`Failed to update Render var: ${updateResult.message}`);
 
-        // 4. Delete the used key from the database
+        await bot.sendMessage(ADMIN_ID, "`HEROKU_API_KEY` updated on Render. Restart triggered.");
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
-        console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 5. 💡 FIX: Schedule the Mass Restore in the database for 5 minutes from now 💡
-        const delayMinutes = 5;
-        const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
-
-        await pool.query(
-            `INSERT INTO recovery_schedule (task_name, scheduled_at, status) 
-             VALUES ($1, $2, $3)`,
-            ['MASS_RESTORE', scheduledTime, 'PENDING']
-        );
-        
-        // 6. Notify admin about the persistent wait
-        await bot.sendMessage(ADMIN_ID, `The bot is restarting now with the new key. A **Mass Restore** is now scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive the restart.`, { parse_mode: 'Markdown' });
+        await scheduleMassRecovery(5);
 
     } catch (error) {
-        console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
-        await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
-    } finally {
-        isRecoveryInProgress = false; // Reset flag on failure
+        console.error('[Recovery] CRITICAL ERROR:', error);
+        await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nStill in maintenance mode.`);
+        isRecoveryInProgress = false;
     }
 }
 
@@ -3566,6 +3550,139 @@ async function releaseTimedOutNumbers() {
 setInterval(releaseTimedOutNumbers, 60 * 1000);
 
 
+async function deployTlsStack(notifyChatId, triggerRestart = true) {
+    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY: currentKey, MESSAGE_BOT_API_KEY } = process.env;
+
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !currentKey) {
+        await bot.sendMessage(notifyChatId, "TLS Stack Deploy Skipped: Missing GMAIL credentials or Heroku Key.");
+        return { success: false, message: "Missing credentials." };
+    }
+
+    const progressMsg = await bot.sendMessage(notifyChatId, "Starting TLS Stack Deployment (3 Apps)...");
+    try {
+        await bot.editMessageText("(1/3) Deploying MessageBot...", { chat_id: notifyChatId, message_id: progressMsg.message_id });
+        const msgAppName = `msg-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: msgAppName });
+        await herokuApi.put(`/apps/${msgAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'heroku/nodejs' }
+            ]
+        });
+        await herokuApi.patch(`/apps/${msgAppName}/config-vars`, {
+            SECRET_API_KEY, MESSAGE_BOT_API_KEY, DATABASE_URL: process.env.DATABASE_URL,
+            HEROKU_API_KEY: currentKey, HEROKU_APP_NAME: msgAppName
+        });
+        await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+        const messageBotUrl = (await herokuApi.get(`/apps/${msgAppName}`)).data.web_url;
+
+        await bot.editMessageText("(2/3) Deploying ScraperBot...", { chat_id: notifyChatId, message_id: progressMsg.message_id });
+        const scAppName = `scr-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: scAppName });
+        await herokuApi.put(`/apps/${scAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'https://github.com/jontewks/heroku-buildpack-puppeteer-firefox' },
+                { buildpack: 'https://buildpack-registry.s3.amazonaws.com/buildpacks/heroku-community/chrome-for-testing.tgz' },
+                { buildpack: 'heroku/python' },
+                { buildpack: 'heroku/nodejs' }
+            ]
+        });
+        await herokuApi.patch(`/apps/${scAppName}/config-vars`, {
+            APP_URL: messageBotUrl, SECRET_API_KEY, PLAYWRIGHT_BROWSERS_PATH: '0'
+        });
+        await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar1/Scarper/tarball/main" } });
+        const scraperUrl = (await herokuApi.get(`/apps/${scAppName}`)).data.web_url;
+
+        await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: notifyChatId, message_id: progressMsg.message_id });
+        const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: emAppName });
+        await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY });
+        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+        const emailServiceUrl = (await herokuApi.get(`/apps/${emAppName}`)).data.web_url;
+
+        await bot.editMessageText("Finalizing: Updating Render variables...", { chat_id: notifyChatId, message_id: progressMsg.message_id });
+        await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl, false);
+        await updateRenderVar('PAIRING_URL', scraperUrl, false);
+        if (triggerRestart) await triggerRenderRestart();
+
+        await bot.editMessageText(
+            `Full TLS Stack Deployed Successfully\n\nMessage Bot: ${messageBotUrl}\nPAIRING_URL: ${scraperUrl}\nEmail Service: ${emailServiceUrl}` +
+            (triggerRestart ? `\n\nRender is restarting to apply the new links.` : ``),
+            { chat_id: notifyChatId, message_id: progressMsg.message_id }
+        );
+        return { success: true };
+    } catch (error) {
+        const errDetails = error.response?.data?.message || error.message;
+        await bot.editMessageText(`TLS Deployment Failed\n\nReason: ${errDetails}`, { chat_id: notifyChatId, message_id: progressMsg.message_id });
+        return { success: false, message: errDetails };
+    }
+}
+
+bot.onText(/^\/deploytls$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+    await deployTlsStack(adminId); // default true — manual command still restarts as before
+});
+
+
+async function performSilentMassRestore(botType) {
+    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
+    let successCount = 0, failureCount = 0;
+    const failureLog = [];
+
+    for (const deployment of deployments) {
+        try {
+            const result = await dbServices.silentRestoreBuild(deployment.user_id, deployment.config_vars, botType, false);
+            if (!result.success) throw new Error(result.error || "Build failed or timed out.");
+            successCount++;
+        } catch (error) {
+            failureCount++;
+            failureLog.push(`\`${deployment.app_name}\` (Owner: \`${deployment.user_id}\`): ${String(error.message).substring(0, 100)}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 15000));
+    }
+    return { total: deployments.length, successCount, failureCount, failureLog };
+}
+
+async function performMassRestoreSequence(taskId) {
+    try {
+        await bot.sendMessage(ADMIN_ID, `**Starting Full Recovery** (Task \`${taskId}\`)\n\nBot owners will NOT be notified during this process.`, { parse_mode: 'Markdown' });
+
+        await bot.sendMessage(ADMIN_ID, "**Step 1/4: Redeploying TLS Stack**", { parse_mode: 'Markdown' });
+        const tlsResult = await deployTlsStack(ADMIN_ID, false); // ✅ no restart — would kill this sequence
+        if (!tlsResult.success) {
+            await bot.sendMessage(ADMIN_ID, `TLS stack failed: ${tlsResult.message}\n\nContinuing to bot restoration.`, { parse_mode: 'Markdown' });
+        }
+
+        await bot.sendMessage(ADMIN_ID, "**Step 2/4: Restoring Levanter (silent)**", { parse_mode: 'Markdown' });
+        const lev = await performSilentMassRestore('levanter');
+        await bot.sendMessage(ADMIN_ID, `Levanter: ${lev.successCount}/${lev.total} ok, ${lev.failureCount} failed.${lev.failureLog.length ? '\n' + lev.failureLog.join('\n') : ''}`, { parse_mode: 'Markdown' });
+
+        await bot.sendMessage(ADMIN_ID, "**Step 3/4: Restoring Raganork (silent)**", { parse_mode: 'Markdown' });
+        const rag = await performSilentMassRestore('raganork');
+        await bot.sendMessage(ADMIN_ID, `Raganork: ${rag.successCount}/${rag.total} ok, ${rag.failureCount} failed.${rag.failureLog.length ? '\n' + rag.failureLog.join('\n') : ''}`, { parse_mode: 'Markdown' });
+
+        await bot.sendMessage(ADMIN_ID, "**Step 4/4: Restoring Hermit (silent)**", { parse_mode: 'Markdown' }); // ✅ was completely missing before
+        const herm = await performSilentMassRestore('hermit');
+        await bot.sendMessage(ADMIN_ID, `Hermit: ${herm.successCount}/${herm.total} ok, ${herm.failureCount} failed.${herm.failureLog.length ? '\n' + herm.failureLog.join('\n') : ''}`, { parse_mode: 'Markdown' });
+
+        await pool.query("UPDATE recovery_schedule SET status = 'COMPLETED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        isMaintenanceMode = false;
+        await saveMaintenanceStatus(false);
+        isRecoveryInProgress = false;
+
+        await bot.sendMessage(ADMIN_ID, `**Full Recovery Complete!** Maintenance mode disabled.`, { parse_mode: 'Markdown' });
+
+    } catch (restoreError) {
+        console.error(`[Mass Restore] CRITICAL ERROR (Task ${taskId}):`, restoreError);
+        await pool.query("UPDATE recovery_schedule SET status = 'FAILED', scheduled_at = NOW() WHERE id = $1", [taskId]);
+        isRecoveryInProgress = false;
+        await bot.sendMessage(ADMIN_ID, `**Recovery Failed!** (Task \`${taskId}\`)\n\nReason: ${restoreError.message}\n\nStill in maintenance mode.`);
+    }
+}
+
+
 
 async function sendBannedUsersList(chatId, messageId = null) {
     if (String(chatId) !== ADMIN_ID) return;
@@ -4209,39 +4326,63 @@ async function triggerRenderRestart() {
 }
 
 
-// In bot.js (REPLACE the checkHerokuApiKey function)
-
-async function checkHerokuApiKey() {
-    if (!HEROKU_API_KEY) {
-        console.error('[API Check] CRITICAL: HEROKU_API_KEY is not set.');
+async function handleInvalidHerokuKeyWorkflow(failingKey) {
+    if (isRecoveryInProgress) {
+        console.log('[Recovery] Recovery already in progress. Ignoring trigger.');
         return;
     }
+    isRecoveryInProgress = true;
+    console.log('[Recovery] Invalid Heroku API key detected! Starting recovery workflow.');
 
     try {
-        await axios.get('https://api.heroku.com/account', {
-            headers: {
-                'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                'Accept': 'application/vnd.heroku+json; version=3'
-            }
-        });
-        
-        console.log('[API Check] Periodic check: Heroku API key is valid.');
+        await bot.sendMessage(ADMIN_ID, "**CRITICAL: Heroku API Key Invalid!**\n\nStarting recovery. Bot is now in maintenance mode.", { parse_mode: 'Markdown' });
+        isMaintenanceMode = true;
+        await saveMaintenanceStatus(true);
+
+        const newKeyResult = await pool.query(
+            "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
+            [failingKey]
+        );
+
+        if (newKeyResult.rows.length === 0) {
+            // ✅ NEW: no dead end — give admin a button
+            await bot.sendMessage(ADMIN_ID,
+                `**No Backup Key Found**\n\nNo alternative Heroku API key is stored. Tap below to enter one manually — recovery will resume automatically once it's applied.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: [[{ text: 'Change Heroku API Key', callback_data: 'recovery_manual_key_input' }]] }
+                }
+            );
+            return; // stay in maintenance + isRecoveryInProgress=true; the button handler takes over
+        }
+
+        const newKey = newKeyResult.rows[0].api_key;
+        const newKeyId = newKeyResult.rows[0].id;
+        await bot.sendMessage(ADMIN_ID, `Found a backup key: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
+
+        const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
+        if (!updateResult.success) throw new Error(`Failed to update Render var: ${updateResult.message}`);
+
+        await bot.sendMessage(ADMIN_ID, "`HEROKU_API_KEY` updated on Render. Restart triggered.");
+        await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
+
+        await scheduleMassRecovery(5);
 
     } catch (error) {
-        if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-            
-            const status = error.response.status;
-            const reason = status === 403 ? 'Forbidden/Suspended' : 'Unauthorized';
-            
-            console.error(`[API Check] Status ${status} (${reason}): Triggering recovery workflow...`);
-            
-            // Trigger the auto-replacement logic (where the DB logic resides)
-            await handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
-
-        } else {
-            console.error(`[API Check] An unexpected error occurred during periodic check:`, error.message);
-        }
+        console.error('[Recovery] CRITICAL ERROR:', error);
+        await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nStill in maintenance mode.`);
+        isRecoveryInProgress = false;
     }
+}
+
+
+async function scheduleMassRecovery(delayMinutes = 5) {
+    const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
+    await pool.query(
+        `INSERT INTO recovery_schedule (task_name, scheduled_at, status) VALUES ($1, $2, $3)`,
+        ['MASS_RESTORE', scheduledTime, 'PENDING']
+    );
+    await bot.sendMessage(ADMIN_ID, `**Full Recovery** (TLS stack + bot restoration) scheduled for ${scheduledTime.toLocaleTimeString()}. Saved in DB — survives the restart.`, { parse_mode: 'Markdown' });
 }
 
 
@@ -4717,8 +4858,11 @@ await recoverReminders();
     await loadMaintenanceStatus(); // Load initial maintenance status
 // In bot.js, inside the main (async () => { ... })(); startup block
 
-  startScheduledTasks();
-    await checkHerokuApiKey(); 
+
+startScheduledTasks();
+await checkHerokuApiKey();
+setInterval(checkHerokuApiKey, 10 * 60 * 1000); // ✅ now actually periodic
+console.log('[API Check] Scheduled periodic Heroku API key validation every 15 minutes.');    
 
   setTimeout(async () => {
       try {
@@ -11073,7 +11217,28 @@ if (st && st.step === 'AWAITING_APP_NAME') {
 // ... existing code ...
 
 
+if (st && st.step === 'AWAITING_RECOVERY_HEROKU_KEY') {
+    const newKey = text.trim();
+    delete userStates[cid];
 
+    if (newKey.length < 30) {
+        isRecoveryInProgress = false;
+        return bot.sendMessage(cid, 'That does not look like a valid key (too short). Recovery paused — try again or wait for the next automatic check.');
+    }
+
+    const workingMsg = await bot.sendMessage(cid, 'Applying new key and restarting...');
+    try {
+        const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
+        if (!updateResult.success) throw new Error(updateResult.message);
+
+        await bot.editMessageText('Key applied. Bot is restarting now.', { chat_id: cid, message_id: workingMsg.message_id });
+        await scheduleMassRecovery(5);
+    } catch (error) {
+        isRecoveryInProgress = false;
+        await bot.editMessageText(`Failed to apply key: ${error.message}`, { chat_id: cid, message_id: workingMsg.message_id });
+    }
+    return;
+}
 
 
   if (st && st.step === 'SETVAR_ENTER_VALUE') { // This state is reached after variable selection or overwrite confirmation
@@ -12245,6 +12410,16 @@ if (action === 'confirm_updateall') {
             parse_mode: 'Markdown'
         });
     }
+}
+
+
+if (action === 'recovery_manual_key_input') {
+    if (cid !== ADMIN_ID) return;
+    userStates[cid] = { step: 'AWAITING_RECOVERY_HEROKU_KEY', data: {} };
+    await bot.editMessageText('Send the new Heroku API Key now. Recovery resumes automatically once applied.', {
+        chat_id: cid, message_id: q.message.message_id
+    });
+    return;
 }
 
 
