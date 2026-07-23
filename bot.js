@@ -7392,9 +7392,10 @@ bot.onText(/^\/deploytls$/, async (msg) => {
 
         // Injects MessageBot URL into Scraper as APP_URL
         await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
-            APP_URL: messageBotUrl,
-            SECRET_API_KEY 
-        });
+    APP_URL: messageBotUrl,
+    SECRET_API_KEY,
+    PLAYWRIGHT_BROWSERS_PATH: '0'
+});
 
         await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
 
