@@ -364,34 +364,65 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
 }
 
 
-
 async function getAwsDbConnectionString(appName) {
-    try {
-        // We look for a record matching the app name AND the assumed AWS account ID
-        const result = await pool.query(
+    // Runs the AWS-DB lookup against a given pool. Returns the connection string,
+    // or null if there's no usable AWS_MAIN record for this app in that pool.
+    const lookupInPool = async (dbPool) => {
+        const result = await dbPool.query(
             `SELECT config_vars FROM user_deployments 
              WHERE app_name = $1 AND neon_account_id = 'AWS_MAIN'`,
             [appName]
         );
 
-        if (result.rows.length === 0) {
-            return { success: false, message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)." };
-        }
+        if (result.rows.length === 0) return null;
 
         const configVars = result.rows[0].config_vars;
-        const dbUrl = configVars?.DATABASE_URL;
+        return configVars?.DATABASE_URL || null;
+    };
 
-        if (!dbUrl) {
-            return { success: false, message: "DATABASE_URL not found in the stored configuration variables." };
+    // 1. Try the main database first
+    let mainDbError = null;
+    try {
+        const dbUrl = await lookupInPool(pool);
+        if (dbUrl) {
+            return { success: true, dbUrl: dbUrl };
         }
-
-        return { success: true, dbUrl: dbUrl };
-
+        console.warn(`[DB] getAwsDbConnectionString: No usable AWS record for "${appName}" in main DB. Checking backup DB...`);
     } catch (error) {
-        console.error(`[DB] Error fetching AWS DB URL for ${appName}:`, error.message);
-        return { success: false, message: `Database error: ${error.message}` };
+        mainDbError = error;
+        console.error(`[DB] getAwsDbConnectionString: Main DB error for "${appName}": ${error.message}. Falling back to backup DB...`);
+    }
+
+    // 2. Main DB came up empty or errored — fall back to backupPool
+    if (!backupPool) {
+        console.error('[DB-Backup] getAwsDbConnectionString: backupPool is not initialized, cannot fall back.');
+        return {
+            success: false,
+            message: mainDbError
+                ? `Main DB error: ${mainDbError.message}`
+                : "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)."
+        };
+    }
+
+    try {
+        const dbUrl = await lookupInPool(backupPool);
+        if (dbUrl) {
+            console.log(`[DB-Backup] getAwsDbConnectionString: Found AWS record for "${appName}" in backup DB.`);
+            return { success: true, dbUrl: dbUrl };
+        }
+        return {
+            success: false,
+            message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing) in either main or backup DB."
+        };
+    } catch (backupError) {
+        console.error(`[DB-Backup] getAwsDbConnectionString: Backup DB error for "${appName}": ${backupError.message}`);
+        return {
+            success: false,
+            message: `Database error — main: ${mainDbError ? mainDbError.message : 'no record'}, backup: ${backupError.message}`
+        };
     }
 }
+
 
 
 /**
@@ -417,75 +448,7 @@ async function storeNewVcfContact(userId, fullName, phoneNumber) {
     }
 }
 
-/**
- * Generates the VCF file, deletes the data, and sends it to the group.
- * Assumes the targetChatId (Group ID) is passed in the .env or config.
- */
-async function generateAndSendVcf(targetGroupId, adminId) {
-    console.log('[VCF] Starting VCF generation and cleanup task...');
-    
-    // 1. Fetch all contacts
-    const contactsResult = await pool.query('SELECT full_name, phone_number FROM vcf_contacts ORDER BY full_name ASC');
-    const contacts = contactsResult.rows;
 
-    if (contacts.length === 0) {
-        console.log('[VCF] No new contacts to process.');
-        return;
-    }
-    
-    // 2. Build VCF Content (using vCard 3.0 standard)
-    let vcfContent = '';
-    const VCF_SUFFIX = ' WBD';
-
-    contacts.forEach(c => {
-        const displayName = `${c.full_name}${VCF_SUFFIX}`;
-        
-        vcfContent += 'BEGIN:VCARD\r\n';
-        vcfContent += 'VERSION:3.0\r\n';
-        vcfContent += `FN:${displayName}\r\n`;
-        vcfContent += `N:${c.full_name};;;;\r\n`;
-        vcfContent += `TEL;TYPE=CELL:${c.phone_number}\r\n`;
-        vcfContent += 'END:VCARD\r\n';
-    });
-
-    // 3. Save VCF to buffer/memory
-    const fileName = `WBD_Contacts_${new Date().toISOString().substring(0, 10)}.vcf`;
-    const vcfBuffer = Buffer.from(vcfContent, 'utf8');
-
-    // --- 💡 START OF CRITICAL FIX 💡 ---
-    // We must define the file options, including the MIME type for VCF files
-    const fileOptions = {
-        filename: fileName,
-        contentType: 'text/vcard' // This line fixes the "Unsupported Buffer" error
-    };
-    // --- 💡 END OF CRITICAL FIX 💡 ---
-
-    // 4. Send the file to Telegram Group
-    try {
-        await moduleParams.bot.sendDocument(targetGroupId, vcfBuffer, {
-            // These are the message options (Argument 3)
-            caption: `**Generated VCF file contains ${contacts.length} new contacts. Download and import for status boosting!`,
-            parse_mode: 'Markdown'
-        }, fileOptions); // <-- Pass the fileOptions as Argument 4
-
-        // Notify admin of success
-        await moduleParams.bot.sendMessage(adminId, `VCF file containing ${contacts.length} contacts sent to group ${targetGroupId}.`, { parse_mode: 'Markdown' });
-
-    } catch (e) {
-        console.error('[VCF] Failed to send VCF document:', e.message);
-        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to send VCF file to group ${targetGroupId}. Error: ${e.message}`, { parse_mode: 'Markdown' });
-        return;
-    }
-
-    // 5. Delete all records
-    try {
-        await pool.query('TRUNCATE vcf_contacts');
-        console.log('[VCF] Successfully deleted all contact records.');
-    } catch (e) {
-        console.error('[VCF] CRITICAL: Failed to truncate vcf_contacts table:', e.message);
-        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to delete contacts from database after sending VCF. Manual check required.`, { parse_mode: 'Markdown' });
-    }
-}
 
 
 async function removeBlacklistedName(chatId, nameFragment) {
@@ -828,53 +791,6 @@ async function getExpiredBackups() {
     }
 }
 
-
-// In bot_services.js (add with your other DB functions)
-
-async function getGroupSettings(chatId) {
-  try {
-    const result = await pool.query('SELECT welcome_message, welcome_enabled FROM group_settings WHERE chat_id = $1', [chatId]);
-    if (result.rows.length > 0) {
-      return result.rows[0];
-    }
-    // Return default settings if not found
-    return { welcome_message: null, welcome_enabled: false };
-  } catch (error) {
-    console.error(`[DB] Failed to get group settings for chat ${chatId}:`, error.message);
-    return { welcome_message: null, welcome_enabled: false }; // Default on error
-  }
-}
-
-async function setGroupWelcome(chatId, enabled) {
-  try {
-    await pool.query(
-      `INSERT INTO group_settings (chat_id, welcome_enabled) 
-       VALUES ($1, $2) 
-       ON CONFLICT (chat_id) DO UPDATE SET welcome_enabled = EXCLUDED.welcome_enabled`,
-      [chatId, enabled]
-    );
-    return { success: true };
-  } catch (error) {
-    console.error(`[DB] Failed to set welcome enabled for chat ${chatId}:`, error.message);
-    return { success: false, error: error.message };
-  }
-}
-
-async function setGroupWelcomeMessage(chatId, message) {
-  try {
-    // Also enable welcome when a custom message is set
-    await pool.query(
-      `INSERT INTO group_settings (chat_id, welcome_message, welcome_enabled) 
-       VALUES ($1, $2, TRUE) 
-       ON CONFLICT (chat_id) DO UPDATE SET welcome_message = EXCLUDED.welcome_message, welcome_enabled = TRUE`,
-      [chatId, message]
-    );
-    return { success: true };
-  } catch (error) {
-    console.error(`[DB] Failed to set welcome message for chat ${chatId}:`, error.message);
-    return { success: false, error: error.message };
-  }
-}
 
 
 async function getUserIdByBotName(botName) {
@@ -2530,10 +2446,13 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 }
 
 
+
+                    
 /**
  * TRULY SILENTLY restores a Heroku app.
- * Sends NO messages to admin.
- * Sends messages to the USER ONLY on build failure or connection failure.
+ * NEVER sends any message to the target user (build progress or failure).
+ * Notifies ADMIN_ID only when something goes wrong (DB/build failure or connection/login failure),
+ * so a mass restore stays invisible to end users while the admin can still catch problems.
  */
 async function silentRestoreBuild(targetChatId, vars, botType) {
     // 1. Get all the tools from moduleParams
@@ -2607,51 +2526,34 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
 
-        // --- ❗️ STEP 2: NEON DATABASE LOGIC ❗️ ---
-        const dbName = appName.replace(/-/g, '_'); // Canonical DB name from potentially new app name
-        
+        // --- ❗️ STEP 2: DATABASE LOGIC (AWS-first, same pattern as buildWithProgress) ❗️ ---
+        const dbName = appName.replace(/-/g, '_'); // Only used if we end up provisioning a brand new DB
+
         let provisionSuccess = false;
-        
-        // 1. Check if the saved variables contain a connection string pointing to Neon
-        const hasNeonDBUrl = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
-        if (isRestore && hasNeonDBUrl) {
-            // --- RESTORE PATH: INTELLIGENT CHECK ---
-            console.log(`[SilentRestore] Attempting to find existing Neon DB: ${dbName} for re-use.`);
-            const dbCheckResult = await checkIfDatabaseExists(dbName);
+        // Look up the app's AWS database directly from user_deployments, keyed on the ORIGINAL
+        // app name (that's what the backup record was saved under, before any rename above).
+        console.log(`[SilentRestore] Looking up AWS database for "${originalAppName}" in user_deployments...`);
+        const awsLookup = await getAwsDbConnectionString(originalAppName);
 
-            if (dbCheckResult.exists) {
-                // A. Database found! Re-use the existing connection string and account ID.
-                vars.DATABASE_URL = dbCheckResult.connection_string; 
-                neonAccountId = dbCheckResult.account_id;
-                provisionSuccess = true;
-                console.log(`[SilentRestore] RE-USED existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
-            } else {
-                // B. Database not found. Provision NEW.
-                console.log(`[SilentRestore] Old Neon DB not found. Provisioning NEW Neon DB: ${dbName}`);
-                const neonResult = await createNeonDatabase(dbName);
-
-                if (neonResult.success) {
-                    vars.DATABASE_URL = neonResult.connection_string;
-                    neonAccountId = neonResult.account_id;
-                    provisionSuccess = true;
-                    console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) for migration.`);
-                } else {
-                    return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
-                }
-            }
+        if (awsLookup.success && awsLookup.dbUrl) {
+            // A. Found the app's existing AWS-hosted database on record. Re-use it as-is.
+            vars.DATABASE_URL = awsLookup.dbUrl;
+            neonAccountId = 'AWS_MAIN';
+            provisionSuccess = true;
+            console.log(`[SilentRestore] RE-USED existing AWS DB for "${originalAppName}".`);
         } else {
-            // --- NEW DEPLOY PATH / NON-NEON MIGRATION ---
-            console.log(`[SilentRestore] Migrating/New Deploy: Creating NEW Neon DB: ${dbName}`);
+            // B. No AWS record found for this app — provision a brand new database.
+            console.log(`[SilentRestore] No AWS DB found for "${originalAppName}" (${awsLookup.message || 'not found'}). Creating NEW database: ${dbName}`);
             const neonResult = await createNeonDatabase(dbName);
-            
+
             if (neonResult.success) {
                 vars.DATABASE_URL = neonResult.connection_string;
                 neonAccountId = neonResult.account_id;
                 provisionSuccess = true;
-                console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) during migration.`);
+                console.log(`[SilentRestore] Created NEW database: ${dbName} (Account: ${neonAccountId}).`);
             } else {
-                return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
+                return { success: false, error: `Database creation failed: ${neonResult.error}`, appName: appName };
             }
         }
         
@@ -2760,7 +2662,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             finalConfigVarsAfterBuild, botType, isFreeTrial, vars.expiration_date, vars.email, neonAccountId
         );
 
-        // --- "Wait for Connect" Logic (MODIFIED FOR SILENCE) ---
+        // --- "Wait for Connect" Logic (SILENT TO USER — admin is pinged only on failure) ---
         if (String(targetChatId) !== ADMIN_ID) {
             const appStatusPromise = new Promise((resolve, reject) => {
                 const STATUS_CHECK_TIMEOUT = 300 * 1000;
@@ -2777,20 +2679,22 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 await appStatusPromise; // Wait for bot to connect
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
-                buildResult = true; // Success, do not notify user
+                buildResult = true; // Success — stays completely silent
             } catch (err) {
-                // --- FAILURE: THIS IS THE "LOGGED OUT" EXCEPTION ---
+                // --- FAILURE: "LOGGED OUT" — notify ADMIN only, never the user ---
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
                 
-                await bot.sendMessage(
-                    targetChatId,
-                    `Your restored bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
-                    }
-                ).catch(()=>{});
+                if (ADMIN_ID) {
+                    await bot.sendMessage(
+                        ADMIN_ID,
+                        `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to start: ${escapeMarkdown(err.message)}\n\nMay need a new session ID.`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                        }
+                    ).catch(()=>{});
+                }
                 
                 // Return failure
                 return { success: false, error: err.message, appName: appName };
@@ -2798,22 +2702,21 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 appDeploymentPromises.delete(appName);
             }
         } else {
-            buildResult = true; // Admin is user, no need to wait
+            buildResult = true; // Admin is the target, no need to wait
         }
 
         // Return success
         return { success: true, appName: appName };
 
     } catch (error) {
-        // --- Main build failure ---
+        // --- Main build failure — notify ADMIN only, never the user ---
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[SilentRestore Build Error] Failed to build app ${appName}:`, errorMsg);
         
-        // --- Notify User of Build Fail ---
-        if (String(targetChatId) !== ADMIN_ID) {
+        if (ADMIN_ID) {
             await bot.sendMessage(
-                targetChatId, 
-                `Your bot *${escapeMarkdown(appName)}* failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
+                ADMIN_ID, 
+                `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
                 { parse_mode: 'Markdown' }
             ).catch(()=>{});
         }
@@ -2822,7 +2725,6 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         return { success: false, error: errorMsg, appName: appName };
     }
 }
-
 
 
 
@@ -2861,7 +2763,6 @@ module.exports = {
     handleAppNotFoundAndCleanDb,
     sendAppList,
     processBotSwitch,
-    generateAndSendVcf,
     storeNewVcfContact,
     permanentlyDeleteBotRecord,
     deleteUserBot,
