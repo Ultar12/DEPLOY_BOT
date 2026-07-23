@@ -2785,8 +2785,5 @@ module.exports = {
     getExpiredBackups,
     getBlacklistedNames,
     removeBlacklistedName,
-    setGroupWelcomeMessage,
-    setGroupWelcome,
-    getGroupSettings,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
