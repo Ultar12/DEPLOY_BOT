@@ -2247,32 +2247,37 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                  // --- Step 7: Handle Build Succeeded ---
         console.log(`[Flow] buildWithProgress: Heroku build for "${appName}" SUCCEEDED.`);
 
-        // NEW: AUTOMATIC DYNO CONFIGURATION (LEVANTER ONLY)
-        if (botType === 'levanter') {
-            try {
-                console.log(`[Dyno] Auto-scaling Levanter "${appName}" to Standard-2X...`);
-                await herokuApi.patch(`/apps/${appName}/formation`, {
-                    updates: [{
-                        process: 'web',
-                        quantity: 1,
-                        size: 'standard-2x' // Use lowercase for API compatibility
-                    }]
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                        'Accept': 'application/vnd.heroku+json; version=3'
-                    }
-                });
-                console.log(`[Dyno] Levanter "${appName}" is now live on Standard-2X.`);
-            } catch (dynoError) {
-                console.error(`[Dyno Error] Could not auto-scale Levanter:`, dynoError.response?.data || dynoError.message);
-                // Fallback: try to just turn it on if Standard-2X fails
-                await herokuApi.patch(`/apps/${appName}/formation`, {
-                    updates: [{ process: 'web', quantity: 1 }]
-                }).catch(() => {});
+        // AUTOMATIC DYNO CONFIGURATION (LEVANTER + RAGANORK)
+if (botType === 'levanter' || botType === 'raganork') {
+    try {
+        console.log(`[Dyno] Auto-scaling "${appName}" (${botType}) to Standard-2X...`);
+        await herokuApi.patch(`/apps/${appName}/formation`, {
+            updates: [{
+                process: 'web',
+                quantity: 1,
+                size: 'standard-2x'
+            }]
+        }, {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
             }
-        } 
-        // --- END OF DYNO LOGIC ---
+        });
+        console.log(`[Dyno] "${appName}" (${botType}) is now live on Standard-2X.`);
+    } catch (dynoError) {
+        console.error(`[Dyno Error] Could not auto-scale ${botType} "${appName}":`, dynoError.response?.data || dynoError.message);
+        // Fallback: try to just turn it on if Standard-2X fails
+        await herokuApi.patch(`/apps/${appName}/formation`, {
+            updates: [{ process: 'web', quantity: 1 }]
+        }, {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        }).catch(() => {});
+    }
+} 
+// --- END OF DYNO LOGIC ---
 
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { 
             headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
