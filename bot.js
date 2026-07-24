@@ -9618,17 +9618,30 @@ if (st && st.step === 'AWAITING_KEY_FOR_SWITCH') {
         return bot.sendMessage(cid, "Invalid or expired key.");
     }
     
+    // 🔧 Capture what we need, then clear state RIGHT AWAY —
+    // don't leave the user "trapped" in this step during the build.
+    const { appName, targetType, sessionId, messageId } = st.data;
+    delete userStates[cid];
+
+    // 🔧 Delete the "Complete Migration" prompt now that the key is used
+    if (messageId) {
+        await bot.deleteMessage(cid, messageId).catch(() => {});
+    }
+    
     await bot.sendMessage(cid, "Key verified! Starting migration...");
     
-    // CALL THE SERVICE FUNCTION
-    await dbServices.processBotSwitch(cid, st.data.appName, st.data.targetType, st.data.sessionId);
+    // Fire the long-running build AFTER state is already cleared,
+    // so other commands work normally while this runs in the background.
+    dbServices.processBotSwitch(cid, appName, targetType, sessionId)
+        .catch(err => {
+            console.error(`[Switch] processBotSwitch failed for ${cid}/${appName}:`, err);
+            bot.sendMessage(cid, `❌ Migration failed: ${err.message}`).catch(() => {});
+        });
     
-    delete userStates[cid];
     return;
 }
 
-// In bot.js, inside bot.on('message', ...)
-
+    
 if (st && st.step === 'AWAITING_OTP') {
     const userOtp = text.trim();
     if (!/^\d{6}$/.test(userOtp)) {
@@ -9702,106 +9715,6 @@ if (st && st.step === 'AWAITING_OTP') {
 }
 
 
-// --- NEW STATE: AWAITING CONTACT NAME ---
-if (st && st.step === 'AWAITING_VCF_NAME') {
-    const fullName = text.trim();
-    if (fullName.length < 3 || fullName.length > 50) {
-        return bot.sendMessage(cid, "Your name must be between 3 and 50 characters. Please try again.");
-    }
-
-    st.data.fullName = fullName;
-    st.step = 'AWAITING_VCF_NUMBER';
-    
-    return bot.sendMessage(cid, "Great. Now, please enter your WhatsApp number in **full international format** (e.g., `+23491...`):", { parse_mode: 'Markdown' });
-}
-
-// --- NEW STATE: AWAITING CONTACT NUMBER ---
-if (st && st.step === 'AWAITING_VCF_NUMBER') {
-    const phoneNumber = text.trim();
-    const phoneRegex = /^\+\d{10,15}$/; // Validates + followed by 10-15 digits
-
-    if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, "Invalid format. Please ensure the number starts with the country code (e.g., `+234...`).");
-    }
-
-    st.data.phoneNumber = phoneNumber;
-    st.step = 'AWAITING_VCF_CONFIRM';
-
-    const reviewMessage = `*Review Your Contact Details:*\n\n` +
-                          `*Name:* ${escapeMarkdown(st.data.fullName)} WBD\n` +
-                          `*Number:* \`${escapeMarkdown(phoneNumber)}\`\n\n` +
-                          `Tap 'Submit'.`;
-
-    await bot.sendMessage(cid, reviewMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Submit Number', callback_data: `vcf_submit_confirm` }],
-                [{ text: 'Edit Details', callback_data: `vcf_start_over` }]
-            ]
-        }
-    });
-    return;
-}
-
-// In bot.js (inside bot.on('message', ...) handler)
-
-// --- STEP 2: AWAITING GROUP LINK ---
-if (st && st.step === 'AWAITING_GROUP_LINK') {
-    const groupLink = text.trim();
-    // Validate common WhatsApp group link format (https://chat.whatsapp.com/...)
-    if (!groupLink.startsWith('https://chat.whatsapp.com/')) {
-        return bot.sendMessage(cid, "❌ Invalid Link. Please send the full WhatsApp group invite link, starting with `https://chat.whatsapp.com/`.");
-    }
-
-    st.data.groupLink = groupLink;
-    st.step = 'AWAITING_MEMBER_AMOUNT';
-
-    const rate = process.env.RATE_PER_NUMBER || 50;
-    
-    return bot.sendMessage(cid, 
-        `Group Link received. The rate is **₦${rate} per number**.\n\n` +
-        `How many members do you want to add? (Min: 1, Max: 500)`, 
-        { parse_mode: 'Markdown' }
-    );
-}
-
-// --- STEP 3: AWAITING MEMBER AMOUNT & CONFIRMATION ---
-if (st && st.step === 'AWAITING_MEMBER_AMOUNT') {
-    const amount = parseInt(text.trim(), 10);
-    const rate = parseInt(process.env.RATE_PER_NUMBER || '50', 10);
-
-    if (isNaN(amount) || amount < 1 || amount > 500) {
-        return bot.sendMessage(cid, "❌ Invalid Amount. Please enter a number between 1 and 500.");
-    }
-    
-    const totalPrice = amount * rate;
-    
-    // Save data and transition to confirmation
-    st.data.memberAmount = amount;
-    st.data.totalPrice = totalPrice;
-    st.step = 'AWAITING_GROUP_CONFIRM';
-    
-    const confirmationMessage = 
-        `**ORDER SUMMARY**\n\n` +
-        `**Members to Add:** ${amount}\n` +
-        `**Price per Member:** ₦${rate}\n` +
-        `───────────────────────\n` +
-        `**TOTAL COST:** ₦${totalPrice.toLocaleString()}\n\n` +
-        `Group Link: \`${st.data.groupLink}\`\n\n` +
-        `Do you want to proceed with payment?`;
-
-    await bot.sendMessage(cid, confirmationMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: `Pay ₦${totalPrice.toLocaleString()}`, callback_data: `group_filler_pay:${totalPrice}` }],
-                [{ text: 'Cancel Order', callback_data: 'group_filler_cancel' }]
-            ]
-        }
-    });
-    return;
-}
 
 
 // In bot.js, inside bot.on('message', ...)
@@ -12611,82 +12524,7 @@ if (action === 'back_to_bapp_list') {
 
   
   
-  if (action === 'Referrals') {
-    // 1. Get user and message details
-    const userId = q.from.id.toString();
-    const chatId = q.message.chat.id;
-    const messageId = q.message.message_id;
-
-    // 2. Create the referral link
-    const referralLink = `https://t.me/${botUsername}?start=${userId}`; // Use userId, not ref_userId
-
-    await dbServices.updateUserActivity(userId);
-
-    // 3. Fetch the list of referred users from the database
-    const referredUsersResult = await pool.query(
-        'SELECT referred_user_id, bot_name FROM user_referrals WHERE inviter_user_id = $1',
-        [userId]
-    );
-    const referredUsers = referredUsersResult.rows;
-
-    // --- 🎨 DESIGN UPDATE START 🎨 ---
-    
-    // Build the text-art message using Markdown
-    let referralMessage = `*═══ YOUR REFERRALS ═══⊷*\n`;
-    referralMessage += `┃❃╭──────────────\n`;
-    referralMessage += `┃❃│ Share your link to earn rewards!\n`;
-    referralMessage += `┃❃│ \n`;
-    referralMessage += `┃❃│ *Your Link:*\n`;
-    referralMessage += `┃❃│ \`${referralLink}\`\n`; // Use backticks for easy copy
-    referralMessage += `┃❃│ \n`;
-    referralMessage += `┃❃│ *Your Rewards:*\n`;
-    referralMessage += `┃❃│ • *20 days* for a direct referral.\n`;
-    referralMessage += `┃❃│ • *7 days* for a 2nd-level referral.\n`;
-    referralMessage += `┃❃╰───────────────\n\n`;
-
-    // Dynamically build the list of referred users
-    if (referredUsers.length > 0) {
-        referralMessage += `*Users you've successfully referred:*\n`;
-        for (const ref of referredUsers) {
-            try {
-                const user = await bot.getChat(ref.referred_user_id);
-                const userName = user.first_name || `User ${ref.referred_user_id}`;
-                referralMessage += `▪️ *${escapeMarkdown(userName)}* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
-            } catch (e) {
-                referralMessage += `▪️ *A user* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
-            }
-        }
-    } else {
-        referralMessage += `_You haven't referred any users yet._`;
-    }
-    // --- 🎨 DESIGN UPDATE END 🎨 ---
-
-    try {
-        // Acknowledge the button press
-        await bot.answerCallbackQuery(q.id);
-
-        // Edit the original message
-        await bot.editMessageText(referralMessage, {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        // This share button will still work
-                        { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
-                    ],
-                    [
-                        { text: '« Back to More Features', callback_data: 'more_features_menu' }
-                    ]
-                ]
-            }
-        });
-
-    } catch (error) {
-        console.error("Error editing message for referrals:", error);
-    }
-}
+  
 
 
 
@@ -12855,48 +12693,7 @@ if (action === 'show_reward_bot_list') {
     return;
 }
 
-  // Add this new handler inside bot.on('callback_query', ...)
-if (action === 'apply_referral_reward') {
-    const inviterId = q.from.id.toString();
-    const botToUpdate = payload;
-    const referredUserId = extra;
-    const isSecondLevel = flag === 'second_level';
-    const rewardDays = isSecondLevel ? 7 : 20;
 
-    await bot.editMessageText(`Applying your *${rewardDays}-day* reward to bot "*${escapeMarkdown(botToUpdate)}*"...`, {
-        chat_id: inviterId,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
-    });
-
-    try {
-        await pool.query(
-            `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '${rewardDays} days'
-             WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-            [inviterId, botToUpdate]
-        );
-
-        // Mark the reward as applied in the user_referrals table
-        await pool.query(
-            `UPDATE user_referrals SET inviter_reward_pending = FALSE WHERE referred_user_id = $1`,
-            [referredUserId]
-        );
-
-        await bot.editMessageText(`Success! A *${rewardDays}-day extension* has been added to your bot "*${escapeMarkdown(botToUpdate)}*".`, {
-            chat_id: inviterId,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
-
-    } catch (e) {
-        console.error(`Error applying referral reward to bot ${botToUpdate} for user ${inviterId}:`, e);
-        await bot.editMessageText(`Failed to apply the reward to your bot "*${escapeMarkdown(botToUpdate)}*". Please contact support.`, {
-            chat_id: inviterId,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
-    }
-}
 
 
 // --- 1. REGENERATE CODE ---
@@ -13135,67 +12932,7 @@ if (action === 'cancel_deluser') {
 }
 
 
-  // Add this inside bot.on('callback_query', async q => { ... })
-
-  if (action === 'verify_join_temp_num') {
-    const userId = q.from.id;
-    // The cid variable was missing, which would cause an error later.
-    const cid = q.message.chat.id.toString();
-
-    try {
-        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-        const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-        if (isMember) {
-            // This code runs if the user IS a member
-            const numberResult = await pool.query(
-                "SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1"
-            );
-
-            if (numberResult.rows.length === 0) {
-                await bot.editMessageText("Sorry, no free trial numbers are available right now. Please check back later.", {
-                    chat_id: cid,
-                    message_id: q.message.message_id
-                });
-                return;
-            }
-
-            const freeNumber = numberResult.rows[0].number;
-            const client = await pool.connect();
-            try {
-                await client.query('BEGIN');
-                await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
-                await client.query("INSERT INTO free_trial_numbers (user_id, number_used) VALUES ($1, $2)", [userId, freeNumber]);
-                await client.query('COMMIT');
-            } catch (e) {
-                await client.query('ROLLBACK');
-                throw e;
-            } finally {
-                client.release();
-            }
-
-            await bot.editMessageText(`Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'HTML'
-            });
-            await bot.sendMessage(userId, 'OTP will send automatically if detected.');
-            await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
-
-        } else {
-            // --- THIS IS THE FIX ---
-            // User is not in the channel. Send the alert and immediately stop the function.
-            await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet. Please join and try again.", show_alert: true });
-            return; // <-- This crucial line stops the code from continuing.
-        }
-    } catch (error) {
-        console.error("Error during free trial number verification:", error);
-        await bot.answerCallbackQuery(q.id, { text: "An error occurred during verification. Please try again.", show_alert: true });
-    }
-    return;
-}
-
-// In bot.js, inside bot.on('callback_query', ...)
+  
 
 if (action === 'users_registered') {
     const page = parseInt(payload, 10);
@@ -13209,148 +12946,8 @@ if (action === 'users_unregistered') {
     return;
 }
 
-// bot.js (Inside bot.on('callback_query', ...))
-
-if (action === 'free_trial_temp_num') {
-    const userId = q.from.id.toString();
-    const cid = q.message.chat.id.toString();
-    
-    // 🚨 FIX 1: Answer the callback query immediately to acknowledge the click.
-    await bot.answerCallbackQuery(q.id, { text: "Starting security check..." }); // Added acknowledgement
-    
-    // Check if the APP_URL is configured, which is essential for the Mini App
-    if (!process.env.APP_URL) {
-        console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
-        await bot.sendMessage(cid, "Error: The verification service is currently unavailable.", { show_alert: true });
-        return;
-    }
-    
-    try {
-        // Check if the user has already claimed a trial
-        const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
-        if (trialUserCheck.rows.length > 0) {
-            await bot.editMessageText("You have already claimed your one-time free trial number.", { chat_id: cid, message_id: q.message.message_id });
-            return;
-        }
-
-        // If the user is eligible, prepare to launch the Mini App
-        const verificationUrl = `${process.env.APP_URL}/verify`;
-
-        // This line sets the state before the Mini App is launched.
-        userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
-
-        await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
-                ]
-            }
-        });
-
-    } catch (error) {
-        console.error("Error during free trial eligibility check:", error);
-        // 🚨 FIX 2: Send the error message directly instead of using answerCallbackQuery, which was already sent.
-        await bot.sendMessage(cid, "An error occurred during eligibility check. Please try again.");
-    }
-    return;
-}
 
 
-
-  
-// Replace this block inside bot.on('callback_query', ...)
-
-if (action === 'buy_temp_num') {
-    const cid = q.message.chat.id.toString();
-    const number = payload; // This is the full number
-
-    // Check if the number is still available
-    const numberCheck = await pool.query("SELECT status FROM temp_numbers WHERE number = $1", [number]);
-    if (numberCheck.rows.length === 0 || numberCheck.rows[0].status !== 'available') {
-        await bot.editMessageText('Sorry, this number is no longer available.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        return;
-    }
-    
-    // --- THIS IS THE UPDATED MESSAGE ---
-    const message = `
-*Important Instructions:*
-
-1.  This is a Poland (**+48**) number. Ensure you select Poland as the country in WhatsApp.
-2.  Request the verification code **only via Gmail**. Do not request an SMS code.
-3.  Do not use this number to start new chats to avoid bans. It's best for joining groups or replying to messages.
-`;
-    // --- END OF UPDATED MESSAGE ---
-
-    // Send the instructions message first
-    await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
-
-    // Generate a unique payment reference
-    const reference = crypto.randomBytes(16).toString('hex');
-    const priceInKobo = 200 * 100; // N200 in kobo
-
-    try {
-        const paystackResponse = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            {
-                email: 'customer@email.com', // Replace with the user's actual email
-                amount: priceInKobo,
-                reference: reference,
-                metadata: {
-                    user_id: cid,
-                    product: 'temporary_number',
-                    phone_number: number
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const paymentUrl = paystackResponse.data.data.authorization_url;
-
-        // Edit the original message to show the payment button after the instructions
-        await bot.editMessageText('Please click the button below to complete your payment.', {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Pay Now', url: paymentUrl }]
-                ]
-            }
-        });
-        
-        // Update the number's status to pending payment
-        await pool.query("UPDATE temp_numbers SET status = 'pending_payment', user_id = $1, assigned_at = NOW() WHERE number = $2", [cid, number]);
-
-    } catch (error) {
-        console.error('Paystack transaction failed:', error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-    }
-}
-
-
-
-  if (action === 'ask_admin_question') {
-      delete userStates[cid]; // Clear user state
-      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your question for the admin:');
-      return;
-  }
-
-  
-
-  // In bot.js, inside bot.on('callback_query', ...) handler
 
 if (action === 'renew_bot') {
     const appName = payload;
@@ -13546,117 +13143,8 @@ if (action === 'confirm_and_pay_step') {
     return;
 }
 
-// In bot.js (inside bot.on('callback_query', ...))
 
-if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
-    const isRenewal = action === 'nowpayments_renew';
-    
-    // We receive NGN amount in payload, but we need to ignore it or use it for display.
-    // We primarily rely on the 'days' (extra) to determine the USD price.
-    
-    // 1. Calculate USD Price based on Days
-    const days = parseInt(extra, 10);
-    const usdPrices = {
-        10: 0.35,
-        30: 1.00,
-        92: 2.00,
-        185: 3.35,
-        365: 5.35
-    };
-    const priceUsd = usdPrices[days] || 1.00; // Fallback safety
-    
-    const appName = isRenewal ? extra2 : null; // extra2 might be undefined if not renewal, handled below
-
-    // State check for new deployments
-    let deployAppName, deploySessionId;
-    if (!isRenewal) {
-        const st = userStates[cid];
-        // Safety check: if state is lost (bot restart), ask user to restart
-        if (!st || !st.data) {
-            return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start /deploy again.", show_alert: true });
-        }
-        deployAppName = st.data.APP_NAME;
-        deploySessionId = st.data.SESSION_ID;
-    }
-
-    // Generate Order ID
-    let orderId;
-    if (isRenewal) {
-        orderId = `renew_${appName}_${crypto.randomBytes(8).toString('hex')}`;
-    } else {
-        orderId = `deploy_${deployAppName}_${crypto.randomBytes(4).toString('hex')}`;
-    }
-
-    await bot.editMessageText('Generating Crypto Invoice...', {
-        chat_id: cid, message_id: q.message.message_id
-    });
-
-    try {
-        // 2. Save to Pending Payments
-        const userEmail = await getUserEmail(cid);
-        await pool.query(
-            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, amount_expected) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (reference) DO NOTHING`,
-            [
-                orderId, 
-                cid, 
-                userEmail || 'crypto@user.com', 
-                isRenewal ? 'renewal' : 'deploy', 
-                isRenewal ? appName : deployAppName, 
-                isRenewal ? 'renewal' : deploySessionId,
-                priceUsd // Storing USD amount here for reference
-            ]
-        );
-        
-        // 3. Call NOWPayments INVOICE API (Changed from /payment to /invoice)
-        const response = await axios.post('https://api.nowpayments.io/v1/invoice', 
-        {
-            price_amount: priceUsd,
-            price_currency: 'usd',
-            order_id: orderId,
-            order_description: isRenewal ? `Renew ${appName} (${days} days)` : `Deploy Bot (${days} days)`,
-            ipn_callback_url: `${process.env.APP_URL}/nowpayments-webhook`,
-            success_url: `https://t.me/${process.env.BOT_USERNAME}`,
-            cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
-        }, 
-        {
-            headers: {
-                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        // Note: Invoice API returns 'invoice_url', not 'payment_url'
-        const paymentUrl = response.data.invoice_url; 
-        
-        // 4. Send the Invoice Link
-        await bot.editMessageText(
-            `<b>Crypto Invoice Created</b>\n\nAmount: <b>$${priceUsd}</b>\nDuration: ${days} Days\n\nPlease click the button below to choose your coin (BTC, ETH, USDT, etc) and pay.\n\n<i>Your bot will start automatically once the network confirms the transaction.</i>`, 
-            {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Click to Pay Crypto', url: paymentUrl }],
-                        [{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]
-                    ]
-                }
-            }
-        );
-
-    } catch (error) {
-        console.error("[NOWPayments] Error:", error.response?.data || error.message);
-        await bot.editMessageText('Could not generate crypto invoice. Please try again later.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-    }
-    return;
-}
-
-  // In bot.js, inside bot.on('callback_query', ...)
+            
 
 if (action === 'start_verification') {
     const st = userStates[cid];
@@ -13972,9 +13460,7 @@ if (action === 'buy_key_for_deploy') {
     return;
 }
 
-  // In bot.js, add this new handler inside the callback_query function
-
-// In bot.js, REPLACE your 'select_plan' handler
+  
 
 if (action === 'select_plan') {
     const st = userStates[cid];
@@ -14316,10 +13802,9 @@ if (action === 'confirm_switch_pay') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_SWITCH_CONFIRM') return;
     
-    // Move to Key/Payment State
     st.step = 'AWAITING_KEY_FOR_SWITCH';
+    st.data.messageId = q.message.message_id; // 🔧 store so we can delete it after key use
     
-    // 500 NGN Price
     const price = 500;
     
     await bot.editMessageText(
@@ -14331,7 +13816,7 @@ if (action === 'confirm_switch_pay') {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}`, style: 'success' }],
-                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`,  style: 'danger' }]
+                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`, style: 'danger' }]
                 ]
             }
         }
