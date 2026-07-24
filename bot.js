@@ -245,6 +245,9 @@ const {
 } = process.env;
 
 
+let HEROKU_API_KEY = process.env.HEROKU_API_KEY;
+
+
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7788409928:AAFw7A2Pr7lVJUWTQJlYWIKKwDveQPF9-ZI';
 const TELEGRAM_USER_ID = '7302005705';
 const TELEGRAM_CHANNEL_ID = '-1003620973489';
@@ -2876,14 +2879,18 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
 }
 
 
-// Create a dedicated axios instance for Heroku API calls
 const herokuApi = axios.create({
     baseURL: 'https://api.heroku.com',
     headers: {
-        'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, // Add this line
         'Accept': 'application/vnd.heroku+json; version=3',
         'Content-Type': 'application/json'
     }
+});
+
+// Always inject the CURRENT key right before the request is sent
+herokuApi.interceptors.request.use((config) => {
+    config.headers['Authorization'] = `Bearer ${HEROKU_API_KEY}`;
+    return config;
 });
 
 
