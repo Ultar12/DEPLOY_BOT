@@ -356,7 +356,7 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
 
         // 7. TRIGGER FRESH BUILD
         // We pass isRestore = false to force new database provisioning
-        await dbServices.buildWithProgress(userId, newVars, false, false, targetType);
+        await buildWithProgress(userId, newVars, false, false, targetType);
         
     } catch (error) {
         console.error(`[Switch Error] ${appName}:`, error.message);
