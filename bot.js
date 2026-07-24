@@ -4674,6 +4674,7 @@ async function notifyAdminUserOnline(msg) {
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
     runOrphanDbCleanup: runOrphanDbCleanup,
+    deleteSelfHostedDatabase: deleteSelfHostedDatabase,
     createNeonDatabase: createNeonDatabase, 
     deleteNeonDatabase: deleteNeonDatabase,
     storeNewVcfContact: dbServices.storeNewVcfContact,       // <-- ADD THIS
