@@ -86,6 +86,12 @@ function extractDbNameFromUrl(dbUrl) {
 }
 
 
+function setHerokuApiKey(newKey) {
+    HEROKU_API_KEY = newKey;
+    console.log('[bot_services] HEROKU_API_KEY updated in-memory.');
+}
+
+
 // === DB helper functions (using 'pool' for main DB) ===
 
 async function addUserBot(u, b, s, botType) {
@@ -2733,6 +2739,7 @@ module.exports = {
     init,
     addUserBot,
     getUserBots,
+    setHerokuApiKey,
     silentRestoreBuild,
     getUserIdByBotName,
     getAllUserBots,
