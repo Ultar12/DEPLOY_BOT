@@ -160,7 +160,7 @@ const VCF_GROUP_LINK = 'https://t.me/wbdvcf1';
 const MINI_APP_URL = 'https://deploy-bot-1-xfd5.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 6; 
+const KEYBOARD_VERSION = 7; 
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
@@ -237,7 +237,6 @@ try {
 // 3) Environment config
 const {
   TELEGRAM_BOT_TOKEN: TOKEN_ENV,
-  HEROKU_API_KEY,
   ADMIN_ID,
   DATABASE_URL,
   DATABASE_URL2,
@@ -1325,72 +1324,7 @@ async function sendReminder(targetNumber, userId, hours) {
 
 
 
-/**
- * DYNAMIC GEMINI BRAIN UPDATE
- * Refreshes Gemini's knowledge base with latest bot state, user data, and system status
- */
-async function updateGeminiBrain(userId) {
-    try {
-        // 1. Fetch user data using correct column 'last_seen'
-        const activityRes = await pool.query(
-            'SELECT last_seen FROM user_activity WHERE user_id = $1',
-            [userId]
-        );
-        
-        // 2. Fetch user bots
-        const botsRes = await pool.query(
-            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1 ORDER BY created_at DESC',
-            [userId]
-        );
-        
-        // 3. Fetch deployment details
-        const deployRes = await pool.query(
-            'SELECT app_name, is_free_trial, expiration_date, deploy_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
-            [userId]
-        );
-        
-        const now = new Date();
-        
-        // 4. Build real-time context
-        const brainUpdate = {
-            timestamp: now.toISOString(),
-            user: {
-                id: userId,
-                lastSeen: activityRes.rows[0]?.last_seen || 'Never'
-            },
-            bots: botsRes.rows.map(b => {
-                const createdDate = b.created_at ? new Date(b.created_at) : now;
-                return {
-                    name: b.bot_name,
-                    status: b.status || 'unknown',
-                    ageDays: Math.floor((now - createdDate) / (1000 * 60 * 60 * 24))
-                };
-            }),
-            deployments: deployRes.rows.map(d => {
-                const expDate = d.expiration_date ? new Date(d.expiration_date) : null;
-                const daysLeft = expDate ? Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
-                
-                return {
-                    name: d.app_name,
-                    isTrial: d.is_free_trial || false,
-                    status: (expDate && expDate < now) ? 'expired' : `${daysLeft} days left`
-                };
-            }),
-            systemStatus: {
-                maintenanceMode: typeof isMaintenanceMode !== 'undefined' ? isMaintenanceMode : false,
-                currentTime: now.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }),
-                activeTrials: deployRes.rows.filter(d => d.is_free_trial && new Date(d.expiration_date) > now).length
-            }
-        };
-        
-        console.log(`[Gemini Brain] Context synced for user ${userId}`);
-        return brainUpdate;
 
-    } catch (err) {
-        console.error('[Gemini Brain Update Error]:', err.message);
-        return null;
-    }
-}
 
 
 /**
@@ -1488,7 +1422,6 @@ function extractBotNameFromMessage(message) {
     const match = message.match(/[*`]{1,2}([a-z0-9\-_]+)[*`]{1,2}/i);
     return match ? match[1] : null;
 }
-
 
 
 async function restartBotProcess(botName, userId) {
@@ -1932,117 +1865,6 @@ const COUNTRY_DATA = {
 };
 
 
-
-// In bot_services.js (REPLACE the generateCountryVcf function)
-
-/**
- * Generates a VCF buffer with 100 UNIQUE random numbers for a specific country.
- * Uses the separate VCF database to ensure numbers are never repeated across files.
- */
-// In bot_services.js (REPLACE the generateCountryVcf function)
-
-async function generateCountryVcf(countryInput) {
-    // 1. Validate Country
-    const countryKey = countryInput.toLowerCase().trim();
-    const data = COUNTRY_DATA[countryKey];
-
-    if (!data) {
-        return { success: false, message: "Country not supported. Try: Nigeria, USA, UK, India, Russia, Pakistan, etc." };
-    }
-
-    // 2. Prepare Name Formatting (Date & Time)
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', timeZone: 'Africa/Lagos' });
-    const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Lagos' });
-    const dateTimeSuffix = `${dateStr} ${timeStr}`;
-    
-    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1); 
-
-    // 3. Ensure the tracking table exists
-    try {
-        await vcfPool.query(`
-            CREATE TABLE IF NOT EXISTS generated_vcf_numbers (
-                phone_number TEXT PRIMARY KEY,
-                country TEXT,
-                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-    } catch (e) {
-        console.error("[VCF Gen] Failed to init tracking table:", e.message);
-    }
-
-    const uniqueNumbers = [];
-    let attempts = 0;
-
-    // 4. Generation Loop (Find 500 unique numbers)
-    while (uniqueNumbers.length < 500 && attempts < 3000) {
-        attempts++;
-        
-        const prefix = data.starts[Math.floor(Math.random() * data.starts.length)];
-        const remainingLength = data.len - prefix.length;
-        
-        let randomDigits = '';
-        for (let d = 0; d < remainingLength; d++) {
-            randomDigits += Math.floor(Math.random() * 10);
-        }
-        const fullNumber = `+${data.code}${prefix}${randomDigits}`;
-
-        // Check Database for Uniqueness
-        try {
-            const result = await vcfPool.query(
-                `INSERT INTO generated_vcf_numbers (phone_number, country) 
-                 VALUES ($1, $2) 
-                 ON CONFLICT (phone_number) DO NOTHING 
-                 RETURNING phone_number`,
-                [fullNumber, countryName]
-            );
-
-            if (result.rows.length > 0) {
-                uniqueNumbers.push(fullNumber);
-            }
-        } catch (e) {
-            console.error("[VCF Gen] DB Check Error:", e.message);
-        }
-    }
-
-    if (uniqueNumbers.length === 0) {
-        return { success: false, message: "Failed to generate numbers. Database connection might be down." };
-    }
-
-    // 5. Build VCF File Content
-    let vcfContent = '';
-
-    // --- 💡 ADD ADMIN NUMBER FIRST 💡 ---
-    const adminNumber = '+2349163916314';
-    const adminName = 'Ultar Admin WBD'; // The name people will see
-
-    vcfContent += 'BEGIN:VCARD\r\n';
-    vcfContent += 'VERSION:3.0\r\n';
-    vcfContent += `FN:${adminName}\r\n`;
-    vcfContent += `TEL;TYPE=CELL:${adminNumber}\r\n`;
-    vcfContent += 'END:VCARD\r\n';
-    // --- 💡 END ADMIN NUMBER 💡 ---
-    
-    // Add the random numbers
-    uniqueNumbers.forEach((num, index) => {
-        const contactName = `${countryName}${index + 1} ${dateTimeSuffix}`;
-
-        vcfContent += 'BEGIN:VCARD\r\n';
-        vcfContent += 'VERSION:3.0\r\n';
-        vcfContent += `FN:${contactName}\r\n`;
-        vcfContent += `TEL;TYPE=CELL:${num}\r\n`;
-        vcfContent += 'END:VCARD\r\n';
-    });
-
-    const buffer = Buffer.from(vcfContent, 'utf8');
-    const safeFileName = `${countryName}_${dateStr.replace(/\//g, '-')}_${timeStr.replace(/:/g, '')}.vcf`;
-
-    return { success: true, buffer: buffer, fileName: safeFileName };
-}
-
-
-
-// ... (storeNewVcfContact and generateAndSendVcf should also be updated to use vcfPool) ...
 
 
 
@@ -2684,12 +2506,6 @@ async function deleteBotCompletely(userId, appName) {
 }
 
 
-/**
- * Updates a specific environment variable on Render and explicitly triggers a restart.
- * @param {string} varName The name of the variable to update.
- * @param {string} varValue The new value for the variable.
- * @returns {Promise<{success: boolean, message: string}>}
- */
 async function updateRenderVar(varName, varValue, restart = true) {
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
@@ -2724,6 +2540,22 @@ async function updateRenderVar(varName, varValue, restart = true) {
         // ✅ Update the LIVE process immediately so this running instance
         // uses the correct value right away, without waiting for a restart.
         process.env[varName] = finalValue;
+
+        // 🔧 If this was the Heroku API key, propagate it to every place
+        // that cached its own copy at load time, so live requests in THIS
+        // process immediately start using the new key instead of waiting
+        // for Render's restart to actually land.
+        if (varName === 'HEROKU_API_KEY') {
+            HEROKU_API_KEY = finalValue; // updates bot.js's local mutable var
+
+            if (dbServices && typeof dbServices.setHerokuApiKey === 'function') {
+                dbServices.setHerokuApiKey(finalValue); // updates bot_services.js's local var
+            } else {
+                console.warn('[updateRenderVar] dbServices.setHerokuApiKey not available — bot_services.js may still use a stale key until restart.');
+            }
+
+            console.log('[updateRenderVar] Propagated new HEROKU_API_KEY to all live in-memory copies.');
+        }
 
         // Only restart if explicitly asked to (default true keeps old callers working)
         if (restart) {
@@ -2813,12 +2645,6 @@ async function findAndDeleteNeonDatabase(dbName) {
 
 
 
-/**
- * Handles the entire automated workflow when a Heroku API key is found to be invalid.
- * @param {string} failingKey The API key that just failed.
- */
-// In bot.js (REPLACE the handleInvalidHerokuKeyWorkflow function)
-
 async function handleInvalidHerokuKeyWorkflow(failingKey) {
     if (isRecoveryInProgress) {
         console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
@@ -2833,7 +2659,7 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
-        // 2. Get a new, valid key from the database 
+        // 2. Get a new, candidate key from the database
         const newKeyResult = await pool.query(
             "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
             [failingKey]
@@ -2844,20 +2670,43 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         }
         const newKey = newKeyResult.rows[0].api_key;
         const newKeyId = newKeyResult.rows[0].id;
-        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
+
+        // 🔧 3. VERIFY the candidate key actually works BEFORE touching
+        // anything else. This prevents us from deleting a good key from
+        // the pool and scheduling a mass restore against a key that's
+        // just as broken as the one that failed.
+        try {
+            await axios.get('https://api.heroku.com/account', {
+                headers: {
+                    'Authorization': `Bearer ${newKey}`,
+                    'Accept': 'application/vnd.heroku+json; version=3'
+                }
+            });
+        } catch (verifyError) {
+            const reason = verifyError.response?.status
+                ? `Status ${verifyError.response.status}`
+                : verifyError.message;
+            await bot.sendMessage(ADMIN_ID, `**Recovery Aborted!**\n\nThe replacement key found in the database (\`...${newKey.slice(-4)}\`) is ALSO invalid (${reason}). No key was deleted. Please add a working key and try again.`, { parse_mode: 'Markdown' });
+            return; // isRecoveryInProgress reset happens in finally
+        }
+
+        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Verified working. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
         
-        // 3. Update the HEROKU_API_KEY on Render (This triggers the first restart)
+        // 4. Update the HEROKU_API_KEY on Render (this also propagates the
+        // new key to every in-memory copy immediately, per updateRenderVar,
+        // and separately triggers the restart)
         const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
         }
-        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
+        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render, and propagated it to the running process. A new deployment has also been triggered to persist the new key.");
 
-        // 4. Delete the used key from the database
+        // 5. Delete the used key from the database — only now that we know
+        // it's verified working and already live.
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
         console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 5. 💡 FIX: Schedule the Mass Restore in the database for 5 minutes from now 💡
+        // 6. Schedule the Mass Restore in the database for 5 minutes from now
         const delayMinutes = 5;
         const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
 
@@ -2867,14 +2716,14 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
             ['MASS_RESTORE', scheduledTime, 'PENDING']
         );
         
-        // 6. Notify admin about the persistent wait
-        await bot.sendMessage(ADMIN_ID, `The bot is restarting now with the new key. A **Mass Restore** is now scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive the restart.`, { parse_mode: 'Markdown' });
+        // 7. Notify admin about the persistent wait
+        await bot.sendMessage(ADMIN_ID, `The new key is already live in this process. A **Mass Restore** is scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive any restart.`, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
         await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
     } finally {
-        isRecoveryInProgress = false; // Reset flag on failure
+        isRecoveryInProgress = false; // Reset flag whether we succeeded, aborted, or errored
     }
 }
 
@@ -4355,8 +4204,10 @@ function buildKeyboard(isAdmin) {
       { text: 'Deploy', style: 'success' }         // Green
     ],
     [
-      { text: 'My Bots', style: 'success' },       // Green
-      { text: 'Support', style: 'danger' }         // Red
+
+      { text: 'Support', style: 'danger' }, 
+      { text: 'My Bots', style: 'success' } 
+        
     ]
 ];
 
