@@ -1219,19 +1219,26 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             : 'None';
 
         // 2. Call Groq with Context
-        const completion = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
-            ],
-            model: "llama-3.3-70b-versatile",
-            response_format: { type: "json_object" } 
-        });
+        let completion;
+        try {
+            completion = await groq.chat.completions.create({
+                messages: [
+                    { role: "system", content: SYSTEM_PROMPT },
+                    { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
+                ],
+                model: "llama-3.3-70b-versatile",
+                response_format: { type: "json_object" } 
+            });
+        } catch (groqError) {
+            console.error('[Groq API Error]', groqError.response?.data || groqError.message);
+            // 🔧 Surface the real reason to the admin instead of guessing
+            await bot.sendMessage(ADMIN_ID, `⚠️ Groq API call failed:\n\`\`\`\n${JSON.stringify(groqError.response?.data || groqError.message, null, 2).substring(0, 1000)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
+            throw groqError; // still bubble up to outer catch for the user-facing fallback
+        }
 
         let aiResponse;
         const rawContent = completion.choices[0].message.content;
 
-        // 3. SAFETY: Parse JSON
         try {
             const cleanText = rawContent.replace(/```json|```/g, "").trim();
             aiResponse = JSON.parse(cleanText);
@@ -1242,7 +1249,6 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
-        // 4. ACTION ROUTER: Handle "EXECUTE" intent (Restart, etc.)
         if (aiResponse.action === 'EXECUTE') {
             const targetBot = aiResponse.actionData?.botName;
             
@@ -1256,11 +1262,9 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                 return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
             }
             
-            // If there's an EXECUTE action but no specific handler above, run your general executeGeminiAction
             return executeGeminiAction(chatId, aiResponse);
         }
 
-        // 5. LINK ROUTER: Handle "GET_LINK" intent
         if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
             return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
                 reply_markup: {
@@ -1277,12 +1281,13 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             });
         }
 
-        // 6. FINAL RESPONSE: Only runs if NO other action was triggered
         const finalMessage = aiResponse.response || "I'm not sure how to help with that, contact support @staries1.";
         return bot.sendMessage(chatId, finalMessage, { parse_mode: 'Markdown' });
 
     } catch (error) {
-        console.error('[Brain Error]', error);
+        // 🔧 Log full detail, and tell the admin exactly what broke
+        console.error('[Brain Error]', error.response?.data || error.stack || error.message);
+        await bot.sendMessage(ADMIN_ID, `⚠️ AI Brain error for user \`${chatId}\`:\n\`\`\`\n${String(error.message).substring(0, 500)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
         return bot.sendMessage(chatId, "⚠️ I encountered an error. Please try again or use the menu.");
     }
 }
