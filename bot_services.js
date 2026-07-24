@@ -289,6 +289,7 @@ async function getLoggedOutBots() {
 
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
     console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
+    const { deleteSelfHostedDatabase } = moduleParams; 
     
     try {
         // 1. Clear user state to prevent input collisions
