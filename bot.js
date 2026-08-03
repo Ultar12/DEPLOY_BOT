@@ -10987,6 +10987,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       }
 
       delete userStates[cid];
+    return;
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
