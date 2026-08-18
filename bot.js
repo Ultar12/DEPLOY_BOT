@@ -7246,7 +7246,7 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         
         await herokuApi.put(`/apps/${msgAppName}/buildpack-installations`, {
             updates: [
-                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
                 { buildpack: 'heroku/nodejs' }
             ]
         });
