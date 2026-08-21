@@ -1579,6 +1579,17 @@ async function trackPersistentKeyboard(chatId, message, options) {
     persistentReplyKeyboardMessageIds.set(key, message.message_id);
 }
 
+async function restorePersistentReplyKeyboard(chatId) {
+    if (!isPrivateChatId(chatId)) return;
+    const key = String(chatId);
+    const priorKeyboardId = persistentReplyKeyboardMessageIds.get(key);
+    const message = await nativeSendMessage(chatId, 'Menu is ready below.', {
+        reply_markup: { keyboard: buildKeyboard(key === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
+    });
+    if (priorKeyboardId && priorKeyboardId !== message.message_id) await safelyDeleteMessage(key, priorKeyboardId);
+    persistentReplyKeyboardMessageIds.set(key, message.message_id);
+}
+
 bot.sendMessage = async (chatId, text, options) => {
     const finalOptions = withPersistentReplyKeyboard(chatId, options);
     const sent = await nativeSendMessage(chatId, text, finalOptions);
@@ -10183,6 +10194,7 @@ if (text === 'Deploy') {
                 inline_keyboard: keyboard
             }
         });
+        await restorePersistentReplyKeyboard(cid);
         return;
     }
 
@@ -10246,6 +10258,7 @@ if (text === 'Deploy') {
                 inline_keyboard: keyboard
             }
         });
+        await restorePersistentReplyKeyboard(cid);
 
     } catch (error) {
         console.error("Error in Get Session ID handler:", error.message);
@@ -10271,7 +10284,7 @@ if (text === 'My Bots') {
         return;
     }
 
-    const checkingMsg = await bot.sendMessage(cid, 'Syncing your bot list with the server, please wait...');
+    const checkingMsg = await bot.sendMessage(cid, 'Syncing your bots...');
 
     try {
         // 1. Get all bots from DB
@@ -10294,18 +10307,26 @@ if (text === 'My Bots') {
                     ]
                 }
             });
+            persistentReplyKeyboardMessageIds.delete(String(cid));
+            await restorePersistentReplyKeyboard(cid);
             return;
         }
 
         // 2. Cross-check with Heroku API
-        const verificationPromises = userBotsFromDb.map(bot =>
-            herokuApi.get(`/apps/${bot.bot_name}/formation`, {
-                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
+        const verificationPromises = userBotsFromDb.map(bot => {
+            const formationCheck = herokuApi.get(`/apps/${bot.bot_name}/formation`, {
+                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` },
+                timeout: 8000
             }).then(response => {
                 const webDyno = response.data.find(d => d.type === 'web');
                 return { ...bot, exists_on_heroku: true, is_active: webDyno && webDyno.quantity > 0 };
-            }).catch(() => ({ ...bot, exists_on_heroku: false, is_active: false }))
-        );
+            }).catch(error => {
+                if (error.response?.status === 404) return { ...bot, exists_on_heroku: false, is_active: false };
+                return { ...bot, exists_on_heroku: true, is_active: bot.status !== 'logged_out', sync_unknown: true };
+            });
+            const fallback = new Promise(resolve => setTimeout(() => resolve({ ...bot, exists_on_heroku: true, is_active: bot.status !== 'logged_out', sync_unknown: true }), 8500));
+            return Promise.race([formationCheck, fallback]);
+        });
 
         const results = await Promise.all(verificationPromises);
         const botsToDisplay = results.filter(r => r.exists_on_heroku);
@@ -10351,12 +10372,16 @@ if (text === 'My Bots') {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
+        persistentReplyKeyboardMessageIds.delete(String(cid));
+        await restorePersistentReplyKeyboard(cid);
 
     } catch (error) {
         console.error("Error in 'My Bots' handler:", error);
         await bot.editMessageText("An error occurred. Please try again.", {
             chat_id: cid, message_id: checkingMsg.message_id
         });
+        persistentReplyKeyboardMessageIds.delete(String(cid));
+        await restorePersistentReplyKeyboard(cid);
     }
     return;
 }

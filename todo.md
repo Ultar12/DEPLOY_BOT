@@ -163,3 +163,11 @@
 - [x] Remove the session-type validation helper text from the Change Session prompt.
 - [x] Move Create a new bot above the bot list and animate its blue glow in a circular motion.
 - [x] Add regression coverage for key-use notification, keyboard resilience, and CTA placement and animation.
+
+# My Bots Synchronization and Primary Keyboard Flow Repair
+
+- [x] Diagnose and fix the My Bots synchronization stall.
+- [x] Change the synchronization copy to “Syncing your bots...”.
+- [x] Restore the reply keyboard explicitly after Deploy, Get Session ID, My Bots, and related primary button flows.
+- [x] Replace the directional glow with a true circular-orbit CTA animation.
+- [x] Add regression coverage for synchronization completion, primary keyboard restoration, and circular glow behavior.

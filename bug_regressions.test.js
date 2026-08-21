@@ -194,6 +194,32 @@ test('dashboard puts the animated deployment action before the bot list and keep
   assert.doesNotMatch(htmlSource, /It will be checked against this bot type before saving/);
 });
 
+test('My Bots sync uses bounded checks and requested copy instead of waiting indefinitely', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /Syncing your bots\.\.\./);
+  assert.match(botSource, /timeout: 8000/);
+  assert.match(botSource, /Promise\.race\(\[formationCheck, fallback\]\)/);
+  assert.match(botSource, /sync_unknown: true/);
+});
+
+test('primary Deploy, Get Session ID, and My Bots flows explicitly restore the reply keyboard', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /async function restorePersistentReplyKeyboard/);
+  const deployStart = botSource.indexOf("if (text === 'Deploy')");
+  const sessionStart = botSource.indexOf("if (text === 'Get Session ID')");
+  const myBotsStart = botSource.indexOf("if (text === 'My Bots')");
+  assert.ok(botSource.slice(deployStart, sessionStart).includes('await restorePersistentReplyKeyboard(cid)'));
+  assert.ok(botSource.slice(sessionStart, myBotsStart).includes('await restorePersistentReplyKeyboard(cid)'));
+  assert.ok(botSource.slice(myBotsStart, myBotsStart + 4500).includes('await restorePersistentReplyKeyboard(cid)'));
+});
+
+test('deployment CTA glow follows an actual circular transform path', () => {
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(htmlSource, /\.deploy-cta::after/);
+  assert.match(htmlSource, /rotate\(360deg\) translateX\(155px\) rotate\(-360deg\)/);
+  assert.match(htmlSource, /box-shadow: 0 0 18px 8px/);
+});
+
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
   assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'/);
