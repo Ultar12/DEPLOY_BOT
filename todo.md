@@ -63,3 +63,9 @@
 - [x] Restore the missing `addReferralAndSecondLevelReward` implementation removed by the oversized cleanup edit.
 - [x] Validate `bot_services.js` and `bot.js` module loading plus regression tests.
 - [x] Synchronize the startup fix to both `main` and `free-trial-verification`.
+
+# Telegram Constructor Regression
+
+- [x] Inspect `node-telegram-bot-api` 2.x export shape and the current constructor import.
+- [x] Patch TelegramBot constructor compatibility and validate startup loading.
+- [x] Synchronize the constructor fix to both `main` and `free-trial-verification`.
