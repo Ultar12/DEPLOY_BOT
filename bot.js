@@ -1667,7 +1667,7 @@ function escapeMarkdown(text) {
     // Escape all Markdown V2 special characters in one robust pass.
     // The single regex handles all necessary escaping correctly.
     // The `\\` at the end ensures the backslash character itself is escaped.
-    return text.replace(/([_*[\]()~`>#+=\-|{}!.!\\\\])/g, '\\$1');
+    return text.replace(/([_*[\]()~`>#+=|{}!.])/g, '\\$1');
 }
 
 
@@ -2890,15 +2890,18 @@ async function handleRestoreAllConfirm(query) {
         }).catch(()=>{}); // Ignore "message not modified"
         
         try {
-            // --- Phase 1: Call the silent restore function (with fallback) ---
-            let buildResult;
-            if (dbServices.silentRestoreBuild && typeof dbServices.silentRestoreBuild === 'function') {
-                buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
-            } else {
-                // FALLBACK: If silentRestoreBuild doesn't exist, log warning and skip
-                console.warn(`[RestoreAll] WARNING: dbServices.silentRestoreBuild is not defined. Skipping restore for ${originalAppName}`);
-                throw new Error(`Function silentRestoreBuild not found in dbServices. This deployment cannot be restored.`);
-            }
+            // Match the single restore flow: type defaults first, saved vars second, then force identity/session values.
+            const botTypeToRestore = deployment.bot_type || botType;
+            const defaultVarsForRestore = botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : botTypeToRestore === 'hermit' ? hermitDefaultEnvVars : levanterDefaultEnvVars;
+            const savedConfigVars = typeof deployment.config_vars === 'string' ? JSON.parse(deployment.config_vars) : (deployment.config_vars || {});
+            const combinedVarsForRestore = {
+                ...defaultVarsForRestore,
+                ...savedConfigVars,
+                APP_NAME: originalAppName,
+                SESSION_ID: deployment.session_id,
+                expiration_date: deployment.expiration_date
+            };
+            const buildResult = await dbServices.buildWithProgress(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore);
             
             if (!buildResult.success) {
                 // Throw the specific error from the silent function
@@ -13661,7 +13664,7 @@ if (action === 'selectapp' || action === 'selectbot') {
     });
     
     const dbBotInfo = (await pool.query(
-        'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
+        'SELECT ud.expiration_date, ud.deploy_date, ud.is_free_trial, ud.config_vars, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
         'WHERE ud.user_id=$1 AND ud.app_name=$2', 
         [cid, appName]
@@ -13675,7 +13678,11 @@ if (action === 'selectapp' || action === 'selectbot') {
     }
 
     const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
-    const expirationDate = dbBotInfo?.expiration_date ? new Date(dbBotInfo.expiration_date) : null;
+    const configExpiration = dbBotInfo?.config_vars?.EXPIRATION_DATE || dbBotInfo?.config_vars?.expiration_date;
+    const storedExpiration = dbBotInfo?.expiration_date || configExpiration;
+    const fallbackDays = dbBotInfo?.is_free_trial ? 1 : 30;
+    const fallbackExpiration = dbBotInfo?.deploy_date ? new Date(new Date(dbBotInfo.deploy_date).getTime() + fallbackDays * 24 * 60 * 60 * 1000) : null;
+    const expirationDate = storedExpiration ? new Date(storedExpiration) : fallbackExpiration;
     const now = new Date();
     const keyboard = [];
     
@@ -14256,10 +14263,13 @@ if (action === 'info') {
 
         if (ownerId) {
             // Correctly read the expiration_date from the main database
-            const deploymentDetails = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
-            
-            if (deploymentDetails && deploymentDetails.expiration_date) {
-                const expirationDate = new Date(deploymentDetails.expiration_date);
+            const deploymentDetails = (await pool.query('SELECT expiration_date, deploy_date, is_free_trial, config_vars FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
+            const configExpiration = deploymentDetails?.config_vars?.EXPIRATION_DATE || deploymentDetails?.config_vars?.expiration_date;
+            const storedExpiration = deploymentDetails?.expiration_date || configExpiration;
+            const fallbackDays = deploymentDetails?.is_free_trial ? 1 : 30;
+            const fallbackExpiration = deploymentDetails?.deploy_date ? new Date(new Date(deploymentDetails.deploy_date).getTime() + fallbackDays * 24 * 60 * 60 * 1000) : null;
+            const expirationDate = storedExpiration ? new Date(storedExpiration) : fallbackExpiration;
+            if (expirationDate && !isNaN(expirationDate.getTime())) {
                 const now = new Date();
                 const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
                 

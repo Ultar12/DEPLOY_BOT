@@ -1269,7 +1269,7 @@ async function getAllDeploymentsFromBackup(botType) {
         // --- THIS IS THE UPDATED QUERY ---
         // Added ud.expiration_date to the selected columns
         const result = await backupPool.query(
-            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars, ud.expiration_date -- <<< ADDED expiration_date
+            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars, ud.bot_type, ud.expiration_date
              FROM user_deployments ud
              INNER JOIN user_bots ub ON ud.user_id = ub.user_id AND ud.app_name = ub.bot_name
              WHERE ud.bot_type = $1 AND ub.status = 'online' -- Only select bots that were 'online'
