@@ -4729,12 +4729,12 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
             res.json({ available: true });
         } else if (e.response && e.response.status === 403) {
             // Handle 403 Forbidden specifically
-            console.error(`[MiniApp] Heroku API error checking app name: Permission denied (403). Check HEROKU_API_KEY.`);
-            res.status(403).json({ success: false, message: 'API permission denied. Please contact support.' });
+            console.error('[MiniApp] Hosting API permission denied while checking app name.');
+            res.status(403).json({ success: false, message: 'App name check is temporarily unavailable. Please contact support.' });
         } else {
             // Other errors (e.g., network issues)
-            console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
-            res.status(500).json({ success: false, message: 'Could not check app name due to a server error.' });
+            console.error(`[MiniApp] App-name availability check failed: ${e.message}`);
+            res.status(500).json({ success: false, message: 'Could not check app name right now.' });
         }
     }
 });
@@ -4816,8 +4816,8 @@ app.get('/api/check-deploy-key/:key', validateWebAppInitData, async (req, res) =
 
     try {
         const result = await pool.query(
-            'SELECT uses_left FROM deploy_keys WHERE key = $1 AND uses_left > 0',
-            [key.toUpperCase()]
+            'SELECT uses_left FROM deploy_keys WHERE key = $1 AND uses_left > 0 AND (user_id = $2 OR user_id IS NULL)',
+            [key.toUpperCase(), String(req.telegramData.id)]
         );
 
         if (result.rows.length > 0) {
@@ -4954,12 +4954,13 @@ app.get('/api/bots/config-vars/:appName', validateWebAppInitData, async (req, re
 
 // GET /api/app-name-check/:appName - Check if an app name is available
 app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res) => {
-    const { appName } = req.params;
-
-    // Check if the key is available before making the request
+    const appName = String(req.params.appName || '').trim().toLowerCase();
+    if (!MINIAPP_APP_NAME_RE.test(appName)) return res.json({ available: false, valid: false, message: 'Use 4–30 lowercase letters, numbers, and hyphens; start with a letter.' });
+    const localDuplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [appName]);
+    if (localDuplicate.rows.length) return res.json({ available: false, valid: true, message: 'This app name is already registered.' });
     if (!HEROKU_API_KEY) {
-        console.error('[MiniApp] Heroku API key is not set in the environment.');
-        return res.status(500).json({ success: false, message: 'Server configuration error: Heroku API key is missing.' });
+        console.error('[MiniApp] Hosting API key is not set in the environment.');
+        return res.status(500).json({ success: false, message: 'Service configuration is incomplete. Please contact support.' });
     }
 
     try {
@@ -4974,12 +4975,12 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
             res.json({ available: true });
         } else if (e.response && e.response.status === 403) {
             // Handle 403 Forbidden specifically
-            console.error(`[MiniApp] Heroku API error checking app name: Permission denied (403). Check HEROKU_API_KEY.`);
-            res.status(403).json({ success: false, message: 'API permission denied. Please contact support.' });
+            console.error('[MiniApp] Hosting API permission denied while checking app name.');
+            res.status(403).json({ success: false, message: 'App name check is temporarily unavailable. Please contact support.' });
         } else {
             // Other errors (e.g., network issues)
-            console.error(`[MiniApp] Heroku API error checking app name: ${e.message}`);
-            res.status(500).json({ success: false, message: 'Could not check app name due to a server error.' });
+            console.error(`[MiniApp] App-name availability check failed: ${e.message}`);
+            res.status(500).json({ success: false, message: 'Could not check app name right now.' });
         }
     }
 });
@@ -5000,6 +5001,23 @@ function validateMiniAppDeploymentInput(botType, appName, sessionId) {
     return null;
 }
 
+let miniAppSchemaReady;
+async function ensureMiniAppDeploymentSchema() {
+    if (!miniAppSchemaReady) {
+        miniAppSchemaReady = (async () => {
+            await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+            await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT`);
+            await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT`);
+        })().catch(error => { miniAppSchemaReady = null; throw error; });
+    }
+    return miniAppSchemaReady;
+}
+
+async function getMiniAppUserEmail(userId) {
+    const result = await pool.query('SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE LIMIT 1', [String(userId)]);
+    return result.rows[0]?.email || null;
+}
+
 async function updateDeploymentJob(jobId, fields) {
     const allowed = ['status', 'progress', 'progress_message', 'error_message', 'payment_method', 'payment_reference'];
     const entries = Object.entries(fields).filter(([key, value]) => allowed.includes(key) && value !== undefined);
@@ -5016,7 +5034,7 @@ async function startMiniAppDeploymentJob(jobId) {
     try {
         await updateDeploymentJob(jobId, { status: 'running', progress: 10, progress_message: 'Registering bot' });
         await dbServices.addUserBot(job.user_id, job.app_name, job.session_id, job.bot_type);
-        await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting Heroku build' });
+        await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting deployment' });
         await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
@@ -5046,6 +5064,12 @@ app.get('/api/support', validateWebAppInitData, (req, res) => {
     res.json({ success: true, handle: `@${MINIAPP_SUPPORT_HANDLE}`, url: `https://t.me/${MINIAPP_SUPPORT_HANDLE}` });
 });
 
+app.get('/api/validate-session', validateWebAppInitData, async (req, res) => {
+    const validationError = validateMiniAppDeploymentInput(req.query.botType, 'valid-app-name', req.query.sessionId);
+    if (validationError && !validationError.startsWith('App name')) return res.json({ valid: false, message: validationError });
+    res.json({ valid: true, message: 'Session ID format is valid.' });
+});
+
 app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
     const { botType, appName, sessionId, autoStatusView, deployKey, email } = req.body;
     const userId = String(req.telegramData.id);
@@ -5056,6 +5080,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
     if (validationError) return res.status(400).json({ success: false, message: validationError });
 
     try {
+        await ensureMiniAppDeploymentSchema();
         const duplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [normalizedName]);
         if (duplicate.rows.length) return res.status(409).json({ success: false, message: 'That app name is already registered.' });
         const pending = await pool.query('SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2 AND status = $3 LIMIT 1', [userId, normalizedName, 'pending']);
@@ -5078,8 +5103,9 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
         }
 
-        const normalizedEmail = String(email || '').trim().toLowerCase();
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, message: 'A valid email is required for payment checkout.' });
+        const storedEmail = await getMiniAppUserEmail(userId);
+        const normalizedEmail = String(email || storedEmail || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, code: 'EMAIL_REQUIRED', message: 'No verified email is saved. Enter an email to continue with payment.' });
         if (!process.env.PAYSTACK_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
         const reference = `mini_${crypto.randomBytes(12).toString('hex')}`;
         const priceNgn = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
@@ -5099,7 +5125,8 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         }
     } catch (error) {
         console.error('[MiniApp Server] Deployment job creation error:', error.response?.data || error.message);
-        res.status(500).json({ success: false, message: 'Could not create the deployment job.' });
+        const message = error.code === '42P01' ? 'Deployment service is initializing. Please try again in a moment.' : error.response?.data?.message || 'Could not create the deployment job. Please verify the fields and try again.';
+        res.status(error.code === '42P01' ? 503 : 500).json({ success: false, message });
     }
 });
 app.post('/nowpayments-webhook', express.json(), async (req, res) => {

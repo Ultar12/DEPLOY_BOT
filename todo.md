@@ -103,3 +103,15 @@
 - [x] Replace support placeholder with `@staries1`.
 - [x] Serve the mini app explicitly at `/miniapp` and verify the Telegram WebApp button URL format.
 - [x] Add tests for job IDs, validation, payment/key branching, support link, and `/miniapp` routing.
+
+# Mini App Deployment Wizard and Dashboard Refinement
+
+- [x] Diagnose the generic deployment-job creation failure path and return actionable user-safe errors.
+- [x] Add live server-backed checks for app name, session ID, and deploy key with green/red UI states.
+- [x] Add Save and Next wizard controls before revealing key deployment or payment options.
+- [x] Reuse the authenticated user's database email and ask only when no email exists.
+- [x] Start deployment automatically after verified payment and preserve the job ID.
+- [x] Rename user-facing deployment copy to avoid provider/infrastructure branding.
+- [x] Add a per-bot menu button with management actions.
+- [x] Show days remaining beside each subscription status.
+- [x] Add regression tests and visual/syntax checks for the revised wizard and dashboard.

@@ -114,6 +114,9 @@
 
         .news-title { font-size: 0.95em; font-weight: 700; color: #60a5fa; margin-bottom: 4px; }
         .news-content { font-size: 0.85em; color: #cbd5e1; line-height: 1.4; }
+        .validation-state { display:block; font-size:.78em; margin-top:6px; color:#94a3b8; text-transform:none; }
+        .validation-state.good { color:#34d399; }
+        .validation-state.bad { color:#f87171; }
 
         .support-action {
             padding-top: 10px;
@@ -299,7 +302,7 @@
                     <div class="bot-list" id="botList">Loading bots...</div>
                     <div class="section-title">Actions</div>
                     <div class="management-grid">
-                        <div class="mgmt-option" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Deploy New Bot</div><div class="mgmt-option-hint">Create a managed Heroku instance</div></div><span>→</span></div>
+                        <div class="mgmt-option" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
                     </div>
                 </div>
             `;
@@ -328,12 +331,14 @@
                 const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json();
                 const bots = data.bots || [];
+                window.__dashboardBots = bots;
                 document.getElementById('totalBots').textContent = bots.length;
                 document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
 
                 document.getElementById('botList').innerHTML = bots.map(bot => {
                     const timeLeft = new Date(bot.expirationDate) - new Date();
                     const isExpired = timeLeft <= 0;
+                    const daysRemaining = Math.max(0, Math.ceil(timeLeft / 86400000));
                     const hoursRemaining = Math.max(0, Math.round(((48*60*60*1000) + timeLeft) / (1000 * 60 * 60)));
                     let statusClass = bot.status === 'Online' ? 'online' : bot.status === 'Building' ? 'building' : 'offline';
                     if (isExpired) statusClass = 'suspended';
@@ -348,9 +353,10 @@
                                     <span class="bot-badge">${isExpired ? 'Suspended' : bot.status}</span>
                                 </div>
                                 <div style="font-size:0.8em; margin-top:5px; color:${isExpired ? '#ef4444' : '#10b981'}">
-                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : 'Subscription Active'}
+                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left`}
                                 </div>
                             </div>
+                            <button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;align-self:center;">MENU</button>
                         </div>
                     `;
                 }).join('') || 'No bots found.';
@@ -386,23 +392,24 @@
         }
 
         function getBotVariablesHTML(bot) {
-            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are masked in the mini app. Editing a variable updates the provider configuration for this bot.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
+            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are masked in the mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
         }
 
         function getBotLogsHTML(bot) {
-            return `<div><div class="news-card"><div class="news-title">Provider logs</div><div class="news-content">Latest output is fetched securely for your bot only.</div></div><div id="logsPanel" class="logs-container">Loading logs...</div></div>`;
+            return `<div><div class="news-card"><div class="news-title">Latest logs</div><div class="news-content">Recent activity is fetched securely for your bot only.</div></div><div id="logsPanel" class="logs-container">Loading logs...</div></div>`;
         }
 
         function getDeployHTML() {
             return `
                 <form id="deployForm" class="management-grid">
-                    <div class="news-card"><div class="news-title">New deployment</div><div class="news-content">Your Telegram identity is attached automatically. Never share tokens outside this secure session.</div></div>
-                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <div class="news-card"><div class="news-title">Create a new bot</div><div class="news-content">Your Telegram identity is attached automatically. Check each field, then save and continue.</div></div>
+                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
-                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
-                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional — leave blank to pay</span><input id="deployKey" placeholder="Use a deploy key, or leave blank" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
-                    <label class="section-title" style="margin:0;">Payment email <span style="font-size:.8em;color:#94a3b8;text-transform:none;">required only when paying</span><input id="deployEmail" type="email" placeholder="you@example.com" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
-                    <button class="support-btn" type="submit">START DEPLOYMENT</button>
+                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
+                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="Enter a key to validate it" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="keyState" class="validation-state">No key entered — payment is available</span></label>
+                    <label class="section-title" style="margin:0;display:none;" id="emailField">Payment email<input id="deployEmail" type="email" placeholder="you@example.com" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
+                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
                     <div id="deployResult" class="news-content"></div>
                 </form>`;
         }
@@ -423,7 +430,7 @@
                 const res = await fetch(`${API_BASE_URL}/bots/logs/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.message || 'Could not load logs.');
-                container.innerHTML += `<div class="section-title">Latest output</div><pre class="logs-container">${String(data.logs || 'No recent logs.').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre><div class="news-content" style="margin-top:10px;">Refresh the page to fetch the latest provider output.</div>`;
+                container.innerHTML += `<div class="section-title">Latest output</div><pre class="logs-container">${String(data.logs || 'No recent logs.').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre><div class="news-content" style="margin-top:10px;">Refresh the page to fetch the latest activity.</div>`;
             } catch (e) { tg.showAlert(e.message || 'Failed to load logs.'); }
         }
 
@@ -433,6 +440,11 @@
                 if (!btn) return;
                 const act = btn.dataset.action;
                 if (act === 'navigate') navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null);
+                if (act === 'bot-menu') {
+                    const bot = (window.__dashboardBots || []).find(item => item.appName === btn.dataset.appName);
+                    if (bot) navigateTo('management', bot);
+                    return;
+                }
                 if (act === 'support') {
                     tg.openTelegramLink('https://t.me/staries1');
                 }
@@ -460,24 +472,74 @@
                 if (act === 'deploy-bot') return;
             };
             const deployForm = document.getElementById('deployForm');
-            if (deployForm) deployForm.onsubmit = async (event) => {
-                event.preventDefault();
-                const result = document.getElementById('deployResult');
-                result.textContent = 'Creating deployment job...';
-                const payload = { botType: document.getElementById('deployBotType').value, appName: document.getElementById('deployAppName').value.trim().toLowerCase(), sessionId: document.getElementById('deploySessionId').value.trim(), deployKey: document.getElementById('deployKey').value.trim(), email: document.getElementById('deployEmail').value.trim() };
-                try {
-                    const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
-                    const data = await res.json();
-                    if (!data.success) throw new Error(data.message || 'Deployment could not be created.');
-                    if (data.paymentRequired && data.paymentUrl) {
-                        result.innerHTML = `Job <strong>${data.jobId}</strong> is awaiting payment. <button type="button" class="support-btn" id="payNowBtn" style="width:auto;margin-top:10px;">OPEN PAYMENT</button><div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
-                        document.getElementById('payNowBtn').onclick = () => tg.openLink(data.paymentUrl);
-                    } else {
-                        result.innerHTML = `Job <strong>${data.jobId}</strong> accepted. <div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
-                    }
-                    pollJob(data.jobId);
-                } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
-            };
+            if (deployForm) {
+                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey'), email: document.getElementById('deployEmail') };
+                const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
+                const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
+                const checkName = async () => {
+                    const name = fields.name.value.trim().toLowerCase();
+                    if (!name) return setState(states.name, false, 'Enter an app name');
+                    setState(states.name, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/check-app-name/${encodeURIComponent(name)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.name, data.available === true, data.available ? 'Name is available' : (data.message || 'Name is unavailable'));
+                    return data.available === true;
+                };
+                const checkSession = async () => {
+                    const value = fields.session.value.trim();
+                    if (!value) return setState(states.session, false, 'Enter a session ID');
+                    setState(states.session, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/validate-session?botType=${encodeURIComponent(fields.type.value)}&sessionId=${encodeURIComponent(value)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.session, data.valid === true, data.message || (data.valid ? 'Session is valid' : 'Invalid session ID'));
+                    return data.valid === true;
+                };
+                const checkKey = async () => {
+                    const value = fields.key.value.trim();
+                    if (!value) { states.key.textContent = 'No key entered — payment is available'; states.key.className = 'validation-state'; return false; }
+                    setState(states.key, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/check-deploy-key/${encodeURIComponent(value)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.key, data.valid === true, data.message || (data.valid ? 'Key is valid' : 'Invalid or expired key'));
+                    return data.valid === true;
+                };
+                fields.name.addEventListener('blur', checkName);
+                fields.session.addEventListener('blur', checkSession);
+                fields.type.addEventListener('change', checkSession);
+                fields.key.addEventListener('blur', checkKey);
+                document.getElementById('saveNextBtn').onclick = async () => {
+                    const [nameOk, sessionOk] = await Promise.all([checkName(), checkSession()]);
+                    if (!nameOk || !sessionOk) return;
+                    const keyOk = await checkKey();
+                    if (fields.key.value.trim() && !keyOk) return;
+                    document.getElementById('deployOptions').style.display = 'block';
+                    document.getElementById('wizardActions').style.display = 'none';
+                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now, or remove the key to pay.' : 'No valid key is selected. Continue with payment to deploy.';
+                    document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
+                    document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
+                    document.getElementById('emailField').style.display = keyOk ? 'none' : 'block';
+                };
+                const submitDeployment = async (forcePayment) => {
+                    const result = document.getElementById('deployResult');
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), email: fields.email.value.trim() };
+                    result.textContent = 'Creating deployment job...';
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
+                        const data = await res.json();
+                        if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
+                        if (data.paymentRequired && data.paymentUrl) {
+                            result.innerHTML = `Job <strong>${data.jobId}</strong> is awaiting payment. <button type="button" class="support-btn" id="payNowBtn" style="width:auto;margin-top:10px;">OPEN PAYMENT</button><div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
+                            document.getElementById('payNowBtn').onclick = () => tg.openLink(data.paymentUrl);
+                        } else {
+                            result.innerHTML = `Job <strong>${data.jobId}</strong> accepted. <div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
+                        }
+                        pollJob(data.jobId);
+                    } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
+                };
+                document.getElementById('keyDeployBtn').onclick = () => submitDeployment(false);
+                document.getElementById('payDeployBtn').onclick = () => submitDeployment(true);
+                deployForm.onsubmit = (event) => { event.preventDefault(); submitDeployment(false); };
+            }
         }
         async function pollJob(jobId) {
             const status = document.getElementById('jobStatus');

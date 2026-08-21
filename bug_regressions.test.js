@@ -65,3 +65,25 @@ test('mini app client polls job progress instead of hiding the deployment result
   assert.match(htmlSource, /deployment-jobs\//);
   assert.match(htmlSource, /progress_message/);
 });
+
+test('mini app uses a validation-first deployment wizard', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /app\.get\('\/api\/validate-session'/);
+  assert.match(botSource, /getMiniAppUserEmail/);
+  assert.match(botSource, /EMAIL_REQUIRED/);
+  assert.match(htmlSource, /SAVE AND NEXT/);
+  assert.match(htmlSource, /\.validation-state\.good/);
+  assert.match(htmlSource, /\.validation-state\.bad/);
+  assert.match(htmlSource, /DEPLOY WITH KEY/);
+  assert.match(htmlSource, /PAY AND DEPLOY/);
+  assert.match(htmlSource, /if \(fields\.key\.value\.trim\(\) && !keyOk\) return/);
+});
+
+test('mini app dashboard exposes neutral bot menus and remaining days', () => {
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(htmlSource, /Create a new bot/);
+  assert.match(htmlSource, /data-action="bot-menu"/);
+  assert.match(htmlSource, /Subscription Active · \$\{daysRemaining\}/);
+  assert.doesNotMatch(htmlSource, /Create a managed Heroku instance/);
+});
