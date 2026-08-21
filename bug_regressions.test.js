@@ -253,3 +253,25 @@ test('invalid provider credentials trigger bounded automatic TLS and mass recove
   assert.match(botSource, /void runScheduledRecoveryCheck\(\)/);
   assert.match(botSource, /async function deployTlsStack\(adminId, \{ restartRender = true \} = \{\}\)/);
 });
+
+test('automatic recovery keeps owner rebuilds silent and gives the administrator a replacement-key action', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /Enter New Key/);
+  assert.match(botSource, /callback_data: 'recovery_enter_new_key'/);
+  assert.match(botSource, /AWAITING_RECOVERY_API_KEY/);
+  assert.match(botSource, /Replacement API key verified and stored/);
+  assert.match(botSource, /performSilentMassRestoreForType/);
+  assert.match(botSource, /dbServices\.silentRestoreBuild/);
+  assert.match(botSource, /Owners will not receive build messages/);
+  assert.doesNotMatch(botSource.slice(botSource.indexOf('async function performMassRestoreSequence'), botSource.indexOf('async function redeployBot')), /handleRestoreAllConfirm/);
+});
+
+test('TLS support apps remain non-expiring and the administrator bypasses email verification', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /if \(String\(userId\) === String\(ADMIN_ID\)\) return true/);
+  const tlsSection = botSource.slice(botSource.indexOf('async function deployTlsStack'), botSource.indexOf("bot.onText(/^\\/deploytls/"));
+  assert.match(tlsSection, /EXPIRATION_DATE: null/);
+  assert.match(tlsSection, /email-tls-/);
+  assert.match(tlsSection, /scr-tls-/);
+  assert.match(tlsSection, /msg-tls-/);
+});

@@ -749,32 +749,49 @@ async function runScheduledRecoveryCheck() {
     }
 }
 
+async function performSilentMassRestoreForType(botType) {
+    const deployments = await dbServices.getAllDeploymentsFromBackup(botType);
+    let successCount = 0;
+    let failureCount = 0;
+    await bot.sendMessage(ADMIN_ID, `**Starting silent ${botType.toUpperCase()} restore:** ${deployments.length} bots. Owners will not receive build messages.`, { parse_mode: 'Markdown' });
+
+    for (const [index, deployment] of deployments.entries()) {
+        const savedConfigVars = typeof deployment.config_vars === 'string' ? JSON.parse(deployment.config_vars) : (deployment.config_vars || {});
+        const botTypeToRestore = deployment.bot_type || botType;
+        const defaultVars = botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : botTypeToRestore === 'hermit' ? hermitDefaultEnvVars : levanterDefaultEnvVars;
+        const vars = { ...defaultVars, ...savedConfigVars, APP_NAME: deployment.app_name, SESSION_ID: deployment.session_id, expiration_date: deployment.expiration_date };
+        try {
+            const result = await dbServices.silentRestoreBuild(deployment.user_id, vars, botTypeToRestore);
+            if (!result.success) throw new Error(result.error || 'Silent restore failed.');
+            successCount++;
+            await bot.sendMessage(ADMIN_ID, `**(${index + 1}/${deployments.length})** \`${result.appName || deployment.app_name}\` restored.`, { parse_mode: 'Markdown' });
+        } catch (error) {
+            failureCount++;
+            await bot.sendMessage(ADMIN_ID, `**(${index + 1}/${deployments.length})** \`${deployment.app_name}\` failed: ${escapeMarkdown(String(error.message).slice(0, 180))}`, { parse_mode: 'Markdown' });
+        }
+    }
+    return { successCount, failureCount };
+}
+
 /**
  * Executes the multi-step restore sequence for all bot types.
  */
 async function performMassRestoreSequence(taskId) {
     try {
-        await bot.sendMessage(ADMIN_ID, "**Starting Persistent Mass Restore** (Task ID: **`" + taskId + "`**)\n\nThis will take a long time...", { parse_mode: 'Markdown' });
-        
-        // 1. Levanter Restore
-        await bot.sendMessage(ADMIN_ID, "**Starting Mass Restore: Levanter**", { parse_mode: 'Markdown' });
-        await handleRestoreAllConfirm({ data: 'restore_all_confirm:levanter', message: { chat: { id: ADMIN_ID } } });
-
-        // 2. Raganork Restore
-        await bot.sendMessage(ADMIN_ID, "**Levanter Restore Complete.**\n\n**Starting Mass Restore: Raganork**", { parse_mode: 'Markdown' });
-        await handleRestoreAllConfirm({ data: 'restore_all_confirm:raganork', message: { chat: { id: ADMIN_ID } } });
-
-        // 3. Complete and clean up
+        await bot.sendMessage(ADMIN_ID, `**Starting Persistent Silent Mass Restore** (Task ID: **\`${taskId}\`**). Bot owners will not be notified.`, { parse_mode: 'Markdown' });
+        const levanter = await performSilentMassRestoreForType('levanter');
+        const raganork = await performSilentMassRestoreForType('raganork');
+        const totalSuccess = levanter.successCount + raganork.successCount;
+        const totalFailure = levanter.failureCount + raganork.failureCount;
+        await runCopyDbTask();
         await pool.query("UPDATE recovery_schedule SET status = 'COMPLETED', scheduled_at = NOW() WHERE id = $1", [taskId]);
         isMaintenanceMode = false;
         await saveMaintenanceStatus(false);
-        
-        await bot.sendMessage(ADMIN_ID, `**Persistent Mass Restore Complete!**\n\nMaintenance mode is now disabled.`);
-
+        await bot.sendMessage(ADMIN_ID, `**Persistent Silent Mass Restore Complete!**\n\n✅ ${totalSuccess} restored\n${totalFailure ? `⚠️ ${totalFailure} failed\n` : ''}Maintenance mode is now disabled.`, { parse_mode: 'Markdown' });
     } catch (restoreError) {
         console.error(`[Mass Restore] CRITICAL ERROR during sequence (Task ID: ${taskId}):`, restoreError);
         await pool.query("UPDATE recovery_schedule SET status = 'FAILED', scheduled_at = NOW() WHERE id = $1", [taskId]);
-        await bot.sendMessage(ADMIN_ID, `**Mass Restore Sequence Failed!** (Task ID: **\`${taskId}\`**)\n\nAn error occurred during the restore phase: ${restoreError.message}\n\nThe bot is still in maintenance mode. Manual intervention is required.`);
+        await bot.sendMessage(ADMIN_ID, `**Mass Restore Sequence Failed!** (Task ID: **\`${taskId}\`**)\n\nAn error occurred during the restore phase: ${escapeMarkdown(restoreError.message)}\n\nThe bot is still in maintenance mode. Manual intervention is required.`, { parse_mode: 'Markdown' });
     }
 }
 
@@ -2672,7 +2689,11 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         );
 
         if (newKeyResult.rows.length === 0) {
-            throw new Error("No alternative Heroku API keys found in the database. Manual intervention required.");
+            await bot.sendMessage(ADMIN_ID, "**Recovery paused:** No replacement API key is available in the database. Enter a new key to continue automatic recovery.", {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: [[{ text: 'Enter New Key', callback_data: 'recovery_enter_new_key', style: 'success' }]] }
+            });
+            return;
         }
         const newKey = newKeyResult.rows[0].api_key;
         const newKeyId = newKeyResult.rows[0].id;
@@ -3505,6 +3526,7 @@ function generateOtp() {
 }
 
 async function isUserVerified(userId) {
+    if (String(userId) === String(ADMIN_ID)) return true;
     try {
         const result = await pool.query(
             'SELECT is_verified FROM email_verification WHERE user_id = $1',
@@ -7351,7 +7373,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             MESSAGE_BOT_API_KEY,
             DATABASE_URL: process.env.DATABASE_URL,
             HEROKU_API_KEY: HEROKU_API_KEY,
-            HEROKU_APP_NAME: msgAppName
+            HEROKU_APP_NAME: msgAppName,
+            EXPIRATION_DATE: null
         });
 
         await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
@@ -7379,7 +7402,8 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
     APP_URL: messageBotUrl,
     SECRET_API_KEY,
-    PLAYWRIGHT_BROWSERS_PATH: '0'
+    PLAYWRIGHT_BROWSERS_PATH: '0',
+    EXPIRATION_DATE: null
 });
 
         await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
@@ -7392,7 +7416,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
-        await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY });
+        await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
         await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
 
         // Retrieve exact URL for Email Service to update Render
@@ -9207,6 +9231,27 @@ bot.on('message', async msg => {
   // Now the rest of your code for handling text messages will run correctly
   await dbServices.updateUserActivity(cid); 
   await notifyAdminUserOnline(msg); 
+
+  if (cid === ADMIN_ID && st?.step === 'AWAITING_RECOVERY_API_KEY') {
+    const replacementKey = text.trim();
+    delete userStates[cid];
+    if (replacementKey.length < 30) {
+      await bot.sendMessage(cid, 'Invalid key. Please use Enter New Key again and send the complete API key.');
+      return;
+    }
+    try {
+      await axios.get('https://api.heroku.com/account', {
+        headers: { Authorization: `Bearer ${replacementKey}`, Accept: 'application/vnd.heroku+json; version=3' }
+      });
+      await pool.query(`INSERT INTO heroku_api_keys (id, api_key, added_by, is_active) VALUES (DEFAULT, $1, $2, TRUE)`, [replacementKey, cid]);
+      await bot.sendMessage(cid, 'Replacement API key verified and stored. Automatic recovery is resuming now.');
+      void handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
+    } catch (error) {
+      const reason = error.response?.status ? `Status ${error.response.status}` : error.message;
+      await bot.sendMessage(cid, `Replacement key verification failed (${reason}). Please use Enter New Key and try again.`);
+    }
+    return;
+  }
     
      
 
@@ -10956,6 +11001,16 @@ bot.on('callback_query', async q => {
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
+
+  if (action === 'recovery_enter_new_key') {
+    if (cid !== ADMIN_ID) return;
+    userStates[cid] = { step: 'AWAITING_RECOVERY_API_KEY', data: {} };
+    await bot.editMessageText('Send the replacement API key now. It will be verified before recovery continues.', {
+      chat_id: cid,
+      message_id: q.message.message_id
+    });
+    return;
+  }
 
   // --- ADD this block inside your bot.on('callback_query', ...) handler ---
 

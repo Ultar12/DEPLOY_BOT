@@ -193,3 +193,11 @@
 - [x] Start the established mass restore automatically after successful TLS deployment, with no confirmation prompt.
 - [x] Preserve recovery locking, administrator notifications, database key retirement, and failure-safe maintenance mode.
 - [x] Add regression coverage for the approved automatic full recovery order.
+
+# Silent Recovery and Administrator Recovery Controls
+
+- [x] Keep provider-key recovery rebuild activity silent to ordinary bot owners.
+- [x] Add an administrator Enter New Key button when no verified replacement key exists.
+- [x] Ensure TLS Message Bot, Scraper Bot, and Email Service do not receive expiration metadata.
+- [x] Exempt the administrator from email verification for administrator actions.
+- [x] Add regression coverage for recovery silence, key-entry action, non-expiring support apps, and admin verification bypass.
