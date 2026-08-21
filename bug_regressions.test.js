@@ -131,6 +131,43 @@ test('mini app uses the requested app-name-unavailable message for all name conf
   assert.ok(messageMatches.length >= 4);
 });
 
+test('offline bots support validated session recovery and safe restart from the mini app', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /app\.post\('\/api\/bots\/set-session'/);
+  assert.match(botSource, /Session replacement is available only while this bot is offline/);
+  assert.match(botSource, /validateMiniAppDeploymentInput\(botType, 'valid-session-name', normalizedSession\)/);
+  assert.match(botSource, /UPDATE user_deployments SET session_id/);
+  assert.match(botSource, /Session updated and bot restart initiated/);
+  assert.match(htmlSource, /CHANGE SESSION/);
+  assert.match(htmlSource, /data-action="change-session"/);
+});
+
+test('mini app exposes configuration and supports redeploy and turn-off controls', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /app\.post\('\/api\/bots\/turn-off'/);
+  assert.match(botSource, /formation\/web/);
+  assert.match(htmlSource, /View and Edit Variables/);
+  assert.match(htmlSource, /Redeploy Bot/);
+  assert.match(htmlSource, /Turn Off Bot/);
+  assert.doesNotMatch(htmlSource, /Values are masked in the mini app/);
+  assert.match(htmlSource, /escapeValue\(value\)/);
+});
+
+test('mini app displays Deploy ID and staged progress after deployment begins', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /Provisioning deployment resources/);
+  assert.match(botSource, /Configuring bot environment/);
+  assert.match(botSource, /Building bot source/);
+  assert.match(botSource, /Finalizing deployment/);
+  assert.match(botSource, /setInterval\(\(\) =>/);
+  assert.match(htmlSource, /Deploy ID:/);
+  assert.match(htmlSource, /Processing deployment\.\.\./);
+  assert.match(htmlSource, /deploy-cta/);
+});
+
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
   assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'/);

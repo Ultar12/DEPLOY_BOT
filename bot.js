@@ -4822,7 +4822,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         const formattedBots = bots.map(bot => {
             let statusText = bot.status;
             if (bot.status === 'online') statusText = 'Online';
-            if (bot.status === 'logged_out') statusText = 'Offline';
+            if (bot.status === 'logged_out' || bot.status === 'offline') statusText = 'Offline';
 
             return {
                 appName: bot.bot_name,
@@ -4943,32 +4943,39 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
 
 // POST /api/bots/set-session - Set a new session ID
 app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
-    const userId = req.telegramData.id.toString();
+    const userId = String(req.telegramData.id);
     const { appName, sessionId } = req.body;
+    const normalizedSession = String(sessionId || '').trim();
     try {
-        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
-            return res.status(403).json({ success: false, message: 'You do not own this bot.' });
-        }
-        
-        const botType = ownerCheck.rows[0].bot_type;
-        const isValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX)) ||
-                        (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX));
-        if (!isValid) {
-            return res.status(400).json({ success: false, message: `Invalid session ID format for ${botType}.` });
-        }
+        const ownerCheck = await pool.query(`SELECT ud.bot_type, ub.status FROM user_deployments ud JOIN user_bots ub ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name WHERE ud.app_name = $1 AND ud.user_id = $2 LIMIT 1`, [appName, userId]);
+        if (!ownerCheck.rows.length) return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        const { bot_type: botType, status } = ownerCheck.rows[0];
+        if (status !== 'logged_out' && status !== 'offline') return res.status(409).json({ success: false, message: 'Session replacement is available only while this bot is offline.' });
+        const validationError = validateMiniAppDeploymentInput(botType, 'valid-session-name', normalizedSession);
+        if (validationError && !validationError.startsWith('App name')) return res.status(400).json({ success: false, message: validationError });
+        await herokuApi.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { SESSION_ID: normalizedSession }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
+        await pool.query('UPDATE user_bots SET session_id = $1, status = $2 WHERE bot_name = $3 AND user_id = $4', [normalizedSession, 'restarting', appName, userId]);
+        await pool.query('UPDATE user_deployments SET session_id = $1 WHERE app_name = $2 AND user_id = $3', [normalizedSession, appName, userId]);
+        await herokuApi.delete(`https://api.heroku.com/apps/${appName}/dynos`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+        res.json({ success: true, message: 'Session updated and bot restart initiated.' });
+    } catch (error) {
+        console.error(`[MiniApp] Error replacing session for ${appName}:`, error.message);
+        res.status(500).json({ success: false, message: 'Failed to replace the session.' });
+    }
+});
 
-        await herokuApi.patch(
-            `https://api.heroku.com/apps/${appName}/config-vars`,
-            { SESSION_ID: sessionId },
-            {
-                headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' }
-            }
-        );
-        res.json({ success: true, message: 'Session ID updated successfully.' });
-    } catch (e) {
-        console.error(`[MiniApp V2] Error setting session ID for ${appName}:`, e.message);
-        res.status(500).json({ success: false, message: 'Failed to update session ID.' });
+app.post('/api/bots/turn-off', validateWebAppInitData, async (req, res) => {
+    const userId = String(req.telegramData.id);
+    const { appName } = req.body;
+    try {
+        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        if (!ownerCheck.rows.length) return res.status(403).json({ success: false, message: 'You do not own this bot.' });
+        await herokuApi.patch(`https://api.heroku.com/apps/${appName}/formation/web`, { quantity: 0 }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
+        await pool.query('UPDATE user_bots SET status = $1 WHERE bot_name = $2 AND user_id = $3', ['offline', appName, userId]);
+        res.json({ success: true, message: 'Bot turned off.' });
+    } catch (error) {
+        console.error(`[MiniApp] Failed to turn off ${appName}:`, error.message);
+        res.status(500).json({ success: false, message: 'Failed to turn off bot.' });
     }
 });
 
@@ -5105,10 +5112,23 @@ async function startMiniAppDeploymentJob(jobId) {
     const jobResult = await pool.query('SELECT * FROM deployment_jobs WHERE job_id = $1', [jobId]);
     if (!jobResult.rows.length) throw new Error('Deployment job not found.');
     const job = jobResult.rows[0];
+    const progressStages = [
+        { progress: 40, message: 'Provisioning deployment resources' },
+        { progress: 55, message: 'Configuring bot environment' },
+        { progress: 70, message: 'Building bot source' },
+        { progress: 85, message: 'Finalizing deployment' }
+    ];
+    let progressStageIndex = 0;
+    let progressTimer;
     try {
         await updateDeploymentJob(jobId, { status: 'running', progress: 10, progress_message: 'Registering bot' });
         await dbServices.addUserBot(job.user_id, job.app_name, job.session_id, job.bot_type);
         await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting deployment' });
+        progressTimer = setInterval(() => {
+            const stage = progressStages[progressStageIndex++];
+            if (!stage) return clearInterval(progressTimer);
+            updateDeploymentJob(jobId, { progress: stage.progress, progress_message: stage.message }).catch(error => console.error(`[MiniApp Job ${jobId}] Progress update failed:`, error.message));
+        }, 12000);
         await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
@@ -5121,6 +5141,8 @@ async function startMiniAppDeploymentJob(jobId) {
         console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
         await updateDeploymentJob(jobId, { status: 'failed', progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' });
         await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
+    } finally {
+        if (progressTimer) clearInterval(progressTimer);
     }
 }
 

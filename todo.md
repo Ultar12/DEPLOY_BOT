@@ -144,3 +144,14 @@
 - [x] Keep the Telegram reply keyboard visible after deployment, cancellation, and main-menu transitions.
 - [x] Delete or replace stale deployment prompts, old session messages, and cancellation messages shown in the deployment flow.
 - [x] Add regression coverage for plans, tracking return, reply-keyboard persistence, and targeted cleanup.
+
+# Mini-App Offline Recovery, Lifecycle Controls, and Progress Polish
+
+- [x] Show Change Session beside Menu for offline bots only and validate the new session against the bot type.
+- [x] Persist a valid replacement session and restart the affected offline bot safely.
+- [x] Show configuration values in the mini app rather than masking them.
+- [x] Add Redeploy and Turn Off lifecycle actions with ownership checks.
+- [x] Rename user-facing job language to Deploy ID and Processing.
+- [x] Add real progress updates beyond 25 percent during deployment build and completion steps.
+- [x] Add a glowing blue Create a new bot call-to-action.
+- [x] Add regression coverage for session recovery, lifecycle actions, visible config, and progress stages.

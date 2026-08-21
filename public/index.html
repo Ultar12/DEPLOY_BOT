@@ -134,6 +134,12 @@
             font-weight: 600;
         }
 
+        .deploy-cta {
+            border-color: rgba(96, 165, 250, .9) !important;
+            background: linear-gradient(135deg, rgba(37, 99, 235, .35), rgba(59, 130, 246, .12));
+            box-shadow: 0 0 18px rgba(59, 130, 246, .72), inset 0 0 16px rgba(96, 165, 250, .12);
+        }
+
         /* --- Dashboard Stats --- */
         .stats-grid {
             display: grid;
@@ -304,7 +310,7 @@
                     <div class="bot-list" id="botList">Loading bots...</div>
                     <div class="section-title">Actions</div>
                     <div class="management-grid">
-                        <div class="mgmt-option" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
+                        <div class="mgmt-option deploy-cta" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
                     </div>
                 </div>
             `;
@@ -358,7 +364,7 @@
                                     ${isExpired ? `Deletion in ${hoursRemaining}h` : `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left`}
                                 </div>
                             </div>
-                            <button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;align-self:center;">MENU</button>
+                            <div style="display:flex;gap:8px;align-self:center;"><button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>${bot.status === 'Offline' ? `<button class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
                         </div>
                     `;
                 }).join('') || 'No bots found.';
@@ -386,7 +392,9 @@
             return `
                 <div class="management-grid">
                     <div class="mgmt-option" data-action="restart-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Restart Bot</div></div>
-                    <div class="mgmt-option" data-action="navigate" data-view="variables" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">Edit Variables</div></div>
+                    <div class="mgmt-option" data-action="redeploy-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Redeploy Bot</div></div>
+                    <div class="mgmt-option" data-action="turn-off-bot" data-app-name="${bot.appName}" style="border-color:rgba(245,158,11,.45);"><div class="mgmt-option-label" style="color:#fcd34d;">Turn Off Bot</div></div>
+                    <div class="mgmt-option" data-action="navigate" data-view="variables" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">View and Edit Variables</div></div>
                     <div class="mgmt-option" data-action="navigate" data-view="logs" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">Live Logs</div></div>
                     <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="margin-top:20px; border-color:rgba(239,68,68,0.3);"><div class="mgmt-option-label" style="color:#fca5a5;">Delete Bot</div></div>
                 </div>
@@ -394,7 +402,7 @@
         }
 
         function getBotVariablesHTML(bot) {
-            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are masked in the mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
+            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are visible in this private Telegram mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
         }
 
         function getBotLogsHTML(bot) {
@@ -416,7 +424,7 @@
         }
 
         function getDeploymentJobHTML(data) {
-            return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Job ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Checking deployment status...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
+            return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
         }
 
         async function loadVariables(bot) {
@@ -425,7 +433,8 @@
                 const res = await fetch(`${API_BASE_URL}/bots/config-vars/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.message || 'Could not load config.');
-                container.innerHTML += `<div class="section-title">Config Vars</div><div class="management-grid" id="varsList">${Object.entries(data.configVars || {}).map(([key, value]) => `<div class="mgmt-option"><div><div class="mgmt-option-label">${key}</div><div class="mgmt-option-hint">${value === 'Not Set' ? 'Not Set' : '••••••••'}</div></div><button class="support-btn" data-action="set-var" data-app-name="${bot.appName}" data-var-name="${key}" style="width:auto;padding:8px 12px;">EDIT</button></div>`).join('')}</div>`;
+                const escapeValue = value => String(value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+                container.innerHTML += `<div class="section-title">Config Vars</div><div class="management-grid" id="varsList">${Object.entries(data.configVars || {}).map(([key, value]) => `<div class="mgmt-option"><div><div class="mgmt-option-label">${escapeValue(key)}</div><div class="mgmt-option-hint" style="word-break:break-all;max-width:48vw;">${escapeValue(value)}</div></div><button class="support-btn" data-action="set-var" data-app-name="${bot.appName}" data-var-name="${key}" style="width:auto;padding:8px 12px;">EDIT</button></div>`).join('')}</div>`;
             } catch (e) { tg.showAlert(e.message || 'Failed to load variables.'); }
         }
 
@@ -450,6 +459,12 @@
                     if (bot) navigateTo('management', bot);
                     return;
                 }
+                if (act === 'change-session') {
+                    const sessionId = window.prompt('Paste the new session ID. It will be checked against this bot type before saving.');
+                    if (!sessionId) return;
+                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
+                    return;
+                }
                 if (act === 'support') {
                     tg.openTelegramLink('https://t.me/staries1');
                 }
@@ -458,10 +473,10 @@
                     if (value === null) return;
                     fetch(`${API_BASE_URL}/bots/set-var`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, varName: btn.dataset.varName, varValue: value }) }).then(r => r.json()).then(data => tg.showAlert(data.message || 'Saved.')).catch(() => tg.showAlert('Failed to save variable.'));
                 }
-                if (act === 'restart-bot' || act === 'delete-bot') {
+                if (act === 'restart-bot' || act === 'redeploy-bot' || act === 'turn-off-bot' || act === 'delete-bot') {
                     tg.showConfirm(`Confirm ${act}?`, async (ok) => {
                         if (!ok) return;
-                        const ep = act === 'restart-bot' ? 'bots/restart' : 'bots/delete';
+                        const ep = { 'restart-bot': 'bots/restart', 'redeploy-bot': 'bots/redeploy', 'turn-off-bot': 'bots/turn-off', 'delete-bot': 'bots/delete' }[act];
                         try {
                             const res = await fetch(`${API_BASE_URL}/${ep}`, {
                                 method: 'POST',
@@ -551,7 +566,7 @@
                     const result = document.getElementById('deployResult');
                     if (forcePayment && !selectedPlan) return;
                     const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), planId: forcePayment ? selectedPlan.id : undefined };
-                    result.textContent = 'Creating deployment job...';
+                    result.textContent = 'Processing deployment...';
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
                         const data = await res.json();
