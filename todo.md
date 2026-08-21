@@ -46,3 +46,7 @@
 # Final Commit and Push Request
 
 - [ ] Confirm the latest intended changes are committed and pushed to `free-trial-verification`.
+
+# Branch Merge Request
+
+- [ ] Merge `free-trial-verification` into `main` and push the updated `main` branch.
