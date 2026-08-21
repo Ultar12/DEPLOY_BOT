@@ -34,3 +34,11 @@ test('admin expiry label falls back to deployment date instead of N/A', () => {
   assert.equal(expiryLabel(fallback, now), '10 days left');
   assert.notEqual(expiryLabel(fallback, now), 'N/A');
 });
+
+test('stopping logs persists a stopped state when returning to the bot menu', () => {
+  const source = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(source, /previousState\?\.data\?\.logStreaming === false \|\| wasLogStreamRunning \? false : undefined/);
+  assert.match(source, /action === 'logs' \|\| action === 'start_logs'/);
+  assert.match(source, /const shouldStream = st\.data\.logStreaming !== false/);
+  assert.match(source, /callback_data: st\.data\.logStreaming === false \? `start_logs:\$\{payload\}` : `selectapp:\$\{payload\}`/);
+});

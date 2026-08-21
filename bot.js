@@ -13168,13 +13168,21 @@ if (action === 'cancel_payment_and_deploy') {
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
+    const previousState = userStates[cid];
+    const previousLogInterval = previousState?.data?.logInterval;
+    const wasLogStreamRunning = Boolean(previousLogInterval);
 
-    userStates[cid] = { step: 'APP_MANAGEMENT', data: { appName: appName } };
-    
-    if (userStates[cid]?.data?.logInterval) {
-        clearInterval(userStates[cid].data.logInterval);
-        delete userStates[cid].data.logInterval;
+    if (previousLogInterval) {
+        clearInterval(previousLogInterval);
     }
+
+    userStates[cid] = {
+        step: 'APP_MANAGEMENT',
+        data: {
+            appName,
+            logStreaming: previousState?.data?.logStreaming === false || wasLogStreamRunning ? false : undefined
+        }
+    };
 
     await bot.editMessageText(`Checking status for "*${appName}*" ...`, {
         chat_id: cid, message_id: messageId, parse_mode: 'Markdown'
@@ -13873,7 +13881,7 @@ if (action === 'info') {
     }
   }
 
-  if (action === 'logs') {
+  if (action === 'logs' || action === 'start_logs') {
     const st = userStates[cid];
     if (!st || st.step !== 'APP_MANAGEMENT' || st.data.appName !== payload) {
         await bot.sendMessage(cid, "Please select an app again from 'My Bots'.");
@@ -13882,6 +13890,10 @@ if (action === 'info') {
     }
 
     const messageId = q.message.message_id;
+    if (action === 'start_logs') {
+        st.data.logStreaming = true;
+    }
+    const shouldStream = st.data.logStreaming !== false;
     
     // BUG FIX: Clear any existing interval if the user clicks "Logs" multiple times
     if (st.data.logInterval) {
@@ -13915,7 +13927,7 @@ if (action === 'info') {
                     reply_markup: {
                         inline_keyboard: [
                             [{ text: 'Summarize with AI', callback_data: `ai_summary:${payload}` }],
-                            [{ text: 'Stop Stream', callback_data: `selectapp:${payload}` }]
+                            [{ text: st.data.logStreaming === false ? 'Start Stream' : 'Stop Stream', callback_data: st.data.logStreaming === false ? `start_logs:${payload}` : `selectapp:${payload}` }]
                         ]
                     }
                 });
@@ -13929,18 +13941,22 @@ if (action === 'info') {
         }
     };
 
-    // Store the interval in the state so we can stop it later
-    const intervalId = setInterval(refreshLogs, 4000);
-    st.data.logInterval = intervalId;
+    // Store the interval only when streaming is enabled. A stopped stream remains stopped when reopened.
+    let intervalId;
+    if (shouldStream) {
+        intervalId = setInterval(refreshLogs, 4000);
+        st.data.logInterval = intervalId;
+    }
 
     // Trigger first run immediately
     refreshLogs();
 
     // Auto-stop after 1 minute
-    setTimeout(() => {
+    if (shouldStream) setTimeout(() => {
         if (st.data && st.data.logInterval === intervalId) {
             clearInterval(intervalId);
             delete st.data.logInterval;
+            st.data.logStreaming = false;
             bot.editMessageText(`Log Session Ended for ${payload}.`, {
                 chat_id: cid,
                 message_id: messageId,

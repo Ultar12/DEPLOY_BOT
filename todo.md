@@ -69,3 +69,16 @@
 - [x] Inspect `node-telegram-bot-api` 2.x export shape and the current constructor import.
 - [x] Patch TelegramBot constructor compatibility and validate startup loading.
 - [x] Synchronize the constructor fix to both `main` and `free-trial-verification`.
+
+# Deployment Process Audit
+
+- [x] Trace the end-to-end user deployment flow from command/menu through payment, key validation, build, persistence, and status feedback.
+- [x] Evaluate provider API usage, configuration validation, database persistence, retries, rollback, and recovery behavior.
+- [x] Assess deployment security, idempotency, observability, and user-facing professionalism.
+- [x] Produce prioritized recommendations and an implementation roadmap.
+
+# Log Stop and Mini App Expansion
+
+- [x] Persist the user’s stopped-log-stream state so reopening a bot log does not restart streaming unexpectedly.
+- [x] Extend deploy-bot-dashboard with an authorized mini app deployment and bot-management workflow.
+- [x] Add or update tests for log-stream state persistence and dashboard deployment actions.
