@@ -249,7 +249,7 @@
         }
 
         function updateHeader() {
-            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs' };
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy' };
             document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
             document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
         }
@@ -266,6 +266,7 @@
             const container = document.getElementById('view-container');
             switch(viewName) {
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
+                case 'deploy': container.innerHTML = getDeployHTML(); break;
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
@@ -286,7 +287,7 @@
                     <div class="news-dropdown" id="newsDropdown">
                         <div id="newsContainer">Checking for news...</div>
                         <div class="support-action">
-                            <button class="support-btn" onclick="window.open('https://t.me/your_support_user')">Contact Support</button>
+                            <button class="support-btn" data-action="support">Contact Support</button>
                         </div>
                     </div>
 
@@ -296,6 +297,10 @@
                     </div>
                     <div class="section-title">Your Bots</div>
                     <div class="bot-list" id="botList">Loading bots...</div>
+                    <div class="section-title">Actions</div>
+                    <div class="management-grid">
+                        <div class="mgmt-option" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Deploy New Bot</div><div class="mgmt-option-hint">Create a managed Heroku instance</div></div><span>→</span></div>
+                    </div>
                 </div>
             `;
         }
@@ -380,16 +385,61 @@
             `;
         }
 
-        // Variable and Log loading logic remains minimal for size
-        async function loadVariables(bot) { /* API logic */ }
-        async function loadLogs(bot) { /* API logic */ }
+        function getBotVariablesHTML(bot) {
+            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are masked in the mini app. Editing a variable updates the provider configuration for this bot.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
+        }
+
+        function getBotLogsHTML(bot) {
+            return `<div><div class="news-card"><div class="news-title">Provider logs</div><div class="news-content">Latest output is fetched securely for your bot only.</div></div><div id="logsPanel" class="logs-container">Loading logs...</div></div>`;
+        }
+
+        function getDeployHTML() {
+            return `
+                <form id="deployForm" class="management-grid">
+                    <div class="news-card"><div class="news-title">New deployment</div><div class="news-content">Your Telegram identity is attached automatically. Never share tokens outside this secure session.</div></div>
+                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
+                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="If you have a deploy key" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <button class="support-btn" type="submit">START DEPLOYMENT</button>
+                    <div id="deployResult" class="news-content"></div>
+                </form>`;
+        }
+
+        async function loadVariables(bot) {
+            const container = document.getElementById('view-container');
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots/config-vars/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Could not load config.');
+                container.innerHTML += `<div class="section-title">Config Vars</div><div class="management-grid" id="varsList">${Object.entries(data.configVars || {}).map(([key, value]) => `<div class="mgmt-option"><div><div class="mgmt-option-label">${key}</div><div class="mgmt-option-hint">${value === 'Not Set' ? 'Not Set' : '••••••••'}</div></div><button class="support-btn" data-action="set-var" data-app-name="${bot.appName}" data-var-name="${key}" style="width:auto;padding:8px 12px;">EDIT</button></div>`).join('')}</div>`;
+            } catch (e) { tg.showAlert(e.message || 'Failed to load variables.'); }
+        }
+
+        async function loadLogs(bot) {
+            const container = document.getElementById('view-container');
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots/logs/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Could not load logs.');
+                container.innerHTML += `<div class="section-title">Latest output</div><pre class="logs-container">${String(data.logs || 'No recent logs.').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre><div class="news-content" style="margin-top:10px;">Refresh the page to fetch the latest provider output.</div>`;
+            } catch (e) { tg.showAlert(e.message || 'Failed to load logs.'); }
+        }
 
         function attachEventListeners() {
             document.onclick = (e) => {
                 const btn = e.target.closest('[data-action]');
                 if (!btn) return;
                 const act = btn.dataset.action;
-                if (act === 'navigate') navigateTo(btn.dataset.view, JSON.parse(btn.dataset.botJson));
+                if (act === 'navigate') navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null);
+                if (act === 'support') {
+                    tg.showAlert('Please use the support contact shared in the bot chat.');
+                }
+                if (act === 'set-var') {
+                    const value = window.prompt(`Enter a new value for ${btn.dataset.varName}`);
+                    if (value === null) return;
+                    fetch(`${API_BASE_URL}/bots/set-var`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, varName: btn.dataset.varName, varValue: value }) }).then(r => r.json()).then(data => tg.showAlert(data.message || 'Saved.')).catch(() => tg.showAlert('Failed to save variable.'));
+                }
                 if (act === 'restart-bot' || act === 'delete-bot') {
                     tg.showConfirm(`Confirm ${act}?`, async (ok) => {
                         if (!ok) return;
@@ -406,6 +456,20 @@
                         } catch (e) { tg.showAlert("Error."); }
                     });
                 }
+                if (act === 'deploy-bot') return;
+            };
+            const deployForm = document.getElementById('deployForm');
+            if (deployForm) deployForm.onsubmit = async (event) => {
+                event.preventDefault();
+                const result = document.getElementById('deployResult');
+                result.textContent = 'Submitting deployment...';
+                const payload = { botType: document.getElementById('deployBotType').value, appName: document.getElementById('deployAppName').value.trim().toLowerCase(), sessionId: document.getElementById('deploySessionId').value.trim(), deployKey: document.getElementById('deployKey').value.trim() };
+                try {
+                    const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
+                    const data = await res.json();
+                    result.textContent = data.message || (data.success ? 'Deployment accepted.' : 'Deployment failed.');
+                    if (data.success) setTimeout(() => navigateTo('dashboard'), 1200);
+                } catch (e) { result.textContent = 'Connection error. Try again.'; }
             };
         }
 

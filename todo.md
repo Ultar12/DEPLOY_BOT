@@ -82,3 +82,14 @@
 - [x] Persist the user’s stopped-log-stream state so reopening a bot log does not restart streaming unexpectedly.
 - [x] Extend deploy-bot-dashboard with an authorized mini app deployment and bot-management workflow.
 - [x] Add or update tests for log-stream state persistence and dashboard deployment actions.
+
+# Telegram WebApp and Clean Conversation Upgrade
+
+- [ ] Audit current temporary-message creation, editing, deletion, and task-completion paths.
+- [ ] Audit Express static serving and existing mini-app/web endpoints.
+- [ ] Add reusable Telegram message cleanup helpers and apply them to key user workflows.
+- [ ] Add secure Telegram WebApp init-data validation using the bot token and Telegram user ID scoping.
+- [ ] Add the mini-app source inside this repository and serve it from the bot app URL.
+- [ ] Add user-scoped mini-app API endpoints for dashboard, deployment, bot actions, logs, and support.
+- [ ] Add tests for message cleanup, WebApp authentication, user scoping, and mini-app API contracts.
+- [ ] Commit and push the implementation to both `main` and `free-trial-verification`.
