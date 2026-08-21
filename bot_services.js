@@ -432,31 +432,6 @@ async function getAwsDbConnectionString(appName) {
 
 
 
-/**
- * Stores a new contact entry for VCF generation.
- */
-async function storeNewVcfContact(userId, fullName, phoneNumber) {
-    // Sanitize name and ensure number has '+'
-    const cleanName = fullName.trim();
-    const cleanNumber = phoneNumber.trim().replace(/\s/g, ''); 
-
-    try {
-        await pool.query(
-            `INSERT INTO vcf_contacts (user_id, full_name, phone_number, submitted_by_chat_id) 
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (phone_number) 
-             DO UPDATE SET full_name = EXCLUDED.full_name, user_id = EXCLUDED.user_id, created_at = NOW()`,
-            [userId, cleanName, cleanNumber, userId]
-        );
-        return { success: true };
-    } catch (error) {
-        console.error(`[VCF] Failed to store contact for ${cleanName}:`, error.message);
-        return { success: false, error: error.message };
-    }
-}
-
-
-
 
 async function removeBlacklistedName(chatId, nameFragment) {
   try {
@@ -1027,46 +1002,6 @@ async function deleteDeployKey(key) {
   }
 }
 
-async function canDeployFreeTrial(userId) {
-    // 🚨 FIX 1: Define the cooldown period as 90 days (3 months)
-    const COOLDOWN_DAYS = 90; 
-
-    // 1. Get the timestamp of the user's last free deployment
-    const res = await pool.query(
-        'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
-        [userId]
-    );
-    
-    // If no record is found, the user can deploy.
-    if (res.rows.length === 0) return { can: true };
-    
-    const lastDeploy = new Date(res.rows[0].last_deploy_at);
-    const now = new Date();
-    
-    // 2. Calculate the exact future date when the cooldown ends
-    const cooldownEnd = new Date(lastDeploy.getTime() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
-    
-    // 3. Compare current time with the cooldown end date
-    if (now >= cooldownEnd) {
-        // Cooldown period has passed.
-        return { can: true };
-    } else {
-        // Cooldown is still active. Return the future date.
-        // 🚨 FIX 2: Removed flawed "tenDaysAgo" logic and use "cooldownEnd" as the return value.
-        return { can: false, cooldown: cooldownEnd };
-    }
-}
-
-
-async function recordFreeTrialDeploy(userId) {
-    await pool.query(
-        `INSERT INTO temp_deploys (user_id, last_deploy_at) VALUES ($1, NOW())
-         ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW()`,
-        [userId]
-    );
-    console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
-}
-
 // --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
@@ -1297,183 +1232,6 @@ async function getAllDeploymentsFromBackup(botType) {
 }
 
 
-
-async function recordFreeTrialForMonitoring(userId, appName, channelId) {
-    try {
-        await pool.query(
-            `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
-             ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
-            [userId, appName, channelId]
-        );
-        console.log(`[DB-Backup] Added user ${userId} with app ${appName} to free trial monitoring.`);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to record free trial for monitoring:`, error.message);
-    }
-}
-
-async function getMonitoredFreeTrials() {
-    try {
-        const result = await pool.query('SELECT * FROM free_trial_monitoring;');
-        return result.rows;
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
-        return [];
-    }
-}
-
-// This function replaces the previous grantReferralRewards function
-async function grantReferralRewards(referredUserId, deployedBotName) {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-
-        const referralSessionResult = await client.query(
-            `SELECT data FROM sessions WHERE id = $1`,
-            [`referral_session:${referredUserId}`]
-        );
-
-        if (referralSessionResult.rows.length > 0) {
-            const inviterId = referralSessionResult.rows[0].data.inviterId;
-
-            const inviterBotsResult = await client.query(
-                `SELECT bot_name FROM user_bots WHERE user_id = $1`,
-                [inviterId]
-            );
-            const inviterBots = inviterBotsResult.rows;
-
-            if (inviterBots.length <= 2) {
-                // Inviter has two or fewer bots, apply the reward directly
-                const inviterBotName = inviterBots[0].bot_name;
-                await client.query(
-                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
-                     WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-                    [inviterId, inviterBotName]
-                );
-                await bot.sendMessage(inviterId,
-                    `Congratulations! A friend you invited has deployed their first bot. ` +
-                    `You've received a *20-day extension* on your bot \`${escapeMarkdown(inviterBotName)}\`!`,
-                    { parse_mode: 'Markdown' }
-                );
-
-                // Add referral record and grant second-level reward
-                await addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName);
-
-            } else if (inviterBots.length > 2) { // THIS LINE WAS CHANGED
-                // Inviter has more than two bots, prompt for selection
-                await client.query(
-                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending) VALUES ($1, $2, $3, TRUE)
-                     ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
-                    [referredUserId, inviterId, deployedBotName]
-                );
-                
-                const buttons = inviterBots.map(bot => ([{
-                    text: bot.bot_name,
-                    callback_data: `apply_referral_reward:${bot.bot_name}:${referredUserId}`
-                }]));
-                
-                await bot.sendMessage(inviterId,
-                    `A friend you invited has deployed a bot! Please select one of your bots below to add the *20-day extension* to.`,
-                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
-                );
-            } else {
-                // Inviter has no bots to extend, just add the referral record
-                await client.query(
-                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
-                    [referredUserId, inviterId, deployedBotName]
-                );
-                await bot.sendMessage(inviterId,
-                    `Congratulations! A friend you invited has deployed their first bot. ` +
-                    `You've earned a *20-day extension* reward, but you have no active bots to apply it to. ` +
-                    `Deploy a bot now to use your reward!`,
-                    { parse_mode: 'Markdown' }
-                );
-            }
-
-            // Clean up the temporary referral session
-            await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
-
-        } else {
-            // The user was not referred, nothing to do here
-        }
-        await client.query('COMMIT');
-    } catch (e) {
-        await client.query('ROLLBACK');
-        console.error(`[Referral] Failed to grant rewards for user ${referredUserId}:`, e);
-    } finally {
-        client.release();
-    }
-}
-
-// NEW HELPER FUNCTION to handle second-level rewards
-async function addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName) {
-    await client.query(
-        `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
-        [referredUserId, inviterId, deployedBotName]
-    );
-
-    const grandInviterResult = await client.query(
-        `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
-        [inviterId]
-    );
-    if (grandInviterResult.rows.length > 0) {
-        const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
-
-        const grandInviterBotsResult = await client.query(
-            `SELECT bot_name FROM user_bots WHERE user_id = $1`,
-            [grandInviterId]
-        );
-        const grandInviterBots = grandInviterBotsResult.rows;
-
-        if (grandInviterBots.length <= 2) {
-            const grandInviterBotName = grandInviterBots[0].bot_name;
-            await client.query(
-                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
-                 WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-                [grandInviterId, grandInviterBotName]
-            );
-            await bot.sendMessage(grandInviterId,
-                `Bonus Reward! A friend of a friend has deployed a bot. ` +
-                `You've received a *7-day extension* on your bot \`${escapeMarkdown(grandInviterBotName)}\`!`,
-                { parse_mode: 'Markdown' }
-            );
-        } else if (grandInviterBots.length > 2) {
-            await client.query(
-                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, inviter_reward_pending) VALUES ($1, $2, TRUE)
-                 ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
-                [inviterId, grandInviterId]
-            );
-
-            const buttons = grandInviterBots.map(bot => ([{
-                text: bot.bot_name,
-                callback_data: `apply_referral_reward:${bot.bot_name}:${inviterId}:second_level`
-            }]));
-            
-            await bot.sendMessage(grandInviterId,
-                `Bonus Reward! A friend of a friend has deployed a bot. Please select one of your bots below to add the *7-day extension* to.`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
-            );
-        }
-    }
-}
-
-
-
-async function updateFreeTrialWarning(userId) {
-    try {
-        await pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
-    }
-}
-
-async function removeMonitoredFreeTrial(userId) {
-    try {
-        await pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
-        console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
-    }
-}
 
 async function getAllBotDeployments() {
     // This query depends on your table name.
@@ -1942,7 +1700,8 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
         
 
-async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
+async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
+    const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
         const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
@@ -2295,18 +2054,6 @@ if (botType === 'levanter' || botType === 'raganork') {
             vars.email || null, neonAccountId
         );
 
-        // --- ✅ Free Trial Logic ---
-        if (isFreeTrial && !isRestore) {
-            await mainPool.query(
-                'INSERT INTO temp_deploys (user_id, last_deploy_at, ip_address) VALUES ($1, NOW(), $2) ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW(), ip_address = EXCLUDED.ip_address',
-                [targetChatId, ipAddress]
-            );
-            await mainPool.query(
-                'INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name',
-                [targetChatId, appName, MUST_JOIN_CHANNEL_ID]
-            );
-        }
-
         // --- ✅ Reward Logic ---
         if (!isRestore) {
             try {
@@ -2333,7 +2080,7 @@ if (botType === 'levanter' || botType === 'raganork') {
         if (!isRestore) {
             const userChat = await bot.getChat(targetChatId);
             const userDetails = `*Name:* ${escapeMarkdown(userChat.first_name || '')} ${escapeMarkdown(userChat.last_name || '')}\n*Username:* @${escapeMarkdown(userChat.username || 'N/A')}\n*Chat ID:* \`${escapeMarkdown(targetChatId)}\``;
-            const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Paid'}`;
+            const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* Paid`;
             await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
         }
 
@@ -2757,8 +2504,6 @@ module.exports = {
     getAllDeployKeys,
     deleteDeployKey,
     getDynoStatus,
-    canDeployFreeTrial,
-    recordFreeTrialDeploy,
     updateUserActivity,
     getUserLastSeen,
     getAllBotDeployments,
@@ -2776,18 +2521,13 @@ module.exports = {
     handleAppNotFoundAndCleanDb,
     sendAppList,
     processBotSwitch,
-    storeNewVcfContact,
     permanentlyDeleteBotRecord,
     deleteUserBot,
     getLoggedOutBotsForEmail,
     grantReferralRewards,
     buildWithProgress,
     syncExpirationToHeroku,
-    recordFreeTrialForMonitoring,
-    getMonitoredFreeTrials,
-    updateFreeTrialWarning,
     backupAllPaidBots,
-    removeMonitoredFreeTrial,
     syncDatabases,
     getAwsDbConnectionString,
     createAllTablesInPool,
