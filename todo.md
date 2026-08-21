@@ -115,3 +115,13 @@
 - [x] Add a per-bot menu button with management actions.
 - [x] Show days remaining beside each subscription status.
 - [x] Add regression tests and visual/syntax checks for the revised wizard and dashboard.
+
+# Verified-Email Checkout and Chat Cleanup
+
+- [x] Diagnose and remove the remaining generic mini-app deployment-job creation failure.
+- [x] Remove the manual email field and use only the user’s verified database email for payment.
+- [x] Show payment only when the deploy-key field is empty; show immediate deployment only after a key validates.
+- [x] Redirect a keyless user to the generated payment URL and start the job only from verified payment confirmation.
+- [x] Add safe cleanup of private user command messages where deletion is permitted.
+- [x] Reuse or replace prior bot menu/status messages instead of accumulating new messages.
+- [x] Add regression checks for verified-email checkout and safe message cleanup.

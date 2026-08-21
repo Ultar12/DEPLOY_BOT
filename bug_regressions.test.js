@@ -54,7 +54,7 @@ test('mini app exposes durable job status and payment-or-key deployment flow', (
   assert.match(botSource, /app\.get\('\/api\/deployment-jobs\/:jobId'/);
   assert.match(botSource, /app\.get\('\/miniapp'/);
   assert.match(servicesSource, /CREATE TABLE IF NOT EXISTS deployment_jobs/);
-  assert.match(htmlSource, /deployEmail/);
+  assert.match(htmlSource, /saved verified email/);
   assert.match(htmlSource, /OPEN PAYMENT/);
   assert.match(htmlSource, /t\.me\/staries1/);
 });
@@ -86,4 +86,30 @@ test('mini app dashboard exposes neutral bot menus and remaining days', () => {
   assert.match(htmlSource, /data-action="bot-menu"/);
   assert.match(htmlSource, /Subscription Active · \$\{daysRemaining\}/);
   assert.doesNotMatch(htmlSource, /Create a managed Heroku instance/);
+});
+
+test('mini app payment checkout uses only the verified database email', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /VERIFIED_EMAIL_REQUIRED/);
+  assert.match(botSource, /String\(await getMiniAppUserEmail\(userId\) \|\| ''\)/);
+  assert.doesNotMatch(htmlSource, /id="deployEmail"/);
+  assert.match(htmlSource, /Your saved verified email will be used to create a secure payment link/);
+  assert.match(htmlSource, /tg\.openLink\(data\.paymentUrl\)/);
+});
+
+test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'/);
+  assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT/);
+  assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT/);
+});
+
+test('private chat lifecycle safely deletes user input and replaces the prior bot screen', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /const latestPrivateBotMessageIds = new Map\(\)/);
+  assert.match(botSource, /async function safelyDeleteMessage/);
+  assert.match(botSource, /bot\.sendMessage = async/);
+  assert.match(botSource, /void safelyDeleteMessage\(cid, msg\.message_id\)/);
+  assert.match(botSource, /sendReplaceablePrivateVideo\(cid, welcomeVideoUrl/);
 });

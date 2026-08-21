@@ -407,7 +407,6 @@
                     <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="Enter a key to validate it" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="keyState" class="validation-state">No key entered — payment is available</span></label>
-                    <label class="section-title" style="margin:0;display:none;" id="emailField">Payment email<input id="deployEmail" type="email" placeholder="you@example.com" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
                     <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
                     <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
                     <div id="deployResult" class="news-content"></div>
@@ -473,7 +472,7 @@
             };
             const deployForm = document.getElementById('deployForm');
             if (deployForm) {
-                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey'), email: document.getElementById('deployEmail') };
+                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
                 const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
                 const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
                 const checkName = async () => {
@@ -514,14 +513,13 @@
                     if (fields.key.value.trim() && !keyOk) return;
                     document.getElementById('deployOptions').style.display = 'block';
                     document.getElementById('wizardActions').style.display = 'none';
-                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now, or remove the key to pay.' : 'No valid key is selected. Continue with payment to deploy.';
+                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : 'Your saved verified email will be used to create a secure payment link.';
                     document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
                     document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
-                    document.getElementById('emailField').style.display = keyOk ? 'none' : 'block';
                 };
                 const submitDeployment = async (forcePayment) => {
                     const result = document.getElementById('deployResult');
-                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), email: fields.email.value.trim() };
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim() };
                     result.textContent = 'Creating deployment job...';
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
@@ -530,6 +528,7 @@
                         if (data.paymentRequired && data.paymentUrl) {
                             result.innerHTML = `Job <strong>${data.jobId}</strong> is awaiting payment. <button type="button" class="support-btn" id="payNowBtn" style="width:auto;margin-top:10px;">OPEN PAYMENT</button><div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
                             document.getElementById('payNowBtn').onclick = () => tg.openLink(data.paymentUrl);
+                            tg.openLink(data.paymentUrl);
                         } else {
                             result.innerHTML = `Job <strong>${data.jobId}</strong> accepted. <div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
                         }

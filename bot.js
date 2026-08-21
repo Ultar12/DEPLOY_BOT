@@ -635,6 +635,9 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
         await client.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
+        await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';`);
+        await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT;`);
+        await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT;`);
         await client.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS amount_expected NUMERIC;`);
         await client.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMP WITH TIME ZONE;`);
         // --- New columns for pre_verified_users to store geolocation ---
@@ -1527,6 +1530,44 @@ bot.getMe().then(me => {
 
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
+const latestPrivateBotMessageIds = new Map();
+const nativeSendMessage = bot.sendMessage.bind(bot);
+
+function isPrivateChatId(chatId) {
+    return /^\d+$/.test(String(chatId));
+}
+
+async function safelyDeleteMessage(chatId, messageId) {
+    if (!chatId || !messageId) return;
+    await bot.deleteMessage(chatId, messageId).catch(() => {});
+}
+
+async function clearLatestPrivateBotMessage(chatId, keepMessageId = null) {
+    const key = String(chatId);
+    const previousId = latestPrivateBotMessageIds.get(key);
+    if (previousId && previousId !== keepMessageId) await safelyDeleteMessage(key, previousId);
+    if (!keepMessageId) latestPrivateBotMessageIds.delete(key);
+}
+
+function trackLatestPrivateBotMessage(chatId, message) {
+    if (isPrivateChatId(chatId) && message?.message_id) latestPrivateBotMessageIds.set(String(chatId), message.message_id);
+    return message;
+}
+
+bot.sendMessage = async (chatId, text, options) => {
+    const sent = await nativeSendMessage(chatId, text, options);
+    if (isPrivateChatId(chatId)) {
+        await clearLatestPrivateBotMessage(chatId, sent.message_id);
+        trackLatestPrivateBotMessage(chatId, sent);
+    }
+    return sent;
+};
+
+async function sendReplaceablePrivateVideo(chatId, video, options) {
+    await clearLatestPrivateBotMessage(chatId);
+    const sent = await bot.sendVideo(chatId, video, options);
+    return trackLatestPrivateBotMessage(chatId, sent);
+}
 
 // Map to store Promises for app deployment status based on channel notifications
 const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
@@ -5008,6 +5049,7 @@ async function ensureMiniAppDeploymentSchema() {
             await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT`);
+            await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'`);
         })().catch(error => { miniAppSchemaReady = null; throw error; });
     }
     return miniAppSchemaReady;
@@ -5071,7 +5113,7 @@ app.get('/api/validate-session', validateWebAppInitData, async (req, res) => {
 });
 
 app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-    const { botType, appName, sessionId, autoStatusView, deployKey, email } = req.body;
+    const { botType, appName, sessionId, autoStatusView, deployKey } = req.body;
     const userId = String(req.telegramData.id);
     const normalizedType = String(botType || '').trim().toLowerCase();
     const normalizedName = String(appName || '').trim().toLowerCase();
@@ -5103,9 +5145,8 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
         }
 
-        const storedEmail = await getMiniAppUserEmail(userId);
-        const normalizedEmail = String(email || storedEmail || '').trim().toLowerCase();
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, code: 'EMAIL_REQUIRED', message: 'No verified email is saved. Enter an email to continue with payment.' });
+        const normalizedEmail = String(await getMiniAppUserEmail(userId) || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, code: 'VERIFIED_EMAIL_REQUIRED', message: 'A verified email is required before payment. Send “Deploy” to the bot to register or verify your email, then return here.' });
         if (!process.env.PAYSTACK_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
         const reference = `mini_${crypto.randomBytes(12).toString('hex')}`;
         const priceNgn = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
@@ -5974,7 +6015,7 @@ RULES:
             ]
         };
 
-        const sentMessage = await bot.sendVideo(cid, welcomeVideoUrl, {
+        const sentMessage = await sendReplaceablePrivateVideo(cid, welcomeVideoUrl, {
             caption: welcomeCaption, // Use the new AI-generated or fallback caption
             parse_mode: 'Markdown',
             reply_markup: {
@@ -6014,7 +6055,7 @@ bot.onText(/^\/menu$/i, async msg => {
   await dbServices.updateUserActivity(cid);
   const isAdmin = cid === ADMIN_ID;
   delete userStates[cid]; // Clear user state
-  bot.sendMessage(cid, 'Menu:', {
+  await bot.sendMessage(cid, 'Menu:', {
     reply_markup: { keyboard: buildKeyboard(isAdmin), resize_keyboard: true }
   });
 });
@@ -9062,6 +9103,9 @@ bot.on('message', async msg => {
     const text = msg.text?.trim() || ""; 
     const cid = msg.chat.id.toString();
     const st = userStates[cid];
+    if (msg.chat.type === 'private' && !msg.from?.is_bot) {
+      void safelyDeleteMessage(cid, msg.message_id);
+    }
   if (msg.text && msg.text.startsWith('/')) {
   return; 
 }
