@@ -57,3 +57,9 @@
 - [x] Update all declared dependencies and refresh the lockfile.
 - [x] Run syntax, regression, and dependency integrity checks.
 - [x] Commit and push the validated dependency update to `main`.
+
+# Startup Regression Repair
+
+- [x] Restore the missing `addReferralAndSecondLevelReward` implementation removed by the oversized cleanup edit.
+- [x] Validate `bot_services.js` and `bot.js` module loading plus regression tests.
+- [x] Synchronize the startup fix to both `main` and `free-trial-verification`.

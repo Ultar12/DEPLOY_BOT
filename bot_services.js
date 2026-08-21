@@ -62,7 +62,7 @@ function init(params) {
     GITHUB_HERMIT_REPO_URL = params.GITHUB_HERMIT_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
     ADMIN_ID = params.ADMIN_ID;
-    runOrphanDbCleanup = params.runOrphanDbCleanup; 
+    runOrphanDbCleanup = params.runOrphanDbCleanup;
     moduleParams = params;
     NEON_ACCOUNTS = params.NEON_ACCOUNTS;
     TELEGRAM_CHANNEL_ID = params.TELEGRAM_CHANNEL_ID;
@@ -142,7 +142,7 @@ async function pruneLoggedOutBot() {
 
     // 1. Get dependencies from moduleParams
     // 💡 ADDED 'runOrphanDbCleanup' to the dependencies
-    const { deleteNeonDatabase, mainPool, monitorSendTelegramAlert, ADMIN_ID, herokuApi, HEROKU_API_KEY, runOrphanDbCleanup } = moduleParams; 
+    const { deleteNeonDatabase, mainPool, monitorSendTelegramAlert, ADMIN_ID, herokuApi, HEROKU_API_KEY, runOrphanDbCleanup } = moduleParams;
 
     // 2. Get all bots marked as 'logged_out' from the *main* database
     const loggedOutBots = await getLoggedOutBots(); // Uses main 'pool' internally
@@ -167,7 +167,7 @@ async function pruneLoggedOutBot() {
 
         // --- FETCH NEON ACCOUNT ID ---
         try {
-            const deploymentInfo = await mainPool.query( 
+            const deploymentInfo = await mainPool.query(
                 'SELECT neon_account_id FROM user_deployments WHERE user_id = $1 AND app_name = $2',
                 [user_id, app_name]
             );
@@ -204,10 +204,10 @@ async function pruneLoggedOutBot() {
 
         // --- Part B: Delete Neon Database (Using Account ID) ---
         const dbName = app_name.replace(/-/g, '_');
-        if (herokuDeleted) { 
+        if (herokuDeleted) {
             try {
                 console.log(`[Prune] Deleting Neon database: ${dbName} from Account ${neonAccountIdToDelete}`);
-                const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete); 
+                const neonResult = await deleteNeonDatabase(dbName, neonAccountIdToDelete);
 
                 if (neonResult.success) {
                     console.log(`[Prune] Successfully deleted Neon DB: ${dbName} from Account ${neonAccountIdToDelete}`);
@@ -229,10 +229,10 @@ async function pruneLoggedOutBot() {
         if (herokuDeleted && neonDeleted) {
             prunedCount++;
             console.log(`[Prune] External resources for ${app_name} pruned. Deleting local records...`);
-            
+
             try {
                 // This function is defined in bot_services.js and deletes from all local tables
-                await permanentlyDeleteBotRecord(user_id, app_name); 
+                await permanentlyDeleteBotRecord(user_id, app_name);
                 console.log(`[Prune] Successfully deleted local DB records for ${app_name}.`);
             } catch (dbError) {
                 console.error(`[Prune] CRITICAL: Failed to delete local DB records for ${app_name}:`, dbError.message);
@@ -280,8 +280,8 @@ async function getLoggedOutBots() {
     try {
         // We select 'bot_name' and rename it to 'app_name' for consistency
         const result = await pool.query(
-            `SELECT user_id, bot_name AS app_name 
-             FROM user_bots 
+            `SELECT user_id, bot_name AS app_name
+             FROM user_bots
              WHERE status = 'logged_out';`
         );
         console.log(`[DB] Found ${result.rows.length} logged-out bots.`);
@@ -295,8 +295,8 @@ async function getLoggedOutBots() {
 
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
     console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
-    const { deleteSelfHostedDatabase } = moduleParams; 
-    
+    const { deleteSelfHostedDatabase } = moduleParams;
+
     try {
         // 1. Clear user state to prevent input collisions
         if (moduleParams.userStates && moduleParams.userStates[userId]) {
@@ -306,9 +306,9 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
         // 2. DELETE OLD APP FROM HEROKU
         try {
             await herokuApi.delete(`/apps/${appName}`, {
-                 headers: { 
-                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, 
-                    'Accept': 'application/vnd.heroku+json; version=3' 
+                 headers: {
+                    'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`,
+                    'Accept': 'application/vnd.heroku+json; version=3'
                 }
             });
             console.log(`[Switch] Deleted Heroku app: ${appName}`);
@@ -319,10 +319,10 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
         // 3. AWS DATABASE DELETE (The "Clean Slate" Logic)
         const dbNameForDeletion = appName.replace(/-/g, '_');
         console.log(`[Switch] Requesting AWS deletion for DB: ${dbNameForDeletion}`);
-        
+
         // Use your specific AWS deletion function
         const awsDeleteResult = await deleteSelfHostedDatabase(dbNameForDeletion);
-        
+
         if (awsDeleteResult.success) {
             console.log(`[Switch] AWS Database ${dbNameForDeletion} wiped successfully.`);
         } else {
@@ -333,25 +333,25 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
         // Heroku often prevents immediate reuse of a deleted name; a suffix fixes this.
         const randomSuffix = require('crypto').randomBytes(2).toString('hex');
         const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
-        
+
         console.log(`[Switch] Migrating identity: ${appName} -> ${newAppName}`);
 
         // 5. UPDATE LOCAL DATABASE RECORDS
         // We update the existing record with the new name and type
         await pool.query(
-            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'Building' 
+            `UPDATE user_bots SET bot_name = $1, bot_type = $2, session_id = $3, status = 'Building'
              WHERE bot_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
-        
+
         await pool.query(
-            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3 
+            `UPDATE user_deployments SET app_name = $1, bot_type = $2, session_id = $3
              WHERE app_name = $4 AND user_id = $5`,
             [newAppName, targetType, newSessionId, appName, userId]
         );
 
         // 6. PREPARE FRESH CONFIG
-        // We omit DATABASE_URL here. buildWithProgress will detect this and 
+        // We omit DATABASE_URL here. buildWithProgress will detect this and
         // trigger the AWS createDatabase logic for the new type.
         const targetDefaults = moduleParams.defaultEnvVars[targetType] || {};
         const newVars = {
@@ -363,7 +363,7 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
         // 7. TRIGGER FRESH BUILD
         // We pass isRestore = false to force new database provisioning
         await buildWithProgress(userId, newVars, false, false, targetType);
-        
+
     } catch (error) {
         console.error(`[Switch Error] ${appName}:`, error.message);
         moduleParams.bot.sendMessage(userId, `❌ Switch failed: ${error.message}. Please contact Admin.`);
@@ -376,7 +376,7 @@ async function getAwsDbConnectionString(appName) {
     // or null if there's no usable AWS_MAIN record for this app in that pool.
     const lookupInPool = async (dbPool) => {
         const result = await dbPool.query(
-            `SELECT config_vars FROM user_deployments 
+            `SELECT config_vars FROM user_deployments
              WHERE app_name = $1 AND neon_account_id = 'AWS_MAIN'`,
             [appName]
         );
@@ -479,7 +479,7 @@ async function syncDatabaseWithHeroku() {
             }
         });
         const herokuAppNames = new Set(herokuAppsResponse.data.map(app => app.name));
-        
+
         // Step 2: Get all app names from the local database
         const dbAppsResult = await pool.query('SELECT bot_name FROM user_bots');
         const dbAppNames = new Set(dbAppsResult.rows.map(row => row.bot_name));
@@ -507,10 +507,10 @@ async function syncDatabaseWithHeroku() {
                 } else if (sessionId && sessionId.startsWith(LEVANTER_SESSION_PREFIX)) {
                     botType = 'levanter';
                 }
-                
+
                 await addUserBot(ADMIN_ID, appName, sessionId, botType);
                 await saveUserDeployment(ADMIN_ID, appName, sessionId, configVars, botType);
-                
+
                 syncStats.addedToUserBots++;
                 syncStats.addedToDeployments++;
                 console.log(`[Sync] Added missing app "${appName}" to DB with ADMIN_ID as owner.`);
@@ -536,8 +536,8 @@ async function getLoggedOutBotsForEmail() {
             SELECT ub.user_id, ub.bot_name, ud.email
             FROM user_bots ub
             JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-            WHERE ub.status = 'logged_out' 
-              AND ud.is_free_trial = FALSE 
+            WHERE ub.status = 'logged_out'
+              AND ud.is_free_trial = FALSE
               AND ud.email IS NOT NULL;
         `);
         console.log(`[DB] Found ${result.rows.length} logged-out paid bots with registered emails.`);
@@ -609,7 +609,7 @@ async function reconcileDatabaseWithHeroku(botType) {
                 }
             }
         }
-        
+
         for (const app of renamedApps) {
             await pool.query('UPDATE user_bots SET bot_name = $1 WHERE user_id = $2 AND bot_name = $3', [app.newName, app.userId, app.oldName]);
             await pool.query('UPDATE user_deployments SET app_name = $1 WHERE user_id = $2 AND app_name = $3', [app.newName, app.userId, app.oldName]);
@@ -618,7 +618,7 @@ async function reconcileDatabaseWithHeroku(botType) {
 
         console.log(`[Sync] Reconciliation complete. Found and fixed ${renamedApps.length} renamed apps.`);
         return { success: true, message: `Reconciliation fixed ${renamedApps.length} renamed apps.` };
-        
+
     } catch (error) {
         console.error('[Sync] Reconciliation failed:', error);
         return { success: false, message: error.message };
@@ -631,9 +631,9 @@ async function reconcileDatabaseWithHeroku(botType) {
 async function getDynoStatus(appName) {
     try {
         const response = await herokuApi.get(`https://api.heroku.com/apps/${appName}/dynos`, {
-            headers: { 
-                Authorization: `Bearer ${HEROKU_API_KEY}`, 
-                Accept: 'application/vnd.heroku+json; version=3' 
+            headers: {
+                Authorization: `Bearer ${HEROKU_API_KEY}`,
+                Accept: 'application/vnd.heroku+json; version=3'
             }
         });
         // If there are any dynos and the first one is not 'crashed', the bot is on.
@@ -658,7 +658,7 @@ async function syncExpirationToHeroku(appName, newDateStr) {
     try {
         if (!HEROKU_API_KEY || !appName || !newDateStr) return false;
         const isoDate = new Date(newDateStr).toISOString();
-        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+        await herokuApi.patch(`/apps/${appName}/config-vars`,
             { EXPIRATION_DATE: isoDate },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
@@ -674,7 +674,7 @@ async function syncExpirationToHeroku(appName, newDateStr) {
 async function getExpiringBots() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name FROM user_deployments 
+            `SELECT user_id, app_name FROM user_deployments
              WHERE warning_sent_at IS NULL AND expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days';`
         );
         return result.rows;
@@ -691,8 +691,8 @@ async function getExpiringBackups() {
         // have not received the 7-day warning (level 0) OR
         // have received the 7-day warning but not the 3-day (level 7).
         const result = await pool.query(
-            `SELECT user_id, app_name, expiration_date, warning_level 
-             FROM user_deployments 
+            `SELECT user_id, app_name, expiration_date, warning_level
+             FROM user_deployments
              WHERE expiration_date BETWEEN NOW() AND NOW() + INTERVAL '7 days'
                AND paused_at IS NULL
                AND warning_level IN (0, 7);` // <-- CHANGED THIS LINE
@@ -761,8 +761,8 @@ async function setBackupWarningSent(userId, appName) {
 async function getExpiredBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name 
-             FROM user_deployments 
+            `SELECT user_id, app_name
+             FROM user_deployments
              WHERE expiration_date <= NOW()
                AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
         );
@@ -797,28 +797,28 @@ async function getUserIdByBotName(botName) {
 
         // 3. IF STILL NOT FOUND, AUTO-ASSIGN TO ADMIN
         console.warn(`[DB] getUserIdByBotName: Bot "${botName}" has no owner in DB. Auto-assigning to ADMIN_ID (${ADMIN_ID}).`);
-        
+
         try {
             // Fetch config from Heroku to restore it fully to the database
             const response = await herokuApi.get(`/apps/${botName}/config-vars`, {
                 headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
             });
-            
+
             const configVars = response.data;
             const sessionId = configVars.SESSION_ID || 'N/A';
-            
+
             // Determine bot type based on session prefixes
             let botType = 'levanter'; // Default
             if (sessionId.startsWith('RGNK')) botType = 'raganork';
             else if (sessionId.startsWith('H')) botType = 'hermit';
-            
+
             // Save it to the database under the Admin's ID automatically
             await addUserBot(ADMIN_ID, botName, sessionId, botType);
             await saveUserDeployment(ADMIN_ID, botName, sessionId, configVars, botType);
-            
+
             console.log(`[DB] Successfully rescued orphaned bot "${botName}" and assigned it to Admin.`);
         } catch (herokuErr) {
-            // If it fails (e.g., 404 not found on Heroku), still return ADMIN_ID 
+            // If it fails (e.g., 404 not found on Heroku), still return ADMIN_ID
             // so the calling function can cleanly delete the ghost record.
             console.warn(`[DB] Could not fetch Heroku config for "${botName}". Proceeding with Admin ID fallback.`);
         }
@@ -865,7 +865,7 @@ async function permanentlyDeleteBotRecord(userId, appName) {
         // Delete from the main database (pool)
         await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
         await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
-        
+
         // --- THIS IS THE NEW LOGIC ---
         // Also delete from the backup database (backupPool)
         await backupPool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
@@ -1233,6 +1233,139 @@ async function getAllDeploymentsFromBackup(botType) {
 
 
 
+async function grantReferralRewards(referredUserId, deployedBotName) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const referralSessionResult = await client.query(
+            `SELECT data FROM sessions WHERE id = $1`,
+            [`referral_session:${referredUserId}`]
+        );
+
+        if (referralSessionResult.rows.length > 0) {
+            const inviterId = referralSessionResult.rows[0].data.inviterId;
+
+            const inviterBotsResult = await client.query(
+                `SELECT bot_name FROM user_bots WHERE user_id = $1`,
+                [inviterId]
+            );
+            const inviterBots = inviterBotsResult.rows;
+
+            if (inviterBots.length <= 2) {
+                // Inviter has two or fewer bots, apply the reward directly
+                const inviterBotName = inviterBots[0].bot_name;
+                await client.query(
+                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
+                     WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
+                    [inviterId, inviterBotName]
+                );
+                await bot.sendMessage(inviterId,
+                    `Congratulations! A friend you invited has deployed their first bot. ` +
+                    `You've received a *20-day extension* on your bot \`${escapeMarkdown(inviterBotName)}\`!`,
+                    { parse_mode: 'Markdown' }
+                );
+
+                // Add referral record and grant second-level reward
+                await addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName);
+
+            } else if (inviterBots.length > 2) { // THIS LINE WAS CHANGED
+                // Inviter has more than two bots, prompt for selection
+                await client.query(
+                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending) VALUES ($1, $2, $3, TRUE)
+                     ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
+                    [referredUserId, inviterId, deployedBotName]
+                );
+
+                const buttons = inviterBots.map(bot => ([{
+                    text: bot.bot_name,
+                    callback_data: `apply_referral_reward:${bot.bot_name}:${referredUserId}`
+                }]));
+
+                await bot.sendMessage(inviterId,
+                    `A friend you invited has deployed a bot! Please select one of your bots below to add the *20-day extension* to.`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+                );
+            } else {
+                // Inviter has no bots to extend, just add the referral record
+                await client.query(
+                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
+                    [referredUserId, inviterId, deployedBotName]
+                );
+                await bot.sendMessage(inviterId,
+                    `Congratulations! A friend you invited has deployed their first bot. ` +
+                    `You've earned a *20-day extension* reward, but you have no active bots to apply it to. ` +
+                    `Deploy a bot now to use your reward!`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+
+            // Clean up the temporary referral session
+            await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
+
+        } else {
+            // The user was not referred, nothing to do here
+        }
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error(`[Referral] Failed to grant rewards for user ${referredUserId}:`, e);
+    } finally {
+        client.release();
+    }
+}
+
+async function addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName) {
+    await client.query(
+        `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
+        [referredUserId, inviterId, deployedBotName]
+    );
+
+    const grandInviterResult = await client.query(
+        `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
+        [inviterId]
+    );
+    if (grandInviterResult.rows.length > 0) {
+        const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
+
+        const grandInviterBotsResult = await client.query(
+            `SELECT bot_name FROM user_bots WHERE user_id = $1`,
+            [grandInviterId]
+        );
+        const grandInviterBots = grandInviterBotsResult.rows;
+
+        if (grandInviterBots.length <= 2) {
+            const grandInviterBotName = grandInviterBots[0].bot_name;
+            await client.query(
+                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
+                 WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
+                [grandInviterId, grandInviterBotName]
+            );
+            await bot.sendMessage(grandInviterId,
+                `Bonus Reward! A friend of a friend has deployed a bot. ` +
+                `You've received a *7-day extension* on your bot \`${escapeMarkdown(grandInviterBotName)}\`!`,
+                { parse_mode: 'Markdown' }
+            );
+        } else if (grandInviterBots.length > 2) {
+            await client.query(
+                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, inviter_reward_pending) VALUES ($1, $2, TRUE)
+                 ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
+                [inviterId, grandInviterId]
+            );
+
+            const buttons = grandInviterBots.map(bot => ([{
+                text: bot.bot_name,
+                callback_data: `apply_referral_reward:${bot.bot_name}:${inviterId}:second_level`
+            }]));
+
+            await bot.sendMessage(grandInviterId,
+                `Bonus Reward! A friend of a friend has deployed a bot. Please select one of your bots below to add the *7-day extension* to.`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+            );
+        }
+    }
+}
+
 async function getAllBotDeployments() {
     // This query depends on your table name.
     // It should get the app_name and user_id from your main bot table
@@ -1252,12 +1385,12 @@ async function backupAllPaidBots() {
 
     // 1. ADD HERMIT to the stats object to prevent undefined errors
     const typeStats = {
-        levanter: { backedUp: [], failed: [] }, 
-        raganork: { backedUp: [], failed: [] }, 
+        levanter: { backedUp: [], failed: [] },
+        raganork: { backedUp: [], failed: [] },
         hermit: { backedUp: [], failed: [] }, // <-- ADDED HERMIT
-        unknown: { backedUp: [], failed: [] }   
+        unknown: { backedUp: [], failed: [] }
     };
-    
+
     try {
         const allHerokuAppsResponse = await herokuApi.get('https://api.heroku.com/apps', {
             headers: {
@@ -1267,7 +1400,7 @@ async function backupAllPaidBots() {
         });
         const herokuApps = allHerokuAppsResponse.data.map(app => app.name);
         herokuAppList.push(...herokuApps);
-        
+
         console.log(`[DB-Backup] Found ${herokuAppList.length} apps on Heroku.`);
         if (herokuAppList.length === 0) {
             return { success: true, message: 'No apps found on Heroku to back up.' };
@@ -1325,32 +1458,32 @@ async function backupAllPaidBots() {
             // Back it up
             await saveUserDeployment(userId, appName, sessionId, configVars, botType);
             console.log(`[DB-Backup] Successfully backed up: ${appName} (Owner: ${userId}, Type: ${botType})`);
-            
+
             backedUpCount++;
             if (typeStats[botType]) {
-                typeStats[botType].backedUp.push(appName); 
+                typeStats[botType].backedUp.push(appName);
             } else {
-                typeStats.unknown.backedUp.push(appName); 
+                typeStats.unknown.backedUp.push(appName);
             }
-            
+
         } catch (error) {
             console.error(`[DB-Backup] Failed to back up app ${appName}. Error: ${error.message}`);
             failedCount++;
             if (typeStats[botType]) {
-                typeStats[botType].failed.push(appName); 
+                typeStats[botType].failed.push(appName);
             } else {
-                typeStats.unknown.failed.push(appName); 
+                typeStats.unknown.failed.push(appName);
             }
         }
     }
-    
+
     const summary = `Backup complete! Processed ${herokuAppList.length} relevant apps on Heroku.`;
     console.log(`[DB-Backup] ${summary}`);
-    
-    return { 
-        success: true, 
-        message: summary, 
-        stats: typeStats, 
+
+    return {
+        success: true,
+        message: summary,
+        stats: typeStats,
         miscStats: {
             totalRelevantApps: herokuAppList.length,
             appsBackedUp: backedUpCount,
@@ -1366,7 +1499,7 @@ async function backupAllPaidBots() {
 // Helper function to create all tables in a given database pool
 async function createAllTablesInPool(dbPool, dbName) {
     console.log(`[DB-${dbName}] Checking/creating all tables...`);
-    
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS user_bots (
         user_id    TEXT NOT NULL,
@@ -1419,14 +1552,14 @@ async function createAllTablesInPool(dbPool, dbName) {
           reward_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS all_users_backup (
         user_id TEXT PRIMARY KEY,
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -1452,7 +1585,7 @@ async function createAllTablesInPool(dbPool, dbName) {
     `);
 
     await dbPool.query(`ALTER TABLE user_deployments ADD COLUMN IF NOT EXISTS is_free_trial BOOLEAN DEFAULT FALSE;`);
-    
+
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS free_trial_monitoring (
         user_id TEXT PRIMARY KEY,
@@ -1510,12 +1643,12 @@ async function createAllTablesInPool(dbPool, dbName) {
 async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
-    
+
     try {
         await clientTarget.query('BEGIN');
 
         const sourceTablesResult = await clientSource.query(`
-            SELECT tablename FROM pg_catalog.pg_tables 
+            SELECT tablename FROM pg_catalog.pg_tables
             WHERE schemaname = 'public' AND tablename != 'sessions';
         `);
         const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename);
@@ -1523,9 +1656,9 @@ async function syncDatabases(sourcePool, targetPool) {
         if (sourceTableNames.length === 0) {
             return { success: true, message: 'Source database has no tables to copy.' };
         }
-        
+
         console.log('[Sync] Tables to clone:', sourceTableNames);
-        
+
         // Drop old tables in the target to ensure a clean slate
         for (const tableName of sourceTableNames) {
             await clientTarget.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE;`);
@@ -1534,16 +1667,16 @@ async function syncDatabases(sourcePool, targetPool) {
         // Recreate each table's schema AND primary keys in the target database
         for (const tableName of sourceTableNames) {
             console.log(`[Sync] Cloning schema for table "${tableName}"...`);
-            
+
             // Get column definitions
             const columnsResult = await clientSource.query(`
-                SELECT column_name, data_type, character_maximum_length, is_nullable 
-                FROM information_schema.columns 
+                SELECT column_name, data_type, character_maximum_length, is_nullable
+                FROM information_schema.columns
                 WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position;
             `, [tableName]);
-            
+
             let createTableScript = `CREATE TABLE "${tableName}" (`;
-            createTableScript += columnsResult.rows.map(col => 
+            createTableScript += columnsResult.rows.map(col =>
                 `"${col.column_name}" ${col.data_type}` +
                 (col.character_maximum_length ? `(${col.character_maximum_length})` : '') +
                 (col.is_nullable === 'NO' ? ' NOT NULL' : '')
@@ -1551,7 +1684,7 @@ async function syncDatabases(sourcePool, targetPool) {
 
             // --- THIS IS THE FIX: Get and add the Primary Key ---
             const pkeyResult = await clientSource.query(`
-                SELECT conname AS constraint_name, 
+                SELECT conname AS constraint_name,
                        pg_get_constraintdef(c.oid) AS constraint_definition
                 FROM pg_constraint c
                 JOIN pg_namespace n ON n.oid = c.connamespace
@@ -1562,7 +1695,7 @@ async function syncDatabases(sourcePool, targetPool) {
                 createTableScript += `, CONSTRAINT "${pkeyResult.rows[0].constraint_name}" ${pkeyResult.rows[0].constraint_definition}`;
             }
             // --- END OF FIX ---
-            
+
             createTableScript += ');';
             await clientTarget.query(createTableScript);
         }
@@ -1698,26 +1831,26 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
     }
 }
 
-        
+
 
 async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
     const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
-        const { 
+        const {
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
-        ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool, 
+        ADMIN_ID, defaultEnvVars, escapeMarkdown, animateMessage, mainPool,
         MUST_JOIN_CHANNEL_ID, createNeonDatabase, appDeploymentPromises, getAnimatedEmoji,
         hasReceivedReward, addDeployKey, recordReward, grantReferralRewards
     } = moduleParams;
 
-    
+
     let appName = vars.APP_NAME;
     const originalAppName = appName;
-    
+
     let adminLogMsg; // The log message sent to the ADMIN_ID chat
     let primaryBuildMsg; // The message sent to the USER (targetChatId)
-    
-    let buildResult = false; 
+
+    let buildResult = false;
     let neonAccountId = '1';
     let primaryAnimateIntervalId; // The animation for the user's message
 
@@ -1730,11 +1863,11 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
             // --- 💡 FIX: CHECK OWNERSHIP & RENAME IF BLOCKED 💡 ---
         try {
             // Check if the app exists and if we have access
-            await herokuApi.get(`/apps/${appName}`, { 
-                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+            await herokuApi.get(`/apps/${appName}`, {
+                headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
             });
-            
-            // If isRestore is true, we usually rename anyway to be safe, 
+
+            // If isRestore is true, we usually rename anyway to be safe,
             // but if it's a standard redeploy and we own it, we keep the name.
             if (isRestore) {
                  const newName = `${appName.split('-')[0]}-${require('crypto').randomBytes(2).toString('hex')}`;
@@ -1747,17 +1880,17 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
             if (e.response && e.response.status === 403) {
                 // 🛑 403 FORBIDDEN DETECTED: We don't own this app (Old Account).
                 console.warn(`[Build] 403 Forbidden for ${appName}. Ownership conflict detected. Renaming...`);
-                
+
                 const randomSuffix = require('crypto').randomBytes(2).toString('hex');
                 const newAppName = `${appName.substring(0, 20)}-${randomSuffix}`;
-                
+
                 // Update DB references immediately so the user's "My Bots" list updates
                 await mainPool.query('UPDATE user_bots SET bot_name = $1 WHERE bot_name = $2', [newAppName, appName]);
                 await mainPool.query('UPDATE user_deployments SET app_name = $1 WHERE app_name = $2', [newAppName, appName]);
-                
+
                 appName = newAppName;
                 vars.APP_NAME = newAppName;
-                
+
                 // Notify Admin
                 if (String(targetChatId) !== ADMIN_ID) {
                      bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another Heroku account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
@@ -1771,32 +1904,32 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         }
         // --- 💡 END OF FIX 💡 ---
 
-        
+
         // --- NEW MESSAGE LOGIC ---
         // This logic determines where to send animations.
-        
+
         if (String(targetChatId) === ADMIN_ID) {
             // The admin is deploying for themselves.
             // The "primary" message IS the admin's message.
             primaryBuildMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}*...`, { parse_mode: 'Markdown' });
             adminLogMsg = null; // No separate log needed.
-            
+
             primaryAnimChatId = primaryBuildMsg.chat.id;
             primaryAnimMsgId = primaryBuildMsg.message_id;
-            
+
         } else {
             // A user is deploying.
             // Send a simple log to the admin.
             adminLogMsg = await bot.sendMessage(ADMIN_ID, `Starting build for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`)...`, { parse_mode: 'Markdown' });
             // Send the "primary" message to the user.
             primaryBuildMsg = await bot.sendMessage(targetChatId, `Your bot *${escapeMarkdown(appName)}* is being built...`, { parse_mode: 'Markdown' });
-            
+
             primaryAnimChatId = primaryBuildMsg.chat.id;
             primaryAnimMsgId = primaryBuildMsg.message_id;
         }
         // --- END OF NEW LOGIC ---
-        
-        
+
+
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
 
         // --- Step 1: Create the Heroku app ---
@@ -1842,12 +1975,12 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
 
         // --- Step 3: Set Buildpacks ---
         let buildpacksToInstall = [];
-        
+
         // --- 💡 START OF FIX 💡 ---
         // This now groups Hermit with Levanter and Raganork.
         // All three bots will get the same set of buildpacks.
         if (botType === 'levanter' || botType === 'raganork' || botType === 'hermit') {
-            
+
             console.log(`[Build] Setting full buildpacks (ffmpeg, nodejs) for ${botType} bot: ${appName}`);
             buildpacksToInstall = [
   { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
@@ -1855,7 +1988,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
   { buildpack: 'heroku/nodejs' }
 ];
 
-            
+
         } else {
             // This is now an error/unknown case
             console.log(`[Build] No buildpacks set for unknown bot type: ${botType}`);
@@ -1873,7 +2006,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
             // This will now only happen if the botType is somehow unknown
             console.log(`[Build] Skipping buildpack installation step.`);
         }
-        
+
         // This must be outside the 'if' block so the animation always stops
         clearInterval(primaryAnimateIntervalId);
 
@@ -1896,14 +2029,14 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- Step 4: Set Environment Variables ---
         await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
-        
+
         const filteredVars = {};
         for (const key in vars) {
             if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== undefined && vars[key] !== null && String(vars[key]).trim() !== '') {
                 filteredVars[key] = vars[key];
             }
         }
-        
+
         const botTypeSpecificDefaults = defaultEnvVars[botType] || {};
         const finalConfigVars = isRestore ? filteredVars : { ...botTypeSpecificDefaults, ...filteredVars };
 
@@ -1916,8 +2049,8 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         if (expirationDateToUse) {
             finalConfigVars.EXPIRATION_DATE = expirationDateToUse.toISOString();
         }
-        
-        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+
+        await herokuApi.patch(`/apps/${appName}/config-vars`,
             { ...finalConfigVars, APP_NAME: appName },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
@@ -1928,20 +2061,20 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- Step 5: Trigger Build from GitHub ---
                 // --- Step 5: Trigger Build from GitHub ---
         await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
-        
+
         // --- 💡 UPDATED REPO URL LOGIC 💡 ---
         let repoUrl;
         if (botType === 'raganork') {
             repoUrl = GITHUB_RAGANORK_REPO_URL;
         } else if (botType === 'hermit') {
             // (This relies on GITHUB_HERMIT_REPO_URL being passed into init)
-            repoUrl = GITHUB_HERMIT_REPO_URL; 
+            repoUrl = GITHUB_HERMIT_REPO_URL;
         } else {
             // Default to Levanter
             repoUrl = GITHUB_LEVANTER_REPO_URL;
         }
-    
-        
+
+
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
@@ -1967,7 +2100,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                             headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
                         });
                         buildStatus = poll.data.status;
-                        
+
                         if (buildStatus === 'pending') {
                             currentPct = Math.min(99, currentPct + Math.floor(Math.random() * 5) + 1);
                         } else if (buildStatus === 'succeeded') {
@@ -1975,12 +2108,12 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                         } else if (buildStatus === 'failed') {
                             currentPct = 'Error';
                         }
-                        
+
                         // --- This now edits the USER's message ---
                         await bot.editMessageText(`Building... ${currentPct}%`, {
                             chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
                         }).catch(() => {});
-                        
+
                         if (buildStatus !== 'pending') {
                             clearInterval(buildProgressInterval);
                             clearTimeout(timeoutId);
@@ -2000,7 +2133,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
             await buildPromise;
         } catch (err) {
             if (buildProgressInterval) clearInterval(buildProgressInterval);
-            throw err; 
+            throw err;
         }
 
                  // --- Step 7: Handle Build Succeeded ---
@@ -2035,21 +2168,21 @@ if (botType === 'levanter' || botType === 'raganork') {
             }
         }).catch(() => {});
     }
-} 
+}
 // --- END OF DYNO LOGIC ---
 
-        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { 
-            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
+        const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, {
+            headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
         })).data;
-        
+
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
 
-        
+
 
 
         await saveUserDeployment(
-            targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
-            finalConfigVarsAfterBuild, botType, isFreeTrial, 
+            targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID,
+            finalConfigVarsAfterBuild, botType, isFreeTrial,
             expirationDateToUse,
             vars.email || null, neonAccountId
         );
@@ -2070,7 +2203,7 @@ if (botType === 'levanter' || botType === 'raganork') {
                 console.error(`[Reward] Failed to check or issue reward:`, rewardError.message);
             }
         }
-        
+
         // --- Referral Logic ---
         if (!isRestore && referredBy) {
             await grantReferralRewards(targetChatId, appName);
@@ -2090,22 +2223,22 @@ if (botType === 'levanter' || botType === 'raganork') {
         // --- 💡 START OF HERMIT RESTART FIX (STEP 7.5) 💡 ---
         if (botType === 'hermit') {
             console.log(`[Flow] Hermit build succeeded. Forcing an immediate restart for ${appName} to ensure connection.`);
-            
+
             // We don't need to await this. Just send the command.
             herokuApi.delete(`/apps/${appName}/dynos`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })
                 .catch(err => console.warn(`[Flow] Failed to force-restart ${appName}: ${err.message}`));
-            
+
             // Give Heroku a 5-second head start before we listen
             await new Promise(r => setTimeout(r, 5000));
         }
         // --- 💡 END OF HERMIT RESTART FIX 💡 ---
         // --- MODIFIED "Wait for Connect" Logic ---
         // This block now animates and edits the USER's message
-        
+
         const baseWaitingText = `Build successful! Waiting for bot to connect...`;
         await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' });
         primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
-        
+
         const appStatusPromise = new Promise((resolve, reject) => {
             const STATUS_CHECK_TIMEOUT = 300 * 1000;
             const timeoutId = setTimeout(() => {
@@ -2114,7 +2247,7 @@ if (botType === 'levanter' || botType === 'raganork') {
                     appPromise.reject(new Error(`Bot did not connect within ${STATUS_CHECK_TIMEOUT / 1000} seconds (Session might be logged out).`));
                 }
             }, STATUS_CHECK_TIMEOUT);
-            
+
             appDeploymentPromises.set(appName, { resolve, reject, animateIntervalId: primaryAnimateIntervalId, timeoutId });
         });
 
@@ -2126,10 +2259,10 @@ if (botType === 'levanter' || botType === 'raganork') {
                if (promiseData.animateIntervalId) clearInterval(promiseData.animateIntervalId);
             }
 
-            const successMessage = isRestore ? 
+            const successMessage = isRestore ?
                 `Your bot *${escapeMarkdown(appName)}* has been restored and is now live!` :
                 `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`;
-            
+
             // Edit the USER's message to show SUCCESS
             await bot.editMessageText(
                 successMessage,
@@ -2142,13 +2275,13 @@ if (botType === 'levanter' || botType === 'raganork') {
             ).catch(() => {});
 
             // If it was a user, update the ADMIN's log to show SUCCESS
-            if (adminLogMsg) { 
-                const adminSuccessMsg = isRestore ? 
+            if (adminLogMsg) {
+                const adminSuccessMsg = isRestore ?
                     `Restore successful for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Bot connected.` :
                     `Build successful for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Bot connected.`;
                 await bot.editMessageText(adminSuccessMsg, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
             }
-            
+
             buildResult = true;
 
         } catch (err) { // Connection Failed (Logged Out)
@@ -2160,7 +2293,7 @@ if (botType === 'levanter' || botType === 'raganork') {
 
             // This is the "logged out" message you wanted
             const failMessage = `Bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`;
-            
+
             // Send failure to USER (or admin-as-user)
             await bot.editMessageText(
                 failMessage,
@@ -2176,7 +2309,7 @@ if (botType === 'levanter' || botType === 'raganork') {
             if (adminLogMsg) {
                  await bot.editMessageText(`Connection failed for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`). Reason: ${escapeMarkdown(err.message)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
             }
-            
+
             buildResult = false;
         } finally {
             appDeploymentPromises.delete(appName);
@@ -2187,17 +2320,17 @@ if (botType === 'levanter' || botType === 'raganork') {
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[Build Error] Failed to build app ${appName}:`, errorMsg);
         if (primaryAnimateIntervalId) clearInterval(primaryAnimateIntervalId); // Stop user/admin animation
-        
+
         // Edit the USER's message to show failure
         await bot.editMessageText(`Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
-        
+
         // If it was a user, update the ADMIN's log
         if (adminLogMsg) {
             await bot.editMessageText(`Build failed for *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`).\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: ADMIN_ID, message_id: adminLogMsg.message_id, parse_mode: 'Markdown' }).catch(()=>{});
         }
         buildResult = false;
     }
-    
+
     if (isRestore) {
         return { success: buildResult, newAppName: appName };
     }
@@ -2206,7 +2339,7 @@ if (botType === 'levanter' || botType === 'raganork') {
 
 
 
-                    
+
 /**
  * TRULY SILENTLY restores a Heroku app.
  * NEVER sends any message to the target user (build progress or failure).
@@ -2215,21 +2348,21 @@ if (botType === 'levanter' || botType === 'raganork') {
  */
 async function silentRestoreBuild(targetChatId, vars, botType) {
     // 1. Get all the tools from moduleParams
-    const { 
-        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, 
+    const {
+        bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL,
         GITHUB_HERMIT_REPO_URL, // Added HERMIT URL just in case
-        ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool, 
+        ADMIN_ID, defaultEnvVars, escapeMarkdown, mainPool,
         createNeonDatabase, appDeploymentPromises
     } = moduleParams;
-    
+
     // Require crypto for renaming
     const crypto = require('crypto');
 
     let appName = vars.APP_NAME;
     const originalAppName = appName;
     let buildResult = false;
-    
-    const isRestore = true; 
+
+    const isRestore = true;
     let neonAccountId = '1';
     const isFreeTrial = false;
 
@@ -2241,8 +2374,8 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         try {
             // Check if the app name exists
             await herokuApi.get(`/apps/${appName}`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            
-            // If we get here (Status 200), we own the app or have access. 
+
+            // If we get here (Status 200), we own the app or have access.
             // We rename to avoid overwriting the existing running bot.
             needsRename = true;
         } catch (e) {
@@ -2252,13 +2385,13 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 if (e.response.status === 403) {
                     console.log(`[SilentRestore] Name ${appName} is taken by another account (403 Forbidden). Renaming...`);
                     needsRename = true;
-                } 
-                // Status 404: App does not exist. We *could* use the name, 
-                // but for a clean restore, it is often safer to keep the existing logic 
+                }
+                // Status 404: App does not exist. We *could* use the name,
+                // but for a clean restore, it is often safer to keep the existing logic
                 // or just proceed. Here we proceed with the current name.
                 else if (e.response.status === 404) {
-                    needsRename = false; 
-                } 
+                    needsRename = false;
+                }
                 else {
                     // Any other error (401, 500, etc), throw it.
                     throw e;
@@ -2271,15 +2404,15 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         if (needsRename) {
             // Create a new unique name based on the old one
             // We use substring to ensure we don't exceed Heroku's 30 char limit with the suffix
-            const baseName = appName.length > 20 ? appName.substring(0, 20) : appName; 
+            const baseName = appName.length > 20 ? appName.substring(0, 20) : appName;
             const newName = `${baseName}-${crypto.randomBytes(2).toString('hex')}`;
-            
+
             appName = newName;
             vars.APP_NAME = newName;
             console.log(`[SilentRestore] Logic enforced rename. Old: ${originalAppName} -> New: ${appName}`);
         }
         // --- 💡 FIX ENDS HERE 💡 ---
-        
+
         // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
@@ -2315,11 +2448,11 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 return { success: false, error: `Database creation failed: ${neonResult.error}`, appName: appName };
             }
         }
-        
+
         if (!provisionSuccess) {
             return { success: false, error: "Database provisioning failed unexpectedly.", appName: appName };
         }
-        
+
         // --- Step 3: Set Buildpacks --
         // Added Check: Only install buildpacks for Levanter/Raganork/Hermit
         if (['levanter', 'raganork', 'hermit'].includes(botType)) {
@@ -2344,7 +2477,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             }
         }
         const finalConfigVars = filteredVars;
-        await herokuApi.patch(`/apps/${appName}/config-vars`, 
+        await herokuApi.patch(`/apps/${appName}/config-vars`,
             { ...finalConfigVars, APP_NAME: appName },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
         );
@@ -2360,7 +2493,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             // Default to Levanter
             repoUrl = GITHUB_LEVANTER_REPO_URL;
         }
-    
+
         const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
         }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
@@ -2386,7 +2519,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                             headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` }
                         });
                         buildStatus = poll.data.status;
-                        
+
                         if (buildStatus !== 'pending') {
                             clearInterval(buildProgressInterval);
                             clearTimeout(timeoutId);
@@ -2406,18 +2539,18 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             await buildPromise;
         } catch (err) {
             if (buildProgressInterval) clearInterval(buildProgressInterval);
-            throw err; 
+            throw err;
         }
 
         // --- Step 7: Handle Build Succeeded ---
         console.log(`[Flow] silentRestoreBuild: Heroku build for "${appName}" SUCCEEDED.`);
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } })).data;
         await addUserBot(targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, botType);
-        
+
         // Save the deployment with the NEW name
         // Use originalAppName for logging if needed, but we must save the new appName
         await saveUserDeployment(
-            targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID, 
+            targetChatId, appName, finalConfigVarsAfterBuild.SESSION_ID,
             finalConfigVarsAfterBuild, botType, isFreeTrial, vars.expiration_date, vars.email, neonAccountId
         );
 
@@ -2443,7 +2576,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 // --- FAILURE: "LOGGED OUT" — notify ADMIN only, never the user ---
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
-                
+
                 if (ADMIN_ID) {
                     await bot.sendMessage(
                         ADMIN_ID,
@@ -2454,7 +2587,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                         }
                     ).catch(()=>{});
                 }
-                
+
                 // Return failure
                 return { success: false, error: err.message, appName: appName };
             } finally {
@@ -2471,15 +2604,15 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         // --- Main build failure — notify ADMIN only, never the user ---
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[SilentRestore Build Error] Failed to build app ${appName}:`, errorMsg);
-        
+
         if (ADMIN_ID) {
             await bot.sendMessage(
-                ADMIN_ID, 
-                `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
+                ADMIN_ID,
+                `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`,
                 { parse_mode: 'Markdown' }
             ).catch(()=>{});
         }
-        
+
         // Return failure
         return { success: false, error: errorMsg, appName: appName };
     }
