@@ -99,9 +99,7 @@ You possess full technical knowledge of the bot's codebase, infrastructure, and 
 - GATEWAYS: Paystack, Flutterwave, and NOWPayments (Crypto).
 
 ## 4. Special Features
-- CONTACT GAIN (VCF): Users exchange contacts for a daily status-boosting VCF file.
 - GROUP FILLER: A paid service to add bot members to WhatsApp groups.
-- FREE TRIAL: Users get a one-time trial after a Mini App security check (IP/Location verification).
 - TIMER SYSTEM (/aa): Admin can set reminders for numbers that delete themselves after sending.
 
 # 🚫 STRICT RULES
@@ -136,11 +134,6 @@ const {
 
 
 const { sendPaymentConfirmation, sendVerificationEmail, sendExpirationReminder, sendLoggedOutReminder } = require('./email_service');
-const vcfPool = new Pool({
-  connectionString: process.env.DATABASE_URLVCF,
-  ssl: { rejectUnauthorized: false }
-});
-
 const crypto = require('crypto');
 
 // Make sure botServices is required, you probably already have this
@@ -155,12 +148,11 @@ const STICKER_PACK_TITLE = 'Ultar';
 // Make sure ADMIN_ID and BOT_USERNAME are defined above this!
 const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
-const VCF_GROUP_LINK = 'https://t.me/wbdvcf1'; 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
 const MINI_APP_URL = 'https://deploy-bot-1-xfd5.onrender.com/miniapp';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 6; 
+const KEYBOARD_VERSION = 7; 
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
@@ -237,12 +229,14 @@ try {
 // 3) Environment config
 const {
   TELEGRAM_BOT_TOKEN: TOKEN_ENV,
-  HEROKU_API_KEY,
   ADMIN_ID,
   DATABASE_URL,
   DATABASE_URL2,
   PAYSTACK_SECRET_KEY, // <-- ADD THIS LINE
 } = process.env;
+
+
+let HEROKU_API_KEY = process.env.HEROKU_API_KEY;
 
 
 const TELEGRAM_BOT_TOKEN = TOKEN_ENV || '7788409928:AAFw7A2Pr7lVJUWTQJlYWIKKwDveQPF9-ZI';
@@ -270,7 +264,6 @@ let lastUsedNeonIndex = -1;
 const EDITABLE_RENDER_VARS = [
     'HEROKU_API_KEY',
     'DOLLAR_RATE',
-    'DATABASE_URLVCF',
     'EMAIL_SERVICE_URL'
 ];
 
@@ -287,22 +280,6 @@ const backupPool = new Pool({
 });
 
 module.exports.pool = pool; 
-// In bot.js (near your other constants)
-// ⚠️ IMPORTANT: Replace with your actual group ID where the VCF should be sent.
-const VCF_GROUP_ID = '-1003323856806'; // <<< SET YOUR TARGET GROUP ID HERE (numeric format)
-
-// Schedule the VCF generation every day at 11:00 PM (Lagos Time)
-cron.schedule('59 23 * * *', () => {
-    console.log('[Scheduler] Running daily VCF generation task.');
-    // 💡 The function now resides in dbServices
-    dbServices.generateAndSendVcf(VCF_GROUP_ID, ADMIN_ID).catch(err => {
-        console.error('[Scheduler] VCF Job Failed:', err);
-    });
-}, {
-    scheduled: true,
-    timezone: "Africa/Lagos"
-});
-
 // --- AWS SELF-HOSTED DB MONITORING (Every 1 minute) ---
 let dbServerOfflineNotified = false;
 let lastDbStatusCheck = null;
@@ -310,7 +287,7 @@ let lastDbStatusCheck = null;
 cron.schedule('*/1 * * * *', async () => {
     try {
         lastDbStatusCheck = new Date();
-        const DB_URL = process.env.DATABASE_URLVCF || process.env.DATABASE_URL;
+        const DB_URL = process.env.DATABASE_URL;
         
         if (!DB_URL) {
             console.warn('[DB Monitor] No database URL found in environment');
@@ -1217,19 +1194,26 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             : 'None';
 
         // 2. Call Groq with Context
-        const completion = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
-            ],
-            model: "llama-3.3-70b-versatile",
-            response_format: { type: "json_object" } 
-        });
+        let completion;
+        try {
+            completion = await groq.chat.completions.create({
+                messages: [
+                    { role: "system", content: SYSTEM_PROMPT },
+                    { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
+                ],
+                model: "llama-3.3-70b-versatile",
+                response_format: { type: "json_object" } 
+            });
+        } catch (groqError) {
+            console.error('[Groq API Error]', groqError.response?.data || groqError.message);
+            // 🔧 Surface the real reason to the admin instead of guessing
+            await bot.sendMessage(ADMIN_ID, `⚠️ Groq API call failed:\n\`\`\`\n${JSON.stringify(groqError.response?.data || groqError.message, null, 2).substring(0, 1000)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
+            throw groqError; // still bubble up to outer catch for the user-facing fallback
+        }
 
         let aiResponse;
         const rawContent = completion.choices[0].message.content;
 
-        // 3. SAFETY: Parse JSON
         try {
             const cleanText = rawContent.replace(/```json|```/g, "").trim();
             aiResponse = JSON.parse(cleanText);
@@ -1240,7 +1224,6 @@ async function handleFallbackWithGemini(chatId, userMessage) {
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
-        // 4. ACTION ROUTER: Handle "EXECUTE" intent (Restart, etc.)
         if (aiResponse.action === 'EXECUTE') {
             const targetBot = aiResponse.actionData?.botName;
             
@@ -1254,11 +1237,9 @@ async function handleFallbackWithGemini(chatId, userMessage) {
                 return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
             }
             
-            // If there's an EXECUTE action but no specific handler above, run your general executeGeminiAction
             return executeGeminiAction(chatId, aiResponse);
         }
 
-        // 5. LINK ROUTER: Handle "GET_LINK" intent
         if (aiResponse.intent === 'GET_LINK' && (!aiResponse.actionData || !aiResponse.actionData.botType)) {
             return bot.sendMessage(chatId, "Which link do you need? I have links for Levanter, Raganork, and Hermit.", {
                 reply_markup: {
@@ -1275,12 +1256,13 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             });
         }
 
-        // 6. FINAL RESPONSE: Only runs if NO other action was triggered
         const finalMessage = aiResponse.response || "I'm not sure how to help with that, contact support @staries1.";
         return bot.sendMessage(chatId, finalMessage, { parse_mode: 'Markdown' });
 
     } catch (error) {
-        console.error('[Brain Error]', error);
+        // 🔧 Log full detail, and tell the admin exactly what broke
+        console.error('[Brain Error]', error.response?.data || error.stack || error.message);
+        await bot.sendMessage(ADMIN_ID, `⚠️ AI Brain error for user \`${chatId}\`:\n\`\`\`\n${String(error.message).substring(0, 500)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
         return bot.sendMessage(chatId, "⚠️ I encountered an error. Please try again or use the menu.");
     }
 }
@@ -1322,72 +1304,7 @@ async function sendReminder(targetNumber, userId, hours) {
 
 
 
-/**
- * DYNAMIC GEMINI BRAIN UPDATE
- * Refreshes Gemini's knowledge base with latest bot state, user data, and system status
- */
-async function updateGeminiBrain(userId) {
-    try {
-        // 1. Fetch user data using correct column 'last_seen'
-        const activityRes = await pool.query(
-            'SELECT last_seen FROM user_activity WHERE user_id = $1',
-            [userId]
-        );
-        
-        // 2. Fetch user bots
-        const botsRes = await pool.query(
-            'SELECT bot_name, status, created_at FROM user_bots WHERE user_id = $1 ORDER BY created_at DESC',
-            [userId]
-        );
-        
-        // 3. Fetch deployment details
-        const deployRes = await pool.query(
-            'SELECT app_name, is_free_trial, expiration_date, deploy_date FROM user_deployments WHERE user_id = $1 ORDER BY deploy_date DESC LIMIT 5',
-            [userId]
-        );
-        
-        const now = new Date();
-        
-        // 4. Build real-time context
-        const brainUpdate = {
-            timestamp: now.toISOString(),
-            user: {
-                id: userId,
-                lastSeen: activityRes.rows[0]?.last_seen || 'Never'
-            },
-            bots: botsRes.rows.map(b => {
-                const createdDate = b.created_at ? new Date(b.created_at) : now;
-                return {
-                    name: b.bot_name,
-                    status: b.status || 'unknown',
-                    ageDays: Math.floor((now - createdDate) / (1000 * 60 * 60 * 24))
-                };
-            }),
-            deployments: deployRes.rows.map(d => {
-                const expDate = d.expiration_date ? new Date(d.expiration_date) : null;
-                const daysLeft = expDate ? Math.ceil((expDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
-                
-                return {
-                    name: d.app_name,
-                    isTrial: d.is_free_trial || false,
-                    status: (expDate && expDate < now) ? 'expired' : `${daysLeft} days left`
-                };
-            }),
-            systemStatus: {
-                maintenanceMode: typeof isMaintenanceMode !== 'undefined' ? isMaintenanceMode : false,
-                currentTime: now.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }),
-                activeTrials: deployRes.rows.filter(d => d.is_free_trial && new Date(d.expiration_date) > now).length
-            }
-        };
-        
-        console.log(`[Gemini Brain] Context synced for user ${userId}`);
-        return brainUpdate;
 
-    } catch (err) {
-        console.error('[Gemini Brain Update Error]:', err.message);
-        return null;
-    }
-}
 
 
 /**
@@ -1454,23 +1371,6 @@ async function executeGeminiAction(chatId, aiResponse) {
                 }
                 break;
 
-            case 'FREE_TRIAL':
-                const trialMsg = await bot.sendMessage(chatId, 'Checking free trial eligibility...');
-                const eligibility = await checkFreeTrialEligibility(chatId);
-                
-                if (eligibility.eligible) {
-                    await bot.editMessageText(`You are eligible!\n\n${aiResponse.response}`, {
-                        chat_id: chatId,
-                        message_id: trialMsg.message_id,
-                        reply_markup: { inline_keyboard: [[{ text: 'Claim Free Trial', callback_data: 'free_trial_start' }]] }
-                    });
-                } else {
-                    await bot.editMessageText(`Not eligible: ${eligibility.reason}`, {
-                        chat_id: chatId, message_id: trialMsg.message_id, parse_mode: 'Markdown'
-                    });
-                }
-                break;
-
             default:
                 await bot.sendMessage(chatId, aiResponse.response);
         }
@@ -1485,7 +1385,6 @@ function extractBotNameFromMessage(message) {
     const match = message.match(/[*`]{1,2}([a-z0-9\-_]+)[*`]{1,2}/i);
     return match ? match[1] : null;
 }
-
 
 
 async function restartBotProcess(botName, userId) {
@@ -1723,20 +1622,46 @@ function escapeMarkdown(text) {
     if (typeof text !== 'string') {
         text = String(text);
     }
-    // Escape all Markdown V2 special characters in one robust pass.
-    // The single regex handles all necessary escaping correctly.
-    // The `\\` at the end ensures the backslash character itself is escaped.
-    return text.replace(/([_*[\]()~`>#+=\-|{}!.!\\\\])/g, '\\$1');
+    // These messages use Telegram's legacy Markdown parser, not MarkdownV2.
+    // Remove literal backslashes from user data and escape only legacy Markdown markers.
+    return text
+        .replace(/\\/g, '')
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/`/g, '\\`')
+        .replace(/\[/g, '\\[');
+}
+
+function resolveExpirationDate(record, defaultDays = 30) {
+    if (!record) return null;
+    const configVars = typeof record.config_vars === 'string'
+        ? (() => { try { return JSON.parse(record.config_vars); } catch { return {}; } })()
+        : (record.config_vars || {});
+    const storedValue = record.expiration_date || configVars.EXPIRATION_DATE || configVars.expiration_date;
+    if (storedValue) {
+        const parsed = new Date(storedValue);
+        if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    if (record.deploy_date) {
+        const parsedDeployDate = new Date(record.deploy_date);
+        if (!Number.isNaN(parsedDeployDate.getTime())) {
+            const days = record.is_free_trial ? 1 : defaultDays;
+            return new Date(parsedDeployDate.getTime() + days * 24 * 60 * 60 * 1000);
+        }
+    }
+    return null;
 }
 
 
 // A reusable function to format a concise countdown string for button lists.
 function formatTimeLeft(expirationDateStr) {
     if (!expirationDateStr) {
-        return '';
+        return ' (Expiry unavailable)';
     }
-
     const expirationDate = new Date(expirationDateStr);
+    if (Number.isNaN(expirationDate.getTime())) {
+        return ' (Expiry unavailable)';
+    }
     const now = new Date();
     const timeLeftMs = expirationDate.getTime() - now.getTime();
 
@@ -1929,117 +1854,6 @@ const COUNTRY_DATA = {
 };
 
 
-
-// In bot_services.js (REPLACE the generateCountryVcf function)
-
-/**
- * Generates a VCF buffer with 100 UNIQUE random numbers for a specific country.
- * Uses the separate VCF database to ensure numbers are never repeated across files.
- */
-// In bot_services.js (REPLACE the generateCountryVcf function)
-
-async function generateCountryVcf(countryInput) {
-    // 1. Validate Country
-    const countryKey = countryInput.toLowerCase().trim();
-    const data = COUNTRY_DATA[countryKey];
-
-    if (!data) {
-        return { success: false, message: "Country not supported. Try: Nigeria, USA, UK, India, Russia, Pakistan, etc." };
-    }
-
-    // 2. Prepare Name Formatting (Date & Time)
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', timeZone: 'Africa/Lagos' });
-    const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Lagos' });
-    const dateTimeSuffix = `${dateStr} ${timeStr}`;
-    
-    const countryName = countryKey.charAt(0).toUpperCase() + countryKey.slice(1); 
-
-    // 3. Ensure the tracking table exists
-    try {
-        await vcfPool.query(`
-            CREATE TABLE IF NOT EXISTS generated_vcf_numbers (
-                phone_number TEXT PRIMARY KEY,
-                country TEXT,
-                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-    } catch (e) {
-        console.error("[VCF Gen] Failed to init tracking table:", e.message);
-    }
-
-    const uniqueNumbers = [];
-    let attempts = 0;
-
-    // 4. Generation Loop (Find 500 unique numbers)
-    while (uniqueNumbers.length < 500 && attempts < 3000) {
-        attempts++;
-        
-        const prefix = data.starts[Math.floor(Math.random() * data.starts.length)];
-        const remainingLength = data.len - prefix.length;
-        
-        let randomDigits = '';
-        for (let d = 0; d < remainingLength; d++) {
-            randomDigits += Math.floor(Math.random() * 10);
-        }
-        const fullNumber = `+${data.code}${prefix}${randomDigits}`;
-
-        // Check Database for Uniqueness
-        try {
-            const result = await vcfPool.query(
-                `INSERT INTO generated_vcf_numbers (phone_number, country) 
-                 VALUES ($1, $2) 
-                 ON CONFLICT (phone_number) DO NOTHING 
-                 RETURNING phone_number`,
-                [fullNumber, countryName]
-            );
-
-            if (result.rows.length > 0) {
-                uniqueNumbers.push(fullNumber);
-            }
-        } catch (e) {
-            console.error("[VCF Gen] DB Check Error:", e.message);
-        }
-    }
-
-    if (uniqueNumbers.length === 0) {
-        return { success: false, message: "Failed to generate numbers. Database connection might be down." };
-    }
-
-    // 5. Build VCF File Content
-    let vcfContent = '';
-
-    // --- 💡 ADD ADMIN NUMBER FIRST 💡 ---
-    const adminNumber = '+2349163916314';
-    const adminName = 'Ultar Admin WBD'; // The name people will see
-
-    vcfContent += 'BEGIN:VCARD\r\n';
-    vcfContent += 'VERSION:3.0\r\n';
-    vcfContent += `FN:${adminName}\r\n`;
-    vcfContent += `TEL;TYPE=CELL:${adminNumber}\r\n`;
-    vcfContent += 'END:VCARD\r\n';
-    // --- 💡 END ADMIN NUMBER 💡 ---
-    
-    // Add the random numbers
-    uniqueNumbers.forEach((num, index) => {
-        const contactName = `${countryName}${index + 1} ${dateTimeSuffix}`;
-
-        vcfContent += 'BEGIN:VCARD\r\n';
-        vcfContent += 'VERSION:3.0\r\n';
-        vcfContent += `FN:${contactName}\r\n`;
-        vcfContent += `TEL;TYPE=CELL:${num}\r\n`;
-        vcfContent += 'END:VCARD\r\n';
-    });
-
-    const buffer = Buffer.from(vcfContent, 'utf8');
-    const safeFileName = `${countryName}_${dateStr.replace(/\//g, '-')}_${timeStr.replace(/:/g, '')}.vcf`;
-
-    return { success: true, buffer: buffer, fileName: safeFileName };
-}
-
-
-
-// ... (storeNewVcfContact and generateAndSendVcf should also be updated to use vcfPool) ...
 
 
 
@@ -2681,12 +2495,6 @@ async function deleteBotCompletely(userId, appName) {
 }
 
 
-/**
- * Updates a specific environment variable on Render and explicitly triggers a restart.
- * @param {string} varName The name of the variable to update.
- * @param {string} varValue The new value for the variable.
- * @returns {Promise<{success: boolean, message: string}>}
- */
 async function updateRenderVar(varName, varValue, restart = true) {
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
@@ -2721,6 +2529,22 @@ async function updateRenderVar(varName, varValue, restart = true) {
         // ✅ Update the LIVE process immediately so this running instance
         // uses the correct value right away, without waiting for a restart.
         process.env[varName] = finalValue;
+
+        // 🔧 If this was the Heroku API key, propagate it to every place
+        // that cached its own copy at load time, so live requests in THIS
+        // process immediately start using the new key instead of waiting
+        // for Render's restart to actually land.
+        if (varName === 'HEROKU_API_KEY') {
+            HEROKU_API_KEY = finalValue; // updates bot.js's local mutable var
+
+            if (dbServices && typeof dbServices.setHerokuApiKey === 'function') {
+                dbServices.setHerokuApiKey(finalValue); // updates bot_services.js's local var
+            } else {
+                console.warn('[updateRenderVar] dbServices.setHerokuApiKey not available — bot_services.js may still use a stale key until restart.');
+            }
+
+            console.log('[updateRenderVar] Propagated new HEROKU_API_KEY to all live in-memory copies.');
+        }
 
         // Only restart if explicitly asked to (default true keeps old callers working)
         if (restart) {
@@ -2810,12 +2634,6 @@ async function findAndDeleteNeonDatabase(dbName) {
 
 
 
-/**
- * Handles the entire automated workflow when a Heroku API key is found to be invalid.
- * @param {string} failingKey The API key that just failed.
- */
-// In bot.js (REPLACE the handleInvalidHerokuKeyWorkflow function)
-
 async function handleInvalidHerokuKeyWorkflow(failingKey) {
     if (isRecoveryInProgress) {
         console.log('[Recovery] A recovery process is already in progress. Ignoring trigger.');
@@ -2830,7 +2648,7 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         isMaintenanceMode = true;
         await saveMaintenanceStatus(true);
 
-        // 2. Get a new, valid key from the database 
+        // 2. Get a new, candidate key from the database
         const newKeyResult = await pool.query(
             "SELECT id, api_key FROM heroku_api_keys WHERE is_active = TRUE AND api_key != $1 ORDER BY added_at DESC LIMIT 1",
             [failingKey]
@@ -2841,20 +2659,43 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         }
         const newKey = newKeyResult.rows[0].api_key;
         const newKeyId = newKeyResult.rows[0].id;
-        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
+
+        // 🔧 3. VERIFY the candidate key actually works BEFORE touching
+        // anything else. This prevents us from deleting a good key from
+        // the pool and scheduling a mass restore against a key that's
+        // just as broken as the one that failed.
+        try {
+            await axios.get('https://api.heroku.com/account', {
+                headers: {
+                    'Authorization': `Bearer ${newKey}`,
+                    'Accept': 'application/vnd.heroku+json; version=3'
+                }
+            });
+        } catch (verifyError) {
+            const reason = verifyError.response?.status
+                ? `Status ${verifyError.response.status}`
+                : verifyError.message;
+            await bot.sendMessage(ADMIN_ID, `**Recovery Aborted!**\n\nThe replacement key found in the database (\`...${newKey.slice(-4)}\`) is ALSO invalid (${reason}). No key was deleted. Please add a working key and try again.`, { parse_mode: 'Markdown' });
+            return; // isRecoveryInProgress reset happens in finally
+        }
+
+        await bot.sendMessage(ADMIN_ID, `Found a new API key in the database. Verified working. Masked: \`${newKey.substring(0, 4)}...${newKey.substring(newKey.length - 4)}\``, { parse_mode: 'Markdown' });
         
-        // 3. Update the HEROKU_API_KEY on Render (This triggers the first restart)
+        // 4. Update the HEROKU_API_KEY on Render (this also propagates the
+        // new key to every in-memory copy immediately, per updateRenderVar,
+        // and separately triggers the restart)
         const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
         }
-        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render. A new deployment has been triggered to apply the new key.");
+        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render, and propagated it to the running process. A new deployment has also been triggered to persist the new key.");
 
-        // 4. Delete the used key from the database
+        // 5. Delete the used key from the database — only now that we know
+        // it's verified working and already live.
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
         console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 5. 💡 FIX: Schedule the Mass Restore in the database for 5 minutes from now 💡
+        // 6. Schedule the Mass Restore in the database for 5 minutes from now
         const delayMinutes = 5;
         const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
 
@@ -2864,26 +2705,30 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
             ['MASS_RESTORE', scheduledTime, 'PENDING']
         );
         
-        // 6. Notify admin about the persistent wait
-        await bot.sendMessage(ADMIN_ID, `The bot is restarting now with the new key. A **Mass Restore** is now scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive the restart.`, { parse_mode: 'Markdown' });
+        // 7. Notify admin about the persistent wait
+        await bot.sendMessage(ADMIN_ID, `The new key is already live in this process. A **Mass Restore** is scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive any restart.`, { parse_mode: 'Markdown' });
 
     } catch (error) {
         console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
         await bot.sendMessage(ADMIN_ID, `**Automated Recovery Failed!**\n\n**Reason:** ${error.message}\n\nThe bot is stuck in maintenance mode. Please fix the issue manually.`);
     } finally {
-        isRecoveryInProgress = false; // Reset flag on failure
+        isRecoveryInProgress = false; // Reset flag whether we succeeded, aborted, or errored
     }
 }
 
 
-// Create a dedicated axios instance for Heroku API calls
 const herokuApi = axios.create({
     baseURL: 'https://api.heroku.com',
     headers: {
-        'Authorization': `Bearer ${process.env.HEROKU_API_KEY}`, // Add this line
         'Accept': 'application/vnd.heroku+json; version=3',
         'Content-Type': 'application/json'
     }
+});
+
+// Always inject the CURRENT key right before the request is sent
+herokuApi.interceptors.request.use((config) => {
+    config.headers['Authorization'] = `Bearer ${HEROKU_API_KEY}`;
+    return config;
 });
 
 
@@ -3029,15 +2874,18 @@ async function handleRestoreAllConfirm(query) {
         }).catch(()=>{}); // Ignore "message not modified"
         
         try {
-            // --- Phase 1: Call the silent restore function (with fallback) ---
-            let buildResult;
-            if (dbServices.silentRestoreBuild && typeof dbServices.silentRestoreBuild === 'function') {
-                buildResult = await dbServices.silentRestoreBuild(originalOwnerId, deployment.config_vars, botType);
-            } else {
-                // FALLBACK: If silentRestoreBuild doesn't exist, log warning and skip
-                console.warn(`[RestoreAll] WARNING: dbServices.silentRestoreBuild is not defined. Skipping restore for ${originalAppName}`);
-                throw new Error(`Function silentRestoreBuild not found in dbServices. This deployment cannot be restored.`);
-            }
+            // Match the single restore flow: type defaults first, saved vars second, then force identity/session values.
+            const botTypeToRestore = deployment.bot_type || botType;
+            const defaultVarsForRestore = botTypeToRestore === 'raganork' ? raganorkDefaultEnvVars : botTypeToRestore === 'hermit' ? hermitDefaultEnvVars : levanterDefaultEnvVars;
+            const savedConfigVars = typeof deployment.config_vars === 'string' ? JSON.parse(deployment.config_vars) : (deployment.config_vars || {});
+            const combinedVarsForRestore = {
+                ...defaultVarsForRestore,
+                ...savedConfigVars,
+                APP_NAME: originalAppName,
+                SESSION_ID: deployment.session_id,
+                expiration_date: deployment.expiration_date
+            };
+            const buildResult = await dbServices.buildWithProgress(originalOwnerId, combinedVarsForRestore, false, true, botTypeToRestore);
             
             if (!buildResult.success) {
                 // Throw the specific error from the silent function
@@ -4320,7 +4168,7 @@ async function saveMaintenanceStatus(status) {
 
 
 function formatExpirationInfo(deployDateStr, expirationDateStr) {
-    if (!deployDateStr) return 'N/A';
+    if (!deployDateStr && !expirationDateStr) return 'Expiry unavailable';
 
     const deployDate = new Date(deployDateStr);
     const fixedExpirationDate = new Date(deployDate.getTime() + 35 * 24 * 60 * 60 * 1000); // 45 days from original deploy
@@ -4348,8 +4196,10 @@ function buildKeyboard(isAdmin) {
       { text: 'Deploy', style: 'success' }         // Green
     ],
     [
-      { text: 'My Bots', style: 'success' },       // Green
-      { text: 'Support', style: 'danger' }         // Red
+
+      { text: 'Support', style: 'danger' }, 
+      { text: 'My Bots', style: 'success' } 
+        
     ]
 ];
 
@@ -4674,10 +4524,9 @@ async function notifyAdminUserOnline(msg) {
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
     ADMIN_ID: ADMIN_ID,
     runOrphanDbCleanup: runOrphanDbCleanup,
+    deleteSelfHostedDatabase: deleteSelfHostedDatabase,
     createNeonDatabase: createNeonDatabase, 
     deleteNeonDatabase: deleteNeonDatabase,
-    storeNewVcfContact: dbServices.storeNewVcfContact,       // <-- ADD THIS
-    generateAndSendVcf: dbServices.generateAndSendVcf,  
     // --- CRITICAL CHANGE START ---
     defaultEnvVars: { // <-- Pass an object containing both
         levanter: levanterDefaultEnvVars,
@@ -5137,7 +4986,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 
 
     app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-    const { botType, appName, sessionId, autoStatusView, deployKey, isFreeTrial } = req.body;
+    const { botType, appName, sessionId, autoStatusView, deployKey } = req.body;
     const userId = req.telegramData.id.toString();
 
     // 1. Initial validation
@@ -5176,16 +5025,9 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
         AUTO_STATUS_VIEW: herokuAutoStatusView
     };
 
-    let deploymentMessage = '';
-
+        let deploymentMessage = '';
     try {
-        if (isFreeTrial) {
-            const check = await dbServices.canDeployFreeTrial(userId);
-            if (!check.can) {
-                return res.status(400).json({ success: false, message: `You have already used your Free Trial. You can use it again after: ${check.cooldown.toLocaleString()}.` });
-            }
-            deploymentMessage = 'Free Trial deployment initiated. Check the bot chat for updates!';
-        } else if (deployKey) {
+        if (deployKey) {
             const usesLeft = await dbServices.useDeployKey(deployKey, userId);
             if (usesLeft === null) {
                 return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
@@ -5535,20 +5377,33 @@ app.post('/api/raganork-callback', async (req, res) => {
 }
 
         else if (status === 'error') {
-            if (intervalId) clearInterval(intervalId);
-            global.raganorkPairingRequests.delete(cleanNumber); // Use cleanNumber here too!
+    if (intervalId) clearInterval(intervalId);
+    global.raganorkPairingRequests.delete(cleanNumber);
 
-            await bot.editMessageText(
-                `Automated pairing failed.\nReason: ${error}`, 
-                {
-                    chat_id: cid,
-                    message_id: messageId,
-                    reply_markup: {
-                        inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]]
-                    }
-                }
-            );
+    const isAdminChat = String(cid) === ADMIN_ID;
+
+    if (!isAdminChat) {
+        await bot.sendMessage(ADMIN_ID, 
+            `*[Raganork] Automated Pairing Failed*\n\n*User:* \`${cid}\`\n*Number:* \`+${cleanNumber}\`\n\n*Raw Error:*\n\`\`\`\n${String(error).substring(0, 3000)}\n\`\`\``, 
+            { parse_mode: 'Markdown' }
+        ).catch(err => console.error('[Raganork] Failed to alert admin of pairing error:', err.message));
+    }
+
+    const userFacingMessage = isAdminChat
+        ? `Automated pairing failed.\nReason: ${error}`
+        : `Failed to obtain session automatically. Please get your session manually.`;
+
+    await bot.editMessageText(
+        userFacingMessage, 
+        {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session Manually', url: RAGANORK_SESSION_SITE_URL }]]
+            }
         }
+    );
+}
     } catch (e) {
         console.error('[Raganork Webhook Error]', e.message);
     }
@@ -5610,20 +5465,33 @@ app.post('/api/levanter-callback', async (req, res) => {
 }
 
         else if (status === 'error') {
-            if (intervalId) clearInterval(intervalId);
-            global.levanterPairingRequests.delete(number);
+    if (intervalId) clearInterval(intervalId);
+    global.levanterPairingRequests.delete(number);
 
-            await bot.editMessageText(
-                `Automated pairing failed.\nReason: ${error}`, 
-                {
-                    chat_id: cid,
-                    message_id: messageId,
-                    reply_markup: {
-                        inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]]
-                    }
-                }
-            );
+    const isAdminChat = String(cid) === ADMIN_ID;
+
+    if (!isAdminChat) {
+        await bot.sendMessage(ADMIN_ID, 
+            `*[Levanter] Automated Pairing Failed*\n\n*User:* \`${cid}\`\n*Number:* \`+${number}\`\n\n*Raw Error:*\n\`\`\`\n${String(error).substring(0, 3000)}\n\`\`\``, 
+            { parse_mode: 'Markdown' }
+        ).catch(err => console.error('[Levanter] Failed to alert admin of pairing error:', err.message));
+    }
+
+    const userFacingMessage = isAdminChat
+        ? `Automated pairing failed.\nReason: ${error}`
+        : `Failed to obtain session automatically. Please get your session manually.`;
+
+    await bot.editMessageText(
+        userFacingMessage, 
+        {
+            chat_id: cid,
+            message_id: messageId,
+            reply_markup: {
+                inline_keyboard: [[{ text: 'Get Session Manually', url: LEVANTER_SESSION_SITE_URL }]]
+            }
         }
+    );
+}
     } catch (e) {
         console.error('[Webhook Error]', e.message);
     }
@@ -6284,48 +6152,6 @@ bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
         );
     }
 });
-
-
-// In bot.js
-
-bot.onText(/^\/vcf (.+)$/, async (msg, match) => {
-    const cid = msg.chat.id.toString();
-    // Note: Remove this check if you want regular users to use it too.
-    if (cid !== ADMIN_ID) return; 
-
-    const countryName = match[1].trim();
-
-    const workingMsg = await bot.sendMessage(cid, `Generating 500 random contacts for *${escapeMarkdown(countryName)}*...`, { parse_mode: 'Markdown' });
-
-    try {
-        // Call the service function
-        const result = await generateCountryVcf(countryName);
-
-        if (result.success) {
-            await bot.deleteMessage(cid, workingMsg.message_id); // Remove "Generating..." msg
-            
-            await bot.sendDocument(cid, result.buffer, {
-                caption: `**Generated Successfully!**\n\n500 Random ${countryName} Numbers.\n📝 Name Format: ${countryName}1 plus data`,
-                parse_mode: 'Markdown'
-            }, {
-                filename: result.fileName,
-                contentType: 'text/vcard'
-            });
-        } else {
-            await bot.editMessageText(`**Error:** ${result.message}`, {
-                chat_id: cid,
-                message_id: workingMsg.message_id
-            });
-        }
-    } catch (error) {
-        console.error("Error generating VCF:", error);
-        await bot.editMessageText("An error occurred while generating the file.", {
-            chat_id: cid,
-            message_id: workingMsg.message_id
-        });
-    }
-});
-
 
 
 
@@ -7356,7 +7182,7 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         
         await herokuApi.put(`/apps/${msgAppName}/buildpack-installations`, {
             updates: [
-                { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
                 { buildpack: 'heroku/nodejs' }
             ]
         });
@@ -7392,9 +7218,10 @@ bot.onText(/^\/deploytls$/, async (msg) => {
 
         // Injects MessageBot URL into Scraper as APP_URL
         await herokuApi.patch(`/apps/${scAppName}/config-vars`, { 
-            APP_URL: messageBotUrl,
-            SECRET_API_KEY 
-        });
+    APP_URL: messageBotUrl,
+    SECRET_API_KEY,
+    PLAYWRIGHT_BROWSERS_PATH: '0'
+});
 
         await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
 
@@ -8263,7 +8090,7 @@ bot.onText(/^\/list$/, async (msg) => {
 \`/addexp <user_id> <days>\` - Add days to user's bots
 
 👥 **USER MANAGEMENT:**
-\`/add <user_id>\` - Add user (free trial)
+\`/add <user_id>\` - Add user
 \`/deluser <user_id>\` - Delete user
 \`/ban <user_id>\` - Ban user
 \`/unban\` - Show banned users
@@ -8302,7 +8129,6 @@ bot.onText(/^\/list$/, async (msg) => {
 \`/editvar\` - Edit variables
 \`/deployem\` - Deploy test bot
 \`/updateall <type>\` - Update bot type
-\`/vcf <data>\` - Generate VCF
 \`/copy\` - Copy something
 \`/bapp\` - Bot app info
 
@@ -8953,7 +8779,7 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
 
     try {
         const botInfoResult = await pool.query(
-    `SELECT ub.user_id, ub.bot_type, ub.status, ud.expiration_date, ud.is_free_trial, ud.deploy_date
+    `SELECT ub.user_id, ub.bot_type, ub.status, ud.expiration_date, ud.is_free_trial, ud.deploy_date, ud.config_vars
      FROM user_bots ub
      LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
      WHERE ub.bot_name = $1`,
@@ -8981,25 +8807,12 @@ bot.onText(/^\/findbot (.+)$/, async (msg, match) => {
             ownerDetails += "\n_Could not fetch owner's Telegram profile._";
         }
 
-        // FIX: The expirationInfo string is now fully escaped.
-        let expirationInfo = escapeMarkdown("Not Set");
-        if (botInfo.is_free_trial) {
-            const deployDate = new Date(botInfo.deploy_date);
-            const expirationDate = new Date(deployDate.getTime() + 1 * 24 * 60 * 60 * 1000); // 3 days for free trial
+                const expirationDate = resolveExpirationDate(botInfo);
+        let expirationInfo = 'Expiry unavailable';
+        if (expirationDate) {
             const now = new Date();
-            const timeLeftMs = expirationDate.getTime() - now.getTime();
-            const daysLeft = Math.ceil(timeLeftMs / (1000 * 60 * 60 * 24));
-
-            if (daysLeft > 0) {
-                expirationInfo = escapeMarkdown(`${daysLeft} days remaining (Free Trial)`);
-            } else {
-                expirationInfo = escapeMarkdown('Expired (Free Trial)');
-            }
-        } else if (botInfo.expiration_date) {
-            const expiration = new Date(botInfo.expiration_date);
-            const now = new Date();
-            const daysLeft = Math.ceil((expiration - now) / (1000 * 60 * 60 * 24));
-            expirationInfo = escapeMarkdown(daysLeft > 0 ? `${daysLeft} days remaining` : "Expired");
+            const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+            expirationInfo = escapeMarkdown(daysLeft > 0 ? `${daysLeft} days remaining` : 'Expired');
         }
 
 
@@ -9206,127 +9019,6 @@ bot.on('message', async msg => {
             return;
         }
     }
-
-    // --- Step 2: Handle High-Priority Special Data (from Mini App) ---
-    // This block is checked immediately after security. This is the key fix.
-    if (msg.web_app_data) {
-        try {
-            const data = JSON.parse(msg.web_app_data.data);
-            console.log("[MiniApp] Data received from Mini App:", data);
-            console.log("[MiniApp] User state:", userStates[cid]);
-
-            const userState = userStates[cid];
-            
-            // NEW PATTERN: Use callback_data to trigger bot response instead of web_app_data handler
-            if (userState && userState.step === 'AWAITING_MINI_APP_VERIFICATION') {
-                if (data.status === 'verified') {
-                    console.log(`[MiniApp] User ${cid} passed verification - marking in DB and sending callback`);
-                    
-                    // Mark verification as complete in database
-                    try {
-                        await pool.query(
-                            'UPDATE pre_verified_users SET verified_at = NOW() WHERE user_id = $1',
-                            [cid]
-                        );
-                    } catch (dbErr) {
-                        console.warn('[MiniApp] DB update error:', dbErr.message);
-                    }
-                    
-                    // Update state for callback processing
-                    userStates[cid] = { step: 'FREE_TRIAL_VERIFIED', data: { verifiedAt: new Date(), miniAppMessageId: userState.miniAppMessageId } };
-                    
-                    // Delete mini app message
-                    if (userState.miniAppMessageId) {
-                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
-                            console.warn(`[MiniApp] Could not delete message:`, e.message)
-                        );
-                    }
-                    
-                    // Send verification success with callback button that triggers next step
-                    await bot.sendMessage(cid, 
-                        "*Security check passed!*\n\nYour IP address and location have been verified.\n\n**Final step:** Join our support channel and click below to proceed.",
-                        {
-                            parse_mode: 'Markdown',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                                    [{ text: 'I have joined - Proceed!', callback_data: 'verify_join_after_miniapp' }]
-                                ]
-                            }
-                        }
-                    );
-                    
-                    console.log(`[MiniApp] Callback setup complete for user ${cid}`);
-                } else {
-                    // Verification failed
-                    const reason = data.reason || data.error || "An unknown issue occurred.";
-                    console.warn(`[MiniApp] User ${cid} failed verification: ${reason}`);
-                    
-                    // Delete mini app message
-                    if (userState.miniAppMessageId) {
-                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
-                            console.warn(`[MiniApp] Could not delete message:`, e.message)
-                        );
-                    }
-                    
-                    delete userStates[cid];
-                    
-                    // Send error and retry button
-                    await bot.sendMessage(cid, 
-                        `*Verification failed*\n\n*Reason:* ${escapeMarkdown(reason)}\n\nPlease try again or contact support.`,
-                        {
-                            parse_mode: 'Markdown',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: 'Try Again', callback_data: 'free_trial_start' }],
-                                    [{ text: 'Contact Support', url: `https://t.me/${SUPPORT_USERNAME}` }]
-                                ]
-                            }
-                        }
-                    );
-                }
-            } else {
-                // Non-free-trial verification - still use callback pattern
-                if (data.status === 'verified') {
-                    console.log(`[MiniApp] Regular verification passed for user ${cid}`);
-                    
-                    if (userState && userState.miniAppMessageId) {
-                        bot.deleteMessage(cid, userState.miniAppMessageId).catch(e => 
-                            console.warn(`[MiniApp] Could not delete message:`, e.message)
-                        );
-                    }
-                    
-                    // Update state and show callback button
-                    userStates[cid] = { step: 'VERIFICATION_COMPLETE' };
-                    
-                    await bot.sendMessage(cid, 
-                        "*Security check passed!*\n\n**Next step:** Join our channel and continue.",
-                        {
-                            parse_mode: 'Markdown',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: 'Join Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                                    [{ text: 'I have joined', callback_data: 'verify_join_after_miniapp' }]
-                                ]
-                            }
-                        }
-                    );
-                }
-            }
-        } catch (err) {
-            console.error("[MiniApp] Failed to parse web_app_data:", err.message);
-            await bot.sendMessage(cid, "An error occurred during verification. Please try again.", {
-                reply_markup: {
-                    inline_keyboard: [[{ text: 'Retry', callback_data: 'free_trial_start' }]]
-                }
-            });
-        }
-        return; // Stop processing - callback will handle next steps
-    }
-
-    
-
-
 
     // --- Step 3: Handle Regular Text-Based Commands ---
     // This only runs if the message was not from the Mini App.
@@ -9732,17 +9424,30 @@ if (st && st.step === 'AWAITING_KEY_FOR_SWITCH') {
         return bot.sendMessage(cid, "Invalid or expired key.");
     }
     
+    // 🔧 Capture what we need, then clear state RIGHT AWAY —
+    // don't leave the user "trapped" in this step during the build.
+    const { appName, targetType, sessionId, messageId } = st.data;
+    delete userStates[cid];
+
+    // 🔧 Delete the "Complete Migration" prompt now that the key is used
+    if (messageId) {
+        await bot.deleteMessage(cid, messageId).catch(() => {});
+    }
+    
     await bot.sendMessage(cid, "Key verified! Starting migration...");
     
-    // CALL THE SERVICE FUNCTION
-    await dbServices.processBotSwitch(cid, st.data.appName, st.data.targetType, st.data.sessionId);
+    // Fire the long-running build AFTER state is already cleared,
+    // so other commands work normally while this runs in the background.
+    dbServices.processBotSwitch(cid, appName, targetType, sessionId)
+        .catch(err => {
+            console.error(`[Switch] processBotSwitch failed for ${cid}/${appName}:`, err);
+            bot.sendMessage(cid, `❌ Migration failed: ${err.message}`).catch(() => {});
+        });
     
-    delete userStates[cid];
     return;
 }
 
-// In bot.js, inside bot.on('message', ...)
-
+    
 if (st && st.step === 'AWAITING_OTP') {
     const userOtp = text.trim();
     if (!/^\d{6}$/.test(userOtp)) {
@@ -9816,106 +9521,6 @@ if (st && st.step === 'AWAITING_OTP') {
 }
 
 
-// --- NEW STATE: AWAITING CONTACT NAME ---
-if (st && st.step === 'AWAITING_VCF_NAME') {
-    const fullName = text.trim();
-    if (fullName.length < 3 || fullName.length > 50) {
-        return bot.sendMessage(cid, "Your name must be between 3 and 50 characters. Please try again.");
-    }
-
-    st.data.fullName = fullName;
-    st.step = 'AWAITING_VCF_NUMBER';
-    
-    return bot.sendMessage(cid, "Great. Now, please enter your WhatsApp number in **full international format** (e.g., `+23491...`):", { parse_mode: 'Markdown' });
-}
-
-// --- NEW STATE: AWAITING CONTACT NUMBER ---
-if (st && st.step === 'AWAITING_VCF_NUMBER') {
-    const phoneNumber = text.trim();
-    const phoneRegex = /^\+\d{10,15}$/; // Validates + followed by 10-15 digits
-
-    if (!phoneRegex.test(phoneNumber)) {
-        return bot.sendMessage(cid, "Invalid format. Please ensure the number starts with the country code (e.g., `+234...`).");
-    }
-
-    st.data.phoneNumber = phoneNumber;
-    st.step = 'AWAITING_VCF_CONFIRM';
-
-    const reviewMessage = `*Review Your Contact Details:*\n\n` +
-                          `*Name:* ${escapeMarkdown(st.data.fullName)} WBD\n` +
-                          `*Number:* \`${escapeMarkdown(phoneNumber)}\`\n\n` +
-                          `Tap 'Submit'.`;
-
-    await bot.sendMessage(cid, reviewMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: 'Submit Number', callback_data: `vcf_submit_confirm` }],
-                [{ text: 'Edit Details', callback_data: `vcf_start_over` }]
-            ]
-        }
-    });
-    return;
-}
-
-// In bot.js (inside bot.on('message', ...) handler)
-
-// --- STEP 2: AWAITING GROUP LINK ---
-if (st && st.step === 'AWAITING_GROUP_LINK') {
-    const groupLink = text.trim();
-    // Validate common WhatsApp group link format (https://chat.whatsapp.com/...)
-    if (!groupLink.startsWith('https://chat.whatsapp.com/')) {
-        return bot.sendMessage(cid, "❌ Invalid Link. Please send the full WhatsApp group invite link, starting with `https://chat.whatsapp.com/`.");
-    }
-
-    st.data.groupLink = groupLink;
-    st.step = 'AWAITING_MEMBER_AMOUNT';
-
-    const rate = process.env.RATE_PER_NUMBER || 50;
-    
-    return bot.sendMessage(cid, 
-        `Group Link received. The rate is **₦${rate} per number**.\n\n` +
-        `How many members do you want to add? (Min: 1, Max: 500)`, 
-        { parse_mode: 'Markdown' }
-    );
-}
-
-// --- STEP 3: AWAITING MEMBER AMOUNT & CONFIRMATION ---
-if (st && st.step === 'AWAITING_MEMBER_AMOUNT') {
-    const amount = parseInt(text.trim(), 10);
-    const rate = parseInt(process.env.RATE_PER_NUMBER || '50', 10);
-
-    if (isNaN(amount) || amount < 1 || amount > 500) {
-        return bot.sendMessage(cid, "❌ Invalid Amount. Please enter a number between 1 and 500.");
-    }
-    
-    const totalPrice = amount * rate;
-    
-    // Save data and transition to confirmation
-    st.data.memberAmount = amount;
-    st.data.totalPrice = totalPrice;
-    st.step = 'AWAITING_GROUP_CONFIRM';
-    
-    const confirmationMessage = 
-        `**ORDER SUMMARY**\n\n` +
-        `**Members to Add:** ${amount}\n` +
-        `**Price per Member:** ₦${rate}\n` +
-        `───────────────────────\n` +
-        `**TOTAL COST:** ₦${totalPrice.toLocaleString()}\n\n` +
-        `Group Link: \`${st.data.groupLink}\`\n\n` +
-        `Do you want to proceed with payment?`;
-
-    await bot.sendMessage(cid, confirmationMessage, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: `Pay ₦${totalPrice.toLocaleString()}`, callback_data: `group_filler_pay:${totalPrice}` }],
-                [{ text: 'Cancel Order', callback_data: 'group_filler_cancel' }]
-            ]
-        }
-    });
-    return;
-}
 
 
 // In bot.js, inside bot.on('message', ...)
@@ -10289,11 +9894,12 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
               console.error('Error forwarding admin reply (support question):', e);
               await bot.sendMessage(cid, 'Failed to send your reply to the user. They might have blocked the bot or the chat no longer exists.');
           }
-          return;
+          return; // Only exit here — this reply was fully handled as a forward.
       }
-      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply or not from admin. Ignoring.`);
-      return;
-  }
+
+    
+      console.log(`Received reply to bot message ${repliedToBotMessageId} from ${cid} but not a support question reply. Continuing normal processing.`);
+}
 
   if (st && st.step === 'AWAITING_ADMIN_QUESTION_TEXT') {
     // ❗️ FIX: Escape the user's question text immediately.
@@ -10326,53 +9932,7 @@ if (msg.reply_to_message && msg.reply_to_message.from.id.toString() === botId) {
 }
 
   
-if (text === 'Deploy' || text === 'Free Trial') {
-    const isFreeTrial = (text === 'Free Trial');
-
-    if (isFreeTrial) {
-        // --- THIS IS THE FREE TRIAL FLOW ---
-        const check = await dbServices.canDeployFreeTrial(cid);
-        if (!check.can) {
-            const formattedDate = check.cooldown.toLocaleString('en-US', {
-                timeZone: 'Africa/Lagos',
-                year: 'numeric', month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: true
-            });
-            return bot.sendMessage(cid, `You have already used your Free Trial. You can use it again after: ${formattedDate}\n\nWould you like to start a standard deployment instead?`, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Deploy Now', callback_data: 'deploy_first_bot' }]
-                    ]
-                }
-            });
-        }
-
-        try {
-            if (!process.env.APP_URL) {
-                console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
-                return bot.sendMessage(cid, "Error: The verification service is currently unavailable. Please try again later.");
-            }
-
-            userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
-            const verificationUrl = `${process.env.APP_URL}/verify`;
-
-            const miniAppMessage = await bot.sendMessage(cid, "*Security Verification Required*\n\nBefore you can access the free trial, we need to verify your IP address and location to prevent abuse.\n\nPlease complete the security check in the window below:", {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
-                    ]
-                }
-            });
-            
-            userStates[cid].miniAppMessageId = miniAppMessage.message_id;
-        } catch (error) { 
-            console.error("Error in free trial verification flow:", error.message);
-            await bot.sendMessage(cid, "An error occurred. Please try again later.");
-        }
-        return;
-
-        } else {
+if (text === 'Deploy') {
         // --- THIS IS THE "DEPLOY" BUTTON FLOW (MANDATORY VERIFICATION) ---
         const isVerified = await isUserVerified(cid);
     
@@ -10418,8 +9978,6 @@ if (text === 'Deploy' || text === 'Free Trial') {
         });
         return;
     }
-}
-
 
 // In bot.js, find and replace the entire "Deploy" / "Free Trial" block with this:
 
@@ -10511,7 +10069,7 @@ if (text === 'My Bots') {
     try {
         // 1. Get all bots from DB
         const dbBotsResult = await pool.query(
-            `SELECT ub.bot_name, ub.status, ud.expiration_date, ud.deleted_from_heroku_at
+            `SELECT ub.bot_name, ub.status, ud.expiration_date, ud.deploy_date, ud.is_free_trial, ud.config_vars, ud.deleted_from_heroku_at
              FROM user_bots ub
              LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
              WHERE ub.user_id = $1`,
@@ -10548,14 +10106,14 @@ if (text === 'My Bots') {
         // 3. Generate Colored Buttons
         const appButtons = botsToDisplay.map(bot => {
             let statusText = bot.is_active ? (bot.status === 'logged_out' ? 'Logged Out' : 'Connected') : 'Off';
-            const expirationCountdown = formatTimeLeft(bot.expiration_date);
+            const expirationCountdown = formatTimeLeft(resolveExpirationDate(bot));
             
             // --- Logic for Colors ---
             let btnStyle = 'success'; // Default: Green
             let labelPrefix = '';
 
             const now = new Date();
-            const expDate = bot.expiration_date ? new Date(bot.expiration_date) : null;
+            const expDate = resolveExpirationDate(bot);
             const daysLeft = expDate ? (expDate - now) / (1000 * 60 * 60 * 24) : 99;
 
             // Mark Red if Logged Out, Off, or Expiring in <= 3 days
@@ -10661,26 +10219,13 @@ if (text === 'More Features') {
     await dbServices.updateUserActivity(cid);
     const moreFeaturesText = "Here are some additional features and services:";
 
-    // Check if the user has already claimed a free trial number
-    const trialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [cid]);
-    const hasUsedTrial = trialCheck.rows.length > 0;
-
-    // --- New Logic Starts Here ---
-
-    // 1. Create a list of all buttons that should be displayed
+        // 1. Create a list of standard paid features.
     const allButtons = [];
 
-    // Conditionally add the free trial button
-    if (!hasUsedTrial) {
-        allButtons.push({ text: "Get a Free Trial Number", callback_data: 'free_trial_temp_num' });
-    }
 
      // 💡 NEW BUTTON
      allButtons.push({ text: "Group Filler", callback_data: 'group_filler_start' });
 
-    // --- 💡 ADD NEW CONTACT GAIN FEATURE 💡 ---
-    allButtons.push({ text: "Contact Gain (VCF Exchange)", callback_data: 'vcf_start' });
-    // --- 💡 END NEW FEATURE 💡 ---
 
     // Add all other standard buttons, including the new Referrals button
     allButtons.push(
@@ -11182,6 +10727,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
       }
 
       delete userStates[cid];
+    return;
 
     } catch (e) {
       const errorMsg = e.response?.data?.message || e.message;
@@ -11602,75 +11148,7 @@ if (action === 'select_deploy_type') {
 
 
 
-// --- FIX 2: REPLACE this block to remove the extra nested code ---
 
-if (action === 'verify_join') {
-    const userId = q.from.id;
-    const messageId = q.message.message_id;
-
-    try {
-        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-        const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-        if (isMember) {
-            const { first_name, username } = q.from;
-            const userIdentifier = username ? `@${username}` : first_name;
-            bot.sendMessage(ADMIN_ID, `User ${escapeMarkdown(userIdentifier)} (\`${userId}\`) has joined the channel for a free trial.`, { parse_mode: 'Markdown' });
-
-            await bot.answerCallbackQuery(q.id);
-
-            await bot.editMessageText('Verification successful!', {
-                chat_id: cid,
-                message_id: messageId
-            });
-
-            await new Promise(resolve => setTimeout(resolve, 1500)); 
-            
-            delete userStates[cid];
-            userStates[cid] = { step: 'AWAITING_BOT_TYPE_SELECTION', data: { isFreeTrial: true } };
-
-            // --- 💡 START OF UPDATE 💡 ---
-            await bot.editMessageText('Great! Which bot type would you like to deploy for your free trial?', {
-                chat_id: cid,
-                message_id: messageId,
-                reply_markup: {
-                    inline_keyboard: [
-                        [ // Row 1
-                            { text: 'Levanter', callback_data: `select_deploy_type:levanter` },
-                            { text: 'Raganork MD', callback_data: `select_deploy_type:raganork` }
-                        ],
-                        [ // Row 2
-                            { text: 'Hermit', callback_data: `select_deploy_type:hermit` }
-                        ]
-                    ]
-                }
-            });
-            // --- 💡 END OF UPDATE 💡 ---
-
-        } else {
-            await bot.answerCallbackQuery(q.id); 
-
-            await bot.editMessageText("You must join our channel to proceed. Please join and then tap 'Verify' again.", {
-                chat_id: cid,
-                message_id: messageId,
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Join Our Channel', url: MUST_JOIN_CHANNEL_LINK }],
-                        [{ text: 'I have joined, Verify me!', callback_data: 'verify_join' }]
-                    ]
-                }
-            });
-        }
-    } catch (error) { 
-        console.error("Error verifying channel membership:", error.message);
-        await bot.answerCallbackQuery(q.id, {
-            text: "Could not verify membership. Please contact an admin.",
-            show_alert: true
-        });
-        await bot.sendMessage(ADMIN_ID, `Error checking channel membership for channel ID ${MUST_JOIN_CHANNEL_ID}. Ensure the bot is an admin in this channel. Error: ${error.message}`);
-    }
-    return;
-}
 
 
       if (action === 'start_deploy_after_payment') {
@@ -11736,69 +11214,7 @@ if (action === 'edit_deployment_start_over') {
 }
 
 
-// 2. In bot.on('callback_query', ...) handler (Add new actions)
 
-if (action === 'vcf_start') {
-    await bot.editMessageText(
-        `*Contact Gain (VCF Exchange)*\n\n` +
-        `Share your contact to receive a full list of contacts from other users every night at 11 PM (WAT) for WhatsApp Status boosting.\n\n` +
-        `Your name will be saved as "{Name} WBD".`,
-        {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Submit Number', callback_data: 'vcf_start_submit' }],
-                    [{ text: '« Back', callback_data: 'more_features_menu' }]
-                ]
-            }
-        }
-    );
-    return;
-}
-
-if (action === 'vcf_start_submit' || action === 'vcf_start_over') {
-    delete userStates[cid];
-    userStates[cid] = { step: 'AWAITING_VCF_NAME', data: {} };
-    await bot.editMessageText("Please enter your preferred **Full Name** (e.g., Ultar, John Doe):", {
-         chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
-    });
-    return;
-}
-
-if (action === 'vcf_submit_confirm') {
-    if (!st || st.step !== 'AWAITING_VCF_CONFIRM') return;
-
-    const { fullName, phoneNumber } = st.data;
-
-    // Use the new service function
-    const result = await dbServices.storeNewVcfContact(cid, fullName, phoneNumber);
-    
-    delete userStates[cid];
-    
-    if (result.success) {
-        await bot.editMessageText(
-            `**Success!** Your contact has been added to the list.\n\n` + 
-            `Check the group channel for the VCF file at 11 PM (WAT) tonight!`, 
-            {
-                chat_id: cid, 
-                message_id: q.message.message_id, 
-                parse_mode: 'Markdown',
-                reply_markup: { // <<< ADDED INLINE BUTTON
-                    inline_keyboard: [
-                        [{ text: 'Join VCF GROUP', url: VCF_GROUP_LINK }]
-                    ]
-                }
-            }
-        );
-    } else {
-        await bot.editMessageText(`**Failed to Submit.** This phone number may already be registered.`, {
-            chat_id: cid, message_id: q.message.message_id, parse_mode: 'Markdown'
-        });
-    }
-    return;
-}
 
 
 
@@ -12724,82 +12140,7 @@ if (action === 'back_to_bapp_list') {
 
   
   
-  if (action === 'Referrals') {
-    // 1. Get user and message details
-    const userId = q.from.id.toString();
-    const chatId = q.message.chat.id;
-    const messageId = q.message.message_id;
-
-    // 2. Create the referral link
-    const referralLink = `https://t.me/${botUsername}?start=${userId}`; // Use userId, not ref_userId
-
-    await dbServices.updateUserActivity(userId);
-
-    // 3. Fetch the list of referred users from the database
-    const referredUsersResult = await pool.query(
-        'SELECT referred_user_id, bot_name FROM user_referrals WHERE inviter_user_id = $1',
-        [userId]
-    );
-    const referredUsers = referredUsersResult.rows;
-
-    // --- 🎨 DESIGN UPDATE START 🎨 ---
-    
-    // Build the text-art message using Markdown
-    let referralMessage = `*═══ YOUR REFERRALS ═══⊷*\n`;
-    referralMessage += `┃❃╭──────────────\n`;
-    referralMessage += `┃❃│ Share your link to earn rewards!\n`;
-    referralMessage += `┃❃│ \n`;
-    referralMessage += `┃❃│ *Your Link:*\n`;
-    referralMessage += `┃❃│ \`${referralLink}\`\n`; // Use backticks for easy copy
-    referralMessage += `┃❃│ \n`;
-    referralMessage += `┃❃│ *Your Rewards:*\n`;
-    referralMessage += `┃❃│ • *20 days* for a direct referral.\n`;
-    referralMessage += `┃❃│ • *7 days* for a 2nd-level referral.\n`;
-    referralMessage += `┃❃╰───────────────\n\n`;
-
-    // Dynamically build the list of referred users
-    if (referredUsers.length > 0) {
-        referralMessage += `*Users you've successfully referred:*\n`;
-        for (const ref of referredUsers) {
-            try {
-                const user = await bot.getChat(ref.referred_user_id);
-                const userName = user.first_name || `User ${ref.referred_user_id}`;
-                referralMessage += `▪️ *${escapeMarkdown(userName)}* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
-            } catch (e) {
-                referralMessage += `▪️ *A user* (Bot: \`${escapeMarkdown(ref.bot_name)}\`)\n`;
-            }
-        }
-    } else {
-        referralMessage += `_You haven't referred any users yet._`;
-    }
-    // --- 🎨 DESIGN UPDATE END 🎨 ---
-
-    try {
-        // Acknowledge the button press
-        await bot.answerCallbackQuery(q.id);
-
-        // Edit the original message
-        await bot.editMessageText(referralMessage, {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        // This share button will still work
-                        { text: 'Share Your Link', url: `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Deploy your own bot with my referral link!')}` }
-                    ],
-                    [
-                        { text: '« Back to More Features', callback_data: 'more_features_menu' }
-                    ]
-                ]
-            }
-        });
-
-    } catch (error) {
-        console.error("Error editing message for referrals:", error);
-    }
-}
+  
 
 
 
@@ -12968,48 +12309,7 @@ if (action === 'show_reward_bot_list') {
     return;
 }
 
-  // Add this new handler inside bot.on('callback_query', ...)
-if (action === 'apply_referral_reward') {
-    const inviterId = q.from.id.toString();
-    const botToUpdate = payload;
-    const referredUserId = extra;
-    const isSecondLevel = flag === 'second_level';
-    const rewardDays = isSecondLevel ? 7 : 20;
 
-    await bot.editMessageText(`Applying your *${rewardDays}-day* reward to bot "*${escapeMarkdown(botToUpdate)}*"...`, {
-        chat_id: inviterId,
-        message_id: q.message.message_id,
-        parse_mode: 'Markdown'
-    });
-
-    try {
-        await pool.query(
-            `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '${rewardDays} days'
-             WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-            [inviterId, botToUpdate]
-        );
-
-        // Mark the reward as applied in the user_referrals table
-        await pool.query(
-            `UPDATE user_referrals SET inviter_reward_pending = FALSE WHERE referred_user_id = $1`,
-            [referredUserId]
-        );
-
-        await bot.editMessageText(`Success! A *${rewardDays}-day extension* has been added to your bot "*${escapeMarkdown(botToUpdate)}*".`, {
-            chat_id: inviterId,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
-
-    } catch (e) {
-        console.error(`Error applying referral reward to bot ${botToUpdate} for user ${inviterId}:`, e);
-        await bot.editMessageText(`Failed to apply the reward to your bot "*${escapeMarkdown(botToUpdate)}*". Please contact support.`, {
-            chat_id: inviterId,
-            message_id: q.message.message_id,
-            parse_mode: 'Markdown'
-        });
-    }
-}
 
 
 // --- 1. REGENERATE CODE ---
@@ -13116,88 +12416,6 @@ if (action === 'levanter_wa_fallback') {
 
 
 // Add this inside bot.on('callback_query', ...)
-if (action === 'verify_join_after_miniapp') {
-    const userId = q.from.id.toString();
-    const cid = q.message.chat.id.toString();
-
-    try {
-        // 1. Check if user is pre-verified (with IP and location data)
-        const preVerifiedCheck = await pool.query("SELECT ip_address, city, latitude, longitude FROM pre_verified_users WHERE user_id = $1", [userId]);
-        if (preVerifiedCheck.rows.length === 0) {
-            await bot.answerCallbackQuery(q.id, { text: "You must complete the security check first.", show_alert: true });
-            return;
-        }
-        
-        const { ip_address: userIpAddress, city, latitude, longitude } = preVerifiedCheck.rows[0];
-        console.log(`[Free Trial Verification] User ${userId} | IP: ${userIpAddress} | City: ${city} | Location: ${latitude},${longitude}`);
-
-        // 2. Check if user is in the channel (joining requirement)
-        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-        if (!['creator', 'administrator', 'member'].includes(member.status)) {
-            await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet.", show_alert: true });
-            return;
-        }
-
-        // 3. Double-check: Ensure user hasn't already claimed a trial (abuse prevention)
-        const existingTrialCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
-        if (existingTrialCheck.rows.length > 0) {
-            await bot.answerCallbackQuery(q.id, { text: "You have already claimed your free trial.", show_alert: true });
-            return;
-        }
-
-        // All checks passed! Assign a free trial number
-        const numberResult = await pool.query("SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1");
-        if (numberResult.rows.length === 0) {
-            await bot.editMessageText("Sorry, no free trial numbers are available right now.", { chat_id: cid, message_id: q.message.message_id });
-            return;
-        }
-        const freeNumber = numberResult.rows[0].number;
-
-        // Use a transaction to finalize the free trial claim
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            
-            // Mark the number as assigned to this user
-            await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
-            
-            // Record this free trial claim with IP and location data for fraud prevention
-            await client.query("INSERT INTO free_trial_numbers (user_id, number_used, ip_address) VALUES ($1, $2, $3)", [userId, freeNumber, userIpAddress]);
-            
-            // Clean up the pre-verified record
-            await client.query("DELETE FROM pre_verified_users WHERE user_id = $1", [userId]);
-            
-            await client.query('COMMIT');
-            console.log(`[Free Trial] ✅ Successfully assigned number ${freeNumber} to user ${userId} from IP ${userIpAddress}`);
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
-
-        // Success! Show the user their number
-        await bot.editMessageText(`✅ *All steps complete!*\n\nYour free trial number is:\n\n<code>${freeNumber}</code>\n\nOTP will be sent automatically if detected.`, { chat_id: cid, message_id: q.message.message_id, parse_mode: 'HTML' });
-        
-        // Notify the admin about the free trial claim with security details
-        await bot.sendMessage(ADMIN_ID, 
-            `*Free Trial Claimed!*\n\n` +
-            `*User:* \`${userId}\`\n` +
-            `*Number:* \`${freeNumber}\`\n` +
-            `*IP Address:* \`${userIpAddress}\`\n` +
-            `*City:* ${city || 'N/A'}\n` +
-            `*Coordinates:* ${latitude && longitude ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : 'N/A'}\n` +
-            `*Status:* ✅ Verification Passed`, 
-            { parse_mode: 'Markdown' }
-        );
-
-    } catch (error) {
-        console.error("Error during final verification:", error);
-        await bot.answerCallbackQuery(q.id, { text: "An error occurred. Please try again.", show_alert: true });
-    }
-    return;
-}
-
   // In bot.js, inside bot.on('callback_query', ...)
 
 if (action === 'confirm_deluser') {
@@ -13248,67 +12466,7 @@ if (action === 'cancel_deluser') {
 }
 
 
-  // Add this inside bot.on('callback_query', async q => { ... })
-
-  if (action === 'verify_join_temp_num') {
-    const userId = q.from.id;
-    // The cid variable was missing, which would cause an error later.
-    const cid = q.message.chat.id.toString();
-
-    try {
-        const member = await bot.getChatMember(MUST_JOIN_CHANNEL_ID, userId);
-        const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-        if (isMember) {
-            // This code runs if the user IS a member
-            const numberResult = await pool.query(
-                "SELECT number FROM temp_numbers WHERE status = 'available' ORDER BY RANDOM() LIMIT 1"
-            );
-
-            if (numberResult.rows.length === 0) {
-                await bot.editMessageText("Sorry, no free trial numbers are available right now. Please check back later.", {
-                    chat_id: cid,
-                    message_id: q.message.message_id
-                });
-                return;
-            }
-
-            const freeNumber = numberResult.rows[0].number;
-            const client = await pool.connect();
-            try {
-                await client.query('BEGIN');
-                await client.query("UPDATE temp_numbers SET status = 'assigned', user_id = $1, assigned_at = NOW() WHERE number = $2", [userId, freeNumber]);
-                await client.query("INSERT INTO free_trial_numbers (user_id, number_used) VALUES ($1, $2)", [userId, freeNumber]);
-                await client.query('COMMIT');
-            } catch (e) {
-                await client.query('ROLLBACK');
-                throw e;
-            } finally {
-                client.release();
-            }
-
-            await bot.editMessageText(`Verification successful! Your free trial number is: <code>${freeNumber}</code>`, {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'HTML'
-            });
-            await bot.sendMessage(userId, 'OTP will send automatically if detected.');
-            await bot.sendMessage(ADMIN_ID, `User \`${userId}\` has claimed a free trial number: \`${freeNumber}\``, { parse_mode: 'Markdown' });
-
-        } else {
-            // --- THIS IS THE FIX ---
-            // User is not in the channel. Send the alert and immediately stop the function.
-            await bot.answerCallbackQuery(q.id, { text: "You haven't joined the channel yet. Please join and try again.", show_alert: true });
-            return; // <-- This crucial line stops the code from continuing.
-        }
-    } catch (error) {
-        console.error("Error during free trial number verification:", error);
-        await bot.answerCallbackQuery(q.id, { text: "An error occurred during verification. Please try again.", show_alert: true });
-    }
-    return;
-}
-
-// In bot.js, inside bot.on('callback_query', ...)
+  
 
 if (action === 'users_registered') {
     const page = parseInt(payload, 10);
@@ -13322,148 +12480,8 @@ if (action === 'users_unregistered') {
     return;
 }
 
-// bot.js (Inside bot.on('callback_query', ...))
-
-if (action === 'free_trial_temp_num') {
-    const userId = q.from.id.toString();
-    const cid = q.message.chat.id.toString();
-    
-    // 🚨 FIX 1: Answer the callback query immediately to acknowledge the click.
-    await bot.answerCallbackQuery(q.id, { text: "Starting security check..." }); // Added acknowledgement
-    
-    // Check if the APP_URL is configured, which is essential for the Mini App
-    if (!process.env.APP_URL) {
-        console.error("CRITICAL: APP_URL environment variable is not set. Cannot launch Mini App.");
-        await bot.sendMessage(cid, "Error: The verification service is currently unavailable.", { show_alert: true });
-        return;
-    }
-    
-    try {
-        // Check if the user has already claimed a trial
-        const trialUserCheck = await pool.query("SELECT user_id FROM free_trial_numbers WHERE user_id = $1", [userId]);
-        if (trialUserCheck.rows.length > 0) {
-            await bot.editMessageText("You have already claimed your one-time free trial number.", { chat_id: cid, message_id: q.message.message_id });
-            return;
-        }
-
-        // If the user is eligible, prepare to launch the Mini App
-        const verificationUrl = `${process.env.APP_URL}/verify`;
-
-        // This line sets the state before the Mini App is launched.
-        userStates[cid] = { step: 'AWAITING_MINI_APP_VERIFICATION' };
-
-        await bot.editMessageText("Please complete the security check in the window below to begin the verification process.", {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Start Security Check', web_app: { url: verificationUrl } }]
-                ]
-            }
-        });
-
-    } catch (error) {
-        console.error("Error during free trial eligibility check:", error);
-        // 🚨 FIX 2: Send the error message directly instead of using answerCallbackQuery, which was already sent.
-        await bot.sendMessage(cid, "An error occurred during eligibility check. Please try again.");
-    }
-    return;
-}
 
 
-
-  
-// Replace this block inside bot.on('callback_query', ...)
-
-if (action === 'buy_temp_num') {
-    const cid = q.message.chat.id.toString();
-    const number = payload; // This is the full number
-
-    // Check if the number is still available
-    const numberCheck = await pool.query("SELECT status FROM temp_numbers WHERE number = $1", [number]);
-    if (numberCheck.rows.length === 0 || numberCheck.rows[0].status !== 'available') {
-        await bot.editMessageText('Sorry, this number is no longer available.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-        return;
-    }
-    
-    // --- THIS IS THE UPDATED MESSAGE ---
-    const message = `
-*Important Instructions:*
-
-1.  This is a Poland (**+48**) number. Ensure you select Poland as the country in WhatsApp.
-2.  Request the verification code **only via Gmail**. Do not request an SMS code.
-3.  Do not use this number to start new chats to avoid bans. It's best for joining groups or replying to messages.
-`;
-    // --- END OF UPDATED MESSAGE ---
-
-    // Send the instructions message first
-    await bot.sendMessage(cid, message, { parse_mode: 'Markdown' });
-
-    // Generate a unique payment reference
-    const reference = crypto.randomBytes(16).toString('hex');
-    const priceInKobo = 200 * 100; // N200 in kobo
-
-    try {
-        const paystackResponse = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            {
-                email: 'customer@email.com', // Replace with the user's actual email
-                amount: priceInKobo,
-                reference: reference,
-                metadata: {
-                    user_id: cid,
-                    product: 'temporary_number',
-                    phone_number: number
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const paymentUrl = paystackResponse.data.data.authorization_url;
-
-        // Edit the original message to show the payment button after the instructions
-        await bot.editMessageText('Please click the button below to complete your payment.', {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Pay Now', url: paymentUrl }]
-                ]
-            }
-        });
-        
-        // Update the number's status to pending payment
-        await pool.query("UPDATE temp_numbers SET status = 'pending_payment', user_id = $1, assigned_at = NOW() WHERE number = $2", [cid, number]);
-
-    } catch (error) {
-        console.error('Paystack transaction failed:', error.response?.data || error.message);
-        await bot.editMessageText('Sorry, an error occurred while creating the payment link. Please try again later.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-    }
-}
-
-
-
-  if (action === 'ask_admin_question') {
-      delete userStates[cid]; // Clear user state
-      userStates[cid] = { step: 'AWAITING_ADMIN_QUESTION_TEXT', data: {} };
-      await bot.sendMessage(cid, 'Please type your question for the admin:');
-      return;
-  }
-
-  
-
-  // In bot.js, inside bot.on('callback_query', ...) handler
 
 if (action === 'renew_bot') {
     const appName = payload;
@@ -13622,10 +12640,8 @@ if (action === 'confirm_and_pay_step') {
     if (!st || st.step !== 'AWAITING_FINAL_CONFIRMATION') return;
 
     const price = process.env.KEY_PRICE_NGN || '1500';
-    const isFreeTrial = st.data.isFreeTrial;
-    const isAdmin = cid === ADMIN_ID;
-
-    if (isFreeTrial || isAdmin) {
+        const isAdmin = cid === ADMIN_ID;
+    if (isAdmin) {
         await bot.editMessageText('Initiating deployment...', { chat_id: cid, message_id: q.message.message_id });
         delete userStates[cid];
 
@@ -13642,7 +12658,7 @@ if (action === 'confirm_and_pay_step') {
         } catch (e) { /* Ignore errors, proceed without inviterId */ }
         
         // Pass the found inviterId to the build function.
-        await dbServices.buildWithProgress(cid, st.data, isFreeTrial, false, st.data.botType, inviterId);
+        await dbServices.buildWithProgress(cid, st.data, false, false, st.data.botType, inviterId);
 
     } else {
         st.step = 'AWAITING_KEY';
@@ -13659,117 +12675,8 @@ if (action === 'confirm_and_pay_step') {
     return;
 }
 
-// In bot.js (inside bot.on('callback_query', ...))
 
-if (action === 'nowpayments_deploy' || action === 'nowpayments_renew') {
-    const isRenewal = action === 'nowpayments_renew';
-    
-    // We receive NGN amount in payload, but we need to ignore it or use it for display.
-    // We primarily rely on the 'days' (extra) to determine the USD price.
-    
-    // 1. Calculate USD Price based on Days
-    const days = parseInt(extra, 10);
-    const usdPrices = {
-        10: 0.35,
-        30: 1.00,
-        92: 2.00,
-        185: 3.35,
-        365: 5.35
-    };
-    const priceUsd = usdPrices[days] || 1.00; // Fallback safety
-    
-    const appName = isRenewal ? extra2 : null; // extra2 might be undefined if not renewal, handled below
-
-    // State check for new deployments
-    let deployAppName, deploySessionId;
-    if (!isRenewal) {
-        const st = userStates[cid];
-        // Safety check: if state is lost (bot restart), ask user to restart
-        if (!st || !st.data) {
-            return bot.answerCallbackQuery(q.id, { text: "Session expired. Please start /deploy again.", show_alert: true });
-        }
-        deployAppName = st.data.APP_NAME;
-        deploySessionId = st.data.SESSION_ID;
-    }
-
-    // Generate Order ID
-    let orderId;
-    if (isRenewal) {
-        orderId = `renew_${appName}_${crypto.randomBytes(8).toString('hex')}`;
-    } else {
-        orderId = `deploy_${deployAppName}_${crypto.randomBytes(4).toString('hex')}`;
-    }
-
-    await bot.editMessageText('Generating Crypto Invoice...', {
-        chat_id: cid, message_id: q.message.message_id
-    });
-
-    try {
-        // 2. Save to Pending Payments
-        const userEmail = await getUserEmail(cid);
-        await pool.query(
-            `INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, amount_expected) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (reference) DO NOTHING`,
-            [
-                orderId, 
-                cid, 
-                userEmail || 'crypto@user.com', 
-                isRenewal ? 'renewal' : 'deploy', 
-                isRenewal ? appName : deployAppName, 
-                isRenewal ? 'renewal' : deploySessionId,
-                priceUsd // Storing USD amount here for reference
-            ]
-        );
-        
-        // 3. Call NOWPayments INVOICE API (Changed from /payment to /invoice)
-        const response = await axios.post('https://api.nowpayments.io/v1/invoice', 
-        {
-            price_amount: priceUsd,
-            price_currency: 'usd',
-            order_id: orderId,
-            order_description: isRenewal ? `Renew ${appName} (${days} days)` : `Deploy Bot (${days} days)`,
-            ipn_callback_url: `${process.env.APP_URL}/nowpayments-webhook`,
-            success_url: `https://t.me/${process.env.BOT_USERNAME}`,
-            cancel_url: `https://t.me/${process.env.BOT_USERNAME}`
-        }, 
-        {
-            headers: {
-                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        // Note: Invoice API returns 'invoice_url', not 'payment_url'
-        const paymentUrl = response.data.invoice_url; 
-        
-        // 4. Send the Invoice Link
-        await bot.editMessageText(
-            `<b>Crypto Invoice Created</b>\n\nAmount: <b>$${priceUsd}</b>\nDuration: ${days} Days\n\nPlease click the button below to choose your coin (BTC, ETH, USDT, etc) and pay.\n\n<i>Your bot will start automatically once the network confirms the transaction.</i>`, 
-            {
-                chat_id: cid,
-                message_id: q.message.message_id,
-                parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: 'Click to Pay Crypto', url: paymentUrl }],
-                        [{ text: '« Cancel', callback_data: 'cancel_payment_and_deploy' }]
-                    ]
-                }
-            }
-        );
-
-    } catch (error) {
-        console.error("[NOWPayments] Error:", error.response?.data || error.message);
-        await bot.editMessageText('Could not generate crypto invoice. Please try again later.', {
-            chat_id: cid,
-            message_id: q.message.message_id
-        });
-    }
-    return;
-}
-
-  // In bot.js, inside bot.on('callback_query', ...)
+            
 
 if (action === 'start_verification') {
     const st = userStates[cid];
@@ -14041,29 +12948,23 @@ if (action === 'change_email') {
 
 // --- FIX: Awaiting key handler now includes a payment button ---
 if (action === 'deploy_with_key') {
-    const isFreeTrialFromCallback = payload === 'free_trial';
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_KEY_OR_PAYMENT') return;
-
-    // For paid deployments, ask for the key with a payment option.
-    if (!isFreeTrialFromCallback) {
-        st.step = 'AWAITING_KEY';
-        const price = process.env.KEY_PRICE_NGN || '1500';
-        await bot.editMessageText('Enter your Deploy key:', {
-            chat_id: cid,
-            message_id: q.message.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
-                ]
-            }
-        });
-    } else {
-        // For free trials, trigger the deployment directly.
-        await bot.editMessageText('Initiating Free Trial deployment...', { chat_id: cid, message_id: q.message.message_id });
-        delete userStates[cid];
-        await dbServices.buildWithProgress(cid, st.data, true, false, st.data.botType);
+    if (payload === 'free_trial') {
+        await bot.answerCallbackQuery(q.id, { text: 'Free trials are no longer available.', show_alert: true });
+        return;
     }
+    st.step = 'AWAITING_KEY';
+    const price = process.env.KEY_PRICE_NGN || '1500';
+    await bot.editMessageText('Enter your Deploy key:', {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: `Make payment (₦${price})`, callback_data: 'buy_key_for_deploy' }]
+            ]
+        }
+    });
     return;
 }
 
@@ -14085,9 +12986,7 @@ if (action === 'buy_key_for_deploy') {
     return;
 }
 
-  // In bot.js, add this new handler inside the callback_query function
-
-// In bot.js, REPLACE your 'select_plan' handler
+  
 
 if (action === 'select_plan') {
     const st = userStates[cid];
@@ -14282,7 +13181,7 @@ if (action === 'selectapp' || action === 'selectbot') {
     });
     
     const dbBotInfo = (await pool.query(
-        'SELECT ud.expiration_date, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
+        'SELECT ud.expiration_date, ud.deploy_date, ud.is_free_trial, ud.config_vars, ud.paused_at, ub.status AS wpp_status, ub.bot_type FROM user_deployments ud ' +
         'LEFT JOIN user_bots ub ON ud.app_name = ub.bot_name AND ud.user_id = ub.user_id ' +
         'WHERE ud.user_id=$1 AND ud.app_name=$2', 
         [cid, appName]
@@ -14296,12 +13195,13 @@ if (action === 'selectapp' || action === 'selectbot') {
     }
 
     const botType = (dbBotInfo?.bot_type || 'Bot').toUpperCase();
-    const expirationDate = dbBotInfo?.expiration_date ? new Date(dbBotInfo.expiration_date) : null;
+    const expirationDate = resolveExpirationDate(dbBotInfo);
     const now = new Date();
     const keyboard = [];
     
     // TEMPLATE LITERAL FIX: Use backticks (`) for the variables inside the string to work
-    const daysLeft = expirationDate ? Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24)) : 'N/A';
+    const daysLeft = expirationDate ? Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24)) : null;
+    const expirationLabel = daysLeft === null ? 'Expiry unavailable' : `${daysLeft} days left`;
     const finalStatusText = dbBotInfo?.paused_at ? 'Paused' : (dbBotInfo?.wpp_status === 'logged_out' ? 'Logged Out' : 'Connected');
 
     const isExpired = expirationDate && expirationDate < now;
@@ -14329,7 +13229,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
         
     } else if (dynoStatus === 'on') {
-        let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : " + finalStatusText + "\n ┃❃│ Expires  : " + daysLeft + " days left\n ┃❃╰───────────────\n```";
+        let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : " + finalStatusText + "\n ┃❃│ Expires  : " + expirationLabel + "\n ┃❃╰───────────────\n```";
         
         // FIX: All buttons in the row must be objects if style is used
         const mainRow = [
@@ -14429,10 +13329,9 @@ if (action === 'confirm_switch_pay') {
     const st = userStates[cid];
     if (!st || st.step !== 'AWAITING_SWITCH_CONFIRM') return;
     
-    // Move to Key/Payment State
     st.step = 'AWAITING_KEY_FOR_SWITCH';
+    st.data.messageId = q.message.message_id; // 🔧 store so we can delete it after key use
     
-    // 500 NGN Price
     const price = 500;
     
     await bot.editMessageText(
@@ -14444,7 +13343,7 @@ if (action === 'confirm_switch_pay') {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: `Pay ₦${price} (Flutterwave)`, callback_data: `flutterwave_switch:${price}`, style: 'success' }],
-                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`,  style: 'danger' }]
+                    [{ text: 'Cancel', callback_data: `selectapp:${st.data.appName}`, style: 'danger' }]
                 ]
             }
         }
@@ -14874,14 +13773,13 @@ if (action === 'info') {
       
         // --- START OF FIX ---
         const ownerId = await dbServices.getUserIdByBotName(appName);
-        let expirationInfo = "N/A";
+        let expirationInfo = "Expiry unavailable";
 
         if (ownerId) {
             // Correctly read the expiration_date from the main database
-            const deploymentDetails = (await pool.query('SELECT expiration_date FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
-            
-            if (deploymentDetails && deploymentDetails.expiration_date) {
-                const expirationDate = new Date(deploymentDetails.expiration_date);
+            const deploymentDetails = (await pool.query('SELECT expiration_date, deploy_date, is_free_trial, config_vars FROM user_deployments WHERE user_id=$1 AND app_name=$2', [ownerId, appName])).rows[0];
+            const expirationDate = resolveExpirationDate(deploymentDetails);
+            if (expirationDate && !isNaN(expirationDate.getTime())) {
                 const now = new Date();
                 const daysLeft = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
                 
@@ -15933,46 +14831,6 @@ if (action === 'change_session') {
 
 
   
-  if (action === 'admin_delete_trial_app') {
-      const appToDelete = payload;
-      const messageId = q.message.message_id;
-
-      if (cid !== ADMIN_ID) {
-          await bot.editMessageText("You are not authorized to perform this action.", { chat_id: cid, message_id: messageId });
-          return;
-      }
-
-      await bot.sendChatAction(cid, 'typing');
-      await bot.editMessageText(`Admin deleting Free Trial app "*${appToDelete}*"...`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
-      try {
-          await axios.delete(`https://api.heroku.com/apps/${appToDelete}`, {
-              headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-          });
-          const ownerId = await dbServices.getUserIdByBotName(appToDelete); // Use dbServices
-          if (ownerId) {
-              await dbServices.deleteUserBot(ownerId, appToDelete); // Delete from main DB
-              await dbServices.markDeploymentDeletedFromHeroku(ownerId, appToDelete); // NEW: Mark from backup DB as deleted
-          }
-
-          await bot.editMessageText(`Free Trial app "*${appToDelete}*" permanently deleted by Admin.`, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown' });
-          if (ownerId && ownerId !== cid) {
-              await bot.sendMessage(ownerId, `Your Free Trial bot "*${appToDelete}*" has been manually deleted by the admin.`, { parse_mode: 'Markdown' });
-          }
-      } catch (e) {
-          if (e.response && e.response.status === 404) {
-              await dbServices.handleAppNotFoundAndCleanDb(cid, appToDelete, messageId, false); // Use dbServices
-              return;
-          }
-          const errorMsg = e.response?.data?.message || e.message;
-          await bot.editMessageText(`Failed to delete Free Trial app "*${appToDelete}*": ${errorMsg}`, {
-              chat_id: cid,
-              message_id: messageId,
-              parse_mode: 'Markdown'
-          });
-      }
-      return;
-  }
-
   // AROUND LINE 1400 (inside bot.on('callback_query', async q => { ... }))
 
     if (action === 'redeploy_app') {
@@ -16400,53 +15258,6 @@ bot.on('channel_post', async msg => {
     
 
 
-
-
-// === Free Trial Channel Membership Monitoring ===
-const ONE_HOUR_IN_MS = 60 * 60 * 1000;
-
-async function checkMonitoredUsers() {
-    console.log('[Monitor] Running free trial channel membership check...');
-    const usersToMonitor = await dbServices.getMonitoredFreeTrials();
-
-    for (const user of usersToMonitor) {
-        try {
-            const member = await bot.getChatMember(user.channel_id, user.user_id);
-            const isMember = ['creator', 'administrator', 'member'].includes(member.status);
-
-            if (!isMember) {
-                // User has left the channel
-                if (user.warning_sent_at) {
-                    // Warning was already sent, check if 1 hour has passed
-                    const warningTime = new Date(user.warning_sent_at).getTime();
-                    if (Date.now() - warningTime > ONE_HOUR_IN_MS) {
-                        // Time's up. Delete the bot.
-                        console.log(`[Monitor] User ${user.user_id} did not rejoin. Deleting app ${user.app_name}.`);
-                        await bot.sendMessage(user.user_id, `You did not rejoin the channel in time. Your free trial bot *${escapeMarkdown(user.app_name)}* is being deleted.`, { parse_mode: 'Markdown' });
-                        
-                        await axios.delete(`https://api.heroku.com/apps/${user.app_name}`, {
-                            headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
-                        }).catch(e => console.error(`[Monitor] Failed to delete Heroku app ${user.app_name}: ${e.message}`));
-                        
-                        await dbServices.deleteUserBot(user.user_id, user.app_name);
-                        await dbServices.removeMonitoredFreeTrial(user.user_id);
-                        await bot.sendMessage(ADMIN_ID, `Free trial bot *${escapeMarkdown(user.app_name)}* for user \`${user.user_id}\` was auto-deleted because they left the channel and did not rejoin.`, { parse_mode: 'Markdown' });
-                    }
-                } else {
-                    // No warning sent yet, send one now
-                    console.log(`[Monitor] User ${user.user_id} left the channel. Sending warning.`);
-                    await bot.sendMessage(user.user_id, `We noticed you left our support channel. To continue using your free trial bot *${escapeMarkdown(user.app_name)}*, you must rejoin within 1 hour, or it will be automatically deleted.`, { parse_mode: 'Markdown' });
-                    await dbServices.updateFreeTrialWarning(user.user_id);
-                }
-            }
-        } catch (error) {
-            console.error(`[Monitor] Error checking user ${user.user_id}:`, error.message);
-        }
-    }
-}
-
-// Run the check every 30 minutes
-setInterval(checkMonitoredUsers, 30 * 60 * 1000);
 
 
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;

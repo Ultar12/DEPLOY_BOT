@@ -86,6 +86,12 @@ function extractDbNameFromUrl(dbUrl) {
 }
 
 
+function setHerokuApiKey(newKey) {
+    HEROKU_API_KEY = newKey;
+    console.log('[bot_services] HEROKU_API_KEY updated in-memory.');
+}
+
+
 // === DB helper functions (using 'pool' for main DB) ===
 
 async function addUserBot(u, b, s, botType) {
@@ -289,6 +295,7 @@ async function getLoggedOutBots() {
 
 async function processBotSwitch(userId, appName, targetType, newSessionId) {
     console.log(`[Switch] Starting AWS clean slate switch for ${appName} to ${targetType}...`);
+    const { deleteSelfHostedDatabase } = moduleParams; 
     
     try {
         // 1. Clear user state to prevent input collisions
@@ -355,7 +362,7 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
 
         // 7. TRIGGER FRESH BUILD
         // We pass isRestore = false to force new database provisioning
-        await dbServices.buildWithProgress(userId, newVars, false, false, targetType);
+        await buildWithProgress(userId, newVars, false, false, targetType);
         
     } catch (error) {
         console.error(`[Switch Error] ${appName}:`, error.message);
@@ -364,128 +371,66 @@ async function processBotSwitch(userId, appName, targetType, newSessionId) {
 }
 
 
-
 async function getAwsDbConnectionString(appName) {
-    try {
-        // We look for a record matching the app name AND the assumed AWS account ID
-        const result = await pool.query(
+    // Runs the AWS-DB lookup against a given pool. Returns the connection string,
+    // or null if there's no usable AWS_MAIN record for this app in that pool.
+    const lookupInPool = async (dbPool) => {
+        const result = await dbPool.query(
             `SELECT config_vars FROM user_deployments 
              WHERE app_name = $1 AND neon_account_id = 'AWS_MAIN'`,
             [appName]
         );
 
-        if (result.rows.length === 0) {
-            return { success: false, message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)." };
-        }
+        if (result.rows.length === 0) return null;
 
         const configVars = result.rows[0].config_vars;
-        const dbUrl = configVars?.DATABASE_URL;
-
-        if (!dbUrl) {
-            return { success: false, message: "DATABASE_URL not found in the stored configuration variables." };
-        }
-
-        return { success: true, dbUrl: dbUrl };
-
-    } catch (error) {
-        console.error(`[DB] Error fetching AWS DB URL for ${appName}:`, error.message);
-        return { success: false, message: `Database error: ${error.message}` };
-    }
-}
-
-
-/**
- * Stores a new contact entry for VCF generation.
- */
-async function storeNewVcfContact(userId, fullName, phoneNumber) {
-    // Sanitize name and ensure number has '+'
-    const cleanName = fullName.trim();
-    const cleanNumber = phoneNumber.trim().replace(/\s/g, ''); 
-
-    try {
-        await pool.query(
-            `INSERT INTO vcf_contacts (user_id, full_name, phone_number, submitted_by_chat_id) 
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (phone_number) 
-             DO UPDATE SET full_name = EXCLUDED.full_name, user_id = EXCLUDED.user_id, created_at = NOW()`,
-            [userId, cleanName, cleanNumber, userId]
-        );
-        return { success: true };
-    } catch (error) {
-        console.error(`[VCF] Failed to store contact for ${cleanName}:`, error.message);
-        return { success: false, error: error.message };
-    }
-}
-
-/**
- * Generates the VCF file, deletes the data, and sends it to the group.
- * Assumes the targetChatId (Group ID) is passed in the .env or config.
- */
-async function generateAndSendVcf(targetGroupId, adminId) {
-    console.log('[VCF] Starting VCF generation and cleanup task...');
-    
-    // 1. Fetch all contacts
-    const contactsResult = await pool.query('SELECT full_name, phone_number FROM vcf_contacts ORDER BY full_name ASC');
-    const contacts = contactsResult.rows;
-
-    if (contacts.length === 0) {
-        console.log('[VCF] No new contacts to process.');
-        return;
-    }
-    
-    // 2. Build VCF Content (using vCard 3.0 standard)
-    let vcfContent = '';
-    const VCF_SUFFIX = ' WBD';
-
-    contacts.forEach(c => {
-        const displayName = `${c.full_name}${VCF_SUFFIX}`;
-        
-        vcfContent += 'BEGIN:VCARD\r\n';
-        vcfContent += 'VERSION:3.0\r\n';
-        vcfContent += `FN:${displayName}\r\n`;
-        vcfContent += `N:${c.full_name};;;;\r\n`;
-        vcfContent += `TEL;TYPE=CELL:${c.phone_number}\r\n`;
-        vcfContent += 'END:VCARD\r\n';
-    });
-
-    // 3. Save VCF to buffer/memory
-    const fileName = `WBD_Contacts_${new Date().toISOString().substring(0, 10)}.vcf`;
-    const vcfBuffer = Buffer.from(vcfContent, 'utf8');
-
-    // --- 💡 START OF CRITICAL FIX 💡 ---
-    // We must define the file options, including the MIME type for VCF files
-    const fileOptions = {
-        filename: fileName,
-        contentType: 'text/vcard' // This line fixes the "Unsupported Buffer" error
+        return configVars?.DATABASE_URL || null;
     };
-    // --- 💡 END OF CRITICAL FIX 💡 ---
 
-    // 4. Send the file to Telegram Group
+    // 1. Try the main database first
+    let mainDbError = null;
     try {
-        await moduleParams.bot.sendDocument(targetGroupId, vcfBuffer, {
-            // These are the message options (Argument 3)
-            caption: `**Generated VCF file contains ${contacts.length} new contacts. Download and import for status boosting!`,
-            parse_mode: 'Markdown'
-        }, fileOptions); // <-- Pass the fileOptions as Argument 4
-
-        // Notify admin of success
-        await moduleParams.bot.sendMessage(adminId, `VCF file containing ${contacts.length} contacts sent to group ${targetGroupId}.`, { parse_mode: 'Markdown' });
-
-    } catch (e) {
-        console.error('[VCF] Failed to send VCF document:', e.message);
-        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to send VCF file to group ${targetGroupId}. Error: ${e.message}`, { parse_mode: 'Markdown' });
-        return;
+        const dbUrl = await lookupInPool(pool);
+        if (dbUrl) {
+            return { success: true, dbUrl: dbUrl };
+        }
+        console.warn(`[DB] getAwsDbConnectionString: No usable AWS record for "${appName}" in main DB. Checking backup DB...`);
+    } catch (error) {
+        mainDbError = error;
+        console.error(`[DB] getAwsDbConnectionString: Main DB error for "${appName}": ${error.message}. Falling back to backup DB...`);
     }
 
-    // 5. Delete all records
+    // 2. Main DB came up empty or errored — fall back to backupPool
+    if (!backupPool) {
+        console.error('[DB-Backup] getAwsDbConnectionString: backupPool is not initialized, cannot fall back.');
+        return {
+            success: false,
+            message: mainDbError
+                ? `Main DB error: ${mainDbError.message}`
+                : "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing)."
+        };
+    }
+
     try {
-        await pool.query('TRUNCATE vcf_contacts');
-        console.log('[VCF] Successfully deleted all contact records.');
-    } catch (e) {
-        console.error('[VCF] CRITICAL: Failed to truncate vcf_contacts table:', e.message);
-        await moduleParams.bot.sendMessage(adminId, `CRITICAL: Failed to delete contacts from database after sending VCF. Manual check required.`, { parse_mode: 'Markdown' });
+        const dbUrl = await lookupInPool(backupPool);
+        if (dbUrl) {
+            console.log(`[DB-Backup] getAwsDbConnectionString: Found AWS record for "${appName}" in backup DB.`);
+            return { success: true, dbUrl: dbUrl };
+        }
+        return {
+            success: false,
+            message: "Bot not found or is not currently hosted on the AWS platform ('AWS_MAIN' identifier missing) in either main or backup DB."
+        };
+    } catch (backupError) {
+        console.error(`[DB-Backup] getAwsDbConnectionString: Backup DB error for "${appName}": ${backupError.message}`);
+        return {
+            success: false,
+            message: `Database error — main: ${mainDbError ? mainDbError.message : 'no record'}, backup: ${backupError.message}`
+        };
     }
 }
+
+
 
 
 async function removeBlacklistedName(chatId, nameFragment) {
@@ -829,53 +774,6 @@ async function getExpiredBackups() {
 }
 
 
-// In bot_services.js (add with your other DB functions)
-
-async function getGroupSettings(chatId) {
-  try {
-    const result = await pool.query('SELECT welcome_message, welcome_enabled FROM group_settings WHERE chat_id = $1', [chatId]);
-    if (result.rows.length > 0) {
-      return result.rows[0];
-    }
-    // Return default settings if not found
-    return { welcome_message: null, welcome_enabled: false };
-  } catch (error) {
-    console.error(`[DB] Failed to get group settings for chat ${chatId}:`, error.message);
-    return { welcome_message: null, welcome_enabled: false }; // Default on error
-  }
-}
-
-async function setGroupWelcome(chatId, enabled) {
-  try {
-    await pool.query(
-      `INSERT INTO group_settings (chat_id, welcome_enabled) 
-       VALUES ($1, $2) 
-       ON CONFLICT (chat_id) DO UPDATE SET welcome_enabled = EXCLUDED.welcome_enabled`,
-      [chatId, enabled]
-    );
-    return { success: true };
-  } catch (error) {
-    console.error(`[DB] Failed to set welcome enabled for chat ${chatId}:`, error.message);
-    return { success: false, error: error.message };
-  }
-}
-
-async function setGroupWelcomeMessage(chatId, message) {
-  try {
-    // Also enable welcome when a custom message is set
-    await pool.query(
-      `INSERT INTO group_settings (chat_id, welcome_message, welcome_enabled) 
-       VALUES ($1, $2, TRUE) 
-       ON CONFLICT (chat_id) DO UPDATE SET welcome_message = EXCLUDED.welcome_message, welcome_enabled = TRUE`,
-      [chatId, message]
-    );
-    return { success: true };
-  } catch (error) {
-    console.error(`[DB] Failed to set welcome message for chat ${chatId}:`, error.message);
-    return { success: false, error: error.message };
-  }
-}
-
 
 async function getUserIdByBotName(botName) {
     try {
@@ -1104,46 +1002,6 @@ async function deleteDeployKey(key) {
   }
 }
 
-async function canDeployFreeTrial(userId) {
-    // 🚨 FIX 1: Define the cooldown period as 90 days (3 months)
-    const COOLDOWN_DAYS = 90; 
-
-    // 1. Get the timestamp of the user's last free deployment
-    const res = await pool.query(
-        'SELECT last_deploy_at FROM temp_deploys WHERE user_id = $1',
-        [userId]
-    );
-    
-    // If no record is found, the user can deploy.
-    if (res.rows.length === 0) return { can: true };
-    
-    const lastDeploy = new Date(res.rows[0].last_deploy_at);
-    const now = new Date();
-    
-    // 2. Calculate the exact future date when the cooldown ends
-    const cooldownEnd = new Date(lastDeploy.getTime() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
-    
-    // 3. Compare current time with the cooldown end date
-    if (now >= cooldownEnd) {
-        // Cooldown period has passed.
-        return { can: true };
-    } else {
-        // Cooldown is still active. Return the future date.
-        // 🚨 FIX 2: Removed flawed "tenDaysAgo" logic and use "cooldownEnd" as the return value.
-        return { can: false, cooldown: cooldownEnd };
-    }
-}
-
-
-async function recordFreeTrialDeploy(userId) {
-    await pool.query(
-        `INSERT INTO temp_deploys (user_id, last_deploy_at) VALUES ($1, NOW())
-         ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW()`,
-        [userId]
-    );
-    console.log(`[DB] recordFreeTrialDeploy: Recorded free trial deploy for user "${userId}".`);
-}
-
 // --- MODIFIED FUNCTION ---
 async function updateUserActivity(userId) {
   const query = `
@@ -1346,7 +1204,7 @@ async function getAllDeploymentsFromBackup(botType) {
         // --- THIS IS THE UPDATED QUERY ---
         // Added ud.expiration_date to the selected columns
         const result = await backupPool.query(
-            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars, ud.expiration_date -- <<< ADDED expiration_date
+            `SELECT ud.user_id, ud.app_name, ud.session_id, ud.config_vars, ud.bot_type, ud.expiration_date
              FROM user_deployments ud
              INNER JOIN user_bots ub ON ud.user_id = ub.user_id AND ud.app_name = ub.bot_name
              WHERE ud.bot_type = $1 AND ub.status = 'online' -- Only select bots that were 'online'
@@ -1374,183 +1232,6 @@ async function getAllDeploymentsFromBackup(botType) {
 }
 
 
-
-async function recordFreeTrialForMonitoring(userId, appName, channelId) {
-    try {
-        await pool.query(
-            `INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3)
-             ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name, trial_start_at = CURRENT_TIMESTAMP, warning_sent_at = NULL;`,
-            [userId, appName, channelId]
-        );
-        console.log(`[DB-Backup] Added user ${userId} with app ${appName} to free trial monitoring.`);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to record free trial for monitoring:`, error.message);
-    }
-}
-
-async function getMonitoredFreeTrials() {
-    try {
-        const result = await pool.query('SELECT * FROM free_trial_monitoring;');
-        return result.rows;
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to get monitored free trials:`, error.message);
-        return [];
-    }
-}
-
-// This function replaces the previous grantReferralRewards function
-async function grantReferralRewards(referredUserId, deployedBotName) {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-
-        const referralSessionResult = await client.query(
-            `SELECT data FROM sessions WHERE id = $1`,
-            [`referral_session:${referredUserId}`]
-        );
-
-        if (referralSessionResult.rows.length > 0) {
-            const inviterId = referralSessionResult.rows[0].data.inviterId;
-
-            const inviterBotsResult = await client.query(
-                `SELECT bot_name FROM user_bots WHERE user_id = $1`,
-                [inviterId]
-            );
-            const inviterBots = inviterBotsResult.rows;
-
-            if (inviterBots.length <= 2) {
-                // Inviter has two or fewer bots, apply the reward directly
-                const inviterBotName = inviterBots[0].bot_name;
-                await client.query(
-                    `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '20 days'
-                     WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-                    [inviterId, inviterBotName]
-                );
-                await bot.sendMessage(inviterId,
-                    `Congratulations! A friend you invited has deployed their first bot. ` +
-                    `You've received a *20-day extension* on your bot \`${escapeMarkdown(inviterBotName)}\`!`,
-                    { parse_mode: 'Markdown' }
-                );
-
-                // Add referral record and grant second-level reward
-                await addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName);
-
-            } else if (inviterBots.length > 2) { // THIS LINE WAS CHANGED
-                // Inviter has more than two bots, prompt for selection
-                await client.query(
-                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name, inviter_reward_pending) VALUES ($1, $2, $3, TRUE)
-                     ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
-                    [referredUserId, inviterId, deployedBotName]
-                );
-                
-                const buttons = inviterBots.map(bot => ([{
-                    text: bot.bot_name,
-                    callback_data: `apply_referral_reward:${bot.bot_name}:${referredUserId}`
-                }]));
-                
-                await bot.sendMessage(inviterId,
-                    `A friend you invited has deployed a bot! Please select one of your bots below to add the *20-day extension* to.`,
-                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
-                );
-            } else {
-                // Inviter has no bots to extend, just add the referral record
-                await client.query(
-                    `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
-                    [referredUserId, inviterId, deployedBotName]
-                );
-                await bot.sendMessage(inviterId,
-                    `Congratulations! A friend you invited has deployed their first bot. ` +
-                    `You've earned a *20-day extension* reward, but you have no active bots to apply it to. ` +
-                    `Deploy a bot now to use your reward!`,
-                    { parse_mode: 'Markdown' }
-                );
-            }
-
-            // Clean up the temporary referral session
-            await client.query('DELETE FROM sessions WHERE id = $1', [`referral_session:${referredUserId}`]);
-
-        } else {
-            // The user was not referred, nothing to do here
-        }
-        await client.query('COMMIT');
-    } catch (e) {
-        await client.query('ROLLBACK');
-        console.error(`[Referral] Failed to grant rewards for user ${referredUserId}:`, e);
-    } finally {
-        client.release();
-    }
-}
-
-// NEW HELPER FUNCTION to handle second-level rewards
-async function addReferralAndSecondLevelReward(client, referredUserId, inviterId, deployedBotName) {
-    await client.query(
-        `INSERT INTO user_referrals (referred_user_id, inviter_user_id, bot_name) VALUES ($1, $2, $3)`,
-        [referredUserId, inviterId, deployedBotName]
-    );
-
-    const grandInviterResult = await client.query(
-        `SELECT inviter_user_id FROM user_referrals WHERE referred_user_id = $1`,
-        [inviterId]
-    );
-    if (grandInviterResult.rows.length > 0) {
-        const grandInviterId = grandInviterResult.rows[0].inviter_user_id;
-
-        const grandInviterBotsResult = await client.query(
-            `SELECT bot_name FROM user_bots WHERE user_id = $1`,
-            [grandInviterId]
-        );
-        const grandInviterBots = grandInviterBotsResult.rows;
-
-        if (grandInviterBots.length <= 2) {
-            const grandInviterBotName = grandInviterBots[0].bot_name;
-            await client.query(
-                `UPDATE user_deployments SET expiration_date = expiration_date + INTERVAL '7 days'
-                 WHERE user_id = $1 AND app_name = $2 AND expiration_date IS NOT NULL`,
-                [grandInviterId, grandInviterBotName]
-            );
-            await bot.sendMessage(grandInviterId,
-                `Bonus Reward! A friend of a friend has deployed a bot. ` +
-                `You've received a *7-day extension* on your bot \`${escapeMarkdown(grandInviterBotName)}\`!`,
-                { parse_mode: 'Markdown' }
-            );
-        } else if (grandInviterBots.length > 2) {
-            await client.query(
-                `INSERT INTO user_referrals (referred_user_id, inviter_user_id, inviter_reward_pending) VALUES ($1, $2, TRUE)
-                 ON CONFLICT (referred_user_id) DO UPDATE SET inviter_reward_pending = TRUE`,
-                [inviterId, grandInviterId]
-            );
-
-            const buttons = grandInviterBots.map(bot => ([{
-                text: bot.bot_name,
-                callback_data: `apply_referral_reward:${bot.bot_name}:${inviterId}:second_level`
-            }]));
-            
-            await bot.sendMessage(grandInviterId,
-                `Bonus Reward! A friend of a friend has deployed a bot. Please select one of your bots below to add the *7-day extension* to.`,
-                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
-            );
-        }
-    }
-}
-
-
-
-async function updateFreeTrialWarning(userId) {
-    try {
-        await pool.query('UPDATE free_trial_monitoring SET warning_sent_at = NOW() WHERE user_id = $1;', [userId]);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to update free trial warning timestamp:`, error.message);
-    }
-}
-
-async function removeMonitoredFreeTrial(userId) {
-    try {
-        await pool.query('DELETE FROM free_trial_monitoring WHERE user_id = $1;', [userId]);
-        console.log(`[DB-Backup] Removed user ${userId} from free trial monitoring.`);
-    } catch (error) {
-        console.error(`[DB-Backup] Failed to remove monitored free trial:`, error.message);
-    }
-}
 
 async function getAllBotDeployments() {
     // This query depends on your table name.
@@ -2019,7 +1700,8 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
         
 
-async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
+async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null) {
+    const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
         const { 
         bot, herokuApi, HEROKU_API_KEY, GITHUB_LEVANTER_REPO_URL, GITHUB_RAGANORK_REPO_URL, GITHUB_HERMIT_REPO_URL,
@@ -2169,7 +1851,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             console.log(`[Build] Setting full buildpacks (ffmpeg, nodejs) for ${botType} bot: ${appName}`);
             buildpacksToInstall = [
   { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
-  { buildpack: 'https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git' },
+  { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
   { buildpack: 'heroku/nodejs' }
 ];
 
@@ -2324,32 +2006,37 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
                  // --- Step 7: Handle Build Succeeded ---
         console.log(`[Flow] buildWithProgress: Heroku build for "${appName}" SUCCEEDED.`);
 
-        // NEW: AUTOMATIC DYNO CONFIGURATION (LEVANTER ONLY)
-        if (botType === 'levanter') {
-            try {
-                console.log(`[Dyno] Auto-scaling Levanter "${appName}" to Standard-2X...`);
-                await herokuApi.patch(`/apps/${appName}/formation`, {
-                    updates: [{
-                        process: 'web',
-                        quantity: 1,
-                        size: 'standard-2x' // Use lowercase for API compatibility
-                    }]
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${HEROKU_API_KEY}`,
-                        'Accept': 'application/vnd.heroku+json; version=3'
-                    }
-                });
-                console.log(`[Dyno] Levanter "${appName}" is now live on Standard-2X.`);
-            } catch (dynoError) {
-                console.error(`[Dyno Error] Could not auto-scale Levanter:`, dynoError.response?.data || dynoError.message);
-                // Fallback: try to just turn it on if Standard-2X fails
-                await herokuApi.patch(`/apps/${appName}/formation`, {
-                    updates: [{ process: 'web', quantity: 1 }]
-                }).catch(() => {});
+        // AUTOMATIC DYNO CONFIGURATION (LEVANTER + RAGANORK)
+if (botType === 'levanter' || botType === 'raganork') {
+    try {
+        console.log(`[Dyno] Auto-scaling "${appName}" (${botType}) to Standard-2X...`);
+        await herokuApi.patch(`/apps/${appName}/formation`, {
+            updates: [{
+                process: 'web',
+                quantity: 1,
+                size: 'standard-2x'
+            }]
+        }, {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
             }
-        } 
-        // --- END OF DYNO LOGIC ---
+        });
+        console.log(`[Dyno] "${appName}" (${botType}) is now live on Standard-2X.`);
+    } catch (dynoError) {
+        console.error(`[Dyno Error] Could not auto-scale ${botType} "${appName}":`, dynoError.response?.data || dynoError.message);
+        // Fallback: try to just turn it on if Standard-2X fails
+        await herokuApi.patch(`/apps/${appName}/formation`, {
+            updates: [{ process: 'web', quantity: 1 }]
+        }, {
+            headers: {
+                'Authorization': `Bearer ${HEROKU_API_KEY}`,
+                'Accept': 'application/vnd.heroku+json; version=3'
+            }
+        }).catch(() => {});
+    }
+} 
+// --- END OF DYNO LOGIC ---
 
         const finalConfigVarsAfterBuild = (await herokuApi.get(`/apps/${appName}/config-vars`, { 
             headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
@@ -2366,18 +2053,6 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
             expirationDateToUse,
             vars.email || null, neonAccountId
         );
-
-        // --- ✅ Free Trial Logic ---
-        if (isFreeTrial && !isRestore) {
-            await mainPool.query(
-                'INSERT INTO temp_deploys (user_id, last_deploy_at, ip_address) VALUES ($1, NOW(), $2) ON CONFLICT (user_id) DO UPDATE SET last_deploy_at = NOW(), ip_address = EXCLUDED.ip_address',
-                [targetChatId, ipAddress]
-            );
-            await mainPool.query(
-                'INSERT INTO free_trial_monitoring (user_id, app_name, channel_id) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET app_name = EXCLUDED.app_name',
-                [targetChatId, appName, MUST_JOIN_CHANNEL_ID]
-            );
-        }
 
         // --- ✅ Reward Logic ---
         if (!isRestore) {
@@ -2405,7 +2080,7 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
         if (!isRestore) {
             const userChat = await bot.getChat(targetChatId);
             const userDetails = `*Name:* ${escapeMarkdown(userChat.first_name || '')} ${escapeMarkdown(userChat.last_name || '')}\n*Username:* @${escapeMarkdown(userChat.username || 'N/A')}\n*Chat ID:* \`${escapeMarkdown(targetChatId)}\``;
-            const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* ${isFreeTrial ? 'Free Trial' : 'Paid'}`;
+            const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* Paid`;
             await bot.sendMessage(ADMIN_ID, `*New App Deployed*\n\n*App Details:*\n${appDetails}\n\n*Deployed By:*\n${userDetails}`, { parse_mode: 'Markdown', disable_web_page_preview: true });
         }
 
@@ -2530,10 +2205,13 @@ async function buildWithProgress(targetChatId, vars, isFreeTrial, isRestore, bot
 }
 
 
+
+                    
 /**
  * TRULY SILENTLY restores a Heroku app.
- * Sends NO messages to admin.
- * Sends messages to the USER ONLY on build failure or connection failure.
+ * NEVER sends any message to the target user (build progress or failure).
+ * Notifies ADMIN_ID only when something goes wrong (DB/build failure or connection/login failure),
+ * so a mass restore stays invisible to end users while the admin can still catch problems.
  */
 async function silentRestoreBuild(targetChatId, vars, botType) {
     // 1. Get all the tools from moduleParams
@@ -2607,51 +2285,34 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
         await herokuApi.post('/apps', appSetup, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
 
-        // --- ❗️ STEP 2: NEON DATABASE LOGIC ❗️ ---
-        const dbName = appName.replace(/-/g, '_'); // Canonical DB name from potentially new app name
-        
+        // --- ❗️ STEP 2: DATABASE LOGIC (AWS-first, same pattern as buildWithProgress) ❗️ ---
+        const dbName = appName.replace(/-/g, '_'); // Only used if we end up provisioning a brand new DB
+
         let provisionSuccess = false;
-        
-        // 1. Check if the saved variables contain a connection string pointing to Neon
-        const hasNeonDBUrl = vars.DATABASE_URL && vars.DATABASE_URL.includes('.neon.tech');
 
-        if (isRestore && hasNeonDBUrl) {
-            // --- RESTORE PATH: INTELLIGENT CHECK ---
-            console.log(`[SilentRestore] Attempting to find existing Neon DB: ${dbName} for re-use.`);
-            const dbCheckResult = await checkIfDatabaseExists(dbName);
+        // Look up the app's AWS database directly from user_deployments, keyed on the ORIGINAL
+        // app name (that's what the backup record was saved under, before any rename above).
+        console.log(`[SilentRestore] Looking up AWS database for "${originalAppName}" in user_deployments...`);
+        const awsLookup = await getAwsDbConnectionString(originalAppName);
 
-            if (dbCheckResult.exists) {
-                // A. Database found! Re-use the existing connection string and account ID.
-                vars.DATABASE_URL = dbCheckResult.connection_string; 
-                neonAccountId = dbCheckResult.account_id;
-                provisionSuccess = true;
-                console.log(`[SilentRestore] RE-USED existing Neon DB: ${dbName} (Account: ${neonAccountId}).`);
-            } else {
-                // B. Database not found. Provision NEW.
-                console.log(`[SilentRestore] Old Neon DB not found. Provisioning NEW Neon DB: ${dbName}`);
-                const neonResult = await createNeonDatabase(dbName);
-
-                if (neonResult.success) {
-                    vars.DATABASE_URL = neonResult.connection_string;
-                    neonAccountId = neonResult.account_id;
-                    provisionSuccess = true;
-                    console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) for migration.`);
-                } else {
-                    return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
-                }
-            }
+        if (awsLookup.success && awsLookup.dbUrl) {
+            // A. Found the app's existing AWS-hosted database on record. Re-use it as-is.
+            vars.DATABASE_URL = awsLookup.dbUrl;
+            neonAccountId = 'AWS_MAIN';
+            provisionSuccess = true;
+            console.log(`[SilentRestore] RE-USED existing AWS DB for "${originalAppName}".`);
         } else {
-            // --- NEW DEPLOY PATH / NON-NEON MIGRATION ---
-            console.log(`[SilentRestore] Migrating/New Deploy: Creating NEW Neon DB: ${dbName}`);
+            // B. No AWS record found for this app — provision a brand new database.
+            console.log(`[SilentRestore] No AWS DB found for "${originalAppName}" (${awsLookup.message || 'not found'}). Creating NEW database: ${dbName}`);
             const neonResult = await createNeonDatabase(dbName);
-            
+
             if (neonResult.success) {
                 vars.DATABASE_URL = neonResult.connection_string;
                 neonAccountId = neonResult.account_id;
                 provisionSuccess = true;
-                console.log(`[SilentRestore] Created NEW Neon DB: ${dbName} (Account: ${neonAccountId}) during migration.`);
+                console.log(`[SilentRestore] Created NEW database: ${dbName} (Account: ${neonAccountId}).`);
             } else {
-                return { success: false, error: `Neon DB creation failed: ${neonResult.error}`, appName: appName };
+                return { success: false, error: `Database creation failed: ${neonResult.error}`, appName: appName };
             }
         }
         
@@ -2760,7 +2421,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             finalConfigVarsAfterBuild, botType, isFreeTrial, vars.expiration_date, vars.email, neonAccountId
         );
 
-        // --- "Wait for Connect" Logic (MODIFIED FOR SILENCE) ---
+        // --- "Wait for Connect" Logic (SILENT TO USER — admin is pinged only on failure) ---
         if (String(targetChatId) !== ADMIN_ID) {
             const appStatusPromise = new Promise((resolve, reject) => {
                 const STATUS_CHECK_TIMEOUT = 300 * 1000;
@@ -2777,20 +2438,22 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 await appStatusPromise; // Wait for bot to connect
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
-                buildResult = true; // Success, do not notify user
+                buildResult = true; // Success — stays completely silent
             } catch (err) {
-                // --- FAILURE: THIS IS THE "LOGGED OUT" EXCEPTION ---
+                // --- FAILURE: "LOGGED OUT" — notify ADMIN only, never the user ---
                 const promiseData = appDeploymentPromises.get(appName);
                 if (promiseData) clearTimeout(promiseData.timeoutId);
                 
-                await bot.sendMessage(
-                    targetChatId,
-                    `Your restored bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`,
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
-                    }
-                ).catch(()=>{});
+                if (ADMIN_ID) {
+                    await bot.sendMessage(
+                        ADMIN_ID,
+                        `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to start: ${escapeMarkdown(err.message)}\n\nMay need a new session ID.`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: [[{ text: 'Change Session ID', callback_data: `change_session:${appName}:${targetChatId}` }]] }
+                        }
+                    ).catch(()=>{});
+                }
                 
                 // Return failure
                 return { success: false, error: err.message, appName: appName };
@@ -2798,22 +2461,21 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
                 appDeploymentPromises.delete(appName);
             }
         } else {
-            buildResult = true; // Admin is user, no need to wait
+            buildResult = true; // Admin is the target, no need to wait
         }
 
         // Return success
         return { success: true, appName: appName };
 
     } catch (error) {
-        // --- Main build failure ---
+        // --- Main build failure — notify ADMIN only, never the user ---
         const errorMsg = error.response?.data?.message || error.message;
         console.error(`[SilentRestore Build Error] Failed to build app ${appName}:`, errorMsg);
         
-        // --- Notify User of Build Fail ---
-        if (String(targetChatId) !== ADMIN_ID) {
+        if (ADMIN_ID) {
             await bot.sendMessage(
-                targetChatId, 
-                `Your bot *${escapeMarkdown(appName)}* failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
+                ADMIN_ID, 
+                `⚠️ Silent restore: bot *${escapeMarkdown(appName)}* (User: \`${targetChatId}\`) failed to restore.\n*Reason:* ${escapeMarkdown(errorMsg)}`, 
                 { parse_mode: 'Markdown' }
             ).catch(()=>{});
         }
@@ -2825,11 +2487,11 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
 
 
 
-
 module.exports = {
     init,
     addUserBot,
     getUserBots,
+    setHerokuApiKey,
     silentRestoreBuild,
     getUserIdByBotName,
     getAllUserBots,
@@ -2842,8 +2504,6 @@ module.exports = {
     getAllDeployKeys,
     deleteDeployKey,
     getDynoStatus,
-    canDeployFreeTrial,
-    recordFreeTrialDeploy,
     updateUserActivity,
     getUserLastSeen,
     getAllBotDeployments,
@@ -2861,19 +2521,13 @@ module.exports = {
     handleAppNotFoundAndCleanDb,
     sendAppList,
     processBotSwitch,
-    generateAndSendVcf,
-    storeNewVcfContact,
     permanentlyDeleteBotRecord,
     deleteUserBot,
     getLoggedOutBotsForEmail,
     grantReferralRewards,
     buildWithProgress,
     syncExpirationToHeroku,
-    recordFreeTrialForMonitoring,
-    getMonitoredFreeTrials,
-    updateFreeTrialWarning,
     backupAllPaidBots,
-    removeMonitoredFreeTrial,
     syncDatabases,
     getAwsDbConnectionString,
     createAllTablesInPool,
@@ -2884,8 +2538,5 @@ module.exports = {
     getExpiredBackups,
     getBlacklistedNames,
     removeBlacklistedName,
-    setGroupWelcomeMessage,
-    setGroupWelcome,
-    getGroupSettings,
     backupAllPaidBots // <-- FIX: Added the missing function to the exports
 };
