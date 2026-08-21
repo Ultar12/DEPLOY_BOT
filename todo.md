@@ -42,3 +42,7 @@
 - [x] Inventory every backslash escape helper and every template/string path that can emit a literal backslash.
 - [x] Inventory every `N/A` fallback and replace user-facing bot/config/expiry displays with accurate data or an explicit unavailable state.
 - [x] Verify VCF and free-trial references are removed from commands, menus, schedulers, services, and user-facing copy.
+
+# Final Commit and Push Request
+
+- [ ] Confirm the latest intended changes are committed and pushed to `free-trial-verification`.
