@@ -1530,97 +1530,20 @@ bot.getMe().then(me => {
 
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
-const latestPrivateBotMessageIds = new Map();
-const persistentReplyKeyboardMessageIds = new Map();
-const nativeSendMessage = bot.sendMessage.bind(bot);
-const nativeSendPhoto = bot.sendPhoto.bind(bot);
-const nativeSendVideo = bot.sendVideo.bind(bot);
-const nativeSendAnimation = bot.sendAnimation.bind(bot);
+const nativeEditMessageText = bot.editMessageText.bind(bot);
 
-function isPrivateChatId(chatId) {
-    return /^\d+$/.test(String(chatId));
-}
-
-async function safelyDeleteMessage(chatId, messageId) {
-    if (!chatId || !messageId) return;
-    await bot.deleteMessage(chatId, messageId).catch(() => {});
-}
-
-async function clearLatestPrivateBotMessage(chatId, keepMessageId = null) {
-    const key = String(chatId);
-    const previousId = latestPrivateBotMessageIds.get(key);
-    const keyboardMessageId = persistentReplyKeyboardMessageIds.get(key);
-    if (previousId && previousId !== keepMessageId && previousId !== keyboardMessageId) await safelyDeleteMessage(key, previousId);
-    if (!keepMessageId) latestPrivateBotMessageIds.delete(key);
-}
-
-function trackLatestPrivateBotMessage(chatId, message) {
-    if (isPrivateChatId(chatId) && message?.message_id) latestPrivateBotMessageIds.set(String(chatId), message.message_id);
-    return message;
-}
-
-function hasReplyKeyboard(options) {
-    return Boolean(options?.reply_markup?.keyboard);
-}
-
-function withPersistentReplyKeyboard(chatId, options = {}) {
-    if (!isPrivateChatId(chatId) || options?.reply_markup) return options;
-    return {
-        ...options,
-        reply_markup: { keyboard: buildKeyboard(String(chatId) === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
-    };
-}
-
-async function trackPersistentKeyboard(chatId, message, options) {
-    if (!isPrivateChatId(chatId) || !hasReplyKeyboard(options)) return;
-    const key = String(chatId);
-    const priorKeyboardId = persistentReplyKeyboardMessageIds.get(key);
-    if (priorKeyboardId && priorKeyboardId !== message.message_id) await safelyDeleteMessage(key, priorKeyboardId);
-    persistentReplyKeyboardMessageIds.set(key, message.message_id);
-}
-
-async function restorePersistentReplyKeyboard(chatId) {
-    if (!isPrivateChatId(chatId)) return;
-    const key = String(chatId);
-    const priorKeyboardId = persistentReplyKeyboardMessageIds.get(key);
-    const message = await nativeSendMessage(chatId, 'Menu is ready below.', {
-        reply_markup: { keyboard: buildKeyboard(key === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
-    });
-    if (priorKeyboardId && priorKeyboardId !== message.message_id) await safelyDeleteMessage(key, priorKeyboardId);
-    persistentReplyKeyboardMessageIds.set(key, message.message_id);
-}
-
-bot.sendMessage = async (chatId, text, options) => {
-    const finalOptions = withPersistentReplyKeyboard(chatId, options);
-    const sent = await nativeSendMessage(chatId, text, finalOptions);
-    if (isPrivateChatId(chatId)) {
-        await clearLatestPrivateBotMessage(chatId, sent.message_id);
-        await trackPersistentKeyboard(chatId, sent, finalOptions);
-        trackLatestPrivateBotMessage(chatId, sent);
+bot.editMessageText = async (text, options = {}) => {
+    try {
+        return await nativeEditMessageText(text, options);
+    } catch (error) {
+        const description = String(error.response?.body?.description || error.message || '');
+        if (options.chat_id && /message can't be edited|message to edit not found|message identifier is not specified/i.test(description)) {
+            console.warn('[Telegram] Message could not be edited; sending a replacement message instead.');
+            return bot.sendMessage(options.chat_id, text, { parse_mode: options.parse_mode, reply_markup: options.reply_markup });
+        }
+        throw error;
     }
-    return sent;
 };
-
-async function sendReplaceablePrivateMedia(nativeSender, chatId, media, options, fileOptions) {
-    const finalOptions = withPersistentReplyKeyboard(chatId, options);
-    const sent = await nativeSender(chatId, media, finalOptions, fileOptions);
-    if (isPrivateChatId(chatId)) {
-        await clearLatestPrivateBotMessage(chatId, sent.message_id);
-        await trackPersistentKeyboard(chatId, sent, finalOptions);
-        trackLatestPrivateBotMessage(chatId, sent);
-    }
-    return sent;
-}
-
-bot.sendPhoto = (chatId, photo, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendPhoto, chatId, photo, options, fileOptions);
-bot.sendVideo = (chatId, video, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendVideo, chatId, video, options, fileOptions);
-bot.sendAnimation = (chatId, animation, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendAnimation, chatId, animation, options, fileOptions);
-
-async function sendReplaceablePrivateVideo(chatId, video, options) {
-    await clearLatestPrivateBotMessage(chatId);
-    const sent = await bot.sendVideo(chatId, video, options);
-    return trackLatestPrivateBotMessage(chatId, sent);
-}
 
 // Map to store Promises for app deployment status based on channel notifications
 const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
@@ -6131,7 +6054,7 @@ RULES:
             ]
         };
 
-        const sentMessage = await sendReplaceablePrivateVideo(cid, welcomeVideoUrl, {
+        const sentMessage = await bot.sendVideo(cid, welcomeVideoUrl, {
             caption: welcomeCaption, // Use the new AI-generated or fallback caption
             parse_mode: 'Markdown',
             reply_markup: {
@@ -9219,9 +9142,6 @@ bot.on('message', async msg => {
     const text = msg.text?.trim() || ""; 
     const cid = msg.chat.id.toString();
     const st = userStates[cid];
-    if (msg.chat.type === 'private' && !msg.from?.is_bot) {
-      void safelyDeleteMessage(cid, msg.message_id);
-    }
   if (msg.text && msg.text.startsWith('/')) {
   return; 
 }
@@ -10194,7 +10114,6 @@ if (text === 'Deploy') {
                 inline_keyboard: keyboard
             }
         });
-        await restorePersistentReplyKeyboard(cid);
         return;
     }
 
@@ -10258,7 +10177,6 @@ if (text === 'Deploy') {
                 inline_keyboard: keyboard
             }
         });
-        await restorePersistentReplyKeyboard(cid);
 
     } catch (error) {
         console.error("Error in Get Session ID handler:", error.message);
@@ -10307,8 +10225,6 @@ if (text === 'My Bots') {
                     ]
                 }
             });
-            persistentReplyKeyboardMessageIds.delete(String(cid));
-            await restorePersistentReplyKeyboard(cid);
             return;
         }
 
@@ -10372,16 +10288,12 @@ if (text === 'My Bots') {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
         });
-        persistentReplyKeyboardMessageIds.delete(String(cid));
-        await restorePersistentReplyKeyboard(cid);
 
     } catch (error) {
         console.error("Error in 'My Bots' handler:", error);
         await bot.editMessageText("An error occurred. Please try again.", {
             chat_id: cid, message_id: checkingMsg.message_id
         });
-        persistentReplyKeyboardMessageIds.delete(String(cid));
-        await restorePersistentReplyKeyboard(cid);
     }
     return;
 }
@@ -13389,9 +13301,9 @@ if (action === 'cancel_payment_and_deploy') {
     }
 
     delete userStates[cid]; // Clear the state to cancel the deployment flow
-    await safelyDeleteMessage(cid, q.message.message_id);
-    await bot.sendMessage(cid, 'Menu:', {
-        reply_markup: { keyboard: buildKeyboard(cid === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
+    await bot.editMessageText('Deployment process canceled.', {
+        chat_id: cid,
+        message_id: q.message.message_id
     });
     return;
 }

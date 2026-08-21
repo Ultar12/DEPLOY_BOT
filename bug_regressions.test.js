@@ -175,21 +175,20 @@ test('mini app deploy-key use sends user and administrator notifications', () =>
   assert.match(botSource, /\*Deploy ID:\*/);
 });
 
-test('private cleanup preserves a persistent reply-keyboard anchor', () => {
+test('private interaction flow no longer installs destructive keyboard-anchor cleanup', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
-  assert.match(botSource, /persistentReplyKeyboardMessageIds/);
-  assert.match(botSource, /withPersistentReplyKeyboard/);
-  assert.match(botSource, /one_time_keyboard: false/);
-  assert.match(botSource, /previousId !== keyboardMessageId/);
+  assert.doesNotMatch(botSource, /persistentReplyKeyboardMessageIds/);
+  assert.doesNotMatch(botSource, /withPersistentReplyKeyboard/);
+  assert.doesNotMatch(botSource, /Menu is ready below/);
 });
 
-test('dashboard puts the animated deployment action before the bot list and keeps the session prompt concise', () => {
+test('dashboard keeps the deployment action above the bot list with static styling and a concise session prompt', () => {
   const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
   const ctaPosition = htmlSource.indexOf('mgmt-option deploy-cta');
   const botListPosition = htmlSource.indexOf('id="botList"');
   assert.ok(ctaPosition > -1 && ctaPosition < botListPosition);
-  assert.match(htmlSource, /@keyframes orbit-blue-glow/);
-  assert.match(htmlSource, /animation: orbit-blue-glow/);
+  assert.match(htmlSource, /box-shadow: 0 0 18px rgba\(59, 130, 246, \.72\)/);
+  assert.doesNotMatch(htmlSource, /@keyframes orbit-blue-glow/);
   assert.match(htmlSource, /window\.prompt\('Paste the new session ID\.'\)/);
   assert.doesNotMatch(htmlSource, /It will be checked against this bot type before saving/);
 });
@@ -202,22 +201,17 @@ test('My Bots sync uses bounded checks and requested copy instead of waiting ind
   assert.match(botSource, /sync_unknown: true/);
 });
 
-test('primary Deploy, Get Session ID, and My Bots flows explicitly restore the reply keyboard', () => {
+test('primary Deploy, Get Session ID, and My Bots flows no longer add extra keyboard messages', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
-  assert.match(botSource, /async function restorePersistentReplyKeyboard/);
-  const deployStart = botSource.indexOf("if (text === 'Deploy')");
-  const sessionStart = botSource.indexOf("if (text === 'Get Session ID')");
-  const myBotsStart = botSource.indexOf("if (text === 'My Bots')");
-  assert.ok(botSource.slice(deployStart, sessionStart).includes('await restorePersistentReplyKeyboard(cid)'));
-  assert.ok(botSource.slice(sessionStart, myBotsStart).includes('await restorePersistentReplyKeyboard(cid)'));
-  assert.ok(botSource.slice(myBotsStart, myBotsStart + 4500).includes('await restorePersistentReplyKeyboard(cid)'));
+  assert.doesNotMatch(botSource, /async function restorePersistentReplyKeyboard/);
+  assert.doesNotMatch(botSource, /Menu is ready below/);
 });
 
-test('deployment CTA glow follows an actual circular transform path', () => {
+test('deployment CTA is restored to the earlier static glow', () => {
   const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
-  assert.match(htmlSource, /\.deploy-cta::after/);
-  assert.match(htmlSource, /rotate\(360deg\) translateX\(155px\) rotate\(-360deg\)/);
-  assert.match(htmlSource, /box-shadow: 0 0 18px 8px/);
+  assert.doesNotMatch(htmlSource, /\.deploy-cta::after/);
+  assert.doesNotMatch(htmlSource, /translateX\(155px\)/);
+  assert.match(htmlSource, /box-shadow: 0 0 18px rgba\(59, 130, 246, \.72\)/);
 });
 
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
@@ -227,15 +221,11 @@ test('mini app database bootstrap includes job-payment columns required by deplo
   assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT/);
 });
 
-test('private chat lifecycle safely deletes user input and replaces the prior bot screen', () => {
+test('private chat lifecycle preserves messages and replaces uneditable bot screens safely', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
-  assert.match(botSource, /const latestPrivateBotMessageIds = new Map\(\)/);
-  assert.match(botSource, /async function safelyDeleteMessage/);
-  assert.match(botSource, /bot\.sendMessage = async/);
-  assert.match(botSource, /void safelyDeleteMessage\(cid, msg\.message_id\)/);
-  assert.match(botSource, /sendReplaceablePrivateVideo\(cid, welcomeVideoUrl/);
-  assert.match(botSource, /bot\.sendPhoto =/);
-  assert.match(botSource, /bot\.sendAnimation =/);
-  assert.match(botSource, /one_time_keyboard: false/);
-  assert.match(botSource, /await safelyDeleteMessage\(cid, q\.message\.message_id\)/);
+  assert.doesNotMatch(botSource, /void safelyDeleteMessage\(cid, msg\.message_id\)/);
+  assert.doesNotMatch(botSource, /sendReplaceablePrivateVideo\(cid, welcomeVideoUrl/);
+  assert.match(botSource, /const nativeEditMessageText = bot\.editMessageText\.bind\(bot\)/);
+  assert.match(botSource, /Message could not be edited; sending a replacement message instead/);
+  assert.match(botSource, /message can't be edited\|message to edit not found/);
 });

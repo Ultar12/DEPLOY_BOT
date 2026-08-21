@@ -171,3 +171,12 @@
 - [x] Restore the reply keyboard explicitly after Deploy, Get Session ID, My Bots, and related primary button flows.
 - [x] Replace the directional glow with a true circular-orbit CTA animation.
 - [x] Add regression coverage for synchronization completion, primary keyboard restoration, and circular glow behavior.
+
+# Interaction Flow Rollback and Safe Bot-Button Edits
+
+- [x] Restore the prior static deployment CTA without animated glow.
+- [x] Remove the recent automatic private-message deletion and keyboard-anchor behavior.
+- [x] Remove the “Menu is ready below.” message.
+- [x] Prevent unhandled message-not-editable errors in user-bot button flows.
+- [x] Verify My Bots and primary user-bot button loading after the rollback.
+- [x] Add regression coverage for non-destructive flow and safe edit fallback.
