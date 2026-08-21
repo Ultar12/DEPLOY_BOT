@@ -42,3 +42,26 @@ test('stopping logs persists a stopped state when returning to the bot menu', ()
   assert.match(source, /const shouldStream = st\.data\.logStreaming !== false/);
   assert.match(source, /callback_data: st\.data\.logStreaming === false \? `start_logs:\$\{payload\}` : `selectapp:\$\{payload\}`/);
 });
+
+test('mini app exposes durable job status and payment-or-key deployment flow', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  const servicesSource = fs.readFileSync('./bot_services.js', 'utf8');
+  assert.match(botSource, /deployment_jobs/);
+  assert.match(botSource, /validateMiniAppDeploymentInput/);
+  assert.match(botSource, /paymentRequired: true/);
+  assert.match(botSource, /paymentRequired: false/);
+  assert.match(botSource, /app\.get\('\/api\/deployment-jobs\/:jobId'/);
+  assert.match(botSource, /app\.get\('\/miniapp'/);
+  assert.match(servicesSource, /CREATE TABLE IF NOT EXISTS deployment_jobs/);
+  assert.match(htmlSource, /deployEmail/);
+  assert.match(htmlSource, /OPEN PAYMENT/);
+  assert.match(htmlSource, /t\.me\/staries1/);
+});
+
+test('mini app client polls job progress instead of hiding the deployment result', () => {
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(htmlSource, /pollJob\(data\.jobId\)/);
+  assert.match(htmlSource, /deployment-jobs\//);
+  assert.match(htmlSource, /progress_message/);
+});

@@ -4985,96 +4985,123 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 });
 
 
-    app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-    const { botType, appName, sessionId, autoStatusView, deployKey } = req.body;
-    const userId = req.telegramData.id.toString();
+const MINIAPP_SUPPORT_HANDLE = 'staries1';
+const MINIAPP_APP_NAME_RE = /^[a-z][a-z0-9-]{2,29}[a-z0-9]$/;
 
-    // 1. Initial validation
-    if (!userId || !botType || !appName || !sessionId) {
-        return res.status(400).json({ success: false, message: 'Missing required fields.' });
-    }
+function validateMiniAppDeploymentInput(botType, appName, sessionId) {
+    const normalizedType = String(botType || '').trim().toLowerCase();
+    const normalizedName = String(appName || '').trim().toLowerCase();
+    const normalizedSession = String(sessionId || '').trim();
+    if (!['raganork', 'levanter'].includes(normalizedType)) return 'Unsupported bot type.';
+    if (!MINIAPP_APP_NAME_RE.test(normalizedName)) return 'App name must be 4–30 characters, start with a letter, and contain only lowercase letters, numbers, and hyphens.';
+    if (normalizedSession.length < 10 || normalizedSession.length > 512) return 'Session ID length is invalid.';
+    const prefix = normalizedType === 'raganork' ? RAGANORK_SESSION_PREFIX : LEVANTER_SESSION_PREFIX;
+    if (!normalizedSession.startsWith(prefix)) return `Invalid session ID format for bot type "${normalizedType}".`;
+    return null;
+}
 
-    const pendingPaymentResult = await pool.query(
-        'SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2',
-        [userId, appName]
-    );
-    if (pendingPaymentResult.rows.length > 0) {
-        return res.status(400).json({ success: false, message: 'A payment is already pending for this app. Please complete it.' });
-    }
+async function updateDeploymentJob(jobId, fields) {
+    const allowed = ['status', 'progress', 'progress_message', 'error_message', 'payment_method', 'payment_reference'];
+    const entries = Object.entries(fields).filter(([key, value]) => allowed.includes(key) && value !== undefined);
+    if (!entries.length) return;
+    const assignments = entries.map(([key], index) => `${key} = $${index + 2}`);
+    const values = entries.map(([, value]) => value);
+    await pool.query(`UPDATE deployment_jobs SET ${assignments.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE job_id = $1`, [jobId, ...values]);
+}
 
-    const isSessionIdValid = (botType === 'raganork' && sessionId.startsWith(RAGANORK_SESSION_PREFIX) && sessionId.length >= 10) ||
-        (botType === 'levanter' && sessionId.startsWith(LEVANTER_SESSION_PREFIX) && sessionId.length >= 10);
-    
-    if (!isSessionIdValid) {
-        return res.status(400).json({ success: false, message: `Invalid session ID format for bot type "${botType}".` });
-    }
-
-    // 2. Map autoStatusView to correct Heroku variable
-    let herokuAutoStatusView = '';
-    if (botType === 'levanter' && autoStatusView === 'yes') {
-        herokuAutoStatusView = 'no-dl';
-    } else if (botType === 'raganork' && autoStatusView === 'yes') {
-        herokuAutoStatusView = 'true';
-    } else {
-        herokuAutoStatusView = 'false';
-    }
-
-    const deployVars = {
-        SESSION_ID: sessionId,
-        APP_NAME: appName,
-        AUTO_STATUS_VIEW: herokuAutoStatusView
-    };
-
-        let deploymentMessage = '';
+async function startMiniAppDeploymentJob(jobId) {
+    const jobResult = await pool.query('SELECT * FROM deployment_jobs WHERE job_id = $1', [jobId]);
+    if (!jobResult.rows.length) throw new Error('Deployment job not found.');
+    const job = jobResult.rows[0];
     try {
-        if (deployKey) {
-            const usesLeft = await dbServices.useDeployKey(deployKey, userId);
-            if (usesLeft === null) {
-                return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
-            }
-            deploymentMessage = 'Deployment initiated with key. Check the bot chat for updates!';
-            
-            // Admin notification logic here
-            const userChat = await bot.getChat(userId);
-            const userName = userChat.username ? `@${userChat.username}` : `${userChat.first_name || 'N/A'}`;
-            await bot.sendMessage(ADMIN_ID,
-                `*New App Deployed (Mini App)*\n` +
-                `*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n` +
-                `*App Name:* \`${appName}\`\n` +
-                `*Key Used:* \`${deployKey}\`\n` +
-                `*Uses Left:* ${usesLeft}`,
-                { parse_mode: 'Markdown' }
-            );
-        }
-        
-        // This is a CRITICAL fix. The build process should be awaited.
-        // It's also important to add the bot to the database before the build, so the monitor can find it.
-        await dbServices.addUserBot(userId, appName, sessionId, botType);
-        
-        // This promise will resolve when the build is complete.
-        // The `buildWithProgress` function must be refactored to return a promise that resolves on success.
-        const buildPromise = dbServices.buildWithProgress(userId, deployVars, isFreeTrial, false, botType);
-        
-        // We do NOT await here to avoid a long timeout for the HTTP request.
-        // Instead, the frontend gets an immediate success response, and the bot will send a message to the user later when the build is done.
-        
-        // Notify the user that the process has started
-        await bot.sendMessage(userId, 
-            `Deployment of your *${escapeMarkdown(appName)}* bot has started via the Mini App.\n\n` +
-            `You will receive a notification here when the bot is ready.`, 
-            { parse_mode: 'Markdown' });
+        await updateDeploymentJob(jobId, { status: 'running', progress: 10, progress_message: 'Registering bot' });
+        await dbServices.addUserBot(job.user_id, job.app_name, job.session_id, job.bot_type);
+        await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting Heroku build' });
+        await dbServices.buildWithProgress(job.user_id, {
+            SESSION_ID: job.session_id,
+            APP_NAME: job.app_name,
+            AUTO_STATUS_VIEW: job.auto_status_view || 'false'
+        }, false, false, job.bot_type);
+        await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
+        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
+        await updateDeploymentJob(jobId, { status: 'failed', progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' });
+        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
+    }
+}
 
-        // Finally, send the success response to the Mini App
-        res.json({ success: true, message: deploymentMessage });
-
-    } catch (e) {
-        console.error('[MiniApp Server] Deployment error:', e);
-        res.status(500).json({ success: false, message: e.message || 'An unknown error occurred during deployment.' });
+app.get('/api/deployment-jobs/:jobId', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT job_id, app_name, bot_type, status, progress, progress_message, payment_method, payment_reference, error_message, created_at, updated_at FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, String(req.telegramData.id)]);
+        if (!result.rows.length) return res.status(404).json({ success: false, message: 'Deployment job not found.' });
+        res.json({ success: true, job: result.rows[0] });
+    } catch (error) {
+        console.error('[MiniApp] Job status error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to read deployment job.' });
     }
 });
-  
 
+app.get('/api/support', validateWebAppInitData, (req, res) => {
+    res.json({ success: true, handle: `@${MINIAPP_SUPPORT_HANDLE}`, url: `https://t.me/${MINIAPP_SUPPORT_HANDLE}` });
+});
 
+app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
+    const { botType, appName, sessionId, autoStatusView, deployKey, email } = req.body;
+    const userId = String(req.telegramData.id);
+    const normalizedType = String(botType || '').trim().toLowerCase();
+    const normalizedName = String(appName || '').trim().toLowerCase();
+    const normalizedSession = String(sessionId || '').trim();
+    const validationError = validateMiniAppDeploymentInput(normalizedType, normalizedName, normalizedSession);
+    if (validationError) return res.status(400).json({ success: false, message: validationError });
+
+    try {
+        const duplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [normalizedName]);
+        if (duplicate.rows.length) return res.status(409).json({ success: false, message: 'That app name is already registered.' });
+        const pending = await pool.query('SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2 AND status = $3 LIMIT 1', [userId, normalizedName, 'pending']);
+        if (pending.rows.length) return res.status(409).json({ success: false, message: 'A payment is already pending for this app.' });
+        try {
+            await herokuApi.get(`https://api.heroku.com/apps/${normalizedName}`, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' } });
+            return res.status(409).json({ success: false, message: 'That app name is already in use.' });
+        } catch (error) {
+            if (error.response && error.response.status !== 404) throw new Error('Could not verify app name availability.');
+        }
+
+        const herokuAutoStatusView = normalizedType === 'levanter' && autoStatusView === 'yes' ? 'no-dl' : normalizedType === 'raganork' && autoStatusView === 'yes' ? 'true' : 'false';
+        const jobId = `job_${crypto.randomBytes(10).toString('hex')}`;
+        if (deployKey) {
+            const usesLeft = await dbServices.useDeployKey(String(deployKey).trim().toUpperCase(), userId);
+            if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
+            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key')`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView]);
+            void startMiniAppDeploymentJob(jobId);
+            await bot.sendMessage(userId, `Deployment job ${jobId} for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
+            return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
+        }
+
+        const normalizedEmail = String(email || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, message: 'A valid email is required for payment checkout.' });
+        if (!process.env.PAYSTACK_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
+        const reference = `mini_${crypto.randomBytes(12).toString('hex')}`;
+        const priceNgn = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','paystack',$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference]);
+            await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView]);
+            const payment = await axios.post('https://api.paystack.co/transaction/initialize', { email: normalizedEmail, amount: priceNgn * 100, reference, metadata: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId }, callback_url: `https://t.me/${process.env.BOT_USERNAME}` }, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } });
+            await client.query('COMMIT');
+            return res.json({ success: true, jobId, paymentRequired: true, paymentUrl: payment.data.data.authorization_url, reference, message: 'Complete payment to start this deployment job.' });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error('[MiniApp Server] Deployment job creation error:', error.response?.data || error.message);
+        res.status(500).json({ success: false, message: 'Could not create the deployment job.' });
+    }
+});
 app.post('/nowpayments-webhook', express.json(), async (req, res) => {
     
     // 1. Verify the signature
@@ -5736,13 +5763,17 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                      // We already logged the payment, so just return OK.
                      return res.sendStatus(200);
                 }
-                const { bot_type, app_name, session_id } = pendingPayment.rows[0];
-
-                await bot.sendMessage(userId, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
-                const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days };
-                dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
+                const { bot_type, app_name, session_id, job_id } = pendingPayment.rows[0];
+                if (job_id) {
+                    await updateDeploymentJob(job_id, { status: 'queued', progress: 0, progress_message: 'Payment confirmed; deployment queued', payment_reference: reference });
+                    await bot.sendMessage(userId, `Payment confirmed. Deployment job ${job_id} is starting.`, { parse_mode: 'Markdown' });
+                    void startMiniAppDeploymentJob(job_id);
+                } else {
+                    await bot.sendMessage(userId, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
+                    const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days };
+                    dbServices.buildWithProgress(userId, deployVars, false, false, bot_type);
+                }
                 await bot.sendMessage(ADMIN_ID, `*New App Deployed (Paid)*\n\n*User:* ${escapeMarkdown(userName)} (\`${userId}\`)\n*App Name:* \`${app_name}\``, { parse_mode: 'Markdown' });
-
                 await pool.query('DELETE FROM pending_payments WHERE reference = $1', [reference]);
             }
             // --- END OF FIX: RENEWAL/DEPLOYMENT LOGIC ---

@@ -88,8 +88,18 @@
 - [ ] Audit current temporary-message creation, editing, deletion, and task-completion paths.
 - [ ] Audit Express static serving and existing mini-app/web endpoints.
 - [ ] Add reusable Telegram message cleanup helpers and apply them to key user workflows.
-- [ ] Add secure Telegram WebApp init-data validation using the bot token and Telegram user ID scoping.
-- [ ] Add the mini-app source inside this repository and serve it from the bot app URL.
-- [ ] Add user-scoped mini-app API endpoints for dashboard, deployment, bot actions, logs, and support.
-- [ ] Add tests for message cleanup, WebApp authentication, user scoping, and mini-app API contracts.
-- [ ] Commit and push the implementation to both `main` and `free-trial-verification`.
+- [x] Add secure Telegram WebApp init-data validation using the bot token and Telegram user ID scoping.
+- [x] Add the mini-app source inside this repository and serve it from the bot app URL.
+- [x] Add user-scoped mini-app API endpoints for dashboard, deployment, bot actions, logs, and support.
+- [x] Add tests for message cleanup, WebApp authentication, user scoping, and mini-app API contracts.
+- [x] Commit and push the implementation to both `main` and `free-trial-verification`.
+
+# Deployment Jobs, Payments, and Mini App URL
+
+- [x] Add durable deployment job records with job IDs and status/progress retrieval.
+- [x] Let deployment proceed through either a valid deploy key or payment gateway checkout.
+- [x] Validate session ID format and app name format before accepting deployment requests.
+- [x] Add user ownership checks to deployment-job status and action endpoints.
+- [x] Replace support placeholder with `@staries1`.
+- [x] Serve the mini app explicitly at `/miniapp` and verify the Telegram WebApp button URL format.
+- [x] Add tests for job IDs, validation, payment/key branching, support link, and `/miniapp` routing.

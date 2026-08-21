@@ -400,7 +400,8 @@
                     <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
                     <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
-                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="If you have a deploy key" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional — leave blank to pay</span><input id="deployKey" placeholder="Use a deploy key, or leave blank" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
+                    <label class="section-title" style="margin:0;">Payment email <span style="font-size:.8em;color:#94a3b8;text-transform:none;">required only when paying</span><input id="deployEmail" type="email" placeholder="you@example.com" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label>
                     <button class="support-btn" type="submit">START DEPLOYMENT</button>
                     <div id="deployResult" class="news-content"></div>
                 </form>`;
@@ -433,7 +434,7 @@
                 const act = btn.dataset.action;
                 if (act === 'navigate') navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null);
                 if (act === 'support') {
-                    tg.showAlert('Please use the support contact shared in the bot chat.');
+                    tg.openTelegramLink('https://t.me/staries1');
                 }
                 if (act === 'set-var') {
                     const value = window.prompt(`Enter a new value for ${btn.dataset.varName}`);
@@ -462,15 +463,33 @@
             if (deployForm) deployForm.onsubmit = async (event) => {
                 event.preventDefault();
                 const result = document.getElementById('deployResult');
-                result.textContent = 'Submitting deployment...';
-                const payload = { botType: document.getElementById('deployBotType').value, appName: document.getElementById('deployAppName').value.trim().toLowerCase(), sessionId: document.getElementById('deploySessionId').value.trim(), deployKey: document.getElementById('deployKey').value.trim() };
+                result.textContent = 'Creating deployment job...';
+                const payload = { botType: document.getElementById('deployBotType').value, appName: document.getElementById('deployAppName').value.trim().toLowerCase(), sessionId: document.getElementById('deploySessionId').value.trim(), deployKey: document.getElementById('deployKey').value.trim(), email: document.getElementById('deployEmail').value.trim() };
                 try {
                     const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
                     const data = await res.json();
-                    result.textContent = data.message || (data.success ? 'Deployment accepted.' : 'Deployment failed.');
-                    if (data.success) setTimeout(() => navigateTo('dashboard'), 1200);
-                } catch (e) { result.textContent = 'Connection error. Try again.'; }
+                    if (!data.success) throw new Error(data.message || 'Deployment could not be created.');
+                    if (data.paymentRequired && data.paymentUrl) {
+                        result.innerHTML = `Job <strong>${data.jobId}</strong> is awaiting payment. <button type="button" class="support-btn" id="payNowBtn" style="width:auto;margin-top:10px;">OPEN PAYMENT</button><div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
+                        document.getElementById('payNowBtn').onclick = () => tg.openLink(data.paymentUrl);
+                    } else {
+                        result.innerHTML = `Job <strong>${data.jobId}</strong> accepted. <div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
+                    }
+                    pollJob(data.jobId);
+                } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
             };
+        }
+        async function pollJob(jobId) {
+            const status = document.getElementById('jobStatus');
+            if (!status) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(jobId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Unable to read job status.');
+                const job = data.job;
+                status.textContent = `${job.status}: ${job.progress_message} (${job.progress}%)`;
+                if (!['completed', 'failed'].includes(job.status)) setTimeout(() => pollJob(jobId), 2500);
+            } catch (e) { status.textContent = e.message || 'Status unavailable.'; }
         }
 
         document.getElementById('backBtn').onclick = goBack;

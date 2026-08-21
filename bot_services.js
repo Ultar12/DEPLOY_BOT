@@ -1606,6 +1606,26 @@ async function createAllTablesInPool(dbPool, dbName) {
     `);
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS bot_type TEXT;`);
     await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS app_name TEXT, ADD COLUMN IF NOT EXISTS session_id TEXT;`);
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT;`);
+    await dbPool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT;`);
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS deployment_jobs (
+        job_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        app_name TEXT NOT NULL,
+        bot_type TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        auto_status_view TEXT DEFAULT 'false',
+        status TEXT NOT NULL DEFAULT 'queued',
+        progress INTEGER NOT NULL DEFAULT 0,
+        progress_message TEXT NOT NULL DEFAULT 'Queued',
+        payment_method TEXT NOT NULL,
+        payment_reference TEXT,
+        error_message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS completed_payments (
