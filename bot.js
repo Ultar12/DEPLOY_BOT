@@ -1531,6 +1531,7 @@ bot.getMe().then(me => {
 const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessageId }
 const authorizedUsers = new Set(); // chatIds who've passed a key
 const latestPrivateBotMessageIds = new Map();
+const persistentReplyKeyboardMessageIds = new Map();
 const nativeSendMessage = bot.sendMessage.bind(bot);
 const nativeSendPhoto = bot.sendPhoto.bind(bot);
 const nativeSendVideo = bot.sendVideo.bind(bot);
@@ -1548,7 +1549,8 @@ async function safelyDeleteMessage(chatId, messageId) {
 async function clearLatestPrivateBotMessage(chatId, keepMessageId = null) {
     const key = String(chatId);
     const previousId = latestPrivateBotMessageIds.get(key);
-    if (previousId && previousId !== keepMessageId) await safelyDeleteMessage(key, previousId);
+    const keyboardMessageId = persistentReplyKeyboardMessageIds.get(key);
+    if (previousId && previousId !== keepMessageId && previousId !== keyboardMessageId) await safelyDeleteMessage(key, previousId);
     if (!keepMessageId) latestPrivateBotMessageIds.delete(key);
 }
 
@@ -1557,19 +1559,43 @@ function trackLatestPrivateBotMessage(chatId, message) {
     return message;
 }
 
+function hasReplyKeyboard(options) {
+    return Boolean(options?.reply_markup?.keyboard);
+}
+
+function withPersistentReplyKeyboard(chatId, options = {}) {
+    if (!isPrivateChatId(chatId) || options?.reply_markup) return options;
+    return {
+        ...options,
+        reply_markup: { keyboard: buildKeyboard(String(chatId) === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
+    };
+}
+
+async function trackPersistentKeyboard(chatId, message, options) {
+    if (!isPrivateChatId(chatId) || !hasReplyKeyboard(options)) return;
+    const key = String(chatId);
+    const priorKeyboardId = persistentReplyKeyboardMessageIds.get(key);
+    if (priorKeyboardId && priorKeyboardId !== message.message_id) await safelyDeleteMessage(key, priorKeyboardId);
+    persistentReplyKeyboardMessageIds.set(key, message.message_id);
+}
+
 bot.sendMessage = async (chatId, text, options) => {
-    const sent = await nativeSendMessage(chatId, text, options);
+    const finalOptions = withPersistentReplyKeyboard(chatId, options);
+    const sent = await nativeSendMessage(chatId, text, finalOptions);
     if (isPrivateChatId(chatId)) {
         await clearLatestPrivateBotMessage(chatId, sent.message_id);
+        await trackPersistentKeyboard(chatId, sent, finalOptions);
         trackLatestPrivateBotMessage(chatId, sent);
     }
     return sent;
 };
 
 async function sendReplaceablePrivateMedia(nativeSender, chatId, media, options, fileOptions) {
-    const sent = await nativeSender(chatId, media, options, fileOptions);
+    const finalOptions = withPersistentReplyKeyboard(chatId, options);
+    const sent = await nativeSender(chatId, media, finalOptions, fileOptions);
     if (isPrivateChatId(chatId)) {
         await clearLatestPrivateBotMessage(chatId, sent.message_id);
+        await trackPersistentKeyboard(chatId, sent, finalOptions);
         trackLatestPrivateBotMessage(chatId, sent);
     }
     return sent;
@@ -5203,11 +5229,15 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         const herokuAutoStatusView = normalizedType === 'levanter' && autoStatusView === 'yes' ? 'no-dl' : normalizedType === 'raganork' && autoStatusView === 'yes' ? 'true' : 'false';
         const jobId = `job_${crypto.randomBytes(10).toString('hex')}`;
         if (deployKey) {
-            const usesLeft = await dbServices.useDeployKey(String(deployKey).trim().toUpperCase(), userId);
+            const normalizedKey = String(deployKey).trim().toUpperCase();
+            const usesLeft = await dbServices.useDeployKey(normalizedKey, userId);
             if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
             await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView]);
+            const requesterName = req.telegramData.username ? `@${escapeMarkdown(req.telegramData.username)}` : escapeMarkdown(req.telegramData.first_name || 'User');
+            await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
+            await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
             void startMiniAppDeploymentJob(jobId);
-            await bot.sendMessage(userId, `Deployment job ${jobId} for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
+            await bot.sendMessage(userId, `Deployment for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
         }
 

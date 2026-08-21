@@ -168,6 +168,32 @@ test('mini app displays Deploy ID and staged progress after deployment begins', 
   assert.match(htmlSource, /deploy-cta/);
 });
 
+test('mini app deploy-key use sends user and administrator notifications', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /Deploy key used:/);
+  assert.match(botSource, /\*Key Used By:\*/);
+  assert.match(botSource, /\*Deploy ID:\*/);
+});
+
+test('private cleanup preserves a persistent reply-keyboard anchor', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /persistentReplyKeyboardMessageIds/);
+  assert.match(botSource, /withPersistentReplyKeyboard/);
+  assert.match(botSource, /one_time_keyboard: false/);
+  assert.match(botSource, /previousId !== keyboardMessageId/);
+});
+
+test('dashboard puts the animated deployment action before the bot list and keeps the session prompt concise', () => {
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  const ctaPosition = htmlSource.indexOf('mgmt-option deploy-cta');
+  const botListPosition = htmlSource.indexOf('id="botList"');
+  assert.ok(ctaPosition > -1 && ctaPosition < botListPosition);
+  assert.match(htmlSource, /@keyframes orbit-blue-glow/);
+  assert.match(htmlSource, /animation: orbit-blue-glow/);
+  assert.match(htmlSource, /window\.prompt\('Paste the new session ID\.'\)/);
+  assert.doesNotMatch(htmlSource, /It will be checked against this bot type before saving/);
+});
+
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
   assert.match(botSource, /pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'/);

@@ -137,7 +137,15 @@
         .deploy-cta {
             border-color: rgba(96, 165, 250, .9) !important;
             background: linear-gradient(135deg, rgba(37, 99, 235, .35), rgba(59, 130, 246, .12));
-            box-shadow: 0 0 18px rgba(59, 130, 246, .72), inset 0 0 16px rgba(96, 165, 250, .12);
+            animation: orbit-blue-glow 2.8s linear infinite;
+        }
+
+        @keyframes orbit-blue-glow {
+            0% { box-shadow: 16px 0 22px rgba(59, 130, 246, .76), inset 0 0 16px rgba(96, 165, 250, .12); }
+            25% { box-shadow: 0 16px 22px rgba(59, 130, 246, .76), inset 0 0 16px rgba(96, 165, 250, .12); }
+            50% { box-shadow: -16px 0 22px rgba(59, 130, 246, .76), inset 0 0 16px rgba(96, 165, 250, .12); }
+            75% { box-shadow: 0 -16px 22px rgba(59, 130, 246, .76), inset 0 0 16px rgba(96, 165, 250, .12); }
+            100% { box-shadow: 16px 0 22px rgba(59, 130, 246, .76), inset 0 0 16px rgba(96, 165, 250, .12); }
         }
 
         /* --- Dashboard Stats --- */
@@ -306,12 +314,12 @@
                         <div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">Total</div></div>
                         <div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">Active</div></div>
                     </div>
-                    <div class="section-title">Your Bots</div>
-                    <div class="bot-list" id="botList">Loading bots...</div>
                     <div class="section-title">Actions</div>
                     <div class="management-grid">
                         <div class="mgmt-option deploy-cta" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
                     </div>
+                    <div class="section-title">Your Bots</div>
+                    <div class="bot-list" id="botList">Loading bots...</div>
                 </div>
             `;
         }
@@ -460,7 +468,7 @@
                     return;
                 }
                 if (act === 'change-session') {
-                    const sessionId = window.prompt('Paste the new session ID. It will be checked against this bot type before saving.');
+                    const sessionId = window.prompt('Paste the new session ID.');
                     if (!sessionId) return;
                     fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
                     return;

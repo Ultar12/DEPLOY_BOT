@@ -155,3 +155,11 @@
 - [x] Add real progress updates beyond 25 percent during deployment build and completion steps.
 - [x] Add a glowing blue Create a new bot call-to-action.
 - [x] Add regression coverage for session recovery, lifecycle actions, visible config, and progress stages.
+
+# Deploy-Key Notification, Stable Keyboard, and Dashboard CTA Refinement
+
+- [x] Restore the user notification when a deploy key is consumed through the mini app.
+- [x] Reapply the persistent reply keyboard after private message cleanup so it does not depend on /start.
+- [x] Remove the session-type validation helper text from the Change Session prompt.
+- [x] Move Create a new bot above the bot list and animate its blue glow in a circular motion.
+- [x] Add regression coverage for key-use notification, keyboard resilience, and CTA placement and animation.
