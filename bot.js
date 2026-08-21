@@ -1532,6 +1532,9 @@ const userStates = {}; // chatId -> { step, data, message_id, faqPage, faqMessag
 const authorizedUsers = new Set(); // chatIds who've passed a key
 const latestPrivateBotMessageIds = new Map();
 const nativeSendMessage = bot.sendMessage.bind(bot);
+const nativeSendPhoto = bot.sendPhoto.bind(bot);
+const nativeSendVideo = bot.sendVideo.bind(bot);
+const nativeSendAnimation = bot.sendAnimation.bind(bot);
 
 function isPrivateChatId(chatId) {
     return /^\d+$/.test(String(chatId));
@@ -1562,6 +1565,19 @@ bot.sendMessage = async (chatId, text, options) => {
     }
     return sent;
 };
+
+async function sendReplaceablePrivateMedia(nativeSender, chatId, media, options, fileOptions) {
+    const sent = await nativeSender(chatId, media, options, fileOptions);
+    if (isPrivateChatId(chatId)) {
+        await clearLatestPrivateBotMessage(chatId, sent.message_id);
+        trackLatestPrivateBotMessage(chatId, sent);
+    }
+    return sent;
+}
+
+bot.sendPhoto = (chatId, photo, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendPhoto, chatId, photo, options, fileOptions);
+bot.sendVideo = (chatId, video, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendVideo, chatId, video, options, fileOptions);
+bot.sendAnimation = (chatId, animation, options, fileOptions) => sendReplaceablePrivateMedia(nativeSendAnimation, chatId, animation, options, fileOptions);
 
 async function sendReplaceablePrivateVideo(chatId, video, options) {
     await clearLatestPrivateBotMessage(chatId);
@@ -4998,7 +5014,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
     const appName = String(req.params.appName || '').trim().toLowerCase();
     if (!MINIAPP_APP_NAME_RE.test(appName)) return res.json({ available: false, valid: false, message: 'Use 4–30 lowercase letters, numbers, and hyphens; start with a letter.' });
     const localDuplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [appName]);
-    if (localDuplicate.rows.length) return res.json({ available: false, valid: true, message: 'This app name is already registered.' });
+    if (localDuplicate.rows.length) return res.json({ available: false, valid: true, message: 'Name already exists, use another name.' });
     if (!HEROKU_API_KEY) {
         console.error('[MiniApp] Hosting API key is not set in the environment.');
         return res.json({ available: false, message: 'Name already exists, use another name.' });
@@ -5009,7 +5025,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
             headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3' }
         });
         // If Heroku API call succeeds, the name is taken.
-        res.json({ available: false });
+        res.json({ available: false, message: 'Name already exists, use another name.' });
     } catch (e) {
         if (e.response && e.response.status === 404) {
             // A 404 error means the app name is available.
@@ -5029,6 +5045,18 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 
 const MINIAPP_SUPPORT_HANDLE = 'staries1';
 const MINIAPP_APP_NAME_RE = /^[a-z][a-z0-9-]{2,29}[a-z0-9]$/;
+const MINIAPP_PAYMENT_PLANS = [
+    { id: 'basic', name: 'Basic', usd: 0.35, days: 10 },
+    { id: 'standard', name: 'Standard', usd: 1.00, days: 45 },
+    { id: 'quarterly', name: 'Quarterly', usd: 2.00, days: 92 },
+    { id: 'semi', name: 'Semi-Annual', usd: 3.35, days: 185 },
+    { id: 'annual', name: 'Annual', usd: 5.35, days: 365 }
+];
+
+function getMiniAppPaymentPlans() {
+    const rate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
+    return MINIAPP_PAYMENT_PLANS.map(plan => ({ ...plan, amountNgn: Math.ceil(plan.usd * rate) }));
+}
 
 function validateMiniAppDeploymentInput(botType, appName, sessionId) {
     const normalizedType = String(botType || '').trim().toLowerCase();
@@ -5047,9 +5075,13 @@ async function ensureMiniAppDeploymentSchema() {
     if (!miniAppSchemaReady) {
         miniAppSchemaReady = (async () => {
             await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+            await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_id TEXT`);
+            await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_days INTEGER`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'`);
+            await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS plan_id TEXT`);
+            await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS plan_days INTEGER`);
         })().catch(error => { miniAppSchemaReady = null; throw error; });
     }
     return miniAppSchemaReady;
@@ -5080,7 +5112,8 @@ async function startMiniAppDeploymentJob(jobId) {
         await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
-            AUTO_STATUS_VIEW: job.auto_status_view || 'false'
+            AUTO_STATUS_VIEW: job.auto_status_view || 'false',
+            DAYS: job.plan_days || 30
         }, false, false, job.bot_type);
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
         await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' });
@@ -5112,8 +5145,19 @@ app.get('/api/validate-session', validateWebAppInitData, async (req, res) => {
     res.json({ valid: true, message: 'Session ID format is valid.' });
 });
 
+app.get('/api/deployment-plans', validateWebAppInitData, async (req, res) => {
+    try {
+        const existingBot = await pool.query('SELECT 1 FROM user_bots WHERE user_id = $1 LIMIT 1', [String(req.telegramData.id)]);
+        const plans = getMiniAppPaymentPlans().filter(plan => plan.id !== 'basic' || !existingBot.rows.length);
+        res.json({ success: true, plans });
+    } catch (error) {
+        console.error('[MiniApp] Failed to load payment plans:', error.message);
+        res.status(500).json({ success: false, message: 'Could not load payment plans.' });
+    }
+});
+
 app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-    const { botType, appName, sessionId, autoStatusView, deployKey } = req.body;
+    const { botType, appName, sessionId, autoStatusView, deployKey, planId } = req.body;
     const userId = String(req.telegramData.id);
     const normalizedType = String(botType || '').trim().toLowerCase();
     const normalizedName = String(appName || '').trim().toLowerCase();
@@ -5139,7 +5183,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         if (deployKey) {
             const usesLeft = await dbServices.useDeployKey(String(deployKey).trim().toUpperCase(), userId);
             if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
-            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key')`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView]);
+            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView]);
             void startMiniAppDeploymentJob(jobId);
             await bot.sendMessage(userId, `Deployment job ${jobId} for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
@@ -5148,14 +5192,18 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         const normalizedEmail = String(await getMiniAppUserEmail(userId) || '').trim().toLowerCase();
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, code: 'VERIFIED_EMAIL_REQUIRED', message: 'A verified email is required before payment. Send “Deploy” to the bot to register or verify your email, then return here.' });
         if (!process.env.FLUTTERWAVE_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
+        const selectedPlan = getMiniAppPaymentPlans().find(plan => plan.id === String(planId || '').trim());
+        if (!selectedPlan) return res.status(400).json({ success: false, message: 'Select a payment plan before continuing.' });
         const reference = `mini_${crypto.randomBytes(12).toString('hex')}`;
-        const priceNgn = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
+        const priceNgn = selectedPlan.amountNgn;
+        const forwardedProtocol = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+        const miniAppReturnUrl = `${forwardedProtocol}://${req.get('host')}/miniapp?job=${encodeURIComponent(jobId)}`;
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference]);
-            await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView]);
-            const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: priceNgn, currency: 'NGN', redirect_url: `https://t.me/${botUsername}`, customer: { email: normalizedEmail, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId }, customizations: { title: "Ultar's WBD", description: 'Bot deployment' } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
+            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7,$8,$9)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference, selectedPlan.id, selectedPlan.days]);
+            await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView, selectedPlan.id, selectedPlan.days]);
+            const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: priceNgn, currency: 'NGN', redirect_url: miniAppReturnUrl, customer: { email: normalizedEmail, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId, plan_id: selectedPlan.id, plan_days: selectedPlan.days }, customizations: { title: "Ultar's WBD", description: `${selectedPlan.name} bot deployment` } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
             await client.query('COMMIT');
             return res.json({ success: true, jobId, paymentRequired: true, paymentUrl: payment.data.data.link, reference, message: 'Complete payment to start this deployment job.' });
         } catch (error) {
@@ -13264,9 +13312,9 @@ if (action === 'cancel_payment_and_deploy') {
     }
 
     delete userStates[cid]; // Clear the state to cancel the deployment flow
-    await bot.editMessageText('Deployment process canceled.', {
-        chat_id: cid,
-        message_id: q.message.message_id
+    await safelyDeleteMessage(cid, q.message.message_id);
+    await bot.sendMessage(cid, 'Menu:', {
+        reply_markup: { keyboard: buildKeyboard(cid === ADMIN_ID), resize_keyboard: true, one_time_keyboard: false }
     });
     return;
 }

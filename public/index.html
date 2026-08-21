@@ -252,7 +252,7 @@
         }
 
         function updateHeader() {
-            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy' };
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment' };
             document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
             document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
         }
@@ -273,11 +273,13 @@
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
+                case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
             }
             attachEventListeners();
             if (viewName === 'dashboard') loadDashboard();
             if (viewName === 'variables') loadVariables(data);
             if (viewName === 'logs') loadLogs(data);
+            if (viewName === 'job') pollJob(data.jobId);
         }
 
         function getDashboardHTML() {
@@ -408,9 +410,13 @@
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="Enter a key to validate it" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="keyState" class="validation-state">No key entered — payment is available</span></label>
                     <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
-                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
+                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
                     <div id="deployResult" class="news-content"></div>
                 </form>`;
+        }
+
+        function getDeploymentJobHTML(data) {
+            return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Job ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Checking deployment status...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
         }
 
         async function loadVariables(bot) {
@@ -474,6 +480,7 @@
             if (deployForm) {
                 const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
                 const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
+                let selectedPlan = null;
                 const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
                 const debounce = (fn, delay = 450) => { let timer; return () => { clearTimeout(timer); timer = setTimeout(fn, delay); }; };
                 const checkName = async () => {
@@ -517,23 +524,44 @@
                     document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : '';
                     document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
                     document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
+                    const planOptions = document.getElementById('planOptions');
+                    planOptions.style.display = keyOk ? 'none' : 'grid';
+                    if (!keyOk) {
+                        document.getElementById('payDeployBtn').style.display = 'none';
+                        planOptions.innerHTML = '<div class="news-content">Loading available plans...</div>';
+                        try {
+                            const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                            const data = await response.json();
+                            if (!data.success) throw new Error(data.message || 'Could not load plans.');
+                            planOptions.innerHTML = data.plans.map(plan => `<button type="button" class="mgmt-option" data-plan-id="${plan.id}" data-plan-days="${plan.days}" data-plan-amount="${plan.amountNgn}" data-plan-name="${plan.name}"><div><div class="mgmt-option-label">${plan.name}</div><div class="mgmt-option-hint">₦${Number(plan.amountNgn).toLocaleString()} · ${plan.days} days</div></div><span>○</span></button>`).join('');
+                            planOptions.querySelectorAll('[data-plan-id]').forEach(button => {
+                                button.onclick = () => {
+                                    selectedPlan = { id: button.dataset.planId, days: Number(button.dataset.planDays), amount: Number(button.dataset.planAmount), name: button.dataset.planName };
+                                    planOptions.querySelectorAll('[data-plan-id]').forEach(item => { item.style.borderColor = ''; item.style.background = ''; item.querySelector('span').textContent = '○'; });
+                                    button.style.borderColor = '#22c55e';
+                                    button.style.background = 'rgba(34, 197, 94, .15)';
+                                    button.querySelector('span').textContent = '✓';
+                                    document.getElementById('payDeployBtn').style.display = 'block';
+                                };
+                            });
+                        } catch (error) { planOptions.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
+                    }
                 };
                 const submitDeployment = async (forcePayment) => {
                     const result = document.getElementById('deployResult');
-                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim() };
+                    if (forcePayment && !selectedPlan) return;
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), planId: forcePayment ? selectedPlan.id : undefined };
                     result.textContent = 'Creating deployment job...';
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
                         const data = await res.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
                         if (data.paymentRequired && data.paymentUrl) {
-                            result.innerHTML = `Job <strong>${data.jobId}</strong> is awaiting payment. <button type="button" class="support-btn" id="payNowBtn" style="width:auto;margin-top:10px;">OPEN PAYMENT</button><div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
-                            document.getElementById('payNowBtn').onclick = () => tg.openLink(data.paymentUrl);
+                            navigateTo('job', { jobId: data.jobId });
                             tg.openLink(data.paymentUrl);
                         } else {
-                            result.innerHTML = `Job <strong>${data.jobId}</strong> accepted. <div id="jobStatus" class="news-content" style="margin-top:10px;"></div>`;
+                            navigateTo('job', { jobId: data.jobId });
                         }
-                        pollJob(data.jobId);
                     } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
                 };
                 document.getElementById('keyDeployBtn').onclick = () => submitDeployment(false);
@@ -555,7 +583,15 @@
         }
 
         document.getElementById('backBtn').onclick = goBack;
-        navigateTo('dashboard');
+        const returnedJobId = new URLSearchParams(window.location.search).get('job');
+        if (returnedJobId) {
+            state.currentView = 'job';
+            state.selectedBot = { jobId: returnedJobId };
+            renderView('job', state.selectedBot);
+            updateHeader();
+        } else {
+            navigateTo('dashboard');
+        }
     </script>
 </body>
 </html>

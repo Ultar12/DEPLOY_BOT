@@ -134,3 +134,13 @@
 - [x] Replace mini-app Paystack checkout creation with Flutterwave checkout.
 - [x] Update verified Flutterwave completion to start the associated deployment job exactly once.
 - [x] Add regression coverage for Flutterwave checkout and typing-triggered validation.
+
+# Payment Plan Selection and Deployment Conversation Cleanup
+
+- [x] Add payment-plan buttons that visually mark the selected plan before showing Pay and Deploy.
+- [x] Keep deploy-key deployment on its fixed 30-day entitlement without showing payment plans.
+- [x] Persist the selected plan amount and duration in the payment and deployment job records.
+- [x] Return Flutterwave payment users to the mini-app deployment-progress page for their job.
+- [x] Keep the Telegram reply keyboard visible after deployment, cancellation, and main-menu transitions.
+- [x] Delete or replace stale deployment prompts, old session messages, and cancellation messages shown in the deployment flow.
+- [x] Add regression coverage for plans, tracking return, reply-keyboard persistence, and targeted cleanup.

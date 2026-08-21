@@ -55,7 +55,7 @@ test('mini app exposes durable job status and payment-or-key deployment flow', (
   assert.match(botSource, /app\.get\('\/miniapp'/);
   assert.match(servicesSource, /CREATE TABLE IF NOT EXISTS deployment_jobs/);
   assert.doesNotMatch(htmlSource, /saved verified email/);
-  assert.match(htmlSource, /OPEN PAYMENT/);
+  assert.match(htmlSource, /PAY AND DEPLOY/);
   assert.match(htmlSource, /t\.me\/staries1/);
 });
 
@@ -104,9 +104,31 @@ test('mini app payment checkout uses only the verified database email', () => {
 test('mini app creates Flutterwave checkout and resumes the durable job in the verified Flutterwave webhook', () => {
   const botSource = fs.readFileSync('./bot.js', 'utf8');
   assert.match(botSource, /https:\/\/api\.flutterwave\.com\/v3\/payments/);
-  assert.match(botSource, /payment_method, payment_reference\) VALUES[\s\S]*'flutterwave'/);
+  assert.match(botSource, /payment_method, payment_reference, plan_id, plan_days\) VALUES[\s\S]*'flutterwave'/);
   assert.match(botSource, /SELECT user_id, bot_type, app_name, session_id, email, job_id FROM pending_payments/);
   assert.match(botSource, /if \(jobId\) \{[\s\S]*startMiniAppDeploymentJob\(jobId\)/);
+});
+
+test('mini app requires a selected payment plan and returns to its job tracker after payment', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /MINIAPP_PAYMENT_PLANS/);
+  assert.match(botSource, /app\.get\('\/api\/deployment-plans'/);
+  assert.match(botSource, /Select a payment plan before continuing/);
+  assert.match(botSource, /\/miniapp\?job=\$\{encodeURIComponent\(jobId\)\}/);
+  assert.match(botSource, /plan_id, plan_days/);
+  assert.match(botSource, /DAYS: job\.plan_days \|\| 30/);
+  assert.match(htmlSource, /id="planOptions"/);
+  assert.match(htmlSource, /selectedPlan = \{/);
+  assert.match(htmlSource, /button\.style\.borderColor = '#22c55e'/);
+  assert.match(htmlSource, /returnedJobId/);
+  assert.match(htmlSource, /getDeploymentJobHTML/);
+});
+
+test('mini app uses the requested app-name-unavailable message for all name conflicts', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const messageMatches = botSource.match(/Name already exists, use another name\./g) || [];
+  assert.ok(messageMatches.length >= 4);
 });
 
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
@@ -123,4 +145,8 @@ test('private chat lifecycle safely deletes user input and replaces the prior bo
   assert.match(botSource, /bot\.sendMessage = async/);
   assert.match(botSource, /void safelyDeleteMessage\(cid, msg\.message_id\)/);
   assert.match(botSource, /sendReplaceablePrivateVideo\(cid, welcomeVideoUrl/);
+  assert.match(botSource, /bot\.sendPhoto =/);
+  assert.match(botSource, /bot\.sendAnimation =/);
+  assert.match(botSource, /one_time_keyboard: false/);
+  assert.match(botSource, /await safelyDeleteMessage\(cid, q\.message\.message_id\)/);
 });
