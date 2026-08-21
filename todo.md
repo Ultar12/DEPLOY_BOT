@@ -50,3 +50,10 @@
 # Branch Merge Request
 
 - [ ] Merge `free-trial-verification` into `main` and push the updated `main` branch.
+
+# Dependency Update
+
+- [x] Inspect all dependency manifests and available upgrades on `main`.
+- [x] Update all declared dependencies and refresh the lockfile.
+- [x] Run syntax, regression, and dependency integrity checks.
+- [x] Commit and push the validated dependency update to `main`.
