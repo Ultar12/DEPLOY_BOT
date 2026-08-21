@@ -272,6 +272,10 @@
         }
 
         function renderView(viewName, data) {
+            if (viewName !== 'logs' && window.__liveLogPollTimer) {
+                clearInterval(window.__liveLogPollTimer);
+                window.__liveLogPollTimer = null;
+            }
             const container = document.getElementById('view-container');
             switch(viewName) {
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
@@ -406,7 +410,7 @@
         }
 
         function getBotLogsHTML(bot) {
-            return `<div><div class="news-card"><div class="news-title">Latest logs</div><div class="news-content">Recent activity is fetched securely for your bot only.</div></div><div id="logsPanel" class="logs-container">Loading logs...</div></div>`;
+            return `<div><div class="news-card"><div class="news-title">Live logs</div><div class="news-content">New activity appears automatically.</div></div><pre id="logsPanel" class="logs-container">Loading logs...</pre></div>`;
         }
 
         function getDeployHTML() {
@@ -439,13 +443,31 @@
         }
 
         async function loadLogs(bot) {
-            const container = document.getElementById('view-container');
-            try {
-                const res = await fetch(`${API_BASE_URL}/bots/logs/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-                const data = await res.json();
-                if (!data.success) throw new Error(data.message || 'Could not load logs.');
-                container.innerHTML += `<div class="section-title">Latest output</div><pre class="logs-container">${String(data.logs || 'No recent logs.').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre><div class="news-content" style="margin-top:10px;">Refresh the page to fetch the latest activity.</div>`;
-            } catch (e) { tg.showAlert(e.message || 'Failed to load logs.'); }
+            if (window.__liveLogPollTimer) clearInterval(window.__liveLogPollTimer);
+            let latestLogs = null;
+            let requestInFlight = false;
+            const refreshLogs = async () => {
+                if (requestInFlight || state.currentView !== 'logs') return;
+                requestInFlight = true;
+                try {
+                    const res = await fetch(`${API_BASE_URL}/bots/logs/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.message || 'Could not load logs.');
+                    const logs = String(data.logs || 'No recent logs.');
+                    const panel = document.getElementById('logsPanel');
+                    if (panel && logs !== latestLogs) {
+                        latestLogs = logs;
+                        panel.textContent = logs;
+                        panel.scrollTop = panel.scrollHeight;
+                    }
+                } catch (error) {
+                    if (latestLogs === null) tg.showAlert(error.message || 'Failed to load logs.');
+                } finally {
+                    requestInFlight = false;
+                }
+            };
+            await refreshLogs();
+            window.__liveLogPollTimer = setInterval(refreshLogs, 4000);
         }
 
         function attachEventListeners() {

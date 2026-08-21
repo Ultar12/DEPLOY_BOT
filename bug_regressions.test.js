@@ -229,3 +229,27 @@ test('private chat lifecycle preserves messages and replaces uneditable bot scre
   assert.match(botSource, /Message could not be edited; sending a replacement message instead/);
   assert.match(botSource, /message can't be edited\|message to edit not found/);
 });
+
+test('mini app uses concise invalid-session feedback and automatically updates live logs', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  const sessionRoute = botSource.slice(botSource.indexOf("app.post('/api/bots/set-session'"), botSource.indexOf("app.post('/api/bots/turn-off'"));
+  assert.match(sessionRoute, /message: 'Invalid session\.'/);
+  assert.doesNotMatch(sessionRoute, /message: validationError/);
+  assert.match(htmlSource, /Live logs/);
+  assert.match(htmlSource, /setInterval\(refreshLogs, 4000\)/);
+  assert.match(htmlSource, /panel\.scrollTop = panel\.scrollHeight/);
+  assert.doesNotMatch(htmlSource, /Refresh the page to fetch the latest activity\./);
+});
+
+test('invalid provider credentials trigger bounded automatic TLS and mass recovery', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /invalidCredential = status === 401/);
+  assert.match(botSource, /handleInvalidHerokuKeyWorkflow\(HEROKU_API_KEY\)/);
+  assert.match(botSource, /updateRenderVar\('HEROKU_API_KEY', newKey, false\)/);
+  assert.match(botSource, /const tlsResult = await deployTlsStack\(ADMIN_ID, \{ restartRender: false \}\)/);
+  assert.match(botSource, /TLS deployment failed:/);
+  assert.match(botSource, /existingRecovery/);
+  assert.match(botSource, /void runScheduledRecoveryCheck\(\)/);
+  assert.match(botSource, /async function deployTlsStack\(adminId, \{ restartRender = true \} = \{\}\)/);
+});

@@ -180,3 +180,16 @@
 - [x] Prevent unhandled message-not-editable errors in user-bot button flows.
 - [x] Verify My Bots and primary user-bot button loading after the rollback.
 - [x] Add regression coverage for non-destructive flow and safe edit fallback.
+
+# Live Logs and Provider-Key Recovery
+
+- [x] Simplify Change Session failures to concise invalid-session feedback.
+- [x] Replace manual log refreshing with automatically appended live log updates.
+- [x] Audit database key storage, invalid-key detection, deploy TLS commands, silentrestore, and restore-all capabilities.
+- [x] Define a bounded, idempotent provider-key recovery workflow with administrator notification and recovery locking.
+- [x] Add regression coverage for concise validation feedback and live-log updating.
+
+- [x] Run the TLS deployment automatically after a verified replacement provider key is activated.
+- [x] Start the established mass restore automatically after successful TLS deployment, with no confirmation prompt.
+- [x] Preserve recovery locking, administrator notifications, database key retirement, and failure-safe maintenance mode.
+- [x] Add regression coverage for the approved automatic full recovery order.

@@ -2701,20 +2701,30 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
         // 4. Update the HEROKU_API_KEY on Render (this also propagates the
         // new key to every in-memory copy immediately, per updateRenderVar,
         // and separately triggers the restart)
-        const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey);
+        const updateResult = await updateRenderVar('HEROKU_API_KEY', newKey, false);
         if (!updateResult.success) {
             throw new Error(`Failed to update Render environment variable: ${updateResult.message}`);
         }
-        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render, and propagated it to the running process. A new deployment has also been triggered to persist the new key.");
+        await bot.sendMessage(ADMIN_ID, "Successfully updated the `HEROKU_API_KEY` on Render and propagated it to the running process. Starting TLS deployment before full bot recovery.");
 
         // 5. Delete the used key from the database — only now that we know
         // it's verified working and already live.
         await pool.query("DELETE FROM heroku_api_keys WHERE id = $1", [newKeyId]);
         console.log('[Recovery] Deleted the newly used key from the database.');
 
-        // 6. Schedule the Mass Restore in the database for 5 minutes from now
-        const delayMinutes = 5;
-        const scheduledTime = new Date(Date.now() + delayMinutes * 60 * 1000);
+        // 6. Rebuild the TLS stack with the verified key before restoring user bots.
+        const tlsResult = await deployTlsStack(ADMIN_ID, { restartRender: false });
+        if (!tlsResult.success) {
+            throw new Error(`TLS deployment failed: ${tlsResult.error || 'Unknown TLS deployment error'}`);
+        }
+
+        // 7. Schedule one immediate, durable full restore. The row survives process restarts.
+        const existingRecovery = await pool.query("SELECT id FROM recovery_schedule WHERE task_name = 'MASS_RESTORE' AND status IN ('PENDING', 'RUNNING') LIMIT 1");
+        if (existingRecovery.rows.length) {
+            await bot.sendMessage(ADMIN_ID, `TLS deployment completed. Existing mass recovery task \`${existingRecovery.rows[0].id}\` remains active.`, { parse_mode: 'Markdown' });
+            return;
+        }
+        const scheduledTime = new Date();
 
         await pool.query(
             `INSERT INTO recovery_schedule (task_name, scheduled_at, status) 
@@ -2722,8 +2732,8 @@ async function handleInvalidHerokuKeyWorkflow(failingKey) {
             ['MASS_RESTORE', scheduledTime, 'PENDING']
         );
         
-        // 7. Notify admin about the persistent wait
-        await bot.sendMessage(ADMIN_ID, `The new key is already live in this process. A **Mass Restore** is scheduled to begin in **${delayMinutes} minutes** (${scheduledTime.toLocaleTimeString()}). This schedule is saved in the database and will survive any restart.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(ADMIN_ID, `TLS deployment completed. **Mass Restore** is starting now. The recovery task is saved in the database and will survive a restart.`, { parse_mode: 'Markdown' });
+        void runScheduledRecoveryCheck();
 
     } catch (error) {
         console.error('[Recovery] CRITICAL ERROR during recovery workflow:', error);
@@ -2747,6 +2757,19 @@ herokuApi.interceptors.request.use((config) => {
     config.headers['Authorization'] = `Bearer ${HEROKU_API_KEY}`;
     return config;
 });
+
+herokuApi.interceptors.response.use(
+    response => response,
+    error => {
+        const status = error.response?.status;
+        const requestUrl = String(error.config?.url || '');
+        const invalidCredential = status === 401 || (status === 403 && requestUrl.includes('/account'));
+        if (invalidCredential) {
+            void handleInvalidHerokuKeyWorkflow(HEROKU_API_KEY);
+        }
+        return Promise.reject(error);
+    }
+);
 
 
 
@@ -4912,7 +4935,7 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
         const { bot_type: botType, status } = ownerCheck.rows[0];
         if (status !== 'logged_out' && status !== 'offline') return res.status(409).json({ success: false, message: 'Session replacement is available only while this bot is offline.' });
         const validationError = validateMiniAppDeploymentInput(botType, 'valid-session-name', normalizedSession);
-        if (validationError && !validationError.startsWith('App name')) return res.status(400).json({ success: false, message: validationError });
+        if (validationError && !validationError.startsWith('App name')) return res.status(400).json({ success: false, message: 'Invalid session.' });
         await herokuApi.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { SESSION_ID: normalizedSession }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
         await pool.query('UPDATE user_bots SET session_id = $1, status = $2 WHERE bot_name = $3 AND user_id = $4', [normalizedSession, 'restarting', appName, userId]);
         await pool.query('UPDATE user_deployments SET session_id = $1 WHERE app_name = $2 AND user_id = $3', [normalizedSession, appName, userId]);
@@ -7300,14 +7323,12 @@ bot.onText(/^\/dellogout$/, async (msg) => {
 
 
 
-bot.onText(/^\/deploytls$/, async (msg) => {
-    const adminId = msg.chat.id.toString();
-    if (adminId !== ADMIN_ID) return;
-
+async function deployTlsStack(adminId, { restartRender = true } = {}) {
     const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY, MESSAGE_BOT_API_KEY } = process.env;
     
     if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY) {
-        return bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
+        await bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
+        return { success: false, error: 'TLS deployment prerequisites are missing.' };
     }
 
     const progressMsg = await bot.sendMessage(adminId, "Starting TLS Stack Deployment (3 Apps)...");
@@ -7382,11 +7403,11 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         await bot.editMessageText("Finalizing: Updating Render variables and restarting...", { chat_id: adminId, message_id: progressMsg.message_id });
 
         // Update Render variables
-        await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl);
-        await updateRenderVar('PAIRING_URL', scraperUrl);
+        await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl, false);
+        await updateRenderVar('PAIRING_URL', scraperUrl, false);
 
-        // Explicitly trigger Render restart
-        await triggerRenderRestart();
+        // Explicitly trigger Render restart only for the manual command.
+        if (restartRender) await triggerRenderRestart();
 
         await bot.editMessageText(
             "Full TLS Stack Deployed Successfully\n\n" +
@@ -7394,9 +7415,10 @@ bot.onText(/^\/deploytls$/, async (msg) => {
             "Scraper Bot: Configured with APP_URL = " + messageBotUrl + "\n" +
             "PAIRING_URL set to: " + scraperUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
-            "Render is restarting to apply the new links.", 
+            (restartRender ? "Render is restarting to apply the new links." : "Recovery will restart Render after bot restoration."),
             { chat_id: adminId, message_id: progressMsg.message_id }
         );
+        return { success: true, messageBotUrl, scraperUrl, emailServiceUrl };
 
     } catch (error) {
         console.error(error);
@@ -7404,7 +7426,14 @@ bot.onText(/^\/deploytls$/, async (msg) => {
         await bot.editMessageText("Deployment Failed\n\nReason: " + errDetails, {
             chat_id: adminId, message_id: progressMsg.message_id
         });
+        return { success: false, error: errDetails };
     }
+}
+
+bot.onText(/^\/deploytls$/, async (msg) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+    await deployTlsStack(adminId);
 });
 
 
