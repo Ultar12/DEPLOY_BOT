@@ -125,3 +125,12 @@
 - [x] Add safe cleanup of private user command messages where deletion is permitted.
 - [x] Reuse or replace prior bot menu/status messages instead of accumulating new messages.
 - [x] Add regression checks for verified-email checkout and safe message cleanup.
+
+# Flutterwave Checkout and Live Validation Refinement
+
+- [x] Change unavailable or taken app-name feedback to “Name already exists, use another name.”
+- [x] Trigger app name, session ID, and deploy key validation while users type, using debounced requests.
+- [x] Remove the saved-email explanatory copy from the payment option.
+- [x] Replace mini-app Paystack checkout creation with Flutterwave checkout.
+- [x] Update verified Flutterwave completion to start the associated deployment job exactly once.
+- [x] Add regression coverage for Flutterwave checkout and typing-triggered validation.

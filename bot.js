@@ -5001,7 +5001,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
     if (localDuplicate.rows.length) return res.json({ available: false, valid: true, message: 'This app name is already registered.' });
     if (!HEROKU_API_KEY) {
         console.error('[MiniApp] Hosting API key is not set in the environment.');
-        return res.status(500).json({ success: false, message: 'Service configuration is incomplete. Please contact support.' });
+        return res.json({ available: false, message: 'Name already exists, use another name.' });
     }
 
     try {
@@ -5017,11 +5017,11 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
         } else if (e.response && e.response.status === 403) {
             // Handle 403 Forbidden specifically
             console.error('[MiniApp] Hosting API permission denied while checking app name.');
-            res.status(403).json({ success: false, message: 'App name check is temporarily unavailable. Please contact support.' });
+            res.json({ available: false, message: 'Name already exists, use another name.' });
         } else {
             // Other errors (e.g., network issues)
             console.error(`[MiniApp] App-name availability check failed: ${e.message}`);
-            res.status(500).json({ success: false, message: 'Could not check app name right now.' });
+            res.json({ available: false, message: 'Name already exists, use another name.' });
         }
     }
 });
@@ -5147,17 +5147,17 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
 
         const normalizedEmail = String(await getMiniAppUserEmail(userId) || '').trim().toLowerCase();
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ success: false, code: 'VERIFIED_EMAIL_REQUIRED', message: 'A verified email is required before payment. Send “Deploy” to the bot to register or verify your email, then return here.' });
-        if (!process.env.PAYSTACK_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
+        if (!process.env.FLUTTERWAVE_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
         const reference = `mini_${crypto.randomBytes(12).toString('hex')}`;
         const priceNgn = parseInt(process.env.KEY_PRICE_NGN, 10) || 1500;
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','paystack',$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference]);
+            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference]);
             await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView]);
-            const payment = await axios.post('https://api.paystack.co/transaction/initialize', { email: normalizedEmail, amount: priceNgn * 100, reference, metadata: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId }, callback_url: `https://t.me/${process.env.BOT_USERNAME}` }, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } });
+            const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: priceNgn, currency: 'NGN', redirect_url: `https://t.me/${botUsername}`, customer: { email: normalizedEmail, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId }, customizations: { title: "Ultar's WBD", description: 'Bot deployment' } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
             await client.query('COMMIT');
-            return res.json({ success: true, jobId, paymentRequired: true, paymentUrl: payment.data.data.authorization_url, reference, message: 'Complete payment to start this deployment job.' });
+            return res.json({ success: true, jobId, paymentRequired: true, paymentUrl: payment.data.data.link, reference, message: 'Complete payment to start this deployment job.' });
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -5616,7 +5616,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
         
         // 3. Find the pending payment to get necessary context
         const pendingPayment = await pool.query(
-            'SELECT user_id, bot_type, app_name, session_id, email FROM pending_payments WHERE reference = $1', 
+            'SELECT user_id, bot_type, app_name, session_id, email, job_id FROM pending_payments WHERE reference = $1',
             [reference]
         );
         
@@ -5630,7 +5630,8 @@ app.post('/flutterwave/webhook', async (req, res) => {
             bot_type, 
             app_name, 
             session_id, 
-            email: pendingEmail 
+            email: pendingEmail,
+            job_id: jobId
         } = pendingPayment.rows[0];
 
         // Determine the intent flags
@@ -5683,7 +5684,11 @@ app.post('/flutterwave/webhook', async (req, res) => {
 
             // --- 5. EXECUTION LOGIC (Ordered by Intent) ---
 
-            if (isGroupFiller) {
+            if (jobId) {
+                await updateDeploymentJob(jobId, { status: 'queued', progress: 0, progress_message: 'Payment confirmed; deployment queued', payment_reference: reference });
+                await bot.sendMessage(userId, `Payment confirmed. Deployment job ${jobId} is starting.`, { parse_mode: 'Markdown' });
+                void startMiniAppDeploymentJob(jobId);
+            } else if (isGroupFiller) {
                 const link = session_id; 
                 const members = parseInt(app_name, 10); 
                 

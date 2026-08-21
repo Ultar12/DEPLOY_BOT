@@ -475,6 +475,7 @@
                 const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
                 const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
                 const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
+                const debounce = (fn, delay = 450) => { let timer; return () => { clearTimeout(timer); timer = setTimeout(fn, delay); }; };
                 const checkName = async () => {
                     const name = fields.name.value.trim().toLowerCase();
                     if (!name) return setState(states.name, false, 'Enter an app name');
@@ -502,10 +503,10 @@
                     setState(states.key, data.valid === true, data.message || (data.valid ? 'Key is valid' : 'Invalid or expired key'));
                     return data.valid === true;
                 };
-                fields.name.addEventListener('blur', checkName);
-                fields.session.addEventListener('blur', checkSession);
+                fields.name.addEventListener('input', debounce(checkName));
+                fields.session.addEventListener('input', debounce(checkSession));
                 fields.type.addEventListener('change', checkSession);
-                fields.key.addEventListener('blur', checkKey);
+                fields.key.addEventListener('input', debounce(checkKey));
                 document.getElementById('saveNextBtn').onclick = async () => {
                     const [nameOk, sessionOk] = await Promise.all([checkName(), checkSession()]);
                     if (!nameOk || !sessionOk) return;
@@ -513,7 +514,7 @@
                     if (fields.key.value.trim() && !keyOk) return;
                     document.getElementById('deployOptions').style.display = 'block';
                     document.getElementById('wizardActions').style.display = 'none';
-                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : 'Your saved verified email will be used to create a secure payment link.';
+                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : '';
                     document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
                     document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
                 };

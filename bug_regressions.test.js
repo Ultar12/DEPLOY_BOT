@@ -54,7 +54,7 @@ test('mini app exposes durable job status and payment-or-key deployment flow', (
   assert.match(botSource, /app\.get\('\/api\/deployment-jobs\/:jobId'/);
   assert.match(botSource, /app\.get\('\/miniapp'/);
   assert.match(servicesSource, /CREATE TABLE IF NOT EXISTS deployment_jobs/);
-  assert.match(htmlSource, /saved verified email/);
+  assert.doesNotMatch(htmlSource, /saved verified email/);
   assert.match(htmlSource, /OPEN PAYMENT/);
   assert.match(htmlSource, /t\.me\/staries1/);
 });
@@ -78,6 +78,9 @@ test('mini app uses a validation-first deployment wizard', () => {
   assert.match(htmlSource, /DEPLOY WITH KEY/);
   assert.match(htmlSource, /PAY AND DEPLOY/);
   assert.match(htmlSource, /if \(fields\.key\.value\.trim\(\) && !keyOk\) return/);
+  assert.match(htmlSource, /addEventListener\('input', debounce\(checkName\)\)/);
+  assert.match(htmlSource, /addEventListener\('input', debounce\(checkSession\)\)/);
+  assert.match(htmlSource, /addEventListener\('input', debounce\(checkKey\)\)/);
 });
 
 test('mini app dashboard exposes neutral bot menus and remaining days', () => {
@@ -94,8 +97,16 @@ test('mini app payment checkout uses only the verified database email', () => {
   assert.match(botSource, /VERIFIED_EMAIL_REQUIRED/);
   assert.match(botSource, /String\(await getMiniAppUserEmail\(userId\) \|\| ''\)/);
   assert.doesNotMatch(htmlSource, /id="deployEmail"/);
-  assert.match(htmlSource, /Your saved verified email will be used to create a secure payment link/);
+  assert.doesNotMatch(htmlSource, /saved verified email/);
   assert.match(htmlSource, /tg\.openLink\(data\.paymentUrl\)/);
+});
+
+test('mini app creates Flutterwave checkout and resumes the durable job in the verified Flutterwave webhook', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  assert.match(botSource, /https:\/\/api\.flutterwave\.com\/v3\/payments/);
+  assert.match(botSource, /payment_method, payment_reference\) VALUES[\s\S]*'flutterwave'/);
+  assert.match(botSource, /SELECT user_id, bot_type, app_name, session_id, email, job_id FROM pending_payments/);
+  assert.match(botSource, /if \(jobId\) \{[\s\S]*startMiniAppDeploymentJob\(jobId\)/);
 });
 
 test('mini app database bootstrap includes job-payment columns required by deployment creation', () => {
