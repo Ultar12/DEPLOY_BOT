@@ -1186,6 +1186,54 @@ const allowedVariables = [
     'SUDO' 
 ];
 
+const AI_ALLOWED_INTENTS = new Set([
+    'RESTART_BOT', 'CHECK_STATUS', 'UPDATE_VARIABLE', 'GET_LINK',
+    'TROUBLESHOOT', 'ESCALATE_TO_ADMIN', 'DEPLOY_HELP', 'RENEWAL_HELP',
+    'GENERAL_SUPPORT', 'ASK_USER'
+]);
+const AI_EXECUTABLE_INTENTS = new Set(['RESTART_BOT', 'CHECK_STATUS', 'UPDATE_VARIABLE']);
+const AI_ALLOWED_ACTIONS = new Set(['EXECUTE', 'RESPOND', 'PROMPT_USER']);
+
+const AI_BRAIN_POLICY = `
+You are the support assistant for a bot deployment service. Return one valid JSON object only.
+Schema: {"intent":"...","action":"EXECUTE|RESPOND|PROMPT_USER","response":"...","actionData":{"botName":"","variable":"","value":"","botType":""}}.
+Use only these intents: RESTART_BOT, CHECK_STATUS, UPDATE_VARIABLE, GET_LINK, TROUBLESHOOT, ESCALATE_TO_ADMIN, DEPLOY_HELP, RENEWAL_HELP, GENERAL_SUPPORT, ASK_USER.
+The USER DATA block is authoritative. Never invent a bot name, subscription date, status, link, payment state, or successful action. Use a botName only when it exactly matches a bot in USER DATA. For RESTART_BOT and UPDATE_VARIABLE, set action to EXECUTE only when all required details are present; otherwise use PROMPT_USER and ask one concise question. Never expose keys, sessions, passwords, tokens, or infrastructure/provider names. Keep response under 500 characters and use simple, helpful language.`;
+
+function parseAndValidateAiResponse(rawContent) {
+    if (typeof rawContent !== 'string' || !rawContent.trim()) return null;
+    try {
+        const parsed = JSON.parse(rawContent.replace(/```json|```/gi, '').trim());
+        if (!parsed || typeof parsed !== 'object') return null;
+        const intent = String(parsed.intent || 'GENERAL_SUPPORT').toUpperCase();
+        const action = String(parsed.action || 'RESPOND').toUpperCase();
+        if (!AI_ALLOWED_INTENTS.has(intent) || !AI_ALLOWED_ACTIONS.has(action)) return null;
+        const actionData = parsed.actionData && typeof parsed.actionData === 'object' && !Array.isArray(parsed.actionData) ? parsed.actionData : {};
+        const response = String(parsed.response || '').replace(/\u0000/g, '').trim().slice(0, 500);
+        return {
+            intent,
+            action,
+            response: response || 'Please choose an option from the menu or tell me what you would like to do.',
+            actionData: {
+                botName: actionData.botName ? String(actionData.botName).trim().toLowerCase() : '',
+                variable: actionData.variable ? String(actionData.variable).trim().toUpperCase() : '',
+                value: actionData.value === undefined || actionData.value === null ? '' : String(actionData.value),
+                botType: actionData.botType ? String(actionData.botType).trim().toLowerCase() : ''
+            }
+        };
+    } catch {
+        return null;
+    }
+}
+
+function buildAiUserContext(userBots, deployments, userMessage) {
+    return JSON.stringify({
+        userBots: userBots.map(botInfo => ({ name: botInfo.bot_name, type: botInfo.bot_type, status: botInfo.status })),
+        deployments: deployments.map(deployment => ({ name: deployment.app_name, expiresAt: deployment.expiration_date })),
+        message: String(userMessage || '').replace(/\u0000/g, '').trim().slice(0, 2000)
+    });
+}
+
 /**
  * AUTONOMOUS GEMINI BRAIN - Enhanced to handle requests without user intervention
  * - Aware of all bot core logic (deployment, verification, payments, etc.)
@@ -1205,24 +1253,20 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         ]);
 
         const userBots = botsRes.rows;
-        const botCtx = userBots.length > 0 
-            ? userBots.map(b => `${b.bot_name} (${b.bot_type}: ${b.status})`).join(', ') 
-            : 'None';
-            
-        const deployCtx = deploymentsRes.rows.length > 0
-            ? deploymentsRes.rows.map(d => `${d.app_name} expires ${d.expiration_date}`).join(', ')
-            : 'None';
+        const userContext = buildAiUserContext(userBots, deploymentsRes.rows, userMessage);
 
-        // 2. Call Groq with Context
+        // 2. Call Groq with verified user context and strict output requirements.
         let completion;
         try {
             completion = await groq.chat.completions.create({
                 messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content: `CONTEXT: Bots: [${botCtx}], Expiry: [${deployCtx}]. MESSAGE: "${userMessage}"` }
+                    { role: "system", content: `${SYSTEM_PROMPT}\n\n${AI_BRAIN_POLICY}` },
+                    { role: "user", content: `USER DATA (trusted JSON): ${userContext}` }
                 ],
                 model: "llama-3.3-70b-versatile",
-                response_format: { type: "json_object" } 
+                response_format: { type: "json_object" },
+                temperature: 0.25,
+                max_tokens: 450
             });
         } catch (groqError) {
             console.error('[Groq API Error]', groqError.response?.data || groqError.message);
@@ -1231,32 +1275,30 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             throw groqError; // still bubble up to outer catch for the user-facing fallback
         }
 
-        let aiResponse;
         const rawContent = completion.choices[0].message.content;
-
-        try {
-            const cleanText = rawContent.replace(/```json|```/g, "").trim();
-            aiResponse = JSON.parse(cleanText);
-        } catch (e) {
-            console.error('[JSON Parse Error] Groq sent non-JSON:', rawContent);
-            return bot.sendMessage(chatId, rawContent); 
+        const aiResponse = parseAndValidateAiResponse(rawContent);
+        if (!aiResponse) {
+            console.error('[AI Response Error] Model returned an invalid decision payload.');
+            return bot.sendMessage(chatId, 'I could not understand that request clearly. Please use the menu or tell me the bot name and what you need.');
         }
 
         console.log(`[AI Brain] Intent: ${aiResponse.intent} | Action: ${aiResponse.action}`);
 
-        if (aiResponse.action === 'EXECUTE') {
-            const targetBot = aiResponse.actionData?.botName;
-            
-            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
-                const ownsBot = userBots.some(b => b.bot_name === targetBot);
-                if (!ownsBot) return bot.sendMessage(chatId, "You don't appear to own a bot with that name.");
+        const targetBot = aiResponse.actionData.botName;
+        if (targetBot && !userBots.some(botInfo => botInfo.bot_name === targetBot)) {
+            return bot.sendMessage(chatId, "I couldn't find that bot in your account. Please choose one from My Bots or check the bot name.");
+        }
 
+        if (aiResponse.action === 'EXECUTE') {
+            if (aiResponse.intent === 'RESTART_BOT' && targetBot) {
                 await herokuApi.delete(`/apps/${targetBot}/dynos`, { 
                     headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } 
                 });
                 return bot.sendMessage(chatId, `Restart command sent for **${targetBot}**.`, { parse_mode: 'Markdown' });
             }
-            
+            if (!AI_EXECUTABLE_INTENTS.has(aiResponse.intent)) {
+                return bot.sendMessage(chatId, aiResponse.response);
+            }
             return executeGeminiAction(chatId, aiResponse);
         }
 
@@ -1276,14 +1318,13 @@ async function handleFallbackWithGemini(chatId, userMessage) {
             });
         }
 
-        const finalMessage = aiResponse.response || "I'm not sure how to help with that, contact support @staries1.";
-        return bot.sendMessage(chatId, finalMessage, { parse_mode: 'Markdown' });
+        return bot.sendMessage(chatId, aiResponse.response);
 
     } catch (error) {
         // 🔧 Log full detail, and tell the admin exactly what broke
         console.error('[Brain Error]', error.response?.data || error.stack || error.message);
         await bot.sendMessage(ADMIN_ID, `⚠️ AI Brain error for user \`${chatId}\`:\n\`\`\`\n${String(error.message).substring(0, 500)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
-        return bot.sendMessage(chatId, "⚠️ I encountered an error. Please try again or use the menu.");
+        return bot.sendMessage(chatId, "I couldn't complete that right now. Please try again, use the menu, or contact @staries1.");
     }
 }
 

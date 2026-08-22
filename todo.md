@@ -218,3 +218,10 @@
 - [x] Remove YT-DLP-related code, commands, and dependencies from the repository.
 - [x] Suspend expired bots for 24 hours with dynos stopped, then permanently delete unresolved suspended bots.
 - [x] Add regression coverage for pairing UI state, Raganork repair, YT-DLP removal, and 24-hour expiry lifecycle.
+
+# Raganork Service Repair, Button Styling, and AI Upgrade
+
+- [x] Repair the deployed Raganork pairing service so browser connection checks support its runtime object shape.
+- [x] Apply semantic, accessible blue, green, and red button styles across the mini-app actions.
+- [x] Improve the bot AI’s intent routing, structured response validation, user-context handling, and reliable fallback behavior.
+- [x] Add regression coverage and validate all changed JavaScript before synchronizing both DEPLOY_BOT branches.
