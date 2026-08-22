@@ -258,7 +258,7 @@
         }
 
         function updateHeader() {
-            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment' };
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'session': 'Get Session' };
             document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
             document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
         }
@@ -276,6 +276,10 @@
                 clearInterval(window.__liveLogPollTimer);
                 window.__liveLogPollTimer = null;
             }
+            if (viewName !== 'session' && window.__sessionRequestPollTimer) {
+                clearInterval(window.__sessionRequestPollTimer);
+                window.__sessionRequestPollTimer = null;
+            }
             const container = document.getElementById('view-container');
             switch(viewName) {
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
@@ -284,6 +288,7 @@
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
                 case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
+                case 'session': container.innerHTML = getSessionHTML(); break;
             }
             attachEventListeners();
             if (viewName === 'dashboard') loadDashboard();
@@ -313,6 +318,7 @@
                     <div class="section-title">Actions</div>
                     <div class="management-grid">
                         <div class="mgmt-option deploy-cta" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
+                        <div class="mgmt-option" data-action="navigate" data-view="session"><div><div class="mgmt-option-label">Get Session</div><div class="mgmt-option-hint">Generate a session ID securely in this app</div></div><span>→</span></div>
                     </div>
                     <div class="section-title">Your Bots</div>
                     <div class="bot-list" id="botList">Loading bots...</div>
@@ -431,6 +437,10 @@
             return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
         }
 
+        function getSessionHTML() {
+            return `<form id="sessionRequestForm" class="management-grid"><div class="news-card"><div class="news-title">Get Session</div><div class="news-content">Select your bot type, enter your WhatsApp number in international format, then complete the pairing request. Your session ID appears here for copying.</div></div><label class="section-title" style="margin:0;">Bot type<select id="sessionBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="levanter">Levanter</option><option value="raganork">Raganork</option></select></label><label class="section-title" style="margin:0;">WhatsApp number<input id="sessionPhoneNumber" inputmode="tel" required placeholder="2349160000000" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label><button class="support-btn" type="submit">REQUEST SESSION</button><div id="sessionRequestResult" class="news-content"></div></form>`;
+        }
+
         async function loadVariables(bot) {
             const container = document.getElementById('view-container');
             try {
@@ -487,6 +497,20 @@
                     fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
                     return;
                 }
+                if (act === 'copy-session') {
+                    const sessionId = btn.dataset.session || '';
+                    const fallback = () => {
+                        const area = document.createElement('textarea');
+                        area.value = sessionId;
+                        document.body.appendChild(area);
+                        area.select();
+                        document.execCommand('copy');
+                        area.remove();
+                    };
+                    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(sessionId).catch(fallback); else fallback();
+                    tg.showAlert('Session ID copied.');
+                    return;
+                }
                 if (act === 'support') {
                     tg.openTelegramLink('https://t.me/staries1');
                 }
@@ -526,7 +550,7 @@
                     setState(states.name, false, 'Checking...');
                     const response = await fetch(`${API_BASE_URL}/check-app-name/${encodeURIComponent(name)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                     const data = await response.json();
-                    setState(states.name, data.available === true, data.available ? 'Name is available' : (data.message || 'Name is unavailable'));
+                    setState(states.name, data.available === true, data.available ? 'Name is available' : 'This name already exists, try a different name.');
                     return data.available === true;
                 };
                 const checkSession = async () => {
@@ -604,6 +628,53 @@
                 document.getElementById('keyDeployBtn').onclick = () => submitDeployment(false);
                 document.getElementById('payDeployBtn').onclick = () => submitDeployment(true);
                 deployForm.onsubmit = (event) => { event.preventDefault(); submitDeployment(false); };
+            }
+            const sessionRequestForm = document.getElementById('sessionRequestForm');
+            if (sessionRequestForm) {
+                const result = document.getElementById('sessionRequestResult');
+                const renderRequest = request => {
+                    if (request.status === 'pairing_code') {
+                        result.innerHTML = `<div class="news-card"><div class="news-title">Pairing code ready</div><div class="news-content">Enter this code in WhatsApp linked devices:</div><div id="pairingCode" style="font-size:1.35em;letter-spacing:.08em;margin:12px 0;font-weight:700;"></div></div>`;
+                        document.getElementById('pairingCode').textContent = request.pairingCode || '';
+                    } else if (request.status === 'completed') {
+                        result.innerHTML = `<div class="news-card"><div class="news-title">Session ID ready</div><textarea id="generatedSessionId" readonly style="display:block;width:100%;min-height:110px;margin-top:10px;padding:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></textarea><button class="support-btn" data-action="copy-session" data-session="">COPY SESSION ID</button></div>`;
+                        const area = document.getElementById('generatedSessionId');
+                        area.value = request.sessionId || '';
+                        result.querySelector('[data-action="copy-session"]').dataset.session = request.sessionId || '';
+                    } else if (request.status === 'failed') {
+                        result.textContent = request.error || 'Could not generate a session. Please try again.';
+                    } else {
+                        result.textContent = 'Waiting for pairing service...';
+                    }
+                };
+                const pollSessionRequest = async requestId => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/session-requests/${encodeURIComponent(requestId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Session request unavailable.');
+                        renderRequest(data.request);
+                        if (['completed', 'failed'].includes(data.request.status) && window.__sessionRequestPollTimer) {
+                            clearInterval(window.__sessionRequestPollTimer);
+                            window.__sessionRequestPollTimer = null;
+                        }
+                    } catch (error) {
+                        result.textContent = error.message || 'Session request unavailable.';
+                    }
+                };
+                sessionRequestForm.onsubmit = async event => {
+                    event.preventDefault();
+                    const botType = document.getElementById('sessionBotType').value;
+                    const number = document.getElementById('sessionPhoneNumber').value.trim();
+                    result.textContent = 'Requesting pairing...';
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/session-requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ botType, number }) });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Could not start session request.');
+                        await pollSessionRequest(data.requestId);
+                        if (window.__sessionRequestPollTimer) clearInterval(window.__sessionRequestPollTimer);
+                        window.__sessionRequestPollTimer = setInterval(() => pollSessionRequest(data.requestId), 2500);
+                    } catch (error) { result.textContent = error.message || 'Could not start session request.'; }
+                };
             }
         }
         async function pollJob(jobId) {

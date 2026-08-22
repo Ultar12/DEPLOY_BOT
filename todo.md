@@ -201,3 +201,11 @@
 - [x] Ensure TLS Message Bot, Scraper Bot, and Email Service do not receive expiration metadata.
 - [x] Exempt the administrator from email verification for administrator actions.
 - [x] Add regression coverage for recovery silence, key-entry action, non-expiring support apps, and admin verification bypass.
+
+# Mini-App Session Generator and Name Feedback
+
+- [x] Standardize all mini-app unavailable-name failures as “This name already exists, try a different name.”
+- [x] Add a mini-app Get Session entry point with supported bot-type selection and number entry.
+- [x] Generate session data inside the mini app and provide a copyable session ID without sending it to the user’s Telegram chat.
+- [x] Notify only the administrator when a mini-app session generation request succeeds or fails.
+- [x] Add regression coverage for name feedback, session-generation access controls, copyable session output, and administrator-only alerts.

@@ -275,3 +275,20 @@ test('TLS support apps remain non-expiring and the administrator bypasses email 
   assert.match(tlsSection, /scr-tls-/);
   assert.match(tlsSection, /msg-tls-/);
 });
+
+test('Telegram name feedback and mini-app session generation use requested user-safe channels', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  assert.match(botSource, /This name already exists, try a different name\./);
+  assert.match(botSource, /app\.post\('\/api\/session-requests', validateWebAppInitData/);
+  assert.match(botSource, /app\.get\('\/api\/session-requests\/:requestId', validateWebAppInitData/);
+  assert.match(botSource, /miniAppSessionRequests/);
+  assert.match(botSource, /Mini-app session generated/);
+  assert.match(botSource, /if \(miniRequest\)/);
+  assert.doesNotMatch(botSource.slice(botSource.indexOf("app.post('/api/raganork-callback'"), botSource.indexOf("app.post('/flutterwave/webhook'")), /presentSessionApplyOptions\(miniRequest/);
+  assert.match(htmlSource, /Get Session/);
+  assert.match(htmlSource, /sessionRequestForm/);
+  assert.match(htmlSource, /session-requests/);
+  assert.match(htmlSource, /COPY SESSION ID/);
+  assert.match(htmlSource, /copy-session/);
+});

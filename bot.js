@@ -5166,6 +5166,44 @@ app.get('/api/support', validateWebAppInitData, (req, res) => {
     res.json({ success: true, handle: `@${MINIAPP_SUPPORT_HANDLE}`, url: `https://t.me/${MINIAPP_SUPPORT_HANDLE}` });
 });
 
+app.post('/api/session-requests', validateWebAppInitData, async (req, res) => {
+    const userId = String(req.telegramData.id);
+    const botType = String(req.body?.botType || '').toLowerCase();
+    const number = String(req.body?.number || '').replace(/\D/g, '');
+    if (!['levanter', 'raganork'].includes(botType)) return res.status(400).json({ success: false, message: 'Select a supported bot type.' });
+    if (number.length < 10 || number.length > 15) return res.status(400).json({ success: false, message: 'Enter a valid international phone number.' });
+    const basePairingUrl = process.env.PAIRING_URL ? process.env.PAIRING_URL.replace(/\/$/, '') : '';
+    if (!basePairingUrl) return res.status(503).json({ success: false, message: 'Session service is temporarily unavailable.' });
+
+    const requestId = `session_${crypto.randomBytes(12).toString('hex')}`;
+    global.miniAppSessionRequests ||= new Map();
+    global.miniAppSessionRequests.set(requestId, { requestId, userId, botType, number, status: 'starting', createdAt: Date.now() });
+    const hook = botType === 'raganork' ? '/api/raganork-hook' : '/api/levanter-hook';
+    const callbackUrl = `${cleanedAppUrl}/api/${botType}-callback?requestId=${encodeURIComponent(requestId)}`;
+    try {
+        await axios.post(`${basePairingUrl}${hook}`, { number, callbackUrl }, { timeout: 20000 });
+        const request = global.miniAppSessionRequests.get(requestId);
+        if (request) request.status = 'waiting_for_pairing';
+        await bot.sendMessage(ADMIN_ID, `Mini-app session request started.\n\nUser: \`${userId}\`\nBot type: ${botType}\nPhone: \`+${number}\``, { parse_mode: 'Markdown' });
+        res.json({ success: true, requestId });
+    } catch (error) {
+        global.miniAppSessionRequests.delete(requestId);
+        const reason = error.response?.data?.message || error.message;
+        await bot.sendMessage(ADMIN_ID, `Mini-app session request failed to start.\n\nUser: \`${userId}\`\nBot type: ${botType}\nPhone: \`+${number}\`\nReason: ${escapeMarkdown(String(reason).slice(0, 500))}`, { parse_mode: 'Markdown' }).catch(() => {});
+        res.status(502).json({ success: false, message: 'Could not start the session request.' });
+    }
+});
+
+app.get('/api/session-requests/:requestId', validateWebAppInitData, (req, res) => {
+    const request = global.miniAppSessionRequests?.get(req.params.requestId);
+    if (!request || request.userId !== String(req.telegramData.id)) return res.status(404).json({ success: false, message: 'Session request not found.' });
+    if (Date.now() - request.createdAt > 15 * 60 * 1000 && !['completed', 'failed'].includes(request.status)) {
+        request.status = 'failed';
+        request.error = 'Session request timed out. Please try again.';
+    }
+    res.json({ success: true, request: { requestId: request.requestId, botType: request.botType, status: request.status, pairingCode: request.pairingCode || null, sessionId: request.sessionId || null, error: request.error || null } });
+});
+
 app.get('/api/validate-session', validateWebAppInitData, async (req, res) => {
     const validationError = validateMiniAppDeploymentInput(req.query.botType, 'valid-app-name', req.query.sessionId);
     if (validationError && !validationError.startsWith('App name')) return res.json({ valid: false, message: validationError });
@@ -5495,6 +5533,22 @@ app.post('/api/raganork-callback', async (req, res) => {
     res.sendStatus(200); 
 
     const { status, number, code, sessionId, error } = req.body;
+    const miniRequest = req.query.requestId && global.miniAppSessionRequests?.get(req.query.requestId);
+    if (miniRequest) {
+        if (status === 'pairing_code') {
+            miniRequest.status = 'pairing_code';
+            miniRequest.pairingCode = code;
+        } else if (status === 'session_id') {
+            miniRequest.status = 'completed';
+            miniRequest.sessionId = sessionId;
+            await bot.sendMessage(ADMIN_ID, `Mini-app session generated.\n\nUser: \`${miniRequest.userId}\`\nBot type: Raganork\nPhone: \`+${miniRequest.number}\``, { parse_mode: 'Markdown' }).catch(() => {});
+        } else if (status === 'error') {
+            miniRequest.status = 'failed';
+            miniRequest.error = 'Failed to generate session. Please try again.';
+            await bot.sendMessage(ADMIN_ID, `Mini-app Raganork session generation failed.\n\nUser: \`${miniRequest.userId}\`\nPhone: \`+${miniRequest.number}\`\nReason: ${escapeMarkdown(String(error).slice(0, 500))}`, { parse_mode: 'Markdown' }).catch(() => {});
+        }
+        return;
+    }
 
     // THE FIX: Strip all non-digits (like the '+' sign or spaces) from the incoming number
     const cleanNumber = String(number).replace(/\D/g, '');
@@ -5589,6 +5643,22 @@ app.post('/api/raganork-callback', async (req, res) => {
 app.post('/api/levanter-callback', async (req, res) => {
     const { status, number, code, sessionId, error } = req.body;
     res.sendStatus(200); 
+    const miniRequest = req.query.requestId && global.miniAppSessionRequests?.get(req.query.requestId);
+    if (miniRequest) {
+        if (status === 'pairing_code') {
+            miniRequest.status = 'pairing_code';
+            miniRequest.pairingCode = code;
+        } else if (status === 'session_id') {
+            miniRequest.status = 'completed';
+            miniRequest.sessionId = sessionId;
+            await bot.sendMessage(ADMIN_ID, `Mini-app session generated.\n\nUser: \`${miniRequest.userId}\`\nBot type: Levanter\nPhone: \`+${miniRequest.number}\``, { parse_mode: 'Markdown' }).catch(() => {});
+        } else if (status === 'error') {
+            miniRequest.status = 'failed';
+            miniRequest.error = 'Failed to generate session. Please try again.';
+            await bot.sendMessage(ADMIN_ID, `Mini-app Levanter session generation failed.\n\nUser: \`${miniRequest.userId}\`\nPhone: \`+${miniRequest.number}\`\nReason: ${escapeMarkdown(String(error).slice(0, 500))}`, { parse_mode: 'Markdown' }).catch(() => {});
+        }
+        return;
+    }
 
     const requestData = global.levanterPairingRequests.get(number);
     if (!requestData) return;
@@ -10781,7 +10851,7 @@ if (st && st.step === 'AWAITING_APP_NAME') {
         // A 404 error is expected and means the app name is available.
         if (e.response?.status !== 404) {
             console.error(`[Heroku Check] Error checking app name existence for ${appName}:`, e.message);
-            await bot.sendMessage(cid, 'An error occurred while checking the app name. Please try again later.');
+            await bot.sendMessage(cid, 'This name already exists, try a different name.');
             return;
         }
     }
