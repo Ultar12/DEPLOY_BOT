@@ -497,8 +497,8 @@
                     fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
                     return;
                 }
-                if (act === 'copy-session') {
-                    const sessionId = btn.dataset.session || '';
+                if (act === 'copy-session' || act === 'copy-pairing') {
+                    const sessionId = act === 'copy-pairing' ? (btn.dataset.code || '') : (btn.dataset.session || '');
                     const fallback = () => {
                         const area = document.createElement('textarea');
                         area.value = sessionId;
@@ -508,7 +508,7 @@
                         area.remove();
                     };
                     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(sessionId).catch(fallback); else fallback();
-                    tg.showAlert('Session ID copied.');
+                    tg.showAlert(act === 'copy-pairing' ? 'Pairing code copied.' : 'Session ID copied.');
                     return;
                 }
                 if (act === 'support') {
@@ -634,8 +634,9 @@
                 const result = document.getElementById('sessionRequestResult');
                 const renderRequest = request => {
                     if (request.status === 'pairing_code') {
-                        result.innerHTML = `<div class="news-card"><div class="news-title">Pairing code ready</div><div class="news-content">Enter this code in WhatsApp linked devices:</div><div id="pairingCode" style="font-size:1.35em;letter-spacing:.08em;margin:12px 0;font-weight:700;"></div></div>`;
+                        result.innerHTML = `<div class="news-card"><div class="news-title">Pairing code ready</div><div class="news-content">Enter this code in WhatsApp linked devices:</div><div style="display:flex;align-items:center;gap:10px;margin:12px 0;"><div id="pairingCode" style="font-size:1.35em;letter-spacing:.08em;font-weight:700;"></div><button type="button" class="support-btn" data-action="copy-pairing" data-code="" aria-label="Copy pairing code" title="Copy pairing code" style="width:auto;padding:7px 10px;line-height:1;">⧉</button></div></div>`;
                         document.getElementById('pairingCode').textContent = request.pairingCode || '';
+                        result.querySelector('[data-action="copy-pairing"]').dataset.code = request.pairingCode || '';
                     } else if (request.status === 'completed') {
                         result.innerHTML = `<div class="news-card"><div class="news-title">Session ID ready</div><textarea id="generatedSessionId" readonly style="display:block;width:100%;min-height:110px;margin-top:10px;padding:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></textarea><button class="support-btn" data-action="copy-session" data-session="">COPY SESSION ID</button></div>`;
                         const area = document.getElementById('generatedSessionId');
@@ -644,7 +645,7 @@
                     } else if (request.status === 'failed') {
                         result.textContent = request.error || 'Could not generate a session. Please try again.';
                     } else {
-                        result.textContent = 'Waiting for pairing service...';
+                        result.textContent = 'Processing...';
                     }
                 };
                 const pollSessionRequest = async requestId => {

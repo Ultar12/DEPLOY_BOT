@@ -761,10 +761,9 @@ async function setBackupWarningSent(userId, appName) {
 async function getExpiredBackups() {
     try {
         const result = await pool.query(
-            `SELECT user_id, app_name
+            `SELECT user_id, app_name, expiration_date, paused_at
              FROM user_deployments
-             WHERE expiration_date <= NOW()
-               AND paused_at IS NULL;` // <-- This line is added to ignore paused bots
+             WHERE expiration_date <= NOW();`
         );
         return result.rows;
     } catch (error) {

@@ -292,3 +292,51 @@ test('Telegram name feedback and mini-app session generation use requested user-
   assert.match(htmlSource, /COPY SESSION ID/);
   assert.match(htmlSource, /copy-session/);
 });
+
+test('mini-app pairing keeps Processing limited to pending states and provides a compact pairing-code copy action', () => {
+  const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
+  const renderRequest = htmlSource.slice(htmlSource.indexOf('const renderRequest = request =>'), htmlSource.indexOf('const pollSessionRequest = async requestId =>'));
+  assert.match(renderRequest, /request\.status === 'pairing_code'/);
+  assert.match(renderRequest, /data-action="copy-pairing"/);
+  assert.match(renderRequest, /data-code=""/);
+  assert.match(renderRequest, /dataset\.code = request\.pairingCode \|\| ''/);
+  assert.match(renderRequest, /request\.status === 'completed'/);
+  assert.match(renderRequest, /request\.status === 'failed'/);
+  assert.match(renderRequest, /result\.textContent = 'Processing\.\.\.'/);
+  assert.doesNotMatch(renderRequest, /Failed to generate session/);
+  assert.match(htmlSource, /act === 'copy-session' \|\| act === 'copy-pairing'/);
+});
+
+test('Raganork mini-app callback reports pairing-service failures as a safe retry state', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const callback = botSource.slice(botSource.indexOf("app.post('/api/raganork-callback'"), botSource.indexOf('// THE FIX: Strip all non-digits'));
+  assert.match(callback, /miniRequest\.status = 'failed'/);
+  assert.match(callback, /Session generation could not be completed\. Please retry\./);
+  assert.match(callback, /Mini-app Raganork session generation failed/);
+  assert.doesNotMatch(callback, /presentSessionApplyOptions\(miniRequest/);
+});
+
+test('YT-DLP media extraction is fully removed without removing other process utilities', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const requirements = fs.readFileSync('./requirements.txt', 'utf8');
+  assert.doesNotMatch(botSource, /extractMediaInfo|yt-dlp/);
+  assert.doesNotMatch(requirements, /yt-dlp/);
+  assert.match(botSource, /const execPromise = util\.promisify\(exec\)/);
+});
+
+test('expired bots receive a confirmed 24-hour stopped-dyno suspension before deletion', () => {
+  const botSource = fs.readFileSync('./bot.js', 'utf8');
+  const servicesSource = fs.readFileSync('./bot_services.js', 'utf8');
+  const expiredQuery = servicesSource.slice(servicesSource.indexOf('async function getExpiredBackups'), servicesSource.indexOf('async function getUserIdByBotName'));
+  assert.equal((botSource.match(/GRACE_PERIOD_MS = 24 \* 60 \* 60 \* 1000/g) || []).length, 3);
+  assert.doesNotMatch(botSource, /GRACE_PERIOD_MS = 48 \* 60 \* 60 \* 1000/);
+  assert.match(expiredQuery, /SELECT user_id, app_name, expiration_date, paused_at/);
+  assert.doesNotMatch(expiredQuery, /AND paused_at IS NULL/);
+  const worker = botSource.slice(botSource.indexOf('async function checkAndManageExpirations'), botSource.indexOf('// Run the check once every day'));
+  assert.match(worker, /formation\/web/);
+  assert.match(worker, /\{ quantity: 0 \}/);
+  assert.match(worker, /Unable to stop dyno/);
+  assert.match(worker, /SET paused_at = NOW\(\)/);
+  assert.match(worker, /timeSinceSuspension < GRACE_PERIOD_MS/);
+  assert.match(worker, /You have 24 hours to renew/);
+});

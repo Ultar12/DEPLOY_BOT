@@ -209,3 +209,12 @@
 - [x] Generate session data inside the mini app and provide a copyable session ID without sending it to the user’s Telegram chat.
 - [x] Notify only the administrator when a mini-app session generation request succeeds or fails.
 - [x] Add regression coverage for name feedback, session-generation access controls, copyable session output, and administrator-only alerts.
+
+# Session Pairing UX, Raganork Repair, and Expiry Lifecycle
+
+- [x] Add a compact copy control beside each mini-app pairing code.
+- [x] Keep mini-app session generation in Processing only until the pairing code arrives and preserve completed session output.
+- [x] Repair the Raganork pairing browser connection error without exposing session values in Telegram chat.
+- [x] Remove YT-DLP-related code, commands, and dependencies from the repository.
+- [x] Suspend expired bots for 24 hours with dynos stopped, then permanently delete unresolved suspended bots.
+- [x] Add regression coverage for pairing UI state, Raganork repair, YT-DLP removal, and 24-hour expiry lifecycle.

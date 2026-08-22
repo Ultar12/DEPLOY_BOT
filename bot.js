@@ -1448,82 +1448,6 @@ async function handleFallbackWithGeminiOld(chatId, userMessage) {
 }
 
 
-// --- CHILD PROCESS UTILITIES ---
-
-/**
- * Executes yt-dlp to extract high-quality media information.
- * @param {string} url The URL of the video/image post (e.g., TikTok, Instagram).
- * @returns {Promise<{type: string, url: string, caption: string, message?: string}>} Media details or error.
- */
-async function extractMediaInfo(url) {
-    // Command to run:
-    // 1. -j: Output raw JSON
-    // 2. --flat-playlist: Needed for some platforms
-    // 3. --no-warnings: Cleans up the console output
-    const command = `yt-dlp -j --flat-playlist --no-warnings "${url}"`;
-    
-    try {
-        const { stdout, stderr } = await execPromise(command, { timeout: 30000 }); // 30 second timeout
-
-        if (stderr && !stderr.includes('Warning')) {
-            console.error("yt-dlp error output:", stderr);
-            return { type: 'error', message: `yt-dlp error: ${stderr.substring(0, 100)}` };
-        }
-        
-        const info = JSON.parse(stdout);
-        
-        // --- Logic to find the best download URL ---
-        let downloadUrl = info.url || info.webpage_url;
-        let mediaType = 'video';
-        
-        // Find the best quality URL within the 'formats' array for video/audio
-        if (info.formats && Array.isArray(info.formats)) {
-            // Filter for video streams and pick one that is not just audio
-            const bestFormat = info.formats
-                .filter(f => f.vcodec !== 'none' || f.acodec !== 'none')
-                .sort((a, b) => (b.height || 0) - (a.height || 0))[0]; // Sort by highest resolution
-            
-            if (bestFormat && bestFormat.url) {
-                downloadUrl = bestFormat.url;
-            }
-        }
-        
-        // TikTok sometimes involves images or carousels; check for that
-        if (info.is_gallery) {
-             mediaType = 'image_gallery';
-             // For simplicity, we just return the URL of the first media item in a gallery
-             downloadUrl = info.entries?.[0]?.url || info.entries?.[0]?.formats?.[0]?.url;
-        } else if (info.ext === 'jpg' || info.ext === 'png' || info.ext === 'webp') {
-             mediaType = 'image';
-        }
-        
-        // Final sanity check
-        if (!downloadUrl) {
-            return { type: 'error', message: "No playable media link could be extracted." };
-        }
-
-        return { 
-            type: mediaType, 
-            url: downloadUrl,
-            caption: info.title || info.description || 'Downloaded Media'
-        };
-
-    } catch (error) {
-        let errorMessage = "Timed out or execution failed.";
-        if (error.code === 'ENOENT') {
-            errorMessage = "yt-dlp is not installed on the server. Contact Admin.";
-        } else if (error.message.includes('404')) {
-            errorMessage = "Video not found or is private.";
-        } else if (error.message.includes('ERROR:')) {
-            errorMessage = error.message.split('ERROR:')[1].trim().substring(0, 100);
-        }
-        console.error("yt-dlp Execution failed:", error.message);
-        return { type: 'error', message: errorMessage };
-    }
-}
-
-
-
 // 5) Initialize bot & in-memory state
 // <<< IMPORTANT: Set polling to false here. It will be started manually later.
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
@@ -1701,7 +1625,7 @@ function formatTimeLeft(expirationDateStr) {
 
     // --- GRACE PERIOD LOGIC ---
     if (timeLeftMs <= 0) {
-        const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+        const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
         const graceLeftMs = GRACE_PERIOD_MS + timeLeftMs; // timeLeftMs is negative
         
         if (graceLeftMs <= 0) {
@@ -5544,7 +5468,7 @@ app.post('/api/raganork-callback', async (req, res) => {
             await bot.sendMessage(ADMIN_ID, `Mini-app session generated.\n\nUser: \`${miniRequest.userId}\`\nBot type: Raganork\nPhone: \`+${miniRequest.number}\``, { parse_mode: 'Markdown' }).catch(() => {});
         } else if (status === 'error') {
             miniRequest.status = 'failed';
-            miniRequest.error = 'Failed to generate session. Please try again.';
+            miniRequest.error = 'Session generation could not be completed. Please retry.';
             await bot.sendMessage(ADMIN_ID, `Mini-app Raganork session generation failed.\n\nUser: \`${miniRequest.userId}\`\nPhone: \`+${miniRequest.number}\`\nReason: ${escapeMarkdown(String(error).slice(0, 500))}`, { parse_mode: 'Markdown' }).catch(() => {});
         }
         return;
@@ -13511,7 +13435,7 @@ if (action === 'selectapp' || action === 'selectbot') {
     const finalStatusText = dbBotInfo?.paused_at ? 'Paused' : (dbBotInfo?.wpp_status === 'logged_out' ? 'Logged Out' : 'Connected');
 
     const isExpired = expirationDate && expirationDate < now;
-    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+    const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
     if (isExpired) {
         const timeSinceExpiry = now - expirationDate.getTime();
@@ -15579,7 +15503,7 @@ const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 async function checkAndManageExpirations() {
     console.log('[Expiration] Running daily check for expiring and expired bots...');
     const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
-    const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000; // 48 Hours
+    const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
     // 1. Handle Warnings for Soon-to-Expire Bots
     const expiringBots = await dbServices.getExpiringBackups(); 
@@ -15643,35 +15567,41 @@ async function checkAndManageExpirations() {
     const expiredBots = await dbServices.getExpiredBackups();
     for (const botInfo of expiredBots) {
         try {
-            const expiryTime = new Date(botInfo.expiration_date).getTime();
-            const timeSinceExpiry = Date.now() - expiryTime;
-
-            if (timeSinceExpiry < GRACE_PERIOD_MS) {
-                // --- PHASE A: WITHIN GRACE PERIOD (SUSPEND) ---
-                if (!botInfo.paused_at) {
-                    console.log(`[Grace Period] Suspending ${botInfo.app_name}.`);
-                    
-                    // Pause on Heroku
-                    await herokuApi.patch(`/apps/${botInfo.app_name}/formation/web`, 
+            if (!botInfo.paused_at) {
+                // --- PHASE A: STOP THE DYNO, THEN START A FULL 24-HOUR RENEWAL WINDOW ---
+                console.log(`[Grace Period] Suspending ${botInfo.app_name}.`);
+                try {
+                    await herokuApi.patch(`/apps/${botInfo.app_name}/formation/web`,
                         { quantity: 0 },
                         { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-                    ).catch(() => {});
-
-                    // Record suspension in DB
-                    await pool.query("UPDATE user_deployments SET paused_at = NOW() WHERE app_name = $1", [botInfo.app_name]);
-
-                    const hoursLeft = Math.round((GRACE_PERIOD_MS - timeSinceExpiry) / (1000 * 60 * 60));
-                    await bot.sendMessage(botInfo.user_id, 
-                        `Notice: Bot Suspended - ${escapeMarkdown(botInfo.app_name)}\n\n` +
-                        `Your subscription has expired. The bot is now offline.\n` +
-                        `You have ${hoursLeft} hours to renew before the bot and its data are permanently deleted.`,
-                        { 
-                            parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: [[{ text: 'Renew Now', callback_data: `renew_bot:${botInfo.app_name}` }]] }
-                        }
-                    ).catch(() => {});
+                    );
+                } catch (suspensionError) {
+                    console.error(`[Grace Period] Unable to stop dyno for ${botInfo.app_name}; suspension will be retried:`, suspensionError.message);
+                    continue;
                 }
-            } else {
+
+                // paused_at is the lifecycle clock and is only written after the dyno has stopped.
+                await pool.query("UPDATE user_deployments SET paused_at = NOW() WHERE app_name = $1", [botInfo.app_name]);
+
+                await bot.sendMessage(botInfo.user_id,
+                    `Notice: Bot Suspended - ${escapeMarkdown(botInfo.app_name)}\n\n` +
+                    `Your subscription has expired and the bot dyno has been stopped.\n` +
+                    `You have 24 hours to renew before the bot and its data are permanently deleted.`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: [[{ text: 'Renew Now', callback_data: `renew_bot:${botInfo.app_name}` }]] }
+                    }
+                ).catch(() => {});
+                continue;
+            }
+
+            const suspendedAt = new Date(botInfo.paused_at).getTime();
+            const timeSinceSuspension = Date.now() - suspendedAt;
+            if (!Number.isFinite(suspendedAt) || timeSinceSuspension < GRACE_PERIOD_MS) {
+                continue;
+            }
+
+            {
                 // --- PHASE B: GRACE PERIOD ENDED (DELETE) ---
                 console.log(`[Expiration] Grace period ended for ${botInfo.app_name}. Deleting.`);
                 
