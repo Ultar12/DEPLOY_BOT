@@ -225,3 +225,8 @@
 - [x] Apply semantic, accessible blue, green, and red button styles across the mini-app actions.
 - [x] Improve the bot AI’s intent routing, structured response validation, user-context handling, and reliable fallback behavior.
 - [x] Add regression coverage and validate all changed JavaScript before synchronizing both DEPLOY_BOT branches.
+
+# Mini-App Button Styling Rollback
+
+- [x] Remove the newly added semantic mini-app button color system and restore the earlier neutral button appearance.
+- [x] Validate the mini-app rollback and synchronize the same commit to both DEPLOY_BOT branches.

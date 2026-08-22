@@ -341,15 +341,10 @@ test('expired bots receive a confirmed 24-hour stopped-dyno suspension before de
   assert.match(worker, /You have 24 hours to renew/);
 });
 
-test('mini app uses semantic action colors for primary, success, warning, danger, and neutral controls', () => {
+test('mini app retains its earlier neutral control styling without semantic color classes', () => {
   const htmlSource = fs.readFileSync('./public/index.html', 'utf8');
-  for (const actionClass of ['action-primary', 'action-success', 'action-warning', 'action-danger', 'action-neutral']) {
-    assert.match(htmlSource, new RegExp(`\\.${actionClass} \\{`));
-  }
-  assert.match(htmlSource, /data-action="restart-bot"[\s\S]*action-success|action-success[\s\S]*data-action="restart-bot"/);
-  assert.match(htmlSource, /data-action="redeploy-bot"[\s\S]*action-primary|action-primary[\s\S]*data-action="redeploy-bot"/);
-  assert.match(htmlSource, /data-action="turn-off-bot"[\s\S]*action-warning|action-warning[\s\S]*data-action="turn-off-bot"/);
-  assert.match(htmlSource, /data-action="delete-bot"[\s\S]*action-danger|action-danger[\s\S]*data-action="delete-bot"/);
+  assert.match(htmlSource, /\.support-btn \{[\s\S]*background: #3b82f6;/);
+  assert.doesNotMatch(htmlSource, /action-primary|action-success|action-warning|action-danger|action-neutral/);
   assert.match(htmlSource, /24\*60\*60\*1000/);
 });
 
