@@ -7425,7 +7425,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         const messageBotUrl = msgAppInfo.data.web_url; 
 
         // --- STEP 2: DEPLOY SCARPERBOT (SCRAPER) ---
-        await bot.editMessageText("(2/3) Deploying ScraperBot...", { chat_id: adminId, message_id: progressMsg.message_id });
+        await bot.editMessageText("(2/4) Deploying ScraperBot...", { chat_id: adminId, message_id: progressMsg.message_id });
         const scAppName = `scr-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: scAppName });
 
@@ -7470,6 +7470,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         // Only the dynamic Heroku webhook URL is injected here.
         await herokuApi.patch(`/apps/${tgTagAppName}/config-vars`, {
             WEBHOOK_URL: tgTagUrl,
+            EXPIRATION_DATE: null,
         });
         await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
