@@ -7381,18 +7381,29 @@ bot.onText(/^\/dellogout$/, async (msg) => {
 
 
 async function deployTlsStack(adminId, { restartRender = true } = {}) {
-    const { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, HEROKU_API_KEY, MESSAGE_BOT_API_KEY } = process.env;
-    
-    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY) {
-        await bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
+    const {
+        GMAIL_USER,
+        GMAIL_APP_PASSWORD,
+        SECRET_API_KEY,
+        HEROKU_API_KEY,
+        MESSAGE_BOT_API_KEY,
+        TG_TAG_BOT_TOKEN,
+        TG_TAG_ADMIN_ID,
+        TG_TAG_DATABASE_URL,
+        TG_TAG_WEBHOOK_SECRET_TOKEN,
+    } = process.env;
+    const tgTagAdminId = TG_TAG_ADMIN_ID || ADMIN_ID;
+
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY || !TG_TAG_BOT_TOKEN || !tgTagAdminId) {
+        await bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials, Heroku Key, TG_TAG_BOT_TOKEN, or TG_TAG_ADMIN_ID.");
         return { success: false, error: 'TLS deployment prerequisites are missing.' };
     }
 
-    const progressMsg = await bot.sendMessage(adminId, "Starting TLS Stack Deployment (3 Apps)...");
+    const progressMsg = await bot.sendMessage(adminId, "Starting TLS Stack Deployment (4 Apps)...");
 
     try {
         // --- STEP 1: DEPLOY MESSAGEBOT FIRST (To get the URL for the Scraper) ---
-        await bot.editMessageText("(1/3) Deploying MessageBot...", { chat_id: adminId, message_id: progressMsg.message_id });
+        await bot.editMessageText("(1/4) Deploying MessageBot...", { chat_id: adminId, message_id: progressMsg.message_id });
         const msgAppName = `msg-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: msgAppName });
         
@@ -7443,12 +7454,50 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
 
         await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
 
-        // Retrieve exact URL for ScraperBot to save to Render
-        const scAppInfo = await herokuApi.get(`/apps/${scAppName}`);
-        const scraperUrl = scAppInfo.data.web_url;
+        // The scraper is deployed only. Its URL is intentionally not used as PAIRING_URL.
 
-        // --- STEP 3: DEPLOY EMAIL SERVICE ---
-        await bot.editMessageText("(3/3) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
+        // --- STEP 3: DEPLOY TG_TAG TELEGRAM BOT ---
+        await bot.editMessageText("(3/4) Deploying TG_TAG Telegram Bot...", { chat_id: adminId, message_id: progressMsg.message_id });
+        const tgTagAppName = `tg-tag-tls-${crypto.randomBytes(3).toString('hex')}`;
+        await herokuApi.post('/apps', { name: tgTagAppName });
+        await herokuApi.put(`/apps/${tgTagAppName}/buildpack-installations`, {
+            updates: [
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-activestorage-preview.git' },
+                { buildpack: 'https://github.com/heroku/heroku-buildpack-apt' },
+                { buildpack: 'heroku/nodejs' },
+                { buildpack: 'heroku/python' }
+            ]
+        });
+        const tgTagAppInfo = await herokuApi.get(`/apps/${tgTagAppName}`);
+        const tgTagUrl = tgTagAppInfo.data.web_url;
+        const tgTagConfigVars = {
+            BOT_TOKEN: TG_TAG_BOT_TOKEN,
+            ADMIN_ID: tgTagAdminId,
+            DATABASE_URL: TG_TAG_DATABASE_URL,
+            WEBHOOK_URL: tgTagUrl,
+            WEBHOOK_SECRET_TOKEN: TG_TAG_WEBHOOK_SECRET_TOKEN,
+            GEMINI_API_KEY: process.env.TG_TAG_GEMINI_API_KEY,
+            OPENAI_API_KEY: process.env.TG_TAG_OPENAI_API_KEY,
+            REPLICATE_API_TOKEN: process.env.TG_TAG_REPLICATE_API_TOKEN,
+            STABILITY_API_KEY: process.env.TG_TAG_STABILITY_API_KEY,
+            OPENWEATHER_API_KEY: process.env.TG_TAG_OPENWEATHER_API_KEY,
+            SCREENSHOT_API_KEY: process.env.TG_TAG_SCREENSHOT_API_KEY,
+            TMDB_API_KEY: process.env.TG_TAG_TMDB_API_KEY,
+            GMAIL_ADDRESS: process.env.TG_TAG_GMAIL_ADDRESS,
+            GMAIL_APP_PASSWORD: process.env.TG_TAG_GMAIL_APP_PASSWORD,
+        };
+        await herokuApi.patch(
+            `/apps/${tgTagAppName}/config-vars`,
+            Object.fromEntries(
+                Object.entries(tgTagConfigVars).filter(([, value]) => value !== undefined && value !== null && value !== '')
+            )
+        );
+        await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
+            source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
+        });
+
+        // --- STEP 4: DEPLOY EMAIL SERVICE ---
+        await bot.editMessageText("(4/4) Deploying Email Service...", { chat_id: adminId, message_id: progressMsg.message_id });
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
@@ -7463,7 +7512,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
 
         // Update Render variables
         await updateRenderVar('EMAIL_SERVICE_URL', emailServiceUrl, false);
-        await updateRenderVar('PAIRING_URL', scraperUrl, false);
+        await updateRenderVar('PAIRING_URL', tgTagUrl, false);
 
         // Explicitly trigger Render restart only for the manual command.
         if (restartRender) await triggerRenderRestart();
@@ -7471,13 +7520,14 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         await bot.editMessageText(
             "Full TLS Stack Deployed Successfully\n\n" +
             "Message Bot URL: " + messageBotUrl + "\n" +
-            "Scraper Bot: Configured with APP_URL = " + messageBotUrl + "\n" +
-            "PAIRING_URL set to: " + scraperUrl + "\n" +
+            "Scraper Bot: Deployed only; APP_URL = " + messageBotUrl + "\n" +
+            "TG_TAG Telegram Bot: " + tgTagUrl + "\n" +
+            "PAIRING_URL set to TG_TAG: " + tgTagUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
             (restartRender ? "Render is restarting to apply the new links." : "Recovery will restart Render after bot restoration."),
             { chat_id: adminId, message_id: progressMsg.message_id }
         );
-        return { success: true, messageBotUrl, scraperUrl, emailServiceUrl };
+        return { success: true, messageBotUrl, tgTagUrl, emailServiceUrl };
 
     } catch (error) {
         console.error(error);
