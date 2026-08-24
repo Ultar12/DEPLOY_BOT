@@ -7387,15 +7387,10 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         SECRET_API_KEY,
         HEROKU_API_KEY,
         MESSAGE_BOT_API_KEY,
-        TG_TAG_BOT_TOKEN,
-        TG_TAG_ADMIN_ID,
-        TG_TAG_DATABASE_URL,
-        TG_TAG_WEBHOOK_SECRET_TOKEN,
     } = process.env;
-    const tgTagAdminId = TG_TAG_ADMIN_ID || ADMIN_ID;
 
-    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY || !TG_TAG_BOT_TOKEN || !tgTagAdminId) {
-        await bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials, Heroku Key, TG_TAG_BOT_TOKEN, or TG_TAG_ADMIN_ID.");
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD || !HEROKU_API_KEY) {
+        await bot.sendMessage(adminId, "Setup Incomplete: Missing GMAIL credentials or Heroku Key.");
         return { success: false, error: 'TLS deployment prerequisites are missing.' };
     }
 
@@ -7470,28 +7465,12 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         });
         const tgTagAppInfo = await herokuApi.get(`/apps/${tgTagAppName}`);
         const tgTagUrl = tgTagAppInfo.data.web_url;
-        const tgTagConfigVars = {
-            BOT_TOKEN: TG_TAG_BOT_TOKEN,
-            ADMIN_ID: tgTagAdminId,
-            DATABASE_URL: TG_TAG_DATABASE_URL,
+
+        // TG_TAG's tracked repository .env supplies its own bot/database/API values.
+        // Only the dynamic Heroku webhook URL is injected here.
+        await herokuApi.patch(`/apps/${tgTagAppName}/config-vars`, {
             WEBHOOK_URL: tgTagUrl,
-            WEBHOOK_SECRET_TOKEN: TG_TAG_WEBHOOK_SECRET_TOKEN,
-            GEMINI_API_KEY: process.env.TG_TAG_GEMINI_API_KEY,
-            OPENAI_API_KEY: process.env.TG_TAG_OPENAI_API_KEY,
-            REPLICATE_API_TOKEN: process.env.TG_TAG_REPLICATE_API_TOKEN,
-            STABILITY_API_KEY: process.env.TG_TAG_STABILITY_API_KEY,
-            OPENWEATHER_API_KEY: process.env.TG_TAG_OPENWEATHER_API_KEY,
-            SCREENSHOT_API_KEY: process.env.TG_TAG_SCREENSHOT_API_KEY,
-            TMDB_API_KEY: process.env.TG_TAG_TMDB_API_KEY,
-            GMAIL_ADDRESS: process.env.TG_TAG_GMAIL_ADDRESS,
-            GMAIL_APP_PASSWORD: process.env.TG_TAG_GMAIL_APP_PASSWORD,
-        };
-        await herokuApi.patch(
-            `/apps/${tgTagAppName}/config-vars`,
-            Object.fromEntries(
-                Object.entries(tgTagConfigVars).filter(([, value]) => value !== undefined && value !== null && value !== '')
-            )
-        );
+        });
         await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
         });
@@ -7521,7 +7500,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             "Full TLS Stack Deployed Successfully\n\n" +
             "Message Bot URL: " + messageBotUrl + "\n" +
             "Scraper Bot: Deployed only; APP_URL = " + messageBotUrl + "\n" +
-            "TG_TAG Telegram Bot: " + tgTagUrl + "\n" +
+            "TG_TAG Telegram Bot: " + tgTagUrl + " (repository .env used)\n" +
             "PAIRING_URL set to TG_TAG: " + tgTagUrl + "\n" +
             "Email Service: " + emailServiceUrl + "\n\n" +
             (restartRender ? "Render is restarting to apply the new links." : "Recovery will restart Render after bot restoration."),
