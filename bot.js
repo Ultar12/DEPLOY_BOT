@@ -5104,7 +5104,9 @@ async function startMiniAppDeploymentJob(jobId) {
         await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
-            AUTO_STATUS_VIEW: job.auto_status_view || 'false',
+            ...(job.bot_type === 'raganork'
+                ? { AUTO_READ_STATUS: job.auto_status_view || 'false' }
+                : { AUTO_STATUS_VIEW: job.auto_status_view || 'false' }),
             DAYS: job.plan_days || 30
         }, false, false, job.bot_type);
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
@@ -11579,7 +11581,8 @@ if (action === 'set_auto_status_choice') {
     if (st.data.botType === 'levanter') {
       st.data.AUTO_STATUS_VIEW = autoStatusChoice === 'true' ? 'no-dl' : 'false';
     } else if (st.data.botType === 'raganork') {
-      st.data.AUTO_STATUS_VIEW = autoStatusChoice; // Sets to 'true' or 'false'
+      st.data.AUTO_READ_STATUS = autoStatusChoice; // Raganork accepts only 'true' or 'false'.
+      delete st.data.AUTO_STATUS_VIEW;
     } else if (st.data.botType === 'hermit') {
       // Assuming Hermit works like Raganork
       st.data.AUTO_STATUS_VIEW = autoStatusChoice; 
@@ -11594,7 +11597,8 @@ if (action === 'set_auto_status_choice') {
     const botType = st.data.botType.toUpperCase();
     const session = st.data.SESSION_ID.slice(0, 15) + '...';
     const appName = st.data.APP_NAME;
-    const statusView = st.data.AUTO_STATUS_VIEW;
+    const statusVar = st.data.botType === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
+    const statusView = st.data[statusVar];
 
     // Build the message inside a code block (```) for perfect formatting
     let confirmationMessage = "```\n"; // Start code block
@@ -11603,7 +11607,7 @@ if (action === 'set_auto_status_choice') {
     confirmationMessage += ` ┃❃│ Bot Type    : ${botType}\n`;
     confirmationMessage += ` ┃❃│ App Name    : ${appName}\n`;
     confirmationMessage += ` ┃❃│ Session     : ${session}\n`;
-    confirmationMessage += ` ┃❃│ Auto Status : ${statusView}\n`;
+    confirmationMessage += ` ┃❃│ ${statusVar.padEnd(15, ' ')}: ${statusView}\n`;
     confirmationMessage += ` ┃❃╰───────────────\n\n`;
     confirmationMessage += ` Looks good? Tap 'Confirm' to build your bot!`;
     confirmationMessage += "\n```"; // End code block
@@ -12953,7 +12957,8 @@ if (action === 'select_renewal') {
           if (botType === 'levanter') {
             st.data.AUTO_STATUS_VIEW = value === 'true' ? 'no-dl' : 'false';
           } else if (botType === 'raganork') {
-            st.data.AUTO_STATUS_VIEW = (value === 'true').toString(); // 'true' or 'false'
+            st.data.AUTO_READ_STATUS = (value === 'true').toString(); // Raganork accepts only 'true' or 'false'.
+            delete st.data.AUTO_STATUS_VIEW;
           } else if (botType === 'hermit') {
             st.data.AUTO_STATUS_VIEW = (value === 'true').toString(); // 'true' or 'false'
           }
@@ -12962,7 +12967,8 @@ if (action === 'select_renewal') {
           // --- 🎨 DESIGN UPDATE START 🎨 ---
           const session = st.data.SESSION_ID.slice(0, 15) + '...';
           const appName = st.data.APP_NAME;
-          const statusView = st.data.AUTO_STATUS_VIEW;
+          const statusVar = botType === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
+          const statusView = st.data[statusVar];
 
           // Build the message inside a code block (```) for perfect formatting
           let confirmationText = "```\n"; // Start code block
@@ -12971,7 +12977,7 @@ if (action === 'select_renewal') {
           confirmationText += ` ┃❃│ Bot Type    : ${botType.toUpperCase()}\n`;
           confirmationText += ` ┃❃│ App Name    : ${appName}\n`;
           confirmationText += ` ┃❃│ Session     : ${session}\n`;
-          confirmationText += ` ┃❃│ Auto Status : ${statusView}\n`;
+          confirmationText += ` ┃❃│ ${statusVar.padEnd(15, ' ')}: ${statusView}\n`;
           confirmationText += ` ┃❃╰───────────────\n\n`;
           confirmationText += ` Ready to proceed?`;
           confirmationText += "\n```"; // End code block
@@ -14215,13 +14221,17 @@ if (action === 'info') {
         }
         // --- END OF FIX ---
 
+        const appBotType = ownerId
+            ? (await pool.query('SELECT bot_type FROM user_bots WHERE user_id = $1 AND bot_name = $2', [ownerId, appName])).rows[0]?.bot_type
+            : null;
+        const statusVar = appBotType === 'raganork' ? 'AUTO_READ_STATUS' : 'AUTO_STATUS_VIEW';
         const infoText = `*App Info: ${appData.name}*\n\n` +
                        `*Dyno Status:* ${dynoStatus}\n` +
                        `*Created:* ${new Date(appData.created_at).toLocaleDateString()}\n` +
                        `*Expiration:* ${expirationInfo}\n\n` +
                        `*Key Config Vars:*\n` +
                        `  \`SESSION_ID\`: ${configData.SESSION_ID ? 'Set' : 'Not Set'}\n` +
-                       `  \`AUTO_STATUS_VIEW\`: \`${configData.AUTO_STATUS_VIEW || 'false'}\`\n`;
+                       `  \`${statusVar}\`: \`${configData[statusVar] || 'false'}\`\n`;
 
       return bot.editMessageText(infoText, {
         chat_id: cid,
