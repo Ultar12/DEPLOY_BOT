@@ -115,6 +115,25 @@ async function setGitHubRepositoryVisibility(repoUrl, isPrivate) {
     });
 }
 
+async function toggleGitHubRepositoryVisibility(repoUrl) {
+    if (!GITHUB_TOKEN) {
+        throw new Error('GITHUB_TOKEN is required to toggle repository visibility.');
+    }
+
+    const repositoryPath = getGitHubRepositoryPath(repoUrl);
+    const response = await axios.get(`https://api.github.com/repos/${repositoryPath}`, {
+        headers: {
+            Authorization: `Bearer ${GITHUB_TOKEN}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        }
+    });
+    const wasPrivate = Boolean(response.data.private);
+    const nowPrivate = !wasPrivate;
+    await setGitHubRepositoryVisibility(repoUrl, nowPrivate);
+    return { repositoryPath, wasPrivate, nowPrivate };
+}
+
 async function withPublicGitHubRepository(repoUrl, deployOperation) {
     console.log(`[GitHub] Temporarily making ${repoUrl} public for deployment.`);
     await setGitHubRepositoryVisibility(repoUrl, false);
@@ -2712,6 +2731,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
 module.exports = {
     init,
     withPublicGitHubRepository,
+    toggleGitHubRepositoryVisibility,
     addUserBot,
     getUserBots,
     setHerokuApiKey,

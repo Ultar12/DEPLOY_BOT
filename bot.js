@@ -6217,6 +6217,32 @@ bot.onText(/^\/maintenance (on|off)$/, async (msg, match) => {
     }
 });
 
+// ADMIN COMMAND: /toggle <GitHub repository URL>
+bot.onText(/^\/toggle\s+(https?:\/\/github\.com\/[^\s]+)$/i, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    await dbServices.updateUserActivity(chatId);
+
+    if (chatId !== ADMIN_ID) {
+        return bot.sendMessage(chatId, 'You are not authorized to use this command.');
+    }
+
+    const repoUrl = match[1].replace(/\/$/, '').replace(/\.git$/, '');
+    try {
+        const result = await dbServices.toggleGitHubRepositoryVisibility(repoUrl);
+        const oldVisibility = result.wasPrivate ? 'private' : 'public';
+        const newVisibility = result.nowPrivate ? 'private' : 'public';
+        await bot.sendMessage(
+            chatId,
+            `Repository toggled successfully.\n\n` +
+            `Repository: ${result.repositoryPath}\n` +
+            `Changed: ${oldVisibility} → ${newVisibility}`
+        );
+    } catch (error) {
+        console.error(`[GitHub Toggle] Failed for ${repoUrl}:`, error.response?.data || error.message);
+        await bot.sendMessage(chatId, `Toggle failed: ${error.response?.data?.message || error.message}`);
+    }
+});
+
 
 // In bot.js
 
