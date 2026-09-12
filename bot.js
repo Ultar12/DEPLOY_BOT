@@ -817,10 +817,10 @@ async function redeployBot(userId, botId) {
         // --- END OF UPDATE ---
 
         // 2. Trigger the build on Heroku
-        await herokuApi.post(`/apps/${botId}/builds`,
+        await dbServices.withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${botId}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        );
+        ));
         return { status: "success", message: `Redeployment initiated for *${escapeMarkdown(botId)}*. It will restart once the build is complete.` };
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
@@ -2964,7 +2964,7 @@ async function handleRestoreAllConfirm(query) {
             const createAppRes = await herokuApi.post('/apps', { name: appName }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
             const appWebUrl = createAppRes.data.web_url;
             await herokuApi.patch(`/apps/${appName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
-            await herokuApi.post(`/apps/${appName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+            await dbServices.withPublicGitHubRepository("https://github.com/ultar1/Email-service-", () => herokuApi.post(`/apps/${appName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }));
             await updateRenderVar('EMAIL_SERVICE_URL', appWebUrl);
             await bot.sendMessage(adminId, `**Email Service Deployed!** (Phase 3 complete)`);
         } catch (error) {
@@ -4548,6 +4548,7 @@ async function notifyAdminUserOnline(msg) {
     herokuApi: herokuApi,
     NEON_ACCOUNTS: NEON_ACCOUNTS,
     HEROKU_API_KEY: HEROKU_API_KEY,
+    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
     GITHUB_LEVANTER_REPO_URL: GITHUB_LEVANTER_REPO_URL,
     GITHUB_HERMIT_REPO_URL: GITHUB_HERMIT_REPO_URL,
     GITHUB_RAGANORK_REPO_URL: GITHUB_RAGANORK_REPO_URL,
@@ -4895,7 +4896,7 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
         const botType = ownerCheck.rows[0].bot_type;
         const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
         
-        await herokuApi.post(
+        await dbServices.withPublicGitHubRepository(repoUrl, () => herokuApi.post(
             `https://api.heroku.com/apps/${appName}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } },
             {
@@ -4905,7 +4906,7 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
                     'Content-Type': 'application/json'
                 }
             }
-        );
+        ));
         res.json({ success: true, message: 'Redeployment initiated.' });
     } catch (e) {
         console.error(`[MiniApp V2] Error redeploying bot ${appName}:`, e.message);
@@ -7457,7 +7458,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
             EXPIRATION_DATE: null
         });
 
-        const msgBuild = await herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } });
+        const msgBuild = await dbServices.withPublicGitHubRepository("https://github.com/Ultar12/MESSAGEBOT", () => herokuApi.post(`/apps/${msgAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/MESSAGEBOT/tarball/main" } }));
         monitorTlsBuildAndConfigure(msgAppName, msgBuild.data.id, adminId, 'MessageBot');
 
         // Retrieve exact URL for MessageBot to give to Scraper
@@ -7487,7 +7488,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
     EXPIRATION_DATE: null
 });
 
-        const scraperBuild = await herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } });
+        const scraperBuild = await dbServices.withPublicGitHubRepository("https://github.com/Ultar12/Scarper", () => herokuApi.post(`/apps/${scAppName}/builds`, { source_blob: { url: "https://github.com/Ultar12/Scarper/tarball/main" } }));
         monitorTlsBuildAndConfigure(scAppName, scraperBuild.data.id, adminId, 'ScraperBot');
         const scraperAppInfo = await herokuApi.get(`/apps/${scAppName}`);
         const scraperUrl = scraperAppInfo.data.web_url;
@@ -7520,9 +7521,9 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         if (configuredWebhookUrl !== tgTagUrl) {
             throw new Error(`TG_TAG WEBHOOK_URL was not saved correctly (expected ${tgTagUrl}).`);
         }
-        const tgTagBuild = await herokuApi.post(`/apps/${tgTagAppName}/builds`, {
+        const tgTagBuild = await dbServices.withPublicGitHubRepository("https://github.com/Ultar12/TG_TAG", () => herokuApi.post(`/apps/${tgTagAppName}/builds`, {
             source_blob: { url: "https://github.com/Ultar12/TG_TAG/tarball/main" }
-        });
+        }));
         monitorTlsBuildAndConfigure(tgTagAppName, tgTagBuild.data.id, adminId, 'TG_TAG');
 
         // --- STEP 4: DEPLOY EMAIL SERVICE ---
@@ -7530,7 +7531,7 @@ async function deployTlsStack(adminId, { restartRender = true } = {}) {
         const emAppName = `email-tls-${crypto.randomBytes(3).toString('hex')}`;
         await herokuApi.post('/apps', { name: emAppName });
         await herokuApi.patch(`/apps/${emAppName}/config-vars`, { GMAIL_USER, GMAIL_APP_PASSWORD, SECRET_API_KEY, EXPIRATION_DATE: null });
-        await herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } });
+        await dbServices.withPublicGitHubRepository("https://github.com/ultar1/Email-service-", () => herokuApi.post(`/apps/${emAppName}/builds`, { source_blob: { url: "https://github.com/ultar1/Email-service-/tarball/main/" } }));
 
         // Retrieve exact URL for Email Service to update Render
         const emAppInfo = await herokuApi.get(`/apps/${emAppName}`);
@@ -11932,11 +11933,11 @@ if (action === 'confirm_updateall') {
 
             try {
                 const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
-                await axios.post(
+                await dbServices.withPublicGitHubRepository(githubRepoUrl, () => axios.post(
                     `https://api.heroku.com/apps/${appName}/builds`,
                     { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-                );
+                ));
                 statusEmoji = '✅';
                 messageToLog = `${statusEmoji} Redeploy triggered for \`${escapeMarkdown(appName)}\`.`;
             } catch (error) {
@@ -15319,7 +15320,7 @@ if (action === 'change_session') {
         }
         // --- 💡 END OF UPDATE 💡 ---
 
-        const bres = await axios.post(
+        const bres = await dbServices.withPublicGitHubRepository(repoUrl, () => axios.post(
             `https://api.heroku.com/apps/${appName}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } }, // <-- Use the new repoUrl variable
             {
@@ -15329,7 +15330,7 @@ if (action === 'change_session') {
                     'Content-Type': 'application/json'
                 }
             }
-        );
+        ));
 
         const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
 

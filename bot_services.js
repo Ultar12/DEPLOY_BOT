@@ -16,6 +16,7 @@ let pool;
 let backupPool;
 let bot; // The TelegramBot instance
 let HEROKU_API_KEY;
+let GITHUB_TOKEN;
 let GITHUB_LEVANTER_REPO_URL;
 let GITHUB_RAGANORK_REPO_URL;
 let ADMIN_ID;
@@ -58,6 +59,7 @@ function init(params) {
     backupPool = params.backupPool;
     bot = params.bot;
     HEROKU_API_KEY = params.HEROKU_API_KEY;
+    GITHUB_TOKEN = params.GITHUB_TOKEN;
     GITHUB_LEVANTER_REPO_URL = params.GITHUB_LEVANTER_REPO_URL;
     GITHUB_HERMIT_REPO_URL = params.GITHUB_HERMIT_REPO_URL;
     GITHUB_RAGANORK_REPO_URL = params.GITHUB_RAGANORK_REPO_URL;
@@ -76,6 +78,57 @@ function init(params) {
     escapeMarkdown = params.escapeMarkdown;
 
     console.log('--- bot_services.js initialized! ---');
+}
+
+function getGitHubRepositoryPath(repoUrl) {
+    const { URL } = require('url');
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(repoUrl);
+    } catch (error) {
+        throw new Error(`Invalid GitHub repository URL: ${repoUrl}`);
+    }
+
+    if (parsedUrl.hostname.toLowerCase() !== 'github.com') {
+        throw new Error(`Visibility changes are only supported for github.com repositories: ${repoUrl}`);
+    }
+
+    const parts = parsedUrl.pathname.split('/').filter(Boolean).map(part => part.replace(/\.git$/, ''));
+    if (parts.length !== 2) {
+        throw new Error(`Could not determine GitHub owner/repository from URL: ${repoUrl}`);
+    }
+    return `${parts[0]}/${parts[1]}`;
+}
+
+async function setGitHubRepositoryVisibility(repoUrl, isPrivate) {
+    if (!GITHUB_TOKEN) {
+        throw new Error('GITHUB_TOKEN is required to temporarily change repository visibility during deployment.');
+    }
+
+    const repositoryPath = getGitHubRepositoryPath(repoUrl);
+    await axios.patch(`https://api.github.com/repos/${repositoryPath}`, { private: isPrivate }, {
+        headers: {
+            Authorization: `Bearer ${GITHUB_TOKEN}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        }
+    });
+}
+
+async function withPublicGitHubRepository(repoUrl, deployOperation) {
+    console.log(`[GitHub] Temporarily making ${repoUrl} public for deployment.`);
+    await setGitHubRepositoryVisibility(repoUrl, false);
+    try {
+        return await deployOperation();
+    } finally {
+        try {
+            await setGitHubRepositoryVisibility(repoUrl, true);
+            console.log(`[GitHub] Restored ${repoUrl} to private.`);
+        } catch (restoreError) {
+            console.error(`[GitHub] CRITICAL: Failed to restore ${repoUrl} to private:`, restoreError.message);
+            throw new Error(`Deployment finished, but repository privacy could not be restored: ${restoreError.message}`);
+        }
+    }
 }
 
 
@@ -2107,9 +2160,9 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         }
 
 
-        const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
+        const buildStartRes = await withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }));
 
         // --- Step 6: Wait for Build to Finish ---
         const buildId = buildStartRes.data.id;
@@ -2530,9 +2583,9 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             repoUrl = GITHUB_LEVANTER_REPO_URL;
         }
 
-        const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
+        const buildStartRes = await withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
+        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }));
 
 
         // --- Step 6: Wait for Build to Finish (Silently) ---
@@ -2658,6 +2711,7 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
 
 module.exports = {
     init,
+    withPublicGitHubRepository,
     addUserBot,
     getUserBots,
     setHerokuApiKey,
