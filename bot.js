@@ -817,10 +817,10 @@ async function redeployBot(userId, botId) {
         // --- END OF UPDATE ---
 
         // 2. Trigger the build on Heroku
-        await dbServices.withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${botId}/builds`,
+        await herokuApi.post(`/apps/${botId}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } },
             { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-        ));
+        );
         return { status: "success", message: `Redeployment initiated for *${escapeMarkdown(botId)}*. It will restart once the build is complete.` };
     } catch (error) {
         const errorMsg = error.response?.data?.message || error.message;
