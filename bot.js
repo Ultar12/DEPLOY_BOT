@@ -4896,7 +4896,7 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
         const botType = ownerCheck.rows[0].bot_type;
         const repoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
         
-        await dbServices.withPublicGitHubRepository(repoUrl, () => herokuApi.post(
+        await herokuApi.post(
             `https://api.heroku.com/apps/${appName}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } },
             {
@@ -4906,7 +4906,7 @@ app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
                     'Content-Type': 'application/json'
                 }
             }
-        ));
+        );
         res.json({ success: true, message: 'Redeployment initiated.' });
     } catch (e) {
         console.error(`[MiniApp V2] Error redeploying bot ${appName}:`, e.message);
@@ -11959,11 +11959,11 @@ if (action === 'confirm_updateall') {
 
             try {
                 const githubRepoUrl = botType === 'raganork' ? GITHUB_RAGANORK_REPO_URL : GITHUB_LEVANTER_REPO_URL;
-                await dbServices.withPublicGitHubRepository(githubRepoUrl, () => axios.post(
+                await axios.post(
                     `https://api.heroku.com/apps/${appName}/builds`,
                     { source_blob: { url: `${githubRepoUrl}/tarball/main` } },
                     { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } }
-                ));
+                );
                 statusEmoji = '✅';
                 messageToLog = `${statusEmoji} Redeploy triggered for \`${escapeMarkdown(appName)}\`.`;
             } catch (error) {
@@ -15346,7 +15346,7 @@ if (action === 'change_session') {
         }
         // --- 💡 END OF UPDATE 💡 ---
 
-        const bres = await dbServices.withPublicGitHubRepository(repoUrl, () => axios.post(
+        const bres = await axios.post(
             `https://api.heroku.com/apps/${appName}/builds`,
             { source_blob: { url: `${repoUrl}/tarball/main` } }, // <-- Use the new repoUrl variable
             {
@@ -15356,7 +15356,7 @@ if (action === 'change_session') {
                     'Content-Type': 'application/json'
                 }
             }
-        ));
+        );
 
         const statusUrl = `https://api.heroku.com/apps/${appName}/builds/${bres.data.id}`;
 
