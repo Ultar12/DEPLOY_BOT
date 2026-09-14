@@ -2179,9 +2179,9 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         }
 
 
-        const buildStartRes = await withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${appName}/builds`, {
+        const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }));
+        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
         // --- Step 6: Wait for Build to Finish ---
         const buildId = buildStartRes.data.id;
@@ -2429,8 +2429,13 @@ if (botType === 'levanter' || botType === 'raganork') {
         console.error(`[Build Error] Failed to build app ${appName}:`, errorMsg);
         if (primaryAnimateIntervalId) clearInterval(primaryAnimateIntervalId); // Stop user/admin animation
 
-        // Edit the USER's message to show failure
-        await bot.editMessageText(`Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+        // Never expose provider credentials, permissions, or infrastructure
+        // details to regular users. Keep the complete reason in the admin log.
+        const isAdminTarget = String(targetChatId) === String(ADMIN_ID);
+        const userFailureMessage = isAdminTarget
+            ? `Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`
+            : `Your bot *${escapeMarkdown(appName)}* failed to deploy.\nPlease contact the admin for assistance.`;
+        await bot.editMessageText(userFailureMessage, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
 
         // If it was a user, update the ADMIN's log
         if (adminLogMsg) {
@@ -2602,9 +2607,9 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
             repoUrl = GITHUB_LEVANTER_REPO_URL;
         }
 
-        const buildStartRes = await withPublicGitHubRepository(repoUrl, () => herokuApi.post(`/apps/${appName}/builds`, {
+        const buildStartRes = await herokuApi.post(`/apps/${appName}/builds`, {
             source_blob: { url: `${repoUrl}/tarball/main` }
-        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }));
+        }, { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } });
 
 
         // --- Step 6: Wait for Build to Finish (Silently) ---
