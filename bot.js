@@ -4632,6 +4632,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
 const TELEGRAM_LOGIN_COOKIE = 'ultar_telegram_user';
 const pendingWebLogins = new Map();
+const loginRateLimits = new Map();
 const parseCookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(part => { const i = part.indexOf('='); return [part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1))]; }));
 const verifyTelegramLogin = (data) => {
     const params = new URLSearchParams(data);
@@ -4749,6 +4750,9 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/apps', (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
 });
+  app.get(['/apps/new', '/apps/settings', '/apps/notifications'], (req, res) => {
+    telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
+  });
 
   app.get('/auth/check-identifier', async (req, res) => {
     try {
@@ -4763,16 +4767,24 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/auth/login', async (req, res) => {
     try {
         const identifier = String(req.query.identifier || '').trim();
+        const rateKey = identifier.toLowerCase();
+        const recent = loginRateLimits.get(rateKey) || [];
+        const activeAttempts = recent.filter(timestamp => Date.now() - timestamp < 15 * 60 * 1000);
+        if (activeAttempts.length >= 3) return res.status(429).json({ success: false, message: 'Too many code requests. Please wait 15 minutes and try again.' });
+        activeAttempts.push(Date.now());
+        loginRateLimits.set(rateKey, activeAttempts);
         const userId = await findAuthorizedLogin(identifier);
         if (!userId) return res.json({ success: false, message: 'Not found.' });
         const code = String(crypto.randomInt(100000, 1000000));
         const pending = { userId, code, expires: Date.now() + 10 * 60 * 1000 };
         if (/^\d+$/.test(identifier)) {
             pendingWebLogins.set(identifier, pending);
-            await bot.sendMessage(userId, `Your Ultar WBD login verification code is: ${code}\n\nThis code expires in 10 minutes.`, { reply_markup: { inline_keyboard: [[{ text: 'Copy code', copy_text: { text: code } }]] } });
+            const codeMessage = await bot.sendMessage(userId, `Your Ultar WBD login verification code is: ${code}\n\nThis code expires in 10 minutes.`, { reply_markup: { inline_keyboard: [[{ text: 'Copy code', copy_text: { text: code } }]] } });
+            pending.messageId = codeMessage.message_id;
+            setTimeout(() => bot.deleteMessage(userId, codeMessage.message_id).catch(() => {}), 10 * 60 * 1000);
         } else {
             pendingWebLogins.set(identifier.toLowerCase(), pending);
-            const emailSent = await sendVerificationEmail(identifier.toLowerCase(), code);
+            const emailSent = await sendVerificationEmail(identifier.toLowerCase(), code, 'login');
             if (!emailSent) return res.status(503).json({ success: false, message: 'We could not send the verification email.' });
         }
         return res.json({ success: true, requiresCode: true });
@@ -4787,7 +4799,8 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     const code = String(req.query.code || '').trim();
     const pending = pendingWebLogins.get(/^\d+$/.test(identifier) ? identifier : identifier.toLowerCase());
     if (!pending || pending.expires < Date.now() || pending.code !== code) return res.json({ success: false, message: 'Invalid or expired code.' });
-    pendingWebLogins.delete(identifier);
+    pendingWebLogins.delete(/^\d+$/.test(identifier) ? identifier : identifier.toLowerCase());
+    if (pending.messageId) bot.deleteMessage(pending.userId, pending.messageId).catch(() => {});
     res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(pending.userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
     res.json({ success: true });
   });

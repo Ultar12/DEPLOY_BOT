@@ -38,10 +38,11 @@ async function sendEmailViaService(type, payload) {
 }
 
 // Your old functions now just prepare data and call the helper.
-async function sendVerificationEmail(toEmail, verificationCode) {
+async function sendVerificationEmail(toEmail, verificationCode, purpose = 'registration') {
   return sendEmailViaService('verification', { 
     toEmail, 
-    verificationCode 
+    verificationCode,
+    purpose
   });
 }
 

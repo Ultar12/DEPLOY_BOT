@@ -250,14 +250,13 @@
     <div id="main-container">
         <div class="header">
             <button class="back-btn" id="backBtn">&lt;</button>
-            <a class="heroku-brand" href="/apps" aria-label="Ultar WBD dashboard"><span class="heroku-icon">H</span><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span><strong>ULTAR WBD</strong></span></a>
-            <div class="global-search"><span>⌕</span><input aria-label="Search" placeholder="Search and jump to favorites, apps, pipelines, space"></div>
-            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="#" data-action="navigate" data-view="settings">⚙ Account Settings</a><a href="#" id="notificationsLink">♢ Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">↪ Log Out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
+            <a class="heroku-brand" href="/apps" aria-label="Ultar WBD dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span><strong>ULTAR WBD</strong></span></a>
+            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="/apps/settings">⚙ Account Settings</a><a href="#" id="notificationsLink">♢ Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">↪ Log Out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
             <div class="header-title" id="headerTitle">Dashboard</div>
             <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
         <div class="purple-rule"></div>
-        <div class="workspace-bar"><button class="workspace-select">◉ Personal <span>⌄</span></button><button class="new-btn" id="newAppBtn">New <span>⌄</span></button></div>
+        <div class="workspace-bar"><button class="workspace-select">◉ Personal <span>⌄</span></button><a class="new-btn" id="newAppBtn" href="/apps/new">New <span>⌄</span></a></div>
         <div id="view-container"></div>
     </div>
 
@@ -453,7 +452,7 @@
         function getDeployHTML() {
             return `
                 <form id="deployForm" class="management-grid">
-                    <div class="news-card"><div class="news-title">Create a new bot</div><div class="news-content">Your Telegram identity is attached automatically. Check each field, then save and continue.</div></div>
+                    <div class="news-card"><div class="news-title">Create a new bot</div><div class="news-content">Enter the details for your new bot, then save and continue.</div></div>
                     <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
@@ -724,13 +723,14 @@
 
         document.getElementById('backBtn').onclick = goBack;
         const returnedJobId = new URLSearchParams(window.location.search).get('job');
+        const pathView = window.location.pathname === '/apps/new' ? 'deploy' : window.location.pathname === '/apps/settings' ? 'settings' : 'dashboard';
         if (returnedJobId) {
             state.currentView = 'job';
             state.selectedBot = { jobId: returnedJobId };
             renderView('job', state.selectedBot);
             updateHeader();
         } else {
-            navigateTo('dashboard');
+            navigateTo(pathView);
         }
     </script>
 </body>
