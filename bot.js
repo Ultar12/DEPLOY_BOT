@@ -4631,6 +4631,7 @@ if (process.env.NODE_ENV === 'production') {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
 const TELEGRAM_LOGIN_COOKIE = 'ultar_telegram_user';
+const pendingWebLogins = new Map();
 const parseCookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(part => { const i = part.indexOf('='); return [part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1))]; }));
 const verifyTelegramLogin = (data) => {
     const params = new URLSearchParams(data);
@@ -4645,10 +4646,23 @@ const verifyTelegramLogin = (data) => {
     if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash))) return null;
     return JSON.parse(params.get('user') || '{}');
 };
+const createPortalSession = (userId) => {
+    const payload = Buffer.from(JSON.stringify({ userId: String(userId), exp: Date.now() + 86400000 })).toString('base64url');
+    const signature = crypto.createHmac('sha256', TELEGRAM_BOT_TOKEN).update(payload).digest('hex');
+    return `app.${payload}.${signature}`;
+};
+const verifyPortalSession = (value) => {
+    const [prefix, payload, signature] = String(value || '').split('.');
+    if (prefix !== 'app' || !payload || !signature) return null;
+    const expected = crypto.createHmac('sha256', TELEGRAM_BOT_TOKEN).update(payload).digest('hex');
+    if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return null;
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return session.exp > Date.now() ? session.userId : null;
+};
 const telegramLoginRequired = (req, res, next) => {
     const signedLogin = parseCookies(req)[TELEGRAM_LOGIN_COOKIE];
     if (!signedLogin) return res.sendFile(path.join(__dirname, 'public', 'telegram-login.html'));
-    try { const auth = Buffer.from(signedLogin, 'base64url').toString('utf8'); req.telegramData = verifyTelegramLogin(auth); if (!req.telegramData) throw new Error('invalid'); next(); }
+    try { const portalUserId = verifyPortalSession(signedLogin); if (portalUserId) { req.telegramData = { id: portalUserId }; return next(); } const auth = Buffer.from(signedLogin, 'base64url').toString('utf8'); req.telegramData = verifyTelegramLogin(auth); if (!req.telegramData) throw new Error('invalid'); next(); }
     catch { res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`); return res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')); }
 };
 const findAuthorizedLogin = async (identifier) => {
@@ -4746,6 +4760,35 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     }
   });
 
+  app.get('/auth/login', async (req, res) => {
+    try {
+        const identifier = String(req.query.identifier || '').trim();
+        const userId = await findAuthorizedLogin(identifier);
+        if (!userId) return res.json({ success: false, message: 'Not found.' });
+        if (/^\d+$/.test(identifier)) {
+            const code = String(crypto.randomInt(100000, 1000000));
+            pendingWebLogins.set(identifier, { userId, code, expires: Date.now() + 10 * 60 * 1000 });
+            await bot.sendMessage(userId, `Your Ultar WBD login verification code is: ${code}\n\nThis code expires in 10 minutes.`);
+            return res.json({ success: true, requiresCode: true });
+        }
+        res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
+        return res.json({ success: true, requiresCode: false });
+    } catch (error) {
+        console.error('[Login] Login request failed:', error.message);
+        res.status(503).json({ success: false, message: 'Login service temporarily unavailable.' });
+    }
+  });
+
+  app.get('/auth/verify-code', (req, res) => {
+    const identifier = String(req.query.identifier || '').trim();
+    const code = String(req.query.code || '').trim();
+    const pending = pendingWebLogins.get(identifier);
+    if (!pending || pending.expires < Date.now() || pending.code !== code) return res.json({ success: false, message: 'Invalid or expired code.' });
+    pendingWebLogins.delete(identifier);
+    res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(pending.userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
+    res.json({ success: true });
+  });
+
   app.get('/telegram-auth', (req, res) => {
     const { next = '/apps', identifier = '', ...auth } = req.query;
     const user = verifyTelegramLogin(new URLSearchParams(auth).toString());
@@ -4773,7 +4816,7 @@ app.get('/miniapp/health', (req, res) => {
     if (!initData) {
         const cookieUser = parseCookies(req)[TELEGRAM_LOGIN_COOKIE];
         if (cookieUser) {
-            try { req.telegramData = verifyTelegramLogin(Buffer.from(cookieUser, 'base64url').toString('utf8')); if (req.telegramData) return next(); }
+            try { const portalUserId = verifyPortalSession(cookieUser); if (portalUserId) { req.telegramData = { id: portalUserId }; return next(); } req.telegramData = verifyTelegramLogin(Buffer.from(cookieUser, 'base64url').toString('utf8')); if (req.telegramData) return next(); }
             catch { /* fall through to the normal unauthorized response */ }
         }
         console.warn('[MiniApp Server] Unauthorized: No init data provided.');

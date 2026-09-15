@@ -1,64 +1,12 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Login | Ultar WBD</title>
-  <link rel="stylesheet" href="/styles.css">
-  <style>
-    .login-page{min-height:100vh;display:grid;place-items:center;background:#000;padding:20px}.login-card{width:min(390px,100%);background:#fff;border-radius:12px;padding:30px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.45)}.login-card .brand{justify-content:center;margin-bottom:22px}.login-card h1{font-size:1.65rem;margin:0 0 22px;color:var(--ink)}.login-form{display:grid;gap:12px}.login-form input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:6px;font:inherit;outline:none}.login-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(29,95,145,.12)}.login-form button{border:0;border-radius:6px;padding:13px;background:var(--navy);color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-form button:hover{background:var(--blue)}.telegram-wrap{display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.telegram-wrap.visible{display:block}.telegram-wrap p{margin:0 0 12px;color:var(--muted);font-size:.8rem}.telegram-login{min-height:44px;display:flex;justify-content:center}.login-error{display:none;color:#b42318;font-size:.8rem;margin:10px 0 0}.login-error.visible{display:block}.register-prompt{margin:14px 0 0;color:var(--muted);font-size:.82rem}.register-prompt a{color:var(--blue);font-weight:700}
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login | Ultar WBD</title><link rel="stylesheet" href="/styles.css">
+<style>.login-page{min-height:100vh;display:grid;place-items:center;background:#000;padding:20px}.login-card{width:min(390px,100%);background:#fff;border-radius:12px;padding:30px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.45)}.login-card .brand{justify-content:center;margin-bottom:22px}.login-card h1{font-size:1.65rem;margin:0 0 22px;color:var(--ink)}.login-form{display:grid;gap:12px}.login-form input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:6px;font:inherit;outline:none}.login-form button{border:0;border-radius:6px;padding:13px;background:var(--navy);color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-form button:hover{background:var(--blue)}.login-error{display:none;color:#b42318;font-size:.8rem;margin:10px 0 0}.login-error.visible{display:block}.register-prompt{margin:14px 0 0;color:var(--muted);font-size:.82rem}.register-prompt a{color:var(--blue);font-weight:700}.code-form{display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.code-form.visible{display:grid;gap:10px}.code-form input{padding:12px;border:1px solid var(--line);border-radius:6px;font:inherit;text-align:center;letter-spacing:.18em}.code-form button{border:0;border-radius:6px;padding:12px;background:#1f9d63;color:#fff;font:inherit;font-weight:700;cursor:pointer}</style>
 </head>
-<body class="login-page">
-  <main class="login-card">
-    <a class="brand" href="/"><img class="brand-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span>Ultar WBD</span></a>
-    <h1>Login</h1>
-    <form class="login-form" id="login-form">
-      <input id="identifier" name="identifier" type="text" placeholder="Email address or Telegram user ID" autocomplete="username" required>
-      <button type="submit">Login</button>
-    </form>
-    <p class="login-error" id="login-error">Enter your email address or Telegram user ID.</p>
-    <p class="register-prompt">New user? <a href="https://t.me/ultarswbdbot?start=web_register" target="_blank" rel="noopener">Register now</a></p>
-    <div class="telegram-wrap" id="telegram-wrap">
-      <p>Verify your identity with Telegram to continue.</p>
-      <div class="telegram-login" id="telegram-login"></div>
-    </div>
-  </main>
-  <script>
-    function onTelegramAuth(user) {
-      const query = new URLSearchParams(user);
-      const identifier = sessionStorage.getItem('ultar_login_identifier') || '';
-      query.set('identifier', identifier);
-      window.location.href = '/telegram-auth?' + query.toString() + '&next=/apps';
-    }
-    document.getElementById('login-form').addEventListener('submit', function (event) {
-      event.preventDefault();
-      const identifier = document.getElementById('identifier').value.trim();
-      const error = document.getElementById('login-error');
-      if (!identifier) { error.classList.add('visible'); return; }
-      error.classList.remove('visible');
-      sessionStorage.setItem('ultar_login_identifier', identifier);
-      fetch('/auth/check-identifier?identifier=' + encodeURIComponent(identifier)).then(response => response.json()).then(result => {
-        if (!result.allowed) { error.textContent = 'Not found.'; error.classList.add('visible'); return; }
-        document.getElementById('telegram-wrap').classList.add('visible');
-        loadTelegramWidget();
-      }).catch(() => { error.textContent = 'Login service temporarily unavailable.'; error.classList.add('visible'); });
-    });
-    function loadTelegramWidget() {
-      if (!document.getElementById('telegram-widget-script')) {
-        const script = document.createElement('script');
-        script.id = 'telegram-widget-script';
-        script.src = 'https://telegram.org/js/telegram-widget.js?22';
-        script.setAttribute('data-telegram-login', 'ultarswbdbot');
-        script.setAttribute('data-size', 'large');
-        script.setAttribute('data-radius', '6');
-        script.setAttribute('data-userpic', 'false');
-        script.setAttribute('data-request-access', 'write');
-        script.setAttribute('data-onauth', 'onTelegramAuth(user)');
-        script.async = true;
-        document.getElementById('telegram-login').appendChild(script);
-      }
-    }
-  </script>
-</body>
-</html>
+<body class="login-page"><main class="login-card"><a class="brand" href="/"><img class="brand-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span>Ultar WBD</span></a><h1>Login</h1><form class="login-form" id="login-form"><input id="identifier" type="text" placeholder="Email address or Telegram user ID" autocomplete="username" required><button type="submit">Login</button></form><p class="login-error" id="login-error">Enter your email address or Telegram user ID.</p><p class="register-prompt">New user? <a href="https://t.me/ultarswbdbot?start=web_register" target="_blank" rel="noopener">Register now</a></p><form class="code-form" id="code-form"><input id="code" inputmode="numeric" maxlength="6" placeholder="Verification code" required><button type="submit">Verify code</button></form></main>
+<script>
+const loginForm=document.getElementById('login-form'),codeForm=document.getElementById('code-form'),identifierInput=document.getElementById('identifier'),error=document.getElementById('login-error');
+loginForm.addEventListener('submit',async e=>{e.preventDefault();const identifier=identifierInput.value.trim();if(!identifier){error.textContent='Enter your email address or Telegram user ID.';error.classList.add('visible');return}error.classList.remove('visible');try{const r=await fetch('/auth/login?identifier='+encodeURIComponent(identifier));const d=await r.json();if(!d.success){error.textContent=d.message||'Not found.';error.classList.add('visible');return}if(d.requiresCode){sessionStorage.setItem('ultar_login_identifier',identifier);codeForm.classList.add('visible');error.textContent='A verification code was sent to your Telegram chat.';error.classList.add('visible');}else{window.location.href='/apps';}}catch{error.textContent='Login service temporarily unavailable.';error.classList.add('visible')}});
+codeForm.addEventListener('submit',async e=>{e.preventDefault();const identifier=sessionStorage.getItem('ultar_login_identifier')||identifierInput.value.trim(),code=document.getElementById('code').value.trim();try{const r=await fetch('/auth/verify-code?identifier='+encodeURIComponent(identifier)+'&code='+encodeURIComponent(code));const d=await r.json();if(!d.success){error.textContent=d.message||'Invalid or expired code.';error.classList.add('visible');return}window.location.href='/apps';}catch{error.textContent='Login service temporarily unavailable.';error.classList.add('visible')}});
+</script></body></html>
