@@ -233,25 +233,41 @@
             overflow-y: auto; 
             color: #10b981; 
         }
+    
+        /* Heroku-inspired workspace shell */
+        body{background:#fff;color:#172033;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+        .platform-strip{height:30px;padding:7px 24px;color:#7b8492;background:#fafafa;border-bottom:1px solid #eceef2;font-size:11px}.cloud-mark{font-size:14px;margin-right:6px;color:#98a0ad}
+        .header{height:72px;padding:12px 24px;background:#fff;border-bottom:1px solid #e5e7eb;box-shadow:none;color:#172033;gap:18px}.heroku-brand{display:flex;align-items:center;gap:9px;text-decoration:none;color:#172033;min-width:150px}.heroku-icon{width:34px;height:34px;display:grid;place-items:center;border:2px solid #430098;border-radius:5px;color:#430098;font-weight:900;font-size:20px}.heroku-brand strong{display:block;font-size:13px;letter-spacing:.12em}.heroku-brand small{display:block;color:#8b93a0;font-size:9px;margin-top:1px}.global-search{height:36px;display:flex;align-items:center;gap:8px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;flex:1;max-width:510px;color:#7d8795;padding:0 11px}.global-search input{border:0;outline:0;background:transparent;width:100%;font:inherit;font-size:12px;color:#172033}.header-tools{display:flex;align-items:center;gap:14px;margin-left:auto}.launcher-btn,.avatar-btn{border:0;background:transparent;cursor:pointer;color:#677183}.launcher-btn{font-size:24px;line-height:1}.avatar-btn{position:relative;width:34px;height:34px;border-radius:50%;background:#ede5f7;color:#430098;font-weight:800}.notification-dot{position:absolute;right:1px;top:1px;width:7px;height:7px;border-radius:50%;background:#6f2dbd;border:2px solid #fff}.account-area{position:relative}.account-menu{display:none;position:absolute;right:0;top:43px;width:190px;background:#fff;border:1px solid #e5e7eb;border-radius:7px;box-shadow:0 10px 26px rgba(20,24,40,.15);z-index:200;padding:6px}.account-menu.open{display:block}.account-menu a{display:block;padding:10px 11px;color:#273142;text-decoration:none;font-size:12px;border-radius:4px}.account-menu a:hover{background:#f3eef9;color:#430098}.purple-rule{height:3px;background:#430098}.workspace-bar{display:flex;justify-content:space-between;align-items:center;padding:13px 24px;border-bottom:1px solid #e5e7eb;background:#fff}.workspace-select,.new-btn{background:#fff;border:0;color:#374151;font:inherit;font-size:12px;cursor:pointer}.new-btn{border:1px solid #cfd4dc;border-radius:18px;padding:8px 15px;font-weight:700;color:#430098}.workspace-select span,.new-btn span{margin-left:5px;color:#7d8795}.logout-btn{display:none}.back-btn{color:#430098}.header-title{display:none}
+        #view-container{background:#fff;padding:28px 24px 45px;overflow-y:auto}.heroku-dashboard{max-width:1000px;margin:0 auto}.dashboard-heading{display:flex;align-items:end;justify-content:space-between;margin-bottom:24px}.kicker{font-size:10px;letter-spacing:.13em;color:#7d8795;font-weight:800;margin-bottom:4px}.dashboard-heading h1{font-size:28px;letter-spacing:-.04em;margin:0;color:#172033}.dashboard-count{color:#7d8795;font-size:12px}.tabs{display:flex;gap:24px;border-bottom:1px solid #e5e7eb;margin-bottom:17px}.tab{border:0;background:transparent;padding:0 1px 11px;font:inherit;font-size:13px;color:#7d8795;cursor:pointer}.tab.active{color:#430098;font-weight:700;border-bottom:2px solid #430098}.filter-row{display:flex;align-items:center;gap:8px;height:39px;border:1px solid #dfe3e8;border-radius:5px;padding:0 11px;color:#8b93a0;margin-bottom:20px}.filter-row input{border:0;outline:0;width:100%;font:inherit;font-size:12px}.section-title{color:#6b7280;border-bottom-color:#e5e7eb}.stats-grid{gap:12px}.stat-card{background:#fff;border:1px solid #e5e7eb;border-radius:6px;text-align:left;padding:13px}.stat-value{color:#430098;font-size:21px}.stat-label{color:#7d8795;font-size:10px}.bot-list{gap:0;background:#fff;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden}.bot-card{background:#fff;border:0;border-bottom:1px solid #e5e7eb;border-radius:0;padding:16px;align-items:center}.bot-card:last-child{border-bottom:0}.bot-card:hover{background:#faf8fd}.bot-name{color:#172033;font-size:13px}.bot-meta{color:#7d8795}.bot-badge{background:#f1edf7;color:#5d2691;border-radius:3px;font-size:10px}.bot-status-indicator{width:8px;height:8px;margin-top:0}.bot-info{min-width:0}.support-btn{background:#430098;border-radius:5px;font-size:10px}.management-grid,.news-card,.mgmt-option{border-radius:6px}.news-card{background:#faf8fd;border-color:#e6dff0;color:#4b5563}.news-title{color:#430098}.news-content{color:#6b7280}.pagination{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:24px;font-size:12px}.pagination button{border:0;background:transparent;color:#6b7280;padding:7px 10px;border-radius:16px;cursor:pointer}.pagination .page-active{background:#eee5f8;color:#430098;font-weight:800}.pagination a{color:#430098;text-decoration:none;margin-left:4px}.app-list-heading{margin-top:24px}
+        @media(max-width:620px){.platform-strip{padding-left:15px}.header{height:auto;min-height:68px;padding:12px 15px;flex-wrap:wrap;gap:10px}.heroku-brand{min-width:130px}.global-search{order:3;flex-basis:100%;max-width:none}.header-tools{margin-left:auto}.workspace-bar{padding:12px 15px}#view-container{padding:22px 15px 36px}.dashboard-heading h1{font-size:24px}.dashboard-count{font-size:10px}.bot-card{padding:14px 11px}.bot-card>div:last-child{display:none!important}.bot-meta{flex-wrap:wrap}.compact-stats{grid-template-columns:1fr 1fr}}
+
     </style>
 </head>
 <body>
     <div id="main-container">
+        <div class="platform-strip"><span class="cloud-mark">☁</span> Salesforce Platform</div>
         <div class="header">
             <button class="back-btn" id="backBtn">&lt;</button>
-            <div class="header-title" id="headerTitle">Bot Manager</div>
+            <a class="heroku-brand" href="/apps" aria-label="Ultar WBD dashboard"><span class="heroku-icon">H</span><span><strong>ULTAR WBD</strong><small>from Salesforce</small></span></a>
+            <div class="global-search"><span>⌕</span><input aria-label="Search" placeholder="Search and jump to favorites, apps, pipelines, space"></div>
+            <div class="header-tools"><button class="launcher-btn" aria-label="App launcher">⠿</button><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot"></span></button><div class="account-menu" id="accountMenu"><a href="#" data-action="settings">⚙ Account Settings</a><a href="https://t.me/ultarswbdbot" target="_blank" rel="noopener">? Support</a><a href="/telegram-logout">↪ Log Out</a></div></div></div>
+            <div class="header-title" id="headerTitle">Dashboard</div>
             <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
+        <div class="purple-rule"></div>
+        <div class="workspace-bar"><button class="workspace-select">◉ Personal <span>⌄</span></button><button class="new-btn">New <span>⌄</span></button></div>
         <div id="view-container"></div>
     </div>
 
     <script>
         const API_BASE_URL = window.location.origin + '/api';
-        const tg = window.Telegram.WebApp;
+        const tg = window.Telegram?.WebApp || { initData: '', ready() {}, expand() {}, showAlert: (message) => window.alert(message) };
         tg.ready();
         tg.expand();
 
         const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
+        document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
+        document.addEventListener('click', () => document.getElementById('accountMenu')?.classList.remove('open'));
 
         function navigateTo(viewName, data = null) {
             state.viewHistory.push({ view: state.currentView, data: state.selectedBot });
@@ -311,7 +327,10 @@
 
         function getDashboardHTML() {
             return `
-                <div class="dashboard">
+                <div class="dashboard heroku-dashboard">
+                    <div class="dashboard-heading"><div><p class="kicker">PERSONAL WORKSPACE</p><h1>Apps</h1></div><div class="dashboard-count" id="dashboardCount">Your applications</div></div>
+                    <div class="tabs"><button class="tab active">Apps</button><button class="tab">Datastores</button></div>
+                    <div class="filter-row"><span>⌕</span><input placeholder="Filter apps and pipelines" aria-label="Filter apps and pipelines" id="appFilter"></div>
                     <div class="header-with-dropdown" onclick="toggleNewsDropdown()">
                         <div class="section-title" style="margin:0; border:none;">Updates and Support</div>
                         <div class="dropdown-indicator" id="newsArrow">▼</div>
@@ -323,17 +342,18 @@
                         </div>
                     </div>
 
-                    <div class="stats-grid">
+                    <div class="stats-grid compact-stats">
                         <div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">Total</div></div>
                         <div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">Active</div></div>
                     </div>
-                    <div class="section-title">Actions</div>
+                    <div class="section-title">Quick actions</div>
                     <div class="management-grid">
                         <div class="mgmt-option deploy-cta" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
                         <div class="mgmt-option" data-action="navigate" data-view="session"><div><div class="mgmt-option-label">Get Session</div><div class="mgmt-option-hint">Generate a session ID securely in this app</div></div><span>→</span></div>
                     </div>
-                    <div class="section-title">Your Bots</div>
-                    <div class="bot-list" id="botList">Loading bots...</div>
+                    <div class="section-title app-list-heading">Your apps</div>
+                    <div class="bot-list app-list" id="botList">Loading apps...</div>
+                    <div class="pagination"><button class="page-active">1</button><button>2</button><a href="#">Next →</a></div>
                 </div>
             `;
         }
