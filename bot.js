@@ -4655,7 +4655,12 @@ const findAuthorizedLogin = async (identifier) => {
     const value = String(identifier || '').trim();
     if (!value) return null;
     if (/^\d+$/.test(value)) {
-        const result = await backupPool.query('SELECT user_id FROM all_users_backup WHERE user_id = $1 LIMIT 1', [value]);
+        const result = await backupPool.query(`SELECT user_id FROM all_users_backup WHERE user_id = $1
+            UNION SELECT user_id FROM user_activity WHERE user_id = $1
+            UNION SELECT user_id FROM user_bots WHERE user_id = $1
+            UNION SELECT user_id FROM user_deployments WHERE user_id = $1
+            UNION SELECT user_id FROM email_verification WHERE user_id = $1
+            LIMIT 1`, [value]);
         return result.rows[0] ? String(result.rows[0].user_id) : null;
     }
     const result = await pool.query(`SELECT user_id FROM user_deployments WHERE LOWER(email) = LOWER($1)
@@ -9694,7 +9699,7 @@ if (st && st.step === 'AWAITING_EMAIL') {
         st.data.emailAttempts = (st.data.emailAttempts || 0) + 1;
 
         if (st.data.emailAttempts >= 2) {
-            await bot.sendMessage(cid, 'Too many invalid attempts. Registration has been cancelled. Please tap "Deploy" to try again.');
+            await bot.sendMessage(cid, 'I couldn\'t verify that email. Please start again by tapping "Deploy".');
             delete userStates[cid];
         } else {
             await bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again. You have 1 attempt left.");
