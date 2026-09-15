@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in | Ultar Sync</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .login-page{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#07182d,#173d62);padding:24px}.login-card{width:min(440px,100%);background:#fff;border-radius:14px;padding:42px 34px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.25)}.login-card .brand{justify-content:center;margin-bottom:30px}.login-card h1{margin:0 0 12px;font-size:2rem;letter-spacing:-.04em;color:var(--ink)}.login-card p{margin:0 auto 28px;color:var(--muted);max-width:330px}.telegram-login{display:flex;justify-content:center;min-height:44px}.login-note{font-size:.75rem!important;margin:24px 0 0!important;color:#8291a0!important}
+  </style>
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <a class="brand" href="/"><img class="brand-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span>Ultar Sync</span></a>
+    <h1>Sign in to your workspace</h1>
+    <p>Continue securely with your Telegram account to access the Ultar Sync mini web.</p>
+    <div class="telegram-login" id="telegram-login"><span>Loading secure sign-in…</span></div>
+    <p class="login-note">Your Telegram identity is verified by Telegram. We do not ask for your Telegram password.</p>
+  </main>
+  <script>
+    function onTelegramAuth(user) {
+      const query = new URLSearchParams(user);
+      window.location.href = '/telegram-auth?' + query.toString() + '&next=/apps';
+    }
+    const script = document.createElement('script');
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.setAttribute('data-telegram-login', 'ultarbotdeploybot');
+    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-radius', '6');
+    script.setAttribute('data-userpic', 'false');
+    script.setAttribute('data-request-access', 'write');
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    script.async = true;
+    document.getElementById('telegram-login').replaceChildren(script);
+  </script>
+</body>
+</html>

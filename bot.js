@@ -4625,12 +4625,32 @@ runScheduledRecoveryCheck();
 // Check the environment to decide whether to use webhooks or polling
 // At the top of your file, make sure you have crypto required
 const crypto = require('crypto');
-
 if (process.env.NODE_ENV === 'production') {
     // --- Webhook Mode (for Heroku) ---
     const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
+const TELEGRAM_LOGIN_COOKIE = 'ultar_telegram_user';
+const parseCookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(part => { const i = part.indexOf('='); return [part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1))]; }));
+const verifyTelegramLogin = (data) => {
+    const params = new URLSearchParams(data);
+    const hash = params.get('hash');
+    const authDate = Number(params.get('auth_date'));
+    if (!hash || !authDate || Date.now() / 1000 - authDate > 86400) return null;
+    params.delete('hash');
+    params.sort();
+    const checkString = Array.from(params.entries()).map(([key, value]) => `${key}=${value}`).join('\n');
+    const secret = crypto.createHash('sha256').update(TELEGRAM_BOT_TOKEN).digest();
+    const expected = crypto.createHmac('sha256', secret).update(checkString).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash))) return null;
+    return JSON.parse(params.get('user') || '{}');
+};
+const telegramLoginRequired = (req, res, next) => {
+    const signedLogin = parseCookies(req)[TELEGRAM_LOGIN_COOKIE];
+    if (!signedLogin) return res.sendFile(path.join(__dirname, 'public', 'telegram-login.html'));
+    try { const auth = Buffer.from(signedLogin, 'base64url').toString('utf8'); req.telegramData = verifyTelegramLogin(auth); if (!req.telegramData) throw new Error('invalid'); next(); }
+    catch { res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`); return res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')); }
+};
 
 const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 
@@ -4695,8 +4715,19 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 });
 
   app.get('/apps', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'miniapp.html'));
+    telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
 });
+
+  app.get('/telegram-auth', (req, res) => {
+    const { next = '/apps', ...auth } = req.query;
+    const user = verifyTelegramLogin(new URLSearchParams(auth).toString());
+    if (!user || !user.id) return res.status(401).send('Telegram sign-in could not be verified. Please try again.');
+    const signedLogin = new URLSearchParams(auth).toString();
+    res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(Buffer.from(signedLogin).toString('base64url'))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
+    res.redirect(typeof next === 'string' && next.startsWith('/') ? next : '/apps');
+  });
+
+  app.get('/telegram-logout', (req, res) => { res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`); res.redirect('/apps'); });
 
 
 // NEW: Health check endpoint for the Mini App
@@ -4709,6 +4740,11 @@ app.get('/miniapp/health', (req, res) => {
  const validateWebAppInitData = (req, res, next) => {
     const initData = req.header('X-Telegram-Init-Data');
     if (!initData) {
+        const cookieUser = parseCookies(req)[TELEGRAM_LOGIN_COOKIE];
+        if (cookieUser) {
+            try { req.telegramData = verifyTelegramLogin(Buffer.from(cookieUser, 'base64url').toString('utf8')); if (req.telegramData) return next(); }
+            catch { /* fall through to the normal unauthorized response */ }
+        }
         console.warn('[MiniApp Server] Unauthorized: No init data provided.');
         return res.status(401).json({ success: false, message: 'Unauthorized: No init data provided' });
     }
