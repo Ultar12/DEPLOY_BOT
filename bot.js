@@ -4691,11 +4691,11 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     });
   
   app.get('/miniapp', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'miniapp.html'));
 });
 
   app.get('/apps', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'miniapp.html'));
 });
 
 

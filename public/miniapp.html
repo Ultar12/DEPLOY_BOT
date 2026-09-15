@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Manager - Dashboard</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        #main-container {
+            width: 100%;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .header {
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.85) 100%);
+            padding: 20px 15px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .back-btn {
+            font-size: 1.5em;
+            cursor: pointer;
+            color: #3b82f6;
+            background: none;
+            border: none;
+            padding: 8px;
+            display: none;
+        }
+
+        .back-btn.show { display: block; }
+
+        .header-title {
+            font-size: 1.4em;
+            font-weight: 700;
+            flex: 1;
+            letter-spacing: -0.5px;
+        }
+
+        #view-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 15px;
+            padding-bottom: 30px;
+        }
+
+        /* --- News Dropdown Styles --- */
+        .header-with-dropdown {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 10px 0;
+        }
+
+        .dropdown-indicator {
+            transition: transform 0.3s ease;
+            color: #3b82f6;
+            font-size: 0.9em;
+        }
+
+        .dropdown-indicator.open {
+            transform: rotate(180deg);
+        }
+
+        .news-dropdown {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease-out;
+            background: rgba(30, 41, 59, 0.4);
+            border-radius: 10px;
+        }
+
+        .news-dropdown.open {
+            max-height: 500px;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .news-card {
+            background: rgba(59, 130, 246, 0.1);
+            border-left: 4px solid #3b82f6;
+            border-radius: 4px 10px 10px 4px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .news-title { font-size: 0.95em; font-weight: 700; color: #60a5fa; margin-bottom: 4px; }
+        .news-content { font-size: 0.85em; color: #cbd5e1; line-height: 1.4; }
+        .validation-state { display:block; font-size:.78em; margin-top:6px; color:#94a3b8; text-transform:none; }
+        .validation-state.good { color:#34d399; }
+        .validation-state.bad { color:#f87171; }
+
+        .support-action {
+            padding-top: 10px;
+            border-top: 1px solid rgba(148, 163, 184, 0.1);
+            margin-top: 10px;
+        }
+
+        .support-btn {
+            width: 100%;
+            padding: 10px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        .deploy-cta {
+            border-color: rgba(96, 165, 250, .9) !important;
+            background: linear-gradient(135deg, rgba(37, 99, 235, .35), rgba(59, 130, 246, .12));
+            box-shadow: 0 0 18px rgba(59, 130, 246, .72), inset 0 0 16px rgba(96, 165, 250, .12);
+        }
+
+        /* --- Dashboard Stats --- */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value { font-size: 2em; font-weight: 700; color: #3b82f6; }
+        .stat-label { font-size: 0.8em; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
+
+        .section-title {
+            font-size: 0.9em;
+            font-weight: 700;
+            color: #cbd5e1;
+            text-transform: uppercase;
+            margin: 25px 0 15px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        /* --- Bot List & Cards --- */
+        .bot-list { display: flex; flex-direction: column; gap: 12px; }
+        .bot-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 10px;
+            padding: 14px;
+            cursor: pointer;
+            display: flex;
+            gap: 14px;
+        }
+
+        .bot-card.suspended { border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.05); }
+
+        .bot-status-indicator { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+        .bot-status-indicator.online { background: #10b981; }
+        .bot-status-indicator.offline { background: #64748b; }
+        .bot-status-indicator.suspended { background: #ef4444; }
+        .bot-status-indicator.building { background: #f59e0b; animation: pulse 1.5s infinite; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+        .bot-info { flex: 1; }
+        .bot-name { font-size: 0.95em; font-weight: 600; margin-bottom: 4px; }
+        .bot-meta { font-size: 0.8em; color: #94a3b8; display: flex; gap: 8px; }
+        .bot-badge { background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+
+        /* --- Management Options --- */
+        .management-grid { display: grid; gap: 10px; }
+        .mgmt-option {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 10px;
+            padding: 14px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .mgmt-option-label { font-weight: 600; font-size: 0.95em; }
+        .mgmt-option-hint { font-size: 0.8em; color: #94a3b8; }
+        
+        .logs-container { 
+            background: rgba(15, 23, 42, 0.8); 
+            border-radius: 10px; 
+            padding: 12px; 
+            font-family: monospace; 
+            font-size: 0.75em; 
+            max-height: 400px; 
+            overflow-y: auto; 
+            color: #10b981; 
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <div class="header">
+            <button class="back-btn" id="backBtn">&lt;</button>
+            <div class="header-title" id="headerTitle">Bot Manager</div>
+        </div>
+        <div id="view-container"></div>
+    </div>
+
+    <script>
+        const API_BASE_URL = window.location.origin + '/api';
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
+
+        function navigateTo(viewName, data = null) {
+            state.viewHistory.push({ view: state.currentView, data: state.selectedBot });
+            state.currentView = viewName;
+            state.selectedBot = data;
+            renderView(viewName, data);
+            updateHeader();
+        }
+
+        function goBack() {
+            const prev = state.viewHistory.pop() || { view: 'dashboard', data: null };
+            state.currentView = prev.view;
+            state.selectedBot = prev.data;
+            renderView(prev.view, prev.data);
+            updateHeader();
+        }
+
+        function updateHeader() {
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'session': 'Get Session' };
+            document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
+            document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
+        }
+
+        function toggleNewsDropdown() {
+            const dropdown = document.getElementById('newsDropdown');
+            const arrow = document.getElementById('newsArrow');
+            dropdown.classList.toggle('open');
+            arrow.classList.toggle('open');
+            if (dropdown.classList.contains('open')) loadNews();
+        }
+
+        function renderView(viewName, data) {
+            if (viewName !== 'logs' && window.__liveLogPollTimer) {
+                clearInterval(window.__liveLogPollTimer);
+                window.__liveLogPollTimer = null;
+            }
+            if (viewName !== 'session' && window.__sessionRequestPollTimer) {
+                clearInterval(window.__sessionRequestPollTimer);
+                window.__sessionRequestPollTimer = null;
+            }
+            const container = document.getElementById('view-container');
+            switch(viewName) {
+                case 'dashboard': container.innerHTML = getDashboardHTML(); break;
+                case 'deploy': container.innerHTML = getDeployHTML(); break;
+                case 'management': container.innerHTML = getBotManagementHTML(data); break;
+                case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
+                case 'logs': container.innerHTML = getBotLogsHTML(data); break;
+                case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
+                case 'session': container.innerHTML = getSessionHTML(); break;
+            }
+            attachEventListeners();
+            if (viewName === 'dashboard') loadDashboard();
+            if (viewName === 'variables') loadVariables(data);
+            if (viewName === 'logs') loadLogs(data);
+            if (viewName === 'job') pollJob(data.jobId);
+        }
+
+        function getDashboardHTML() {
+            return `
+                <div class="dashboard">
+                    <div class="header-with-dropdown" onclick="toggleNewsDropdown()">
+                        <div class="section-title" style="margin:0; border:none;">Updates and Support</div>
+                        <div class="dropdown-indicator" id="newsArrow">▼</div>
+                    </div>
+                    <div class="news-dropdown" id="newsDropdown">
+                        <div id="newsContainer">Checking for news...</div>
+                        <div class="support-action">
+                            <button class="support-btn" data-action="support">Contact Support</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">Total</div></div>
+                        <div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">Active</div></div>
+                    </div>
+                    <div class="section-title">Actions</div>
+                    <div class="management-grid">
+                        <div class="mgmt-option deploy-cta" data-action="navigate" data-view="deploy"><div><div class="mgmt-option-label">Create a new bot</div><div class="mgmt-option-hint">Set up and manage another bot</div></div><span>→</span></div>
+                        <div class="mgmt-option" data-action="navigate" data-view="session"><div><div class="mgmt-option-label">Get Session</div><div class="mgmt-option-hint">Generate a session ID securely in this app</div></div><span>→</span></div>
+                    </div>
+                    <div class="section-title">Your Bots</div>
+                    <div class="bot-list" id="botList">Loading bots...</div>
+                </div>
+            `;
+        }
+
+        async function loadNews() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/news`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                const container = document.getElementById('newsContainer');
+                if (data.success && data.news.length > 0) {
+                    container.innerHTML = data.news.map(n => `
+                        <div class="news-card">
+                            <div class="news-title">${n.title}</div>
+                            <div class="news-content">${n.content}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="news-content">No active updates.</div>';
+                }
+            } catch (e) { document.getElementById('newsContainer').textContent = "Failed to load news."; }
+        }
+
+        async function loadDashboard() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                const bots = data.bots || [];
+                window.__dashboardBots = bots;
+                document.getElementById('totalBots').textContent = bots.length;
+                document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
+
+                document.getElementById('botList').innerHTML = bots.map(bot => {
+                    const timeLeft = new Date(bot.expirationDate) - new Date();
+                    const isExpired = timeLeft <= 0;
+                    const daysRemaining = Math.max(0, Math.ceil(timeLeft / 86400000));
+                    const hoursRemaining = Math.max(0, Math.round(((24*60*60*1000) + timeLeft) / (1000 * 60 * 60)));
+                    let statusClass = bot.status === 'Online' ? 'online' : bot.status === 'Building' ? 'building' : 'offline';
+                    if (isExpired) statusClass = 'suspended';
+
+                    return `
+                        <div class="bot-card ${isExpired ? 'suspended' : ''}" data-action="navigate" data-view="management" data-bot-json='${JSON.stringify(bot)}'>
+                            <div class="bot-status-indicator ${statusClass}"></div>
+                            <div class="bot-info">
+                                <div class="bot-name">${bot.appName}</div>
+                                <div class="bot-meta">
+                                    <span class="bot-badge">${bot.botType}</span>
+                                    <span class="bot-badge">${isExpired ? 'Suspended' : bot.status}</span>
+                                </div>
+                                <div style="font-size:0.8em; margin-top:5px; color:${isExpired ? '#ef4444' : '#10b981'}">
+                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left`}
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:8px;align-self:center;"><button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>${bot.status === 'Offline' ? `<button class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
+                        </div>
+                    `;
+                }).join('') || 'No bots found.';
+            } catch (e) { document.getElementById('botList').textContent = "Connection error."; }
+        }
+
+        function getBotManagementHTML(bot) {
+            const isExpired = (new Date(bot.expirationDate) - new Date()) <= 0;
+            if (isExpired) {
+                return `
+                    <div class="news-card" style="border-color:#ef4444; background:rgba(239,68,68,0.1);">
+                        <div class="news-title" style="color:#ef4444;">Subscription Expired</div>
+                        <div class="news-content">Renew now to restore bot functionality.</div>
+                    </div>
+                    <div class="management-grid">
+                        <div class="mgmt-option" onclick="tg.showAlert('Please use the Renew button in your Telegram chat.')">
+                            <div class="mgmt-option-label">Renew Subscription</div>
+                        </div>
+                        <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="border-color:#ef4444;">
+                            <div class="mgmt-option-label" style="color:#fca5a5;">Permanent Delete</div>
+                        </div>
+                    </div>
+                `;
+            }
+            return `
+                <div class="management-grid">
+                    <div class="mgmt-option" data-action="restart-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Restart Bot</div></div>
+                    <div class="mgmt-option" data-action="redeploy-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Redeploy Bot</div></div>
+                    <div class="mgmt-option" data-action="turn-off-bot" data-app-name="${bot.appName}" style="border-color:rgba(245,158,11,.45);"><div class="mgmt-option-label" style="color:#fcd34d;">Turn Off Bot</div></div>
+                    <div class="mgmt-option" data-action="navigate" data-view="variables" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">View and Edit Variables</div></div>
+                    <div class="mgmt-option" data-action="navigate" data-view="logs" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">Live Logs</div></div>
+                    <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="margin-top:20px; border-color:rgba(239,68,68,0.3);"><div class="mgmt-option-label" style="color:#fca5a5;">Delete Bot</div></div>
+                </div>
+            `;
+        }
+
+        function getBotVariablesHTML(bot) {
+            return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are visible in this private Telegram mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
+        }
+
+        function getBotLogsHTML(bot) {
+            return `<div><div class="news-card"><div class="news-title">Live logs</div><div class="news-content">New activity appears automatically.</div></div><pre id="logsPanel" class="logs-container">Loading logs...</pre></div>`;
+        }
+
+        function getDeployHTML() {
+            return `
+                <form id="deployForm" class="management-grid">
+                    <div class="news-card"><div class="news-title">Create a new bot</div><div class="news-content">Your Telegram identity is attached automatically. Check each field, then save and continue.</div></div>
+                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
+                    <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
+                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
+                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="Enter a key to validate it" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><span id="keyState" class="validation-state">No key entered — payment is available</span></label>
+                    <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
+                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
+                    <div id="deployResult" class="news-content"></div>
+                </form>`;
+        }
+
+        function getDeploymentJobHTML(data) {
+            return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
+        }
+
+        function getSessionHTML() {
+            return `<form id="sessionRequestForm" class="management-grid"><div class="news-card"><div class="news-title">Get Session</div><div class="news-content">Select your bot type, enter your WhatsApp number in international format, then complete the pairing request. Your session ID appears here for copying.</div></div><label class="section-title" style="margin:0;">Bot type<select id="sessionBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"><option value="levanter">Levanter</option><option value="raganork">Raganork</option></select></label><label class="section-title" style="margin:0;">WhatsApp number<input id="sessionPhoneNumber" inputmode="tel" required placeholder="2349160000000" style="display:block;width:100%;margin-top:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></label><button class="support-btn" type="submit">REQUEST SESSION</button><div id="sessionRequestResult" class="news-content"></div></form>`;
+        }
+
+        async function loadVariables(bot) {
+            const container = document.getElementById('view-container');
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots/config-vars/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Could not load config.');
+                const escapeValue = value => String(value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+                container.innerHTML += `<div class="section-title">Config Vars</div><div class="management-grid" id="varsList">${Object.entries(data.configVars || {}).map(([key, value]) => `<div class="mgmt-option"><div><div class="mgmt-option-label">${escapeValue(key)}</div><div class="mgmt-option-hint" style="word-break:break-all;max-width:48vw;">${escapeValue(value)}</div></div><button class="support-btn" data-action="set-var" data-app-name="${bot.appName}" data-var-name="${key}" style="width:auto;padding:8px 12px;">EDIT</button></div>`).join('')}</div>`;
+            } catch (e) { tg.showAlert(e.message || 'Failed to load variables.'); }
+        }
+
+        async function loadLogs(bot) {
+            if (window.__liveLogPollTimer) clearInterval(window.__liveLogPollTimer);
+            let latestLogs = null;
+            let requestInFlight = false;
+            const refreshLogs = async () => {
+                if (requestInFlight || state.currentView !== 'logs') return;
+                requestInFlight = true;
+                try {
+                    const res = await fetch(`${API_BASE_URL}/bots/logs/${encodeURIComponent(bot.appName)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.message || 'Could not load logs.');
+                    const logs = String(data.logs || 'No recent logs.');
+                    const panel = document.getElementById('logsPanel');
+                    if (panel && logs !== latestLogs) {
+                        latestLogs = logs;
+                        panel.textContent = logs;
+                        panel.scrollTop = panel.scrollHeight;
+                    }
+                } catch (error) {
+                    if (latestLogs === null) tg.showAlert(error.message || 'Failed to load logs.');
+                } finally {
+                    requestInFlight = false;
+                }
+            };
+            await refreshLogs();
+            window.__liveLogPollTimer = setInterval(refreshLogs, 4000);
+        }
+
+        function attachEventListeners() {
+            document.onclick = (e) => {
+                const btn = e.target.closest('[data-action]');
+                if (!btn) return;
+                const act = btn.dataset.action;
+                if (act === 'navigate') navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null);
+                if (act === 'bot-menu') {
+                    const bot = (window.__dashboardBots || []).find(item => item.appName === btn.dataset.appName);
+                    if (bot) navigateTo('management', bot);
+                    return;
+                }
+                if (act === 'change-session') {
+                    const sessionId = window.prompt('Paste the new session ID.');
+                    if (!sessionId) return;
+                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
+                    return;
+                }
+                if (act === 'copy-session' || act === 'copy-pairing') {
+                    const sessionId = act === 'copy-pairing' ? (btn.dataset.code || '') : (btn.dataset.session || '');
+                    const fallback = () => {
+                        const area = document.createElement('textarea');
+                        area.value = sessionId;
+                        document.body.appendChild(area);
+                        area.select();
+                        document.execCommand('copy');
+                        area.remove();
+                    };
+                    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(sessionId).catch(fallback); else fallback();
+                    tg.showAlert(act === 'copy-pairing' ? 'Pairing code copied.' : 'Session ID copied.');
+                    return;
+                }
+                if (act === 'support') {
+                    tg.openTelegramLink('https://t.me/staries1');
+                }
+                if (act === 'set-var') {
+                    const value = window.prompt(`Enter a new value for ${btn.dataset.varName}`);
+                    if (value === null) return;
+                    fetch(`${API_BASE_URL}/bots/set-var`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, varName: btn.dataset.varName, varValue: value }) }).then(r => r.json()).then(data => tg.showAlert(data.message || 'Saved.')).catch(() => tg.showAlert('Failed to save variable.'));
+                }
+                if (act === 'restart-bot' || act === 'redeploy-bot' || act === 'turn-off-bot' || act === 'delete-bot') {
+                    tg.showConfirm(`Confirm ${act}?`, async (ok) => {
+                        if (!ok) return;
+                        const ep = { 'restart-bot': 'bots/restart', 'redeploy-bot': 'bots/redeploy', 'turn-off-bot': 'bots/turn-off', 'delete-bot': 'bots/delete' }[act];
+                        try {
+                            const res = await fetch(`${API_BASE_URL}/${ep}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+                                body: JSON.stringify({ appName: btn.dataset.appName })
+                            });
+                            const data = await res.json();
+                            tg.showAlert(data.message);
+                            if (data.success) navigateTo('dashboard');
+                        } catch (e) { tg.showAlert("Error."); }
+                    });
+                }
+                if (act === 'deploy-bot') return;
+            };
+            const deployForm = document.getElementById('deployForm');
+            if (deployForm) {
+                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
+                const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
+                let selectedPlan = null;
+                const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
+                const debounce = (fn, delay = 450) => { let timer; return () => { clearTimeout(timer); timer = setTimeout(fn, delay); }; };
+                const checkName = async () => {
+                    const name = fields.name.value.trim().toLowerCase();
+                    if (!name) return setState(states.name, false, 'Enter an app name');
+                    setState(states.name, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/check-app-name/${encodeURIComponent(name)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.name, data.available === true, data.available ? 'Name is available' : 'This name already exists, try a different name.');
+                    return data.available === true;
+                };
+                const checkSession = async () => {
+                    const value = fields.session.value.trim();
+                    if (!value) return setState(states.session, false, 'Enter a session ID');
+                    setState(states.session, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/validate-session?botType=${encodeURIComponent(fields.type.value)}&sessionId=${encodeURIComponent(value)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.session, data.valid === true, data.message || (data.valid ? 'Session is valid' : 'Invalid session ID'));
+                    return data.valid === true;
+                };
+                const checkKey = async () => {
+                    const value = fields.key.value.trim();
+                    if (!value) { states.key.textContent = 'No key entered — payment is available'; states.key.className = 'validation-state'; return false; }
+                    setState(states.key, false, 'Checking...');
+                    const response = await fetch(`${API_BASE_URL}/check-deploy-key/${encodeURIComponent(value)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const data = await response.json();
+                    setState(states.key, data.valid === true, data.message || (data.valid ? 'Key is valid' : 'Invalid or expired key'));
+                    return data.valid === true;
+                };
+                fields.name.addEventListener('input', debounce(checkName));
+                fields.session.addEventListener('input', debounce(checkSession));
+                fields.type.addEventListener('change', checkSession);
+                fields.key.addEventListener('input', debounce(checkKey));
+                document.getElementById('saveNextBtn').onclick = async () => {
+                    const [nameOk, sessionOk] = await Promise.all([checkName(), checkSession()]);
+                    if (!nameOk || !sessionOk) return;
+                    const keyOk = await checkKey();
+                    if (fields.key.value.trim() && !keyOk) return;
+                    document.getElementById('deployOptions').style.display = 'block';
+                    document.getElementById('wizardActions').style.display = 'none';
+                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : '';
+                    document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
+                    document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
+                    const planOptions = document.getElementById('planOptions');
+                    planOptions.style.display = keyOk ? 'none' : 'grid';
+                    if (!keyOk) {
+                        document.getElementById('payDeployBtn').style.display = 'none';
+                        planOptions.innerHTML = '<div class="news-content">Loading available plans...</div>';
+                        try {
+                            const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                            const data = await response.json();
+                            if (!data.success) throw new Error(data.message || 'Could not load plans.');
+                            planOptions.innerHTML = data.plans.map(plan => `<button type="button" class="mgmt-option" data-plan-id="${plan.id}" data-plan-days="${plan.days}" data-plan-amount="${plan.amountNgn}" data-plan-name="${plan.name}"><div><div class="mgmt-option-label">${plan.name}</div><div class="mgmt-option-hint">₦${Number(plan.amountNgn).toLocaleString()} · ${plan.days} days</div></div><span>○</span></button>`).join('');
+                            planOptions.querySelectorAll('[data-plan-id]').forEach(button => {
+                                button.onclick = () => {
+                                    selectedPlan = { id: button.dataset.planId, days: Number(button.dataset.planDays), amount: Number(button.dataset.planAmount), name: button.dataset.planName };
+                                    planOptions.querySelectorAll('[data-plan-id]').forEach(item => { item.style.borderColor = ''; item.style.background = ''; item.querySelector('span').textContent = '○'; });
+                                    button.style.borderColor = '#22c55e';
+                                    button.style.background = 'rgba(34, 197, 94, .15)';
+                                    button.querySelector('span').textContent = '✓';
+                                    document.getElementById('payDeployBtn').style.display = 'block';
+                                };
+                            });
+                        } catch (error) { planOptions.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
+                    }
+                };
+                const submitDeployment = async (forcePayment) => {
+                    const result = document.getElementById('deployResult');
+                    if (forcePayment && !selectedPlan) return;
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), planId: forcePayment ? selectedPlan.id : undefined };
+                    result.textContent = 'Processing deployment...';
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
+                        const data = await res.json();
+                        if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
+                        if (data.paymentRequired && data.paymentUrl) {
+                            navigateTo('job', { jobId: data.jobId });
+                            tg.openLink(data.paymentUrl);
+                        } else {
+                            navigateTo('job', { jobId: data.jobId });
+                        }
+                    } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
+                };
+                document.getElementById('keyDeployBtn').onclick = () => submitDeployment(false);
+                document.getElementById('payDeployBtn').onclick = () => submitDeployment(true);
+                deployForm.onsubmit = (event) => { event.preventDefault(); submitDeployment(false); };
+            }
+            const sessionRequestForm = document.getElementById('sessionRequestForm');
+            if (sessionRequestForm) {
+                const result = document.getElementById('sessionRequestResult');
+                const renderRequest = request => {
+                    if (request.status === 'pairing_code') {
+                        result.innerHTML = `<div class="news-card"><div class="news-title">Pairing code ready</div><div class="news-content">Enter this code in WhatsApp linked devices:</div><div style="display:flex;align-items:center;gap:10px;margin:12px 0;"><div id="pairingCode" style="font-size:1.35em;letter-spacing:.08em;font-weight:700;"></div><button type="button" class="support-btn" data-action="copy-pairing" data-code="" aria-label="Copy pairing code" title="Copy pairing code" style="width:auto;padding:7px 10px;line-height:1;">⧉</button></div></div>`;
+                        document.getElementById('pairingCode').textContent = request.pairingCode || '';
+                        result.querySelector('[data-action="copy-pairing"]').dataset.code = request.pairingCode || '';
+                    } else if (request.status === 'completed') {
+                        result.innerHTML = `<div class="news-card"><div class="news-title">Session ID ready</div><textarea id="generatedSessionId" readonly style="display:block;width:100%;min-height:110px;margin-top:10px;padding:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;"></textarea><button class="support-btn" data-action="copy-session" data-session="">COPY SESSION ID</button></div>`;
+                        const area = document.getElementById('generatedSessionId');
+                        area.value = request.sessionId || '';
+                        result.querySelector('[data-action="copy-session"]').dataset.session = request.sessionId || '';
+                    } else if (request.status === 'failed') {
+                        result.textContent = request.error || 'Could not generate a session. Please try again.';
+                    } else {
+                        result.textContent = 'Processing...';
+                    }
+                };
+                const pollSessionRequest = async requestId => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/session-requests/${encodeURIComponent(requestId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Session request unavailable.');
+                        renderRequest(data.request);
+                        if (['completed', 'failed'].includes(data.request.status) && window.__sessionRequestPollTimer) {
+                            clearInterval(window.__sessionRequestPollTimer);
+                            window.__sessionRequestPollTimer = null;
+                        }
+                    } catch (error) {
+                        result.textContent = error.message || 'Session request unavailable.';
+                    }
+                };
+                sessionRequestForm.onsubmit = async event => {
+                    event.preventDefault();
+                    const botType = document.getElementById('sessionBotType').value;
+                    const number = document.getElementById('sessionPhoneNumber').value.trim();
+                    result.textContent = 'Requesting pairing...';
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/session-requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ botType, number }) });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Could not start session request.');
+                        await pollSessionRequest(data.requestId);
+                        if (window.__sessionRequestPollTimer) clearInterval(window.__sessionRequestPollTimer);
+                        window.__sessionRequestPollTimer = setInterval(() => pollSessionRequest(data.requestId), 2500);
+                    } catch (error) { result.textContent = error.message || 'Could not start session request.'; }
+                };
+            }
+        }
+        async function pollJob(jobId) {
+            const status = document.getElementById('jobStatus');
+            if (!status) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(jobId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Unable to read job status.');
+                const job = data.job;
+                status.textContent = `${job.status}: ${job.progress_message} (${job.progress}%)`;
+                if (!['completed', 'failed'].includes(job.status)) setTimeout(() => pollJob(jobId), 2500);
+            } catch (e) { status.textContent = e.message || 'Status unavailable.'; }
+        }
+
+        document.getElementById('backBtn').onclick = goBack;
+        const returnedJobId = new URLSearchParams(window.location.search).get('job');
+        if (returnedJobId) {
+            state.currentView = 'job';
+            state.selectedBot = { jobId: returnedJobId };
+            renderView('job', state.selectedBot);
+            updateHeader();
+        } else {
+            navigateTo('dashboard');
+        }
+    </script>
+</body>
+</html>
