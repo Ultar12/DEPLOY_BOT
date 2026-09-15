@@ -4658,7 +4658,10 @@ const findAuthorizedLogin = async (identifier) => {
         const result = await backupPool.query('SELECT user_id FROM all_users_backup WHERE user_id = $1 LIMIT 1', [value]);
         return result.rows[0] ? String(result.rows[0].user_id) : null;
     }
-    const result = await pool.query('SELECT user_id FROM user_deployments WHERE LOWER(email) = LOWER($1) LIMIT 1', [value]);
+    const result = await pool.query(`SELECT user_id FROM user_deployments WHERE LOWER(email) = LOWER($1)
+        UNION
+        SELECT user_id FROM email_verification WHERE LOWER(email) = LOWER($1) AND is_verified = TRUE
+        LIMIT 1`, [value]);
     return result.rows[0] ? String(result.rows[0].user_id) : null;
 };
 
@@ -6137,6 +6140,12 @@ bot.onText(/^\/start(?: (.+))?$/, async (msg, match) => {
     delete userStates[cid];
     const { first_name, last_name, username } = msg.from;
     console.log(`User: ${[first_name, last_name].filter(Boolean).join(' ')} (@${username || 'N/A'}) [${cid}] | IsAdmin: ${isAdmin}`);
+
+    if (inviterId === 'web_register') {
+        userStates[cid] = { step: 'AWAITING_EMAIL', data: { emailAttempts: 0, registrationSource: 'web' } };
+        await bot.sendMessage(cid, 'Please enter your email address to register:');
+        return;
+    }
 
     if (inviterId && inviterId !== cid) {
         try {

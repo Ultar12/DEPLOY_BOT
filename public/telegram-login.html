@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Login | Ultar Sync</title>
+  <title>Login | Ultar WBD</title>
   <link rel="stylesheet" href="/styles.css">
   <style>
     .login-page{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#07182d,#173d62);padding:20px}.login-card{width:min(390px,100%);background:#fff;border-radius:12px;padding:30px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.25)}.login-card .brand{justify-content:center;margin-bottom:22px}.login-card h1{font-size:1.65rem;margin:0 0 22px;color:var(--ink)}.login-form{display:grid;gap:12px}.login-form input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:6px;font:inherit;outline:none}.login-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(29,95,145,.12)}.login-form button{border:0;border-radius:6px;padding:13px;background:var(--navy);color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-form button:hover{background:var(--blue)}.telegram-wrap{display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.telegram-wrap.visible{display:block}.telegram-wrap p{margin:0 0 12px;color:var(--muted);font-size:.8rem}.telegram-login{min-height:44px;display:flex;justify-content:center}.login-error{display:none;color:#b42318;font-size:.8rem;margin:10px 0 0}.login-error.visible{display:block}
@@ -11,7 +11,7 @@
 </head>
 <body class="login-page">
   <main class="login-card">
-    <a class="brand" href="/"><img class="brand-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span>Ultar Sync</span></a>
+    <a class="brand" href="/"><img class="brand-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span>Ultar WBD</span></a>
     <h1>Login</h1>
     <form class="login-form" id="login-form">
       <input id="identifier" name="identifier" type="text" placeholder="Email address or Telegram user ID" autocomplete="username" required>
@@ -38,7 +38,7 @@
       error.classList.remove('visible');
       sessionStorage.setItem('ultar_login_identifier', identifier);
       fetch('/auth/check-identifier?identifier=' + encodeURIComponent(identifier)).then(response => response.json()).then(result => {
-        if (!result.allowed) { error.textContent = 'No matching deployment or Telegram account was found.'; error.classList.add('visible'); return; }
+        if (!result.allowed) { error.textContent = 'Not found.'; error.classList.add('visible'); return; }
         document.getElementById('telegram-wrap').classList.add('visible');
         loadTelegramWidget();
       }).catch(() => { error.textContent = 'Login service temporarily unavailable.'; error.classList.add('visible'); });
@@ -59,5 +59,6 @@
       }
     }
   </script>
+  <p style="margin:18px 0 0;color:var(--muted);font-size:.82rem">New user? <a href="https://t.me/ultarbotdeploybot?start=web_register" target="_blank" rel="noopener">Register now</a></p>
 </body>
 </html>
