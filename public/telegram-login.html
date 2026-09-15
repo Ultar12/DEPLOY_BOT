@@ -6,7 +6,7 @@
   <title>Login | Ultar WBD</title>
   <link rel="stylesheet" href="/styles.css">
   <style>
-    .login-page{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#07182d,#173d62);padding:20px}.login-card{width:min(390px,100%);background:#fff;border-radius:12px;padding:30px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.25)}.login-card .brand{justify-content:center;margin-bottom:22px}.login-card h1{font-size:1.65rem;margin:0 0 22px;color:var(--ink)}.login-form{display:grid;gap:12px}.login-form input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:6px;font:inherit;outline:none}.login-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(29,95,145,.12)}.login-form button{border:0;border-radius:6px;padding:13px;background:var(--navy);color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-form button:hover{background:var(--blue)}.telegram-wrap{display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.telegram-wrap.visible{display:block}.telegram-wrap p{margin:0 0 12px;color:var(--muted);font-size:.8rem}.telegram-login{min-height:44px;display:flex;justify-content:center}.login-error{display:none;color:#b42318;font-size:.8rem;margin:10px 0 0}.login-error.visible{display:block}
+    .login-page{min-height:100vh;display:grid;place-items:center;background:#000;padding:20px}.login-card{width:min(390px,100%);background:#fff;border-radius:12px;padding:30px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.45)}.login-card .brand{justify-content:center;margin-bottom:22px}.login-card h1{font-size:1.65rem;margin:0 0 22px;color:var(--ink)}.login-form{display:grid;gap:12px}.login-form input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:6px;font:inherit;outline:none}.login-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(29,95,145,.12)}.login-form button{border:0;border-radius:6px;padding:13px;background:var(--navy);color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-form button:hover{background:var(--blue)}.telegram-wrap{display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.telegram-wrap.visible{display:block}.telegram-wrap p{margin:0 0 12px;color:var(--muted);font-size:.8rem}.telegram-login{min-height:44px;display:flex;justify-content:center}.login-error{display:none;color:#b42318;font-size:.8rem;margin:10px 0 0}.login-error.visible{display:block}.register-prompt{margin:14px 0 0;color:var(--muted);font-size:.82rem}.register-prompt a{color:var(--blue);font-weight:700}
   </style>
 </head>
 <body class="login-page">
@@ -48,7 +48,7 @@
         const script = document.createElement('script');
         script.id = 'telegram-widget-script';
         script.src = 'https://telegram.org/js/telegram-widget.js?22';
-        script.setAttribute('data-telegram-login', 'ultarbotdeploybot');
+        script.setAttribute('data-telegram-login', 'ultarswbdbot');
         script.setAttribute('data-size', 'large');
         script.setAttribute('data-radius', '6');
         script.setAttribute('data-userpic', 'false');
@@ -59,6 +59,6 @@
       }
     }
   </script>
-  <p style="margin:18px 0 0;color:var(--muted);font-size:.82rem">New user? <a href="https://t.me/ultarbotdeploybot?start=web_register" target="_blank" rel="noopener">Register now</a></p>
+  <p class="register-prompt">New user? <a href="https://t.me/ultarswbdbot?start=web_register" target="_blank" rel="noopener">Register now</a></p>
 </body>
 </html>

@@ -165,7 +165,7 @@ const MUST_JOIN_CHANNEL_LINK = 'https://t.me/+KgOPzr1wB7E5OGU0';
 const MUST_JOIN_CHANNEL_ID = '-1002491934453'; 
 
 
-let botUsername = 'ultarbotdeploybot'; // Add this new global variable
+let botUsername = 'ultarswbdbot'; // Public Telegram bot username
 
 // 2) Load fallback env vars from app.json / custom config files
 let levanterDefaultEnvVars = {};
