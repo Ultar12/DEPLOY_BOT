@@ -4632,10 +4632,10 @@ if (process.env.NODE_ENV === 'production') {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'))); // <-- ADD THIS LINE
 
-const APP_URL = process.env.APP_URL;
+const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 
     if (!APP_URL) {
-        console.error('CRITICAL ERROR: APP_URL environment variable is not set. The bot cannot start in webhook mode.');
+        console.error('CRITICAL ERROR: Set APP_URL or use a Render service with RENDER_EXTERNAL_URL. The bot cannot start in webhook mode.');
         process.exit(1);
     }
     const PORT = process.env.PORT || 3000;
@@ -4683,7 +4683,7 @@ const APP_URL = process.env.APP_URL;
     });
 
     app.get('/', (req, res) => {
-        res.send('Bot is running (webhook mode)!');
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
     });
 
   app.get('/verify', (req, res) => {
