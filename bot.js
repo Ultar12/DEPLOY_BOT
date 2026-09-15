@@ -4765,14 +4765,17 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
         const identifier = String(req.query.identifier || '').trim();
         const userId = await findAuthorizedLogin(identifier);
         if (!userId) return res.json({ success: false, message: 'Not found.' });
+        const code = String(crypto.randomInt(100000, 1000000));
+        const pending = { userId, code, expires: Date.now() + 10 * 60 * 1000 };
         if (/^\d+$/.test(identifier)) {
-            const code = String(crypto.randomInt(100000, 1000000));
-            pendingWebLogins.set(identifier, { userId, code, expires: Date.now() + 10 * 60 * 1000 });
-            await bot.sendMessage(userId, `Your Ultar WBD login verification code is: ${code}\n\nThis code expires in 10 minutes.`);
-            return res.json({ success: true, requiresCode: true });
+            pendingWebLogins.set(identifier, pending);
+            await bot.sendMessage(userId, `Your Ultar WBD login verification code is: ${code}\n\nThis code expires in 10 minutes.`, { reply_markup: { inline_keyboard: [[{ text: 'Copy code', copy_text: { text: code } }]] } });
+        } else {
+            pendingWebLogins.set(identifier.toLowerCase(), pending);
+            const emailSent = await sendVerificationEmail(identifier.toLowerCase(), code);
+            if (!emailSent) return res.status(503).json({ success: false, message: 'We could not send the verification email.' });
         }
-        res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
-        return res.json({ success: true, requiresCode: false });
+        return res.json({ success: true, requiresCode: true });
     } catch (error) {
         console.error('[Login] Login request failed:', error.message);
         res.status(503).json({ success: false, message: 'Login service temporarily unavailable.' });
@@ -4782,7 +4785,7 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/auth/verify-code', (req, res) => {
     const identifier = String(req.query.identifier || '').trim();
     const code = String(req.query.code || '').trim();
-    const pending = pendingWebLogins.get(identifier);
+    const pending = pendingWebLogins.get(/^\d+$/.test(identifier) ? identifier : identifier.toLowerCase());
     if (!pending || pending.expires < Date.now() || pending.code !== code) return res.json({ success: false, message: 'Invalid or expired code.' });
     pendingWebLogins.delete(identifier);
     res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(pending.userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);

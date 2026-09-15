@@ -56,6 +56,17 @@
 
         .back-btn.show { display: block; }
 
+        .logout-btn {
+            margin-left: auto;
+            background: transparent;
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            color: #cbd5e1;
+            border-radius: 7px;
+            padding: 7px 10px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
         .header-title {
             font-size: 1.4em;
             font-weight: 700;
@@ -229,6 +240,7 @@
         <div class="header">
             <button class="back-btn" id="backBtn">&lt;</button>
             <div class="header-title" id="headerTitle">Bot Manager</div>
+            <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
         <div id="view-container"></div>
     </div>
