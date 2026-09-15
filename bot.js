@@ -4651,6 +4651,16 @@ const telegramLoginRequired = (req, res, next) => {
     try { const auth = Buffer.from(signedLogin, 'base64url').toString('utf8'); req.telegramData = verifyTelegramLogin(auth); if (!req.telegramData) throw new Error('invalid'); next(); }
     catch { res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`); return res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')); }
 };
+const findAuthorizedLogin = async (identifier) => {
+    const value = String(identifier || '').trim();
+    if (!value) return null;
+    if (/^\d+$/.test(value)) {
+        const result = await backupPool.query('SELECT user_id FROM all_users_backup WHERE user_id = $1 LIMIT 1', [value]);
+        return result.rows[0] ? String(result.rows[0].user_id) : null;
+    }
+    const result = await pool.query('SELECT user_id FROM user_deployments WHERE LOWER(email) = LOWER($1) LIMIT 1', [value]);
+    return result.rows[0] ? String(result.rows[0].user_id) : null;
+};
 
 const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 
@@ -4718,13 +4728,26 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
 });
 
+  app.get('/auth/check-identifier', async (req, res) => {
+    try {
+        const userId = await findAuthorizedLogin(req.query.identifier);
+        res.json({ allowed: Boolean(userId), user_id: userId });
+    } catch (error) {
+        console.error('[Login] Identifier lookup failed:', error.message);
+        res.status(503).json({ allowed: false, message: 'Login service temporarily unavailable.' });
+    }
+  });
+
   app.get('/telegram-auth', (req, res) => {
-    const { next = '/apps', ...auth } = req.query;
+    const { next = '/apps', identifier = '', ...auth } = req.query;
     const user = verifyTelegramLogin(new URLSearchParams(auth).toString());
     if (!user || !user.id) return res.status(401).send('Telegram sign-in could not be verified. Please try again.');
-    const signedLogin = new URLSearchParams(auth).toString();
-    res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(Buffer.from(signedLogin).toString('base64url'))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
-    res.redirect(typeof next === 'string' && next.startsWith('/') ? next : '/apps');
+    findAuthorizedLogin(identifier).then(authorizedUserId => {
+        if (!authorizedUserId || authorizedUserId !== String(user.id)) return res.status(403).send('This Telegram account is not authorized for the requested login.');
+        const signedLogin = new URLSearchParams(auth).toString();
+        res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(Buffer.from(signedLogin).toString('base64url'))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
+        res.redirect(typeof next === 'string' && next.startsWith('/') ? next : '/apps');
+    }).catch(error => { console.error('[Login] Authorization failed:', error.message); res.status(503).send('Login service temporarily unavailable.'); });
   });
 
   app.get('/telegram-logout', (req, res) => { res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`); res.redirect('/apps'); });
