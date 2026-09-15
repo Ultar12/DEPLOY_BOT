@@ -284,10 +284,6 @@
         }
 
         function goBack() {
-            if (window.location.pathname !== '/apps' && window.history.length > 1) {
-                window.history.back();
-                return;
-            }
             if (window.location.pathname !== '/apps') {
                 window.location.href = '/apps';
                 return;
