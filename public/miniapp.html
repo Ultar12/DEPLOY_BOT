@@ -281,6 +281,14 @@
         }
 
         function goBack() {
+            if (window.location.pathname !== '/apps' && window.history.length > 1) {
+                window.history.back();
+                return;
+            }
+            if (window.location.pathname !== '/apps') {
+                window.location.href = '/apps';
+                return;
+            }
             const prev = state.viewHistory.pop() || { view: 'dashboard', data: null };
             state.currentView = prev.view;
             state.selectedBot = prev.data;
