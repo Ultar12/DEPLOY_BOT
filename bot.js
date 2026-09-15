@@ -9699,7 +9699,7 @@ if (st && st.step === 'AWAITING_EMAIL') {
         st.data.emailAttempts = (st.data.emailAttempts || 0) + 1;
 
         if (st.data.emailAttempts >= 2) {
-            await bot.sendMessage(cid, 'I couldn\'t verify that email. Please start again by tapping "Deploy".');
+            await bot.sendMessage(cid, 'I couldn\'t verify that email. Please try again.');
             delete userStates[cid];
         } else {
             await bot.sendMessage(cid, "That doesn't look like a valid email address. Please try again. You have 1 attempt left.");
