@@ -149,7 +149,7 @@ const STICKER_PACK_TITLE = 'Ultar';
 const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 
 // --- NEW GLOBAL CONSTANT FOR MINI APP ---
-const MINI_APP_URL = process.env.MINI_APP_URL || 'https://ultarsync.store/miniapp';
+const MINI_APP_URL = process.env.MINI_APP_URL || 'https://ultarsync.store/apps';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
 const KEYBOARD_VERSION = 7; 
@@ -4691,6 +4691,10 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     });
   
   app.get('/miniapp', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+  app.get('/apps', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
