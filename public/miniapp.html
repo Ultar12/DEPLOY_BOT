@@ -567,10 +567,11 @@
                     const expirationTime = bot.expirationDate ? new Date(bot.expirationDate).getTime() : NaN;
                     const hasExpiration = Number.isFinite(expirationTime);
                     const timeLeft = hasExpiration ? expirationTime - Date.now() : Infinity;
-                    const isExpired = hasExpiration && timeLeft <= 0;
+                    const isBuilding = bot.isBuilding === true || bot.status === 'Building';
+                    const isExpired = !isBuilding && hasExpiration && timeLeft <= 0;
                     const daysRemaining = hasExpiration ? Math.max(0, Math.ceil(timeLeft / 86400000)) : null;
                     const hoursRemaining = hasExpiration ? Math.max(0, Math.round(((24*60*60*1000) + timeLeft) / (1000 * 60 * 60))) : null;
-                    const isExpiring = hasExpiration && daysRemaining <= 3;
+                    const isExpiring = !isBuilding && hasExpiration && daysRemaining <= 3;
                     let statusClass = bot.status === 'Online' ? 'online' : bot.status === 'Building' ? 'building' : 'offline';
                     if (isExpired) statusClass = 'suspended';
                     const primaryAction = isExpiring
@@ -584,10 +585,10 @@
                                 <div class="bot-name">${bot.appName}</div>
                                 <div class="bot-meta">
                                     <span class="bot-badge">${bot.botType}</span>
-                                    <span class="bot-badge">${isExpired ? 'Suspended' : bot.status}</span>
+                                    <span class="bot-badge">${isBuilding ? `Building · ${bot.deploymentProgress || 0}%` : isExpired ? 'Suspended' : bot.status}</span>
                                 </div>
                                 <div style="font-size:0.8em; margin-top:5px; color:${isExpired ? '#ef4444' : '#10b981'}">
-                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : hasExpiration ? `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left` : 'Subscription active · Expiry pending'}
+                                    ${isBuilding ? (bot.deploymentMessage || 'Building deployment...') : isExpired ? `Deletion in ${hoursRemaining}h` : hasExpiration ? `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left` : 'Subscription active · Expiry pending'}
                                 </div>
                             </div>
                             <div class="bot-actions">${primaryAction}${String(bot.status || '').toLowerCase() === 'offline' ? `<button type="button" class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
@@ -626,6 +627,7 @@
 
         function getBotManagementHTML(bot) {
             if (window.__maintenanceMode) return '<div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div>';
+            if (bot.isBuilding || bot.status === 'Building') return `<div class="workspace-panel"><strong>Building ${bot.appName}</strong><p>${bot.deploymentMessage || 'Deployment is in progress.'}</p><p>Current progress: ${bot.deploymentProgress || 0}%</p></div>`;
             const isExpired = (new Date(bot.expirationDate) - new Date()) <= 0;
             if (isExpired) {
                 return `
@@ -783,9 +785,9 @@
                 const act = btn.dataset.action;
                 if (act === 'navigate') { if (btn.dataset.appRoute) { window.location.href = btn.dataset.appRoute; return; } navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null); }
                 if (act === 'renew-bot') {
-                    const renewUrl = `https://t.me/ultarswbdbot?start=renew_${encodeURIComponent(btn.dataset.appName || '')}`;
-                    if (typeof tg.openTelegramLink === 'function') tg.openTelegramLink(renewUrl);
-                    else window.open(renewUrl, '_blank', 'noopener');
+                    const bot = (window.__dashboardBots || []).find(item => item.appName === btn.dataset.appName);
+                    if (bot) navigateTo('payment', { ...bot, isRenewal: true });
+                    else showAppAlert('Bot details are unavailable. Please refresh and try again.');
                     return;
                 }
                 if (act === 'change-session') {
@@ -937,9 +939,11 @@
                     if (!selectedPlan) return;
                     const button = document.getElementById('continuePaymentBtn'); button.disabled = true; result.textContent = 'Redirecting to payment...';
                     try {
-                        const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `payment_${Date.now()}_${Math.random().toString(16).slice(2)}`) }) });
+                        const renewal = state.selectedBot?.isRenewal === true;
+                        const response = await fetch(`${API_BASE_URL}/${renewal ? 'renew' : 'deploy'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(renewal ? { appName: state.selectedBot.appName, planId: selectedPlan.id } : { ...state.selectedBot, planId: selectedPlan.id, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `payment_${Date.now()}_${Math.random().toString(16).slice(2)}`) }) });
                         const data = await response.json();
-                        if (!data.success) throw new Error(data.message || 'Could not create the payment.');
+                        if (!response.ok || !data.success) throw new Error(data.message || 'Could not create the payment.');
+                        if (renewal) { result.textContent = 'Opening secure payment...'; if (data.paymentUrl) tg.openLink(data.paymentUrl); return; }
                         navigateTo('job', { jobId: data.jobId, appName: state.selectedBot?.appName, paymentRequired: true });
                         if (data.paymentUrl) tg.openLink(data.paymentUrl);
                     } catch (error) { result.textContent = error.message || 'Could not start payment.'; button.disabled = false; }

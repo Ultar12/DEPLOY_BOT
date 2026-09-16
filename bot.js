@@ -5034,6 +5034,7 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
+        await ensureMiniAppDeploymentSchema();
         // Keep the dashboard ownership table aligned with active deployment records.
         await pool.query(`
             INSERT INTO user_bots (user_id, bot_name, session_id, bot_type)
@@ -5054,9 +5055,19 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 ud.expiration_date,
                 COALESCE(ud.deploy_date, ub.created_at) AS deploy_date,
                 ud.is_free_trial,
-                ud.config_vars
+                ud.config_vars,
+                dj.status AS deployment_status,
+                dj.progress AS deployment_progress,
+                dj.progress_message AS deployment_message
             FROM user_bots ub
             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+            LEFT JOIN LATERAL (
+                SELECT status, progress, progress_message
+                FROM deployment_jobs
+                WHERE user_id = ub.user_id AND app_name = ub.bot_name AND status IN ('queued', 'running')
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) dj ON TRUE
             WHERE ub.user_id = $1 AND (ud.app_name IS NULL OR ud.deleted_from_heroku_at IS NULL)`,
             [userId]
         );
@@ -5068,7 +5079,8 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
 
         // The bot status is now fetched from the database, making this much more reliable
         const formattedBots = bots.map(bot => {
-            let statusText = bot.status;
+            const isBuilding = ['queued', 'running'].includes(bot.deployment_status);
+            let statusText = isBuilding ? 'Building' : bot.status;
             if (bot.status === 'online') statusText = 'Online';
             if (bot.status === 'logged_out' || bot.status === 'offline') statusText = 'Offline';
 
@@ -5077,6 +5089,9 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 botType: bot.bot_type,
                 expirationDate: resolveExpirationDate(bot),
                 status: statusText,
+                isBuilding,
+                deploymentProgress: isBuilding ? Number(bot.deployment_progress || 0) : null,
+                deploymentMessage: isBuilding ? bot.deployment_message : null,
             };
         });
 
@@ -5596,6 +5611,30 @@ app.get('/api/deployment-plans', validateWebAppInitData, async (req, res) => {
     } catch (error) {
         console.error('[MiniApp] Failed to load payment plans:', error.message);
         res.status(500).json({ success: false, message: 'Could not load payment plans.' });
+    }
+});
+
+app.post('/api/renew', validateWebAppInitData, async (req, res) => {
+    const userId = String(req.telegramData.id);
+    const appName = String(req.body?.appName || '').trim().toLowerCase();
+    const planId = String(req.body?.planId || '').trim();
+    try {
+        const botRecord = await pool.query(`SELECT ud.app_name, ud.bot_type, ud.session_id FROM user_deployments ud WHERE ud.user_id = $1 AND LOWER(ud.app_name) = $2 AND ud.deleted_from_heroku_at IS NULL LIMIT 1`, [userId, appName]);
+        if (!botRecord.rows.length) return res.status(404).json({ success: false, message: 'Bot not found.' });
+        const plan = getMiniAppPaymentPlans().find(item => item.id === planId);
+        if (!plan) return res.status(400).json({ success: false, message: 'Select a renewal plan before continuing.' });
+        const email = String(await getMiniAppUserEmail(userId) || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ success: false, message: 'A verified email is required before payment.' });
+        if (!process.env.FLUTTERWAVE_SECRET_KEY) return res.status(503).json({ success: false, message: 'Payment gateway is not configured. Please contact support.' });
+        const reference = `renew_${crypto.randomBytes(12).toString('hex')}`;
+        const forwardedProtocol = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+        const returnUrl = `${forwardedProtocol}://${req.get('host')}/miniapp?renewal=${encodeURIComponent(reference)}`;
+        await pool.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, auto_status_view, plan_id, plan_days) VALUES ($1,$2,$3,'renewal',$4,$5,'pending','false',$6,$7)`, [reference, userId, botRecord.rows[0].app_name, botRecord.rows[0].session_id, plan.id, plan.days]);
+        const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: plan.amountNgn, currency: 'NGN', redirect_url: returnUrl, customer: { email, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Renewal', app_name: botRecord.rows[0].app_name, bot_type: 'renewal', plan_id: plan.id, plan_days: plan.days }, customizations: { title: "Ultar's WBD", description: `${plan.name} subscription renewal` } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
+        res.json({ success: true, paymentUrl: payment.data.data.link, reference, message: 'Complete payment to renew this bot.' });
+    } catch (error) {
+        console.error('[MiniApp] Renewal checkout error:', error.response?.data || error.message);
+        res.status(500).json({ success: false, message: error.response?.data?.message || 'Could not create the renewal payment.' });
     }
 });
 
@@ -6222,8 +6261,9 @@ app.post('/flutterwave/webhook', async (req, res) => {
                 [reference, userId, finalEmail, amountInKobo]
             );
 
-            // Notify user of confirmation and admin of sale
-            const userChat = await bot.getChat(userId);
+            // Notify Telegram users of confirmation; website users receive the payment result in the portal.
+            const isTelegramUser = /^-?\d+$/.test(String(userId));
+            const userChat = isTelegramUser ? await bot.getChat(userId) : {};
             const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
 
             // Send internal payment confirmation email
@@ -6281,7 +6321,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
                     [days, userId, app_name]
                 );
 
-                await bot.sendMessage(userId, `Payment confirmed! *${escapeMarkdown(app_name)}* has been successfully **renewed** for ${days} days.`, { parse_mode: 'Markdown' });
+                if (isTelegramUser) await bot.sendMessage(userId, `Payment confirmed! *${escapeMarkdown(app_name)}* has been successfully **renewed** for ${days} days.`, { parse_mode: 'Markdown' });
             
             } else if (isSwitch) {
                 await bot.sendMessage(userId, 'Payment confirmed! Processing your bot migration now...', { parse_mode: 'Markdown' });
