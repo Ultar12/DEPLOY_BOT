@@ -260,6 +260,9 @@
         body.telegram-theme .mgmt-option{background:var(--tg-section-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
         body.telegram-theme .support-btn{background:var(--tg-button)!important;color:var(--tg-button-text)!important}
         body.telegram-theme .management-grid input,body.telegram-theme .management-grid select,body.telegram-theme .management-grid textarea{background:var(--tg-section-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
+        #sessionRequestForm .news-card,#sessionRequestForm input,#sessionRequestForm select,#sessionRequestForm textarea{background:var(--tg-section-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
+        #sessionRequestForm .news-content,#sessionRequestForm .section-title{color:var(--tg-hint)!important}
+        .payment-cancelled{border-color:var(--tg-link)!important}
 
         /* Standalone /app follows the phone/browser appearance when Telegram theme data is unavailable. */
         @media (prefers-color-scheme:dark){
@@ -353,8 +356,12 @@
         }
 
         function goBack() {
-            if (window.location.pathname !== '/apps') {
+            if (window.location.pathname !== '/apps' && window.location.pathname !== '/app') {
                 window.location.href = '/apps';
+                return;
+            }
+            if (state.currentView === 'payment') {
+                navigateTo('deploy', { ...(state.selectedBot || {}), paymentCancelled: true });
                 return;
             }
             const prev = state.viewHistory.pop() || { view: 'dashboard', data: null };
@@ -390,7 +397,7 @@
             const container = document.getElementById('view-container');
             switch(viewName) {
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
-                case 'deploy': container.innerHTML = getDeployHTML(); break;
+                case 'deploy': container.innerHTML = getDeployHTML(data); break;
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
                 case 'bot-tab': container.innerHTML = getBotWorkspaceHTML(data.bot, data.tab); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
@@ -557,14 +564,15 @@
             return `<div><div class="news-card"><div class="news-title">Live logs</div><div class="news-content">New activity appears automatically.</div></div><pre id="logsPanel" class="logs-container">Loading logs...</pre></div>`;
         }
 
-        function getDeployHTML() {
+        function getDeployHTML(data = {}) {
             return `
                 <form id="deployForm" class="management-grid">
+                    ${data.paymentCancelled ? '<div class="news-card payment-cancelled"><div class="news-title">Payment cancelled</div><div class="news-content">Your payment was cancelled. Your previous deployment details have been restored.</div></div>' : ''}
                     <div class="news-card"><div class="news-title">Create a new bot</div><div class="news-content">Enter the details for your new bot, then save and continue.</div></div>
-                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
-                    <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
-                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
-                    <label class="section-title" style="margin:0;">Auto status view<select id="autoStatusView" aria-label="Auto status view" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="yes">Yes</option><option value="no">No</option></select></label>
+                    <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" value="${data.appName || ''}" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
+                    <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="raganork" ${data.botType === 'raganork' ? 'selected' : ''}>raganork</option><option value="levanter" ${data.botType === 'levanter' ? 'selected' : ''}>levanter</option></select></label>
+                    <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required value="${data.sessionId || ''}" placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
+                    <label class="section-title" style="margin:0;">Auto status view<select id="autoStatusView" aria-label="Auto status view" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="yes" ${data.autoStatusView === 'yes' ? 'selected' : ''}>Yes</option><option value="no" ${data.autoStatusView !== 'yes' ? 'selected' : ''}>No</option></select></label>
                     <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
                     <div id="deployOptions" class="news-card" style="display:none;"><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><div style="display:flex;gap:10px;flex-wrap:nowrap;margin-top:12px;"><button class="support-btn" id="keyDeployBtn" type="button" style="flex:1;min-width:0;">Deploy with key</button><button class="support-btn" id="payDeployBtn" type="button" style="flex:1;min-width:0;">Pay</button></div></div>
                     <div id="deployResult" class="news-content"></div>
@@ -862,9 +870,16 @@
         }
 
         document.getElementById('backBtn').onclick = goBack;
-        const returnedJobId = new URLSearchParams(window.location.search).get('job');
+        const queryParams = new URLSearchParams(window.location.search);
+        const returnedJobId = queryParams.get('job');
+        const paymentWasCancelled = ['cancelled', 'canceled', 'failed'].includes(String(queryParams.get('status') || '').toLowerCase());
         const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : window.location.pathname === '/apps/notifications' ? 'notifications' : 'dashboard';
-        if (returnedJobId) {
+        if (returnedJobId && paymentWasCancelled) {
+            fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(returnedJobId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } }).then(response => response.json()).then(data => {
+                if (!data.success) throw new Error(data.message || 'Deployment details unavailable.');
+                state.currentView = 'deploy'; state.selectedBot = { appName: data.job.app_name, botType: data.job.bot_type, sessionId: data.job.session_id, autoStatusView: data.job.auto_status_view === 'true' ? 'yes' : 'no', paymentCancelled: true }; renderView('deploy', state.selectedBot); updateHeader();
+            }).catch(() => navigateTo('deploy', { paymentCancelled: true }));
+        } else if (returnedJobId) {
             state.currentView = 'job';
             state.selectedBot = { jobId: returnedJobId };
             renderView('job', state.selectedBot);

@@ -5412,7 +5412,7 @@ async function startMiniAppDeploymentJob(jobId) {
 
 app.get('/api/deployment-jobs/:jobId', validateWebAppInitData, async (req, res) => {
     try {
-        const result = await pool.query('SELECT job_id, app_name, bot_type, status, progress, progress_message, payment_method, payment_reference, error_message, created_at, updated_at FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, String(req.telegramData.id)]);
+        const result = await pool.query('SELECT job_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, error_message, created_at, updated_at FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, String(req.telegramData.id)]);
         if (!result.rows.length) return res.status(404).json({ success: false, message: 'Deployment job not found.' });
         res.json({ success: true, job: result.rows[0] });
     } catch (error) {
