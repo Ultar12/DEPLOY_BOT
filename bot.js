@@ -4968,7 +4968,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
 
 app.get('/api/plugins', validateWebAppInitData, async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url, created_at FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(req.telegramData.id)]);
+        const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url, created_at FROM user_plugins ORDER BY created_at DESC');
         res.json({ success: true, plugins: result.rows });
     } catch (error) {
         console.error('[Plugins] List failed:', error.message);
@@ -4977,6 +4977,7 @@ app.get('/api/plugins', validateWebAppInitData, async (req, res) => {
 });
 
 app.post('/api/plugins', validateWebAppInitData, async (req, res) => {
+    if (String(req.telegramData.id) !== String(ADMIN_ID)) return res.status(403).json({ success: false, message: 'Only the administrator can add plugins.' });
     const botType = String(req.body.botType || '').toLowerCase();
     const pluginName = String(req.body.name || 'Unnamed plugin').trim().slice(0, 120);
     const description = String(req.body.description || '').trim().slice(0, 500);
@@ -9485,6 +9486,7 @@ bot.onText(/^\/createneondb (.+)$/, async (msg, match) => {
 });
 
 bot.onText(/^\/plugin$/i, async (msg) => {
+    if (String(msg.from.id) !== String(ADMIN_ID)) return bot.sendMessage(msg.chat.id, 'Only the administrator can publish plugins.');
     const source = msg.reply_to_message?.text || '';
     const lines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const url = lines.find(line => /^https?:\/\//i.test(line));

@@ -256,6 +256,9 @@
     
         .plugin-form textarea{background:#050505;color:#fff;border:1px solid #3f3f46;border-radius:5px;padding:11px;resize:vertical}.plugin-row span{display:block;color:#a1a1aa;font-size:12px;margin-top:5px;max-width:620px}
 
+    
+        html,#main-container,#view-container{background:#050505;color:#f4f4f5}.header{background:#050505!important}.dashboard,.settings-page,.plugins-page,.bot-workspace{color:#f4f4f5}.dashboard-heading h1,.settings-page h1,.bot-workspace-heading h1,.plugins-page h1{color:#fff!important}.section-title,.kicker{color:#a1a1aa!important}.news-card,.workspace-panel,.settings-card,.bot-list,.mgmt-option{background:#111114!important;border-color:#29292f!important;color:#e4e4e7!important}.news-title,.mgmt-option-label,.workspace-panel h2{color:#fff!important}.news-content,.mgmt-option-hint,.workspace-panel p,.settings-card p{color:#a1a1aa!important}.management-grid input,.management-grid select,.management-grid textarea,.session-form input,.session-form select,.session-form textarea{background:#0b0b0d!important;color:#fff!important;border-color:#3f3f46!important}.management-grid label,.session-form label{color:#d4d4d8!important}.support-btn{background:#7c3aed!important;color:#fff!important}.hero-action.primary{background:#fff;color:#111}.pagination{color:#a1a1aa}.error-panel{border-color:#7f1d1d!important}.bot-card{background:#111114!important;border-bottom-color:#29292f!important;color:#fff!important}.bot-name{color:#fff!important}.bot-meta{color:#c4b5fd!important}.plugin-row{background:#111114!important;border-color:#29292f!important}
+
     </style>
 </head>
 <body>
@@ -419,12 +422,12 @@
         }
 
         function getPluginsHTML() {
-            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Store plugin details for Levanter and Raganork bots.</p><form id="pluginForm" class="workspace-panel plugin-form"><input id="pluginName" placeholder="Plugin name" required><select id="pluginBotType"><option value="raganork">Raganork</option><option value="levanter">Levanter</option></select><textarea id="pluginDescription" placeholder="Description" rows="2"></textarea><input id="pluginUrl" type="url" placeholder="https://example.com/plugin.js" required><button class="support-btn" type="submit">Add Plugin</button></form><div class="section-title">Plugin list</div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
+            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Plugins published by the administrator for Levanter and Raganork bots.</p><div class="section-title">Plugin list</div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
         }
 
         async function loadPlugins() {
             const list = document.getElementById('pluginList'); if (!list) return;
-            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); list.innerHTML = data.plugins.length ? data.plugins.map(plugin => `<div class="plugin-row"><div><strong>${plugin.plugin_name} · ${plugin.bot_type}</strong><span>${plugin.description || 'No description'}</span><a href="${plugin.plugin_url}" target="_blank" rel="noopener">${plugin.plugin_url}</a></div><button class="delete-plugin" data-plugin-id="${plugin.id}">Delete</button></div>`).join('') : '<div class="workspace-panel">No plugins saved yet.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
+            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); list.innerHTML = data.plugins.length ? data.plugins.map(plugin => `<div class="plugin-row"><div><strong>${plugin.plugin_name} · ${plugin.bot_type}</strong><span>${plugin.description || 'No description'}</span><a href="${plugin.plugin_url}" target="_blank" rel="noopener">${plugin.plugin_url}</a></div></div>`).join('') : '<div class="workspace-panel">No plugins published yet.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
         }
 
         function getBotManagementHTML(bot) {
@@ -461,7 +464,10 @@
             return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are visible in this private Telegram mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
         }
 
-        function getBotWorkspaceHTML({ bot, tab = 'overview' }) {
+        function getBotWorkspaceHTML(payload = {}) {
+            const bot = payload.bot || payload;
+            const tab = payload.tab || 'overview';
+            if (!bot || !bot.appName) return `<div class="workspace-panel error-panel"><strong>Bot details unavailable</strong><p>Return to My Bots and open the bot again.</p><a href="/apps">Back to My Bots</a></div>`;
             const safeName = encodeURIComponent(bot.appName);
             const remaining = Math.max(0, Math.ceil((new Date(bot.expirationDate) - Date.now()) / 86400000));
             const tabs = [['overview','Overview'],['resources','Resources'],['deploy','Deploy'],['metrics','Metrics'],['activity','Activity'],['access','Access'],['settings','Settings']];
