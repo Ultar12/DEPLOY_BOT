@@ -420,6 +420,17 @@ await client.query(`
         `);
 
         await client.query(`CREATE TABLE IF NOT EXISTS user_activity (user_id TEXT PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS user_plugins (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            bot_type TEXT NOT NULL CHECK (bot_type IN ('levanter', 'raganork')),
+            plugin_url TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, bot_type, plugin_url)
+          );
+        `);
         
         await client.query(`CREATE TABLE IF NOT EXISTS banned_users (user_id TEXT PRIMARY KEY, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, banned_by TEXT);`);
 
@@ -4750,7 +4761,7 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/apps', (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
 });
-  app.get(['/apps/new', '/apps/create', '/apps/session', '/apps/settings', '/apps/notifications'], (req, res) => {
+  app.get(['/apps/new', '/apps/create', '/apps/session', '/apps/plugins', '/apps/settings', '/apps/notifications'], (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
   app.get('/apps/bots/:appName', (req, res) => {
@@ -4951,8 +4962,39 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     }
 });
 
+app.get('/api/plugins', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, bot_type, plugin_url, created_at FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(req.telegramData.id)]);
+        res.json({ success: true, plugins: result.rows });
+    } catch (error) {
+        console.error('[Plugins] List failed:', error.message);
+        res.status(500).json({ success: false, message: 'Could not load plugins.' });
+    }
+});
 
+app.post('/api/plugins', validateWebAppInitData, async (req, res) => {
+    const botType = String(req.body.botType || '').toLowerCase();
+    const pluginUrl = String(req.body.url || '').trim();
+    if (!['levanter', 'raganork'].includes(botType)) return res.status(400).json({ success: false, message: 'Choose Levanter or Raganork.' });
+    if (!/^https?:\/\//i.test(pluginUrl)) return res.status(400).json({ success: false, message: 'Enter a valid plugin URL.' });
+    try {
+        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_url) VALUES ($1, $2, $3) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id, bot_type, plugin_url, created_at', [String(req.telegramData.id), botType, pluginUrl]);
+        res.json({ success: true, plugin: result.rows[0] || null, message: result.rows[0] ? 'Plugin added.' : 'Plugin already exists.' });
+    } catch (error) {
+        console.error('[Plugins] Add failed:', error.message);
+        res.status(500).json({ success: false, message: 'Could not add plugin.' });
+    }
+});
 
+app.delete('/api/plugins/:id', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM user_plugins WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.id, String(req.telegramData.id)]);
+        res.json({ success: result.rowCount > 0, message: result.rowCount ? 'Plugin deleted.' : 'Plugin not found.' });
+    } catch (error) {
+        console.error('[Plugins] Delete failed:', error.message);
+        res.status(500).json({ success: false, message: 'Could not delete plugin.' });
+    }
+});
 
 app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
@@ -9436,9 +9478,27 @@ bot.onText(/^\/createneondb (.+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/plugin\s+list$/i, async (msg) => {
+    try {
+        const result = await pool.query('SELECT id, bot_type, plugin_url FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(msg.from.id)]);
+        if (!result.rows.length) return bot.sendMessage(msg.chat.id, 'No plugins saved yet. Use /plugin (levanter|raganork) (url).');
+        await bot.sendMessage(msg.chat.id, result.rows.map(item => `${item.id}. ${item.bot_type}: ${item.plugin_url}`).join('\n'));
+    } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not load your plugins.'); }
+});
 
+bot.onText(/^\/plugin\s+(levanter|raganork)\s+(https?:\/\/\S+)$/i, async (msg, match) => {
+    try {
+        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_url) VALUES ($1, $2, $3) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), match[1].toLowerCase(), match[2]]);
+        await bot.sendMessage(msg.chat.id, result.rows[0] ? `Plugin saved for ${match[1]}. ID: ${result.rows[0].id}` : 'That plugin is already saved.');
+    } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
+});
 
-
+bot.onText(/^\/plugindelete\s+(\d+)$/i, async (msg, match) => {
+    try {
+        const result = await pool.query('DELETE FROM user_plugins WHERE id = $1 AND user_id = $2 RETURNING id', [match[1], String(msg.from.id)]);
+        await bot.sendMessage(msg.chat.id, result.rowCount ? 'Plugin deleted.' : 'Plugin not found.');
+    } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not delete that plugin.'); }
+});
 
 bot.onText(/^\/restoreall$/, async (msg) => {
     const cid = msg.chat.id.toString();

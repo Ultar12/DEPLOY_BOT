@@ -250,6 +250,9 @@
     
         .bot-workspace{max-width:1000px;margin:0 auto}.bot-workspace-heading h1{font-size:28px;margin:0;color:#172033}.bot-workspace-heading p:not(.kicker){margin:6px 0 20px;color:#7d8795;font-size:12px}.bot-tabs{display:flex;gap:22px;border-bottom:1px solid #e5e7eb;overflow:auto;margin-bottom:22px}.bot-tab{color:#6b7280;text-decoration:none;padding:0 1px 12px;font-size:12px;white-space:nowrap}.bot-tab.active{color:#430098;font-weight:800;border-bottom:2px solid #430098}.bot-tab-content{min-height:260px}.bot-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}.workspace-panel{background:#fff;border:1px solid #e5e7eb;border-radius:7px;padding:20px;color:#4b5563}.workspace-panel h2{color:#172033;font-size:17px;margin:0 0 8px}.workspace-panel p{font-size:13px;line-height:1.6}.resource-row,.activity-item{display:flex;justify-content:space-between;gap:18px;border-top:1px solid #f0f1f3;padding:13px 0;font-size:12px}.resource-row strong,.activity-item strong{color:#172033}.activity-item{display:block}.activity-item span{display:block;color:#7d8795;margin-top:4px}.settings-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.settings-actions .mgmt-option{display:block;padding:14px}.settings-link{margin-top:14px;text-decoration:none}.bot-workspace .management-grid{margin-bottom:20px}@media(max-width:620px){.bot-overview-grid{grid-template-columns:1fr}.settings-actions{grid-template-columns:1fr}.bot-tabs{gap:16px}.bot-workspace-heading h1{font-size:24px}}
 
+    
+        body{background:#050505;color:#f5f5f5}.header{background:#050505;color:#f5f5f5;border-bottom-color:#27272a}.brand-lockup{color:#f5f5f5}.workspace-bar{display:none}.purple-rule{background:#7c3aed}.dark-dashboard{max-width:1050px;margin:0 auto;padding-top:46px}.dark-dashboard .dashboard-heading h1{color:#fff;font-size:38px}.dashboard-subtitle{color:#a1a1aa;font-size:13px;margin:8px 0 26px}.hero-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:26px}.hero-action{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid #303038;border-radius:8px;text-decoration:none;color:#fff;background:#111114}.hero-action:hover{border-color:#8b5cf6}.hero-action.primary{background:#fff;color:#111;border-color:#fff}.hero-action span{font-size:12px;color:#a1a1aa}.hero-action.primary span{color:#52525b}.dark-dashboard .stat-card{background:#111114;border-color:#29292f}.dark-dashboard .stat-value{color:#c4b5fd}.dark-dashboard .stat-label,.dark-dashboard .section-title{color:#a1a1aa}.dark-dashboard .bot-list{background:#111114;border-color:#29292f}.dark-dashboard .bot-card{background:#111114;border-bottom-color:#29292f}.dark-dashboard .bot-card:hover{background:#18181b}.plugins-page,.bot-workspace{max-width:1000px;margin:0 auto;padding-top:42px}.plugins-page h1{color:#fff}.plugins-page .dashboard-subtitle{margin-bottom:22px}.plugin-form{display:grid;grid-template-columns:160px 1fr auto;gap:10px;margin-bottom:24px;background:#111114;border-color:#29292f}.plugin-form input,.plugin-form select{background:#050505;color:#fff;border:1px solid #3f3f46;border-radius:5px;padding:11px}.plugin-list{display:grid;gap:10px}.plugin-row{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:15px 16px;border:1px solid #29292f;border-radius:7px;background:#111114}.plugin-row strong{display:block;text-transform:capitalize;color:#c4b5fd;font-size:12px}.plugin-row a{display:block;color:#d4d4d8;font-size:12px;margin-top:5px;word-break:break-all}.delete-plugin{border:1px solid #7f1d1d;background:transparent;color:#fca5a5;border-radius:5px;padding:8px 10px;cursor:pointer}@media(max-width:620px){.hero-actions{grid-template-columns:1fr}.dark-dashboard .dashboard-heading h1{font-size:30px}.plugin-form{grid-template-columns:1fr}.plugin-row{align-items:flex-start;flex-direction:column}}
+
     </style>
 </head>
 <body>
@@ -331,6 +334,7 @@
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
                 case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
                 case 'session': container.innerHTML = getSessionHTML(); break;
+                case 'plugins': container.innerHTML = getPluginsHTML(); break;
                 case 'settings': container.innerHTML = getSettingsHTML(); break;
             }
             attachEventListeners();
@@ -338,27 +342,11 @@
             if (viewName === 'variables') loadVariables(data);
             if (viewName === 'logs') loadLogs(data);
             if (viewName === 'job') pollJob(data.jobId);
+            if (viewName === 'plugins') loadPlugins();
         }
 
         function getDashboardHTML() {
-            return `
-                <div class="dashboard workspace-dashboard">
-                    <div class="dashboard-heading"><div><p class="kicker">PERSONAL WORKSPACE</p><h1>Apps</h1></div><div class="dashboard-count" id="dashboardCount">Your applications</div></div>
-                    <div class="tabs"><button class="tab active">Apps</button></div>
-                    <div class="filter-row"><span>⌕</span><input placeholder="Filter apps and pipelines" aria-label="Filter apps and pipelines" id="appFilter"></div>
-                    <div class="stats-grid compact-stats">
-                        <div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">Total</div></div>
-                        <div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">Active</div></div>
-                    </div>
-                    <div class="section-title">Quick actions</div>
-                    <div class="management-grid">
-                        <a class="mgmt-option" href="/apps/session"><div><div class="mgmt-option-label">Get Session</div><div class="mgmt-option-hint">Generate a session ID securely in this app</div></div><span>→</span></a>
-                    </div>
-                    <div class="section-title app-list-heading">Your apps</div>
-                    <div class="bot-list app-list" id="botList">Loading apps...</div>
-                    <div class="pagination"><button class="page-active">1</button><button>2</button><a href="#">Next →</a></div>
-                </div>
-            `;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading"><div><p class="kicker">ULTAR WBD</p><h1>Bot control center</h1><p class="dashboard-subtitle">Deploy, manage, and extend your WhatsApp bots.</p></div></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Manage plugin URLs</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div><div class="pagination"><button class="page-active">1</button><button>2</button><a href="#">Next →</a></div></div>`;
         }
 
         async function loadNews() {
@@ -420,11 +408,20 @@
                 const routeBotName = decodeURIComponent(routeMatch?.[1] || '');
                 const routeBot = bots.find(bot => bot.appName === routeBotName);
                 if (routeBot) navigateTo('bot-tab', { bot: routeBot, tab: routeMatch?.[2] || 'overview' });
-            } catch (e) { document.getElementById('botList').textContent = "Connection error."; }
+            } catch (e) { document.getElementById('botList').innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load your bots</strong><p>${e.message || 'Please refresh and try again.'}</p><a href="/apps">Refresh dashboard</a></div>`; }
         }
 
         function getSettingsHTML() {
             return `<div class="settings-page"><p class="kicker">ACCOUNT</p><h1>Account Settings</h1><div class="settings-card"><strong>Ultar WBD workspace</strong><p>Manage your mini web session and support access.</p><a class="support-btn settings-link" href="https://t.me/ultarswbdbot" target="_blank" rel="noopener">Contact Support</a><a class="settings-logout" href="/telegram-logout">Log out</a></div></div>`;
+        }
+
+        function getPluginsHTML() {
+            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Store plugin URLs for Levanter and Raganork bots.</p><form id="pluginForm" class="workspace-panel plugin-form"><select id="pluginBotType"><option value="raganork">Raganork</option><option value="levanter">Levanter</option></select><input id="pluginUrl" type="url" placeholder="https://example.com/plugin.js" required><button class="support-btn" type="submit">Add Plugin</button></form><div class="section-title">Plugin list</div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
+        }
+
+        async function loadPlugins() {
+            const list = document.getElementById('pluginList'); if (!list) return;
+            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); list.innerHTML = data.plugins.length ? data.plugins.map(plugin => `<div class="plugin-row"><div><strong>${plugin.bot_type}</strong><a href="${plugin.plugin_url}" target="_blank" rel="noopener">${plugin.plugin_url}</a></div><button class="delete-plugin" data-plugin-id="${plugin.id}">Delete</button></div>`).join('') : '<div class="workspace-panel">No plugins saved yet.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
         }
 
         function getBotManagementHTML(bot) {
@@ -599,6 +596,9 @@
                 }
                 if (act === 'deploy-bot') return;
             };
+            const pluginForm = document.getElementById('pluginForm');
+            if (pluginForm) pluginForm.onsubmit = async event => { event.preventDefault(); const response = await fetch(`${API_BASE_URL}/plugins`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ botType: document.getElementById('pluginBotType').value, url: document.getElementById('pluginUrl').value.trim() }) }); const data = await response.json(); tg.showAlert(data.message || 'Plugin request completed.'); if (data.success) { pluginForm.reset(); loadPlugins(); } };
+            document.querySelectorAll('.delete-plugin').forEach(button => button.onclick = async () => { const response = await fetch(`${API_BASE_URL}/plugins/${button.dataset.pluginId}`, { method: 'DELETE', headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); tg.showAlert(data.message || 'Plugin deleted.'); if (data.success) loadPlugins(); });
             const deployForm = document.getElementById('deployForm');
             if (deployForm) {
                 const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
@@ -755,7 +755,7 @@
 
         document.getElementById('backBtn').onclick = goBack;
         const returnedJobId = new URLSearchParams(window.location.search).get('job');
-        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/settings' ? 'settings' : 'dashboard';
+        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : 'dashboard';
         if (returnedJobId) {
             state.currentView = 'job';
             state.selectedBot = { jobId: returnedJobId };
