@@ -448,6 +448,8 @@ await client.query(`
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
           );
         `);
+        await client.query(`ALTER TABLE web_accounts ADD COLUMN IF NOT EXISTS reset_code TEXT;`);
+        await client.query(`ALTER TABLE web_accounts ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMP WITH TIME ZONE;`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS banned_users (user_id TEXT PRIMARY KEY, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, banned_by TEXT);`);
 
@@ -4809,9 +4811,10 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
       const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
       if (password.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
-      const existing = await pool.query('SELECT is_verified FROM web_accounts WHERE LOWER(email) = LOWER($1)', [email]);
-      if (existing.rows[0]?.is_verified) return res.status(409).json({ success: false, message: 'An account with this email already exists. Please log in.' });
-      const userId = webAccountKey(email), { salt, hash } = hashWebPassword(password), code = String(crypto.randomInt(100000, 1000000));
+      const existing = await pool.query(`SELECT user_id, TRUE AS is_verified FROM email_verification WHERE LOWER(email)=LOWER($1) AND is_verified=TRUE UNION SELECT user_id, TRUE FROM user_deployments WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email]);
+      const existingWeb = await pool.query('SELECT user_id, is_verified FROM web_accounts WHERE LOWER(email)=LOWER($1)', [email]);
+      const userId = existing.rows[0]?.user_id || existingWeb.rows[0]?.user_id || webAccountKey(email), { salt, hash } = hashWebPassword(password), code = String(crypto.randomInt(100000, 1000000));
+      if (existingWeb.rows[0]?.is_verified) return res.status(409).json({ success: false, message: 'An account with this email already exists. Please log in or reset your password.' });
       await pool.query(`INSERT INTO web_accounts (user_id,email,password_hash,password_salt,verification_code,verification_expires_at,is_verified) VALUES ($1,$2,$3,$4,$5,NOW()+INTERVAL '10 minutes',FALSE) ON CONFLICT (user_id) DO UPDATE SET password_hash=EXCLUDED.password_hash,password_salt=EXCLUDED.password_salt,verification_code=EXCLUDED.verification_code,verification_expires_at=EXCLUDED.verification_expires_at`, [userId, email, hash, salt, code]);
       if (!await sendVerificationEmail(email, code, 'signup')) return res.status(503).json({ success: false, message: 'We could not send the verification email. Please try again later.' });
       res.json({ success: true, message: 'Verification code sent to your email.' });
@@ -4826,6 +4829,30 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
       await pool.query('UPDATE web_accounts SET is_verified=TRUE, verification_code=NULL, verification_expires_at=NULL WHERE user_id=$1', [result.rows[0].user_id]);
       res.json({ success: true, message: 'Account verified. You can now log in.' });
     } catch (error) { console.error('[Web signup verify]', error); res.status(503).json({ success: false, message: 'Verification service temporarily unavailable.' }); }
+  });
+
+  app.post('/auth/password-reset/request', async (req, res) => {
+    try {
+      const email = String(req.body.email || '').trim().toLowerCase();
+      const result = await pool.query('SELECT user_id FROM web_accounts WHERE LOWER(email)=LOWER($1) AND is_verified=TRUE', [email]);
+      if (!result.rows[0]) return res.json({ success: true, message: 'If an account exists, a reset code has been sent.' });
+      const code = String(crypto.randomInt(100000, 1000000));
+      await pool.query("UPDATE web_accounts SET reset_code=$1, reset_expires_at=NOW()+INTERVAL '10 minutes' WHERE user_id=$2", [code, result.rows[0].user_id]);
+      if (!await sendVerificationEmail(email, code, 'password_reset')) return res.status(503).json({ success: false, message: 'We could not send the reset email.' });
+      res.json({ success: true, message: 'A password reset code was sent to your email.' });
+    } catch (error) { console.error('[Password reset request]', error); res.status(503).json({ success: false, message: 'Password reset service temporarily unavailable.' }); }
+  });
+
+  app.post('/auth/password-reset/complete', async (req, res) => {
+    try {
+      const email = String(req.body.email || '').trim().toLowerCase(), code = String(req.body.code || '').trim(), password = String(req.body.password || '');
+      if (password.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+      const result = await pool.query('SELECT * FROM web_accounts WHERE LOWER(email)=LOWER($1) AND reset_code=$2 AND reset_expires_at > NOW()', [email, code]);
+      if (!result.rows[0]) return res.status(400).json({ success: false, message: 'Invalid or expired reset code.' });
+      const { salt, hash } = hashWebPassword(password);
+      await pool.query('UPDATE web_accounts SET password_hash=$1,password_salt=$2,reset_code=NULL,reset_expires_at=NULL WHERE user_id=$3', [hash, salt, result.rows[0].user_id]);
+      res.json({ success: true, message: 'Password updated. You can now log in.' });
+    } catch (error) { console.error('[Password reset complete]', error); res.status(503).json({ success: false, message: 'Password reset service temporarily unavailable.' }); }
   });
 
   app.post('/auth/password-login', async (req, res) => {
