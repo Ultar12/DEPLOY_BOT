@@ -331,6 +331,11 @@
         .plugin-filters { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 12px; }
         .plugin-filter { border:1px solid #3f3f46; border-radius:5px; padding:7px 11px; background:#111114; color:#a1a1aa; font:inherit; font-size:11px; font-weight:700; cursor:pointer; }
         .plugin-filter.active { background:#7c3aed; border-color:#7c3aed; color:#fff; }
+        .plugin-copy-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:0 0 auto; }
+        .plugin-pagination { display:flex; justify-content:center; align-items:center; gap:8px; margin-top:12px; }
+        .plugin-page-btn { border:1px solid #3f3f46; border-radius:5px; padding:6px 9px; background:#111114; color:#d4d4d8; font:inherit; font-size:10px; cursor:pointer; }
+        .plugin-page-btn:disabled { opacity:.4; cursor:default; }
+        .plugin-page-label { color:#a1a1aa; font-size:10px; }
         @media (max-width: 620px) {
             #view-container { padding: 14px 12px 24px; }
             .dark-dashboard,
@@ -363,6 +368,8 @@
             .plugin-copy-btn { align-self: flex-start; padding: 6px 8px; }
             .plugin-filters { gap:5px; margin-bottom:9px; }
             .plugin-filter { padding:6px 9px; font-size:10px; }
+            .plugin-copy-actions { width:100%; justify-content:flex-start; }
+            .plugin-pagination { margin-top:9px; }
         }
     </style>
 </head>
@@ -690,24 +697,40 @@
         }
 
         function getPluginsHTML() {
-            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Plugins published by the administrator for Levanter and Raganork bots.</p><div class="section-title">Plugin list</div><div class="plugin-filters" role="group" aria-label="Filter plugins by bot type"><button type="button" class="plugin-filter active" data-action="filter-plugins" data-plugin-type="all">ALL</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="levanter">LEVANTER</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="raganork">RAGANORK</button></div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
+            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Plugins published by the administrator for Levanter and Raganork bots.</p><div class="section-title">Plugin list</div><div class="plugin-filters" role="group" aria-label="Filter plugins by bot type"><button type="button" class="plugin-filter active" data-action="filter-plugins" data-plugin-type="all">ALL</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="levanter">LEVANTER</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="raganork">RAGANORK</button></div><div id="pluginList" class="plugin-list">Loading plugins...</div><div id="pluginPagination" class="plugin-pagination" aria-label="Plugin pagination"></div></div>`;
         }
 
-        function renderPluginList(filter = 'all') {
+        function renderPluginList(filter = window.__pluginFilter || 'all', page = 1) {
             const list = document.getElementById('pluginList');
             if (!list) return;
-            const plugins = window.__plugins || [];
             const normalizedFilter = String(filter || 'all').toLowerCase();
-            const visiblePlugins = plugins
-                .filter(plugin => normalizedFilter === 'all' || String(plugin.bot_type || '').toLowerCase() === normalizedFilter)
-                .sort((a, b) => normalizedFilter === 'all' ? 0 : (String(b.bot_type || '').toLowerCase() === normalizedFilter) - (String(a.bot_type || '').toLowerCase() === normalizedFilter));
-            list.innerHTML = visiblePlugins.length ? visiblePlugins.map(plugin => `<div class="plugin-row"><div class="plugin-info"><strong>${plugin.plugin_name} · ${plugin.bot_type}</strong><span>${plugin.description || 'No description'}</span></div><button class="support-btn plugin-copy-btn" data-action="copy-plugin" data-url="${encodeURIComponent(plugin.plugin_url)}" type="button">COPY URL</button></div>`).join('') : `<div class="workspace-panel">No ${normalizedFilter === 'all' ? '' : `${normalizedFilter} `}plugins published yet.</div>`;
+            window.__pluginFilter = normalizedFilter;
+            const grouped = new Map();
+            (window.__plugins || []).forEach(plugin => {
+                const type = String(plugin.bot_type || '').toLowerCase();
+                if (normalizedFilter !== 'all' && type !== normalizedFilter) return;
+                const key = String(plugin.plugin_name || '').trim().toLowerCase();
+                if (!grouped.has(key)) grouped.set(key, { name: plugin.plugin_name, description: plugin.description, variants: {} });
+                grouped.get(key).variants[type] = plugin;
+            });
+            const groupedPlugins = [...grouped.values()];
+            const pageSize = 8;
+            const totalPages = Math.max(1, Math.ceil(groupedPlugins.length / pageSize));
+            const currentPage = Math.min(Math.max(Number(page) || 1, 1), totalPages);
+            const visiblePlugins = groupedPlugins.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+            list.innerHTML = groupedPlugins.length ? visiblePlugins.map(plugin => {
+                const buttons = Object.entries(plugin.variants).sort(([a], [b]) => a.localeCompare(b)).map(([type, variant]) => `<button class="support-btn plugin-copy-btn" data-action="copy-plugin" data-url="${encodeURIComponent(variant.plugin_url)}" type="button">COPY PLUGIN · ${type.toUpperCase()}</button>`).join('');
+                return `<div class="plugin-row"><div class="plugin-info"><strong>${plugin.name}</strong><span>${plugin.description || 'No description'}</span></div><div class="plugin-copy-actions">${buttons}</div></div>`;
+            }).join('') : `<div class="workspace-panel">No ${normalizedFilter === 'all' ? '' : `${normalizedFilter} `}plugins published yet.</div>`;
+            const pagination = document.getElementById('pluginPagination');
+            if (pagination) pagination.innerHTML = totalPages > 1 ? `<button class="plugin-page-btn" data-action="plugin-page" data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>PREVIOUS</button><span class="plugin-page-label">Page ${currentPage} of ${totalPages}</span><button class="plugin-page-btn" data-action="plugin-page" data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>NEXT</button>` : '';
+            window.__pluginPage = currentPage;
             document.querySelectorAll('.plugin-filter').forEach(button => button.classList.toggle('active', button.dataset.pluginType === normalizedFilter));
         }
 
         async function loadPlugins() {
             const list = document.getElementById('pluginList'); if (!list) return;
-            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); window.__plugins = data.plugins || []; renderPluginList('all'); } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
+            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); window.__plugins = data.plugins || []; renderPluginList('all', 1); } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
         }
 
         function getBotManagementHTML(bot) {
@@ -883,6 +906,10 @@
                 }
                 if (act === 'filter-plugins') {
                     renderPluginList(btn.dataset.pluginType || 'all');
+                    return;
+                }
+                if (act === 'plugin-page') {
+                    renderPluginList(window.__pluginFilter || 'all', Number(btn.dataset.page || 1));
                     return;
                 }
                 if (act === 'copy-plugin') {
