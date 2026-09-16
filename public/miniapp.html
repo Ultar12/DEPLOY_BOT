@@ -433,7 +433,7 @@
         }
 
         function getSettingsHTML() {
-            return `<div class="settings-page"><p class="kicker">ACCOUNT</p><h1>Account Settings</h1><div class="settings-card"><a class="support-btn settings-link" href="/auth/reset-password">Reset Password</a><a class="support-btn settings-link" href="https://t.me/ultarswbdbot" target="_blank" rel="noopener">Contact Support</a><a class="settings-logout" href="/telegram-logout">Log out</a></div></div>`;
+            return `<div class="settings-page"><p class="kicker">ACCOUNT</p><h1>Account Settings</h1><div class="settings-card"><a class="support-btn settings-link" href="https://t.me/ultarswbdbot" target="_blank" rel="noopener">Contact Support</a><a class="settings-logout" href="/telegram-logout">Log out</a></div></div>`;
         }
 
         function getPluginsHTML() {
@@ -506,9 +506,9 @@
                     <label class="section-title" style="margin:0;">Bot name<input id="deployAppName" required pattern="[a-z0-9-]+" placeholder="my-bot" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="appNameState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Bot type<select id="deployBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="raganork">raganork</option><option value="levanter">levanter</option></select></label>
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
-                    <label class="section-title" style="margin:0;">Deploy key <span style="font-size:.8em;color:#94a3b8;text-transform:none;">optional</span><input id="deployKey" placeholder="Enter a key to validate it" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="keyState" class="validation-state">No key entered — payment is available</span></label>
+                    <label class="section-title" style="margin:0;">Auto status view<select id="autoStatusView" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="yes">Yes</option><option value="no">No</option></select></label>
                     <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
-                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><button class="support-btn" id="keyDeployBtn" type="submit" style="display:none;margin-top:12px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="display:none;margin-top:12px;">PAY AND DEPLOY</button></div>
+                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;"><button class="support-btn" id="keyDeployBtn" type="button" style="flex:1;min-width:145px;">DEPLOY WITH KEY</button><button class="support-btn" id="payDeployBtn" type="button" style="flex:1;min-width:145px;">PAY</button></div></div>
                     <div id="deployResult" class="news-content"></div>
                 </form>`;
         }
@@ -627,8 +627,8 @@
             document.querySelectorAll('.delete-plugin').forEach(button => button.onclick = async () => { const response = await fetch(`${API_BASE_URL}/plugins/${button.dataset.pluginId}`, { method: 'DELETE', headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); tg.showAlert(data.message || 'Plugin deleted.'); if (data.success) loadPlugins(); });
             const deployForm = document.getElementById('deployForm');
             if (deployForm) {
-                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), key: document.getElementById('deployKey') };
-                const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState'), key: document.getElementById('keyState') };
+                const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), autoStatus: document.getElementById('autoStatusView') };
+                const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState') };
                 let selectedPlan = null;
                 const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
                 const debounce = (fn, delay = 450) => { let timer; return () => { clearTimeout(timer); timer = setTimeout(fn, delay); }; };
@@ -650,33 +650,18 @@
                     setState(states.session, data.valid === true, data.message || (data.valid ? 'Session is valid' : 'Invalid session ID'));
                     return data.valid === true;
                 };
-                const checkKey = async () => {
-                    const value = fields.key.value.trim();
-                    if (!value) { states.key.textContent = 'No key entered — payment is available'; states.key.className = 'validation-state'; return false; }
-                    setState(states.key, false, 'Checking...');
-                    const response = await fetch(`${API_BASE_URL}/check-deploy-key/${encodeURIComponent(value)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-                    const data = await response.json();
-                    setState(states.key, data.valid === true, data.message || (data.valid ? 'Key is valid' : 'Invalid or expired key'));
-                    return data.valid === true;
-                };
                 fields.name.addEventListener('input', debounce(checkName));
                 fields.session.addEventListener('input', debounce(checkSession));
                 fields.type.addEventListener('change', checkSession);
-                fields.key.addEventListener('input', debounce(checkKey));
                 document.getElementById('saveNextBtn').onclick = async () => {
                     const [nameOk, sessionOk] = await Promise.all([checkName(), checkSession()]);
                     if (!nameOk || !sessionOk) return;
-                    const keyOk = await checkKey();
-                    if (fields.key.value.trim() && !keyOk) return;
                     document.getElementById('deployOptions').style.display = 'block';
                     document.getElementById('wizardActions').style.display = 'none';
-                    document.getElementById('deployOptionsText').textContent = keyOk ? 'Your key is verified. You can deploy now.' : '';
-                    document.getElementById('keyDeployBtn').style.display = keyOk ? 'block' : 'none';
-                    document.getElementById('payDeployBtn').style.display = keyOk ? 'none' : 'block';
+                    document.getElementById('deployOptionsText').textContent = 'Choose a deployment method.';
                     const planOptions = document.getElementById('planOptions');
-                    planOptions.style.display = keyOk ? 'none' : 'grid';
-                    if (!keyOk) {
-                        document.getElementById('payDeployBtn').style.display = 'none';
+                    planOptions.style.display = 'grid';
+                    {
                         planOptions.innerHTML = '<div class="news-content">Loading available plans...</div>';
                         try {
                             const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
@@ -696,10 +681,10 @@
                         } catch (error) { planOptions.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
                     }
                 };
-                const submitDeployment = async (forcePayment) => {
+                const submitDeployment = async (forcePayment, deployKeyOverride = '') => {
                     const result = document.getElementById('deployResult');
                     if (forcePayment && !selectedPlan) return;
-                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), deployKey: forcePayment ? '' : fields.key.value.trim(), planId: forcePayment ? selectedPlan.id : undefined };
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), autoStatusView: fields.autoStatus.value, deployKey: forcePayment ? '' : deployKeyOverride, planId: forcePayment ? selectedPlan.id : undefined };
                     result.textContent = 'Processing deployment...';
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
@@ -713,7 +698,7 @@
                         }
                     } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
                 };
-                document.getElementById('keyDeployBtn').onclick = () => submitDeployment(false);
+                document.getElementById('keyDeployBtn').onclick = () => { const key = window.prompt('Enter your deploy key.'); if (key) submitDeployment(false, key.trim()); };
                 document.getElementById('payDeployBtn').onclick = () => submitDeployment(true);
                 deployForm.onsubmit = (event) => { event.preventDefault(); submitDeployment(false); };
             }
