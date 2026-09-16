@@ -223,8 +223,10 @@
         .mgmt-option-label { font-weight: 600; font-size: 0.95em; }
         .danger-option { border-color: #dc2626 !important; background: #fef2f2 !important; color: #b91c1c !important; }
         .danger-option .mgmt-option-label { color: #b91c1c !important; }
-        .whatsapp-fab { position: fixed; right: 18px; bottom: 18px; z-index: 120; display: inline-flex; align-items: center; justify-content: center; padding: 11px 15px; border-radius: 999px; background: #16a34a; color: #fff; font-size: 12px; font-weight: 800; text-decoration: none; box-shadow: 0 8px 22px rgba(22, 163, 74, .3); }
-        .whatsapp-fab:hover { background: #15803d; }
+        .whatsapp-fab { position: fixed; right: 18px; bottom: 16px; z-index: 120; display: inline-flex; flex-direction: column; align-items: center; gap: 4px; color: #166534; font-size: 10px; font-weight: 800; text-decoration: none; }
+        .whatsapp-fab-logo { width: 50px; height: 50px; display: grid; place-items: center; border-radius: 50%; background: #16a34a; color: #fff; box-shadow: 0 8px 22px rgba(22, 163, 74, .3); }
+        .whatsapp-fab-logo svg { width: 27px; height: 27px; fill: currentColor; }
+        .whatsapp-fab:hover .whatsapp-fab-logo { background: #15803d; }
         .mgmt-option-hint { font-size: 0.8em; color: #94a3b8; }
         
         .logs-container { 
@@ -303,7 +305,7 @@
         <div class="header">
             <button class="back-btn" id="backBtn">&lt;</button>
             <a class="brand-lockup" href="/apps/dashboard" aria-label="Ultar WBD dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span><strong>ULTAR WBD</strong></span></a>
-            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="/apps/settings">⚙ Account Settings</a><a href="#" id="notificationsLink">♢ Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">↪ Log Out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
+            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="/apps/settings">⚙ Account Settings</a><a href="/apps/deployments">▣ Deployment History</a><a href="/apps/reconciliation" id="adminReconciliationLink" style="display:none">▤ Reconciliation</a><a href="#" id="notificationsLink">♢ Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">↪ Log Out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
             <div class="header-title" id="headerTitle">Dashboard</div>
             <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
@@ -458,6 +460,8 @@
                 case 'plugins': container.innerHTML = getPluginsHTML(); break;
                 case 'settings': container.innerHTML = getSettingsHTML(); break;
                 case 'notifications': container.innerHTML = getNotificationsHTML(); break;
+                case 'deployments': container.innerHTML = getDeploymentHistoryHTML(); break;
+                case 'reconciliation': container.innerHTML = getReconciliationHTML(); break;
             }
             attachEventListeners();
             setTimeout(() => { if (!activeVisibleRequests) hideGlobalLoader(); }, 180);
@@ -467,13 +471,19 @@
             if (viewName === 'job') pollJob(data.jobId);
             if (viewName === 'plugins') loadPlugins();
             if (viewName === 'notifications') loadNotificationCenter();
+            if (viewName === 'deployments') loadDeploymentHistory();
+            if (viewName === 'reconciliation') loadReconciliation();
         }
 
         function getDashboardHTML() {
-            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div><a class="whatsapp-fab" href="https://wa.me/message/XERVFASU4WOOC1" target="_blank" rel="noopener" aria-label="Chat on WhatsApp">WhatsApp</a></div>`;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div><a class="whatsapp-fab" href="https://wa.me/message/XERVFASU4WOOC1" target="_blank" rel="noopener" aria-label="Chat on WhatsApp"><span class="whatsapp-fab-logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a9.7 9.7 0 0 0-8.4 14.55L2.1 22l5.57-1.46A9.7 9.7 0 1 0 12 2Zm0 17.7a8 8 0 0 1-4.08-1.12l-.29-.17-3.3.86.88-3.21-.19-.31A8 8 0 1 1 12 19.7Zm4.4-5.94c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.02-.38-1.94-1.2-.72-.64-1.2-1.43-1.34-1.67-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.2-.47-.4-.4-.54-.41h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.69 2.58 4.1 3.62.57.25 1.02.4 1.37.51.58.18 1.1.15 1.52.09.46-.07 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28Z"/></svg></span><span>Contact support</span></a></div>`;
         }
 
         function getNotificationsHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Notification Center</h1><p class="dashboard-subtitle">Important updates about your bots and account.</p><div id="notificationCenterList" class="plugin-list"><div class="workspace-panel">Loading notifications...</div></div></div>`; }
+
+        function getDeploymentHistoryHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Deployment History</h1><p class="dashboard-subtitle">Track recent deployments and retry failed jobs.</p><div id="deploymentHistoryList" class="plugin-list"><div class="workspace-panel">Loading deployment history...</div></div></div>`; }
+        function getReconciliationHTML() { return `<div class="plugins-page"><p class="kicker">ADMIN</p><h1>Database Reconciliation</h1><p class="dashboard-subtitle">Review records that may be out of sync.</p><div id="reconciliationList" class="plugin-list"><div class="workspace-panel">Checking records...</div></div></div>`; }
+        function getOnboardingHTML() { return '<div class="workspace-panel onboarding-panel"><h2>Welcome to Ultar WBD</h2><p>Get your WhatsApp bot online in three steps:</p><ol><li>Get a WhatsApp session ID.</li><li>Choose Levanter or Raganork.</li><li>Deploy and follow the live progress.</li></ol><a class="support-btn" href="/apps/session">GET SESSION</a><a class="support-btn" href="/apps/create" style="margin-left:8px;">DEPLOY BOT</a></div>'; }
 
         async function loadNews() {
             try {
@@ -496,11 +506,25 @@
         async function loadNotificationCenter() {
             const list = document.getElementById('notificationCenterList'); if (!list) return;
             try {
-                const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-                const data = await res.json(); const bots = data.bots || [];
-                const alerts = bots.flatMap(bot => { const remaining = new Date(bot.expirationDate) - new Date(); const items = []; if (bot.status === 'Offline') items.push(`${bot.appName} is logged out or offline.`); if (remaining <= 0) items.push(`${bot.appName} has expired.`); else if (remaining < 3 * 86400000) items.push(`${bot.appName} expires soon.`); if (bot.error || bot.lastError) items.push(`${bot.appName} needs attention.`); return items; });
-                list.innerHTML = alerts.length ? alerts.map(alert => `<div class="workspace-panel notification-item">${alert}</div>`).join('') : '<div class="workspace-panel">You have no new notifications.</div>';
+                const res = await fetch(`${API_BASE_URL}/notifications`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json(); const notifications = data.notifications || [];
+                list.innerHTML = notifications.length ? notifications.map(item => `<div class="workspace-panel notification-item"><strong>${item.title}</strong><p>${item.message}</p></div>`).join('') : '<div class="workspace-panel">You have no new notifications.</div>';
             } catch (error) { list.innerHTML = '<div class="workspace-panel error-panel">Could not load notifications.</div>'; }
+        }
+
+        async function loadDeploymentHistory() {
+            const list = document.getElementById('deploymentHistoryList'); if (!list) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/deployment-history`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json(); if (!data.success) throw new Error(data.message);
+                list.innerHTML = data.jobs.length ? data.jobs.map(job => `<div class="workspace-panel"><strong>${job.app_name}</strong><p>${job.bot_type} · ${job.status} · ${job.progress || 0}%</p><p>${job.progress_message || ''}</p>${job.status === 'failed' ? `<button class="support-btn retry-deployment" data-job-id="${job.job_id}">RETRY</button>` : ''}</div>`).join('') : '<div class="workspace-panel">No deployments yet.</div>';
+                list.querySelectorAll('.retry-deployment').forEach(button => button.onclick = async () => { button.disabled = true; try { const response = await fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(button.dataset.jobId)}/retry`, { method: 'POST', headers: { 'X-Telegram-Init-Data': tg.initData } }); const result = await response.json(); await showAppAlert(result.message || 'Retry queued.'); if (result.success) loadDeploymentHistory(); } catch (error) { await showAppAlert('Could not retry deployment.'); } finally { button.disabled = false; } });
+            } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel">${error.message || 'Could not load deployment history.'}</div>`; }
+        }
+
+        async function loadReconciliation() {
+            const list = document.getElementById('reconciliationList'); if (!list) return;
+            try { const res = await fetch(`${API_BASE_URL}/admin/reconciliation`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await res.json(); if (!data.success) throw new Error(data.message); list.innerHTML = data.issues.length ? data.issues.map(issue => `<div class="workspace-panel"><strong>${issue.issue}</strong><p>${issue.app_name} · User ${issue.user_id}</p></div>`).join('') : '<div class="workspace-panel">No reconciliation issues found.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel">${error.message || 'Could not run reconciliation.'}</div>`; }
         }
 
         async function loadDashboard() {
@@ -509,6 +533,9 @@
                 const data = await res.json();
                 const bots = data.bots || [];
                 window.__maintenanceMode = data.maintenanceMode === true;
+                window.__isAdmin = data.isAdmin === true;
+                const adminLink = document.getElementById('adminReconciliationLink');
+                if (adminLink) adminLink.style.display = window.__isAdmin ? 'block' : 'none';
                 window.__dashboardBots = bots;
                 document.getElementById('totalBots').textContent = bots.length;
                 document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
@@ -516,7 +543,7 @@
                 const notificationList = document.getElementById('notificationList'); const notificationCount = document.getElementById('notificationCount'); if (notificationList) notificationList.innerHTML = alerts.length ? alerts.map(alert => `<div class="notification-item">${alert}</div>`).join('') : 'No new notifications.'; if (notificationCount) notificationCount.textContent = alerts.length; const dot = document.getElementById('notificationDot'); if (dot) dot.style.display = alerts.length ? 'block' : 'none';
 
                 const maintenanceBotsHTML = '<div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div>';
-                document.getElementById('botList').innerHTML = window.__maintenanceMode ? maintenanceBotsHTML : bots.map(bot => {
+                document.getElementById('botList').innerHTML = window.__maintenanceMode ? maintenanceBotsHTML : bots.length === 0 ? getOnboardingHTML() : bots.map(bot => {
                     const expirationTime = bot.expirationDate ? new Date(bot.expirationDate).getTime() : NaN;
                     const hasExpiration = Number.isFinite(expirationTime);
                     const timeLeft = hasExpiration ? expirationTime - Date.now() : Infinity;
@@ -836,8 +863,10 @@
                 };
                 const submitDeployment = async (forcePayment, deployKeyOverride = '') => {
                     const result = document.getElementById('deployResult');
+                    if (window.__deploySubmitting) return;
                     if (forcePayment && !selectedPlan) return;
-                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), autoStatusView: fields.autoStatus.value, deployKey: forcePayment ? '' : deployKeyOverride, planId: forcePayment ? selectedPlan.id : undefined };
+                    window.__deploySubmitting = true;
+                    const payload = { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), autoStatusView: fields.autoStatus.value, deployKey: forcePayment ? '' : deployKeyOverride, planId: forcePayment ? selectedPlan.id : undefined, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `deploy_${Date.now()}_${Math.random().toString(16).slice(2)}`) };
                     result.textContent = 'Processing deployment...';
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
@@ -849,7 +878,7 @@
                         } else {
                             navigateTo('job', { jobId: data.jobId, appName: payload.appName });
                         }
-                    } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
+                    } catch (e) { window.__deploySubmitting = false; result.textContent = e.message || 'Connection error. Try again.'; }
                 };
                 document.getElementById('keyDeployBtn').onclick = () => { const key = window.prompt('Enter your deploy key.'); if (key) submitDeployment(false, key.trim()); };
                 document.getElementById('payDeployBtn').onclick = () => navigateTo('payment', { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), autoStatusView: fields.autoStatus.value });
@@ -878,7 +907,7 @@
                     if (!selectedPlan) return;
                     const button = document.getElementById('continuePaymentBtn'); button.disabled = true; result.textContent = 'Redirecting to payment...';
                     try {
-                        const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id }) });
+                        const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `payment_${Date.now()}_${Math.random().toString(16).slice(2)}`) }) });
                         const data = await response.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the payment.');
                         navigateTo('job', { jobId: data.jobId, appName: state.selectedBot?.appName, paymentRequired: true });
@@ -967,7 +996,7 @@
         const queryParams = new URLSearchParams(window.location.search);
         const returnedJobId = queryParams.get('job');
         const paymentWasCancelled = ['cancelled', 'canceled', 'failed'].includes(String(queryParams.get('status') || '').toLowerCase());
-        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : window.location.pathname === '/apps/notifications' ? 'notifications' : 'dashboard';
+        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : window.location.pathname === '/apps/notifications' ? 'notifications' : window.location.pathname === '/apps/deployments' ? 'deployments' : window.location.pathname === '/apps/reconciliation' ? 'reconciliation' : 'dashboard';
         if (returnedJobId && paymentWasCancelled) {
             fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(returnedJobId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } }).then(response => response.json()).then(data => {
                 if (!data.success) throw new Error(data.message || 'Deployment details unavailable.');

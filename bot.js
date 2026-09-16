@@ -4788,7 +4788,7 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
   app.get('/auth/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')));
-  app.get(['/apps/new', '/apps/create', '/apps/session', '/apps/plugins', '/apps/settings', '/apps/notifications'], (req, res) => {
+  app.get(['/apps/new', '/apps/create', '/apps/session', '/apps/plugins', '/apps/settings', '/apps/notifications', '/apps/deployments', '/apps/reconciliation'], (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
   app.get('/apps/bots/:appName', (req, res) => {
@@ -4947,9 +4947,14 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 
 
 // NEW: Health check endpoint for the Mini App
-app.get('/miniapp/health', (req, res) => {
-    console.log('[Health Check] Mini App server is responsive.');
-    res.status(200).json({ status: 'ok', message: 'Server is running.' });
+app.get('/miniapp/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.status(200).json({ status: 'ok', database: 'ok', message: 'Server and database are running.' });
+    } catch (error) {
+        console.error('[Health Check] Database unavailable:', error.message);
+        res.status(503).json({ status: 'degraded', database: 'unavailable', message: 'Database is temporarily unavailable.' });
+    }
 });
 
 
@@ -5078,7 +5083,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         // Filter out any bots that were found but have a deleted status
         const filteredBots = formattedBots.filter(b => b.status !== 'Deleted');
         
-        res.json({ success: true, bots: filteredBots, maintenanceMode: Boolean(isMaintenanceMode) });
+        res.json({ success: true, bots: filteredBots, maintenanceMode: Boolean(isMaintenanceMode), isAdmin: userId === String(ADMIN_ID) });
     } catch (e) {
         console.error('[MiniApp V2] Error fetching user bots:', e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
@@ -5370,9 +5375,11 @@ let miniAppSchemaReady;
 async function ensureMiniAppDeploymentSchema() {
     if (!miniAppSchemaReady) {
         miniAppSchemaReady = (async () => {
-            await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+            await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, retry_of TEXT, idempotency_key TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_id TEXT`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_days INTEGER`);
+            await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS retry_of TEXT`);
+            await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS auto_status_view TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'`);
@@ -5452,6 +5459,74 @@ app.get('/api/deployment-jobs/:jobId', validateWebAppInitData, async (req, res) 
     }
 });
 
+app.get('/api/deployment-history', validateWebAppInitData, async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT job_id, app_name, bot_type, status, progress, progress_message, error_message, retry_of, created_at, updated_at
+            FROM deployment_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [String(req.telegramData.id)]);
+        res.json({ success: true, jobs: result.rows });
+    } catch (error) {
+        console.error('[MiniApp] Deployment history error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to load deployment history.' });
+    }
+});
+
+app.post('/api/deployment-jobs/:jobId/retry', validateWebAppInitData, async (req, res) => {
+    const userId = String(req.telegramData.id);
+    try {
+        const result = await pool.query('SELECT * FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, userId]);
+        if (!result.rows.length) return res.status(404).json({ success: false, message: 'Deployment job not found.' });
+        const job = result.rows[0];
+        if (job.status !== 'failed') return res.status(409).json({ success: false, message: 'Only failed deployments can be retried.' });
+        const active = await pool.query(`SELECT job_id FROM deployment_jobs WHERE user_id = $1 AND app_name = $2 AND status IN ('queued','running','awaiting_payment') LIMIT 1`, [userId, job.app_name]);
+        if (active.rows.length) return res.status(409).json({ success: false, jobId: active.rows[0].job_id, message: 'A deployment for this bot is already running.' });
+        await updateDeploymentJob(job.job_id, { status: 'queued', progress: 0, progress_message: 'Retry queued', error_message: null, retry_of: job.job_id });
+        void startMiniAppDeploymentJob(job.job_id);
+        res.json({ success: true, jobId: job.job_id, message: 'Deployment retry queued.' });
+    } catch (error) {
+        console.error('[MiniApp] Deployment retry error:', error.message);
+        res.status(500).json({ success: false, message: 'Could not retry deployment.' });
+    }
+});
+
+app.get('/api/notifications', validateWebAppInitData, async (req, res) => {
+    const userId = String(req.telegramData.id);
+    try {
+        const [jobs, bots] = await Promise.all([
+            pool.query(`SELECT job_id, app_name, status, progress_message, error_message, updated_at FROM deployment_jobs WHERE user_id = $1 AND status IN ('completed','failed') ORDER BY updated_at DESC LIMIT 20`, [userId]),
+            pool.query(`SELECT bot_name, status, expiration_date FROM user_bots ub LEFT JOIN user_deployments ud ON ud.user_id = ub.user_id AND ud.app_name = ub.bot_name WHERE ub.user_id = $1 ORDER BY ub.created_at DESC LIMIT 50`, [userId])
+        ]);
+        const notifications = [];
+        for (const job of jobs.rows) notifications.push({ id: `job:${job.job_id}`, type: job.status, title: job.status === 'completed' ? 'Deployment completed' : 'Deployment failed', message: job.status === 'completed' ? `${job.app_name} is ready to manage.` : `${job.app_name}: ${job.error_message || job.progress_message || 'Deployment failed.'}`, created_at: job.updated_at });
+        for (const bot of bots.rows) {
+            if (String(bot.status || '').toLowerCase() === 'offline') notifications.push({ id: `offline:${bot.bot_name}`, type: 'warning', title: 'Bot offline', message: `${bot.bot_name} is offline or logged out.`, created_at: null });
+            if (bot.expiration_date && new Date(bot.expiration_date).getTime() - Date.now() < 3 * 86400000) notifications.push({ id: `expiry:${bot.bot_name}`, type: 'warning', title: 'Subscription ending soon', message: `${bot.bot_name} needs renewal soon.`, created_at: bot.expiration_date });
+        }
+        res.json({ success: true, notifications: notifications.slice(0, 30) });
+    } catch (error) {
+        console.error('[MiniApp] Notifications error:', error.message);
+        res.status(500).json({ success: false, message: 'Failed to load notifications.' });
+    }
+});
+
+app.get('/api/admin/reconciliation', validateWebAppInitData, async (req, res) => {
+    if (String(req.telegramData.id) !== String(ADMIN_ID)) return res.status(403).json({ success: false, message: 'Administrator access required.' });
+    try {
+        const result = await pool.query(`
+            SELECT 'deployment_missing_bot' AS issue, ud.app_name, ud.user_id FROM user_deployments ud
+              LEFT JOIN user_bots ub ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+              WHERE ud.deleted_from_heroku_at IS NULL AND ub.bot_name IS NULL
+            UNION ALL
+            SELECT 'deleted_but_visible' AS issue, ud.app_name, ud.user_id FROM user_deployments ud
+              JOIN user_bots ub ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
+              WHERE ud.deleted_from_heroku_at IS NOT NULL
+            ORDER BY app_name LIMIT 200`);
+        res.json({ success: true, issues: result.rows, checkedAt: new Date().toISOString() });
+    } catch (error) {
+        console.error('[Admin] Reconciliation error:', error.message);
+        res.status(500).json({ success: false, message: 'Could not run reconciliation.' });
+    }
+});
+
 app.get('/api/support', validateWebAppInitData, (req, res) => {
     res.json({ success: true, handle: `@${MINIAPP_SUPPORT_HANDLE}`, url: `https://t.me/${MINIAPP_SUPPORT_HANDLE}` });
 });
@@ -5512,7 +5587,7 @@ app.get('/api/deployment-plans', validateWebAppInitData, async (req, res) => {
 });
 
 app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
-    const { botType, appName, sessionId, autoStatusView, deployKey, planId } = req.body;
+    const { botType, appName, sessionId, autoStatusView, deployKey, planId, idempotencyKey } = req.body;
     const userId = String(req.telegramData.id);
     const normalizedType = String(botType || '').trim().toLowerCase();
     const normalizedName = String(appName || '').trim().toLowerCase();
@@ -5525,8 +5600,14 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
 
     try {
         await ensureMiniAppDeploymentSchema();
+        if (idempotencyKey) {
+            const existingRequest = await pool.query('SELECT job_id, status FROM deployment_jobs WHERE user_id = $1 AND idempotency_key = $2 LIMIT 1', [userId, String(idempotencyKey)]);
+            if (existingRequest.rows.length) return res.json({ success: true, jobId: existingRequest.rows[0].job_id, paymentRequired: existingRequest.rows[0].status === 'awaiting_payment', message: 'This deployment request is already being processed.' });
+        }
         const duplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [normalizedName]);
         if (duplicate.rows.length) return res.status(409).json({ success: false, message: 'That app name is already registered.' });
+        const activeJob = await pool.query(`SELECT job_id FROM deployment_jobs WHERE user_id = $1 AND app_name = $2 AND status IN ('queued','running','awaiting_payment') LIMIT 1`, [userId, normalizedName]);
+        if (activeJob.rows.length) return res.status(409).json({ success: false, code: 'DEPLOYMENT_IN_PROGRESS', jobId: activeJob.rows[0].job_id, message: 'A deployment for this bot is already in progress.' });
         const pending = await pool.query('SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2 AND status = $3 LIMIT 1', [userId, normalizedName, 'pending']);
         if (pending.rows.length) return res.status(409).json({ success: false, message: 'A payment is already pending for this app.' });
         try {
@@ -5542,7 +5623,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             const normalizedKey = String(deployKey).trim().toUpperCase();
             const usesLeft = await dbServices.useDeployKey(normalizedKey, userId);
             if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
-            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView]);
+            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30,$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, String(idempotencyKey || '') || null]);
             const requesterName = req.telegramData.username ? `@${escapeMarkdown(req.telegramData.username)}` : escapeMarkdown(req.telegramData.first_name || 'User');
             await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
             await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
@@ -5563,7 +5644,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7,$8,$9)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference, selectedPlan.id, selectedPlan.days]);
+            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, plan_id, plan_days, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7,$8,$9,$10)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference, selectedPlan.id, selectedPlan.days, String(idempotencyKey || '') || null]);
             await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView, selectedPlan.id, selectedPlan.days]);
             const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: priceNgn, currency: 'NGN', redirect_url: miniAppReturnUrl, customer: { email: normalizedEmail, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId, plan_id: selectedPlan.id, plan_days: selectedPlan.days }, customizations: { title: "Ultar's WBD", description: `${selectedPlan.name} bot deployment` } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
             await client.query('COMMIT');

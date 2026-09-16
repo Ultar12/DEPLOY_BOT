@@ -1692,6 +1692,8 @@ async function createAllTablesInPool(dbPool, dbName) {
         progress_message TEXT NOT NULL DEFAULT 'Queued',
         payment_method TEXT NOT NULL,
         payment_reference TEXT,
+        retry_of TEXT,
+        idempotency_key TEXT,
         error_message TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
