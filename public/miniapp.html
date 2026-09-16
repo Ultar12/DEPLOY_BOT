@@ -1007,7 +1007,7 @@
                 const data = await res.json();
                 if (!data.success) throw new Error(data.message || 'Unable to read job status.');
                 const job = data.job;
-                status.textContent = `${job.status}: ${job.progress_message || 'Processing deployment'} (${job.progress || 0}%)`;
+                status.textContent = job.status === 'running' ? `Building... (${job.progress || 0}%)` : (job.progress_message || 'Processing deployment');
                 if (job.status === 'completed') {
                     const botsResponse = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                     const botsData = await botsResponse.json();

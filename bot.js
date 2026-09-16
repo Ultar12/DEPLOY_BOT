@@ -4963,7 +4963,7 @@ app.get('/miniapp/health', async (req, res) => {
     if (!initData) {
         const cookieUser = parseCookies(req)[TELEGRAM_LOGIN_COOKIE];
         if (cookieUser) {
-            try { const portalUserId = verifyPortalSession(cookieUser); if (portalUserId) { req.telegramData = { id: portalUserId }; return next(); } req.telegramData = verifyTelegramLogin(Buffer.from(cookieUser, 'base64url').toString('utf8')); if (req.telegramData) return next(); }
+            try { const portalUserId = verifyPortalSession(cookieUser); if (portalUserId) { req.telegramData = { id: portalUserId }; req.isPortalUser = true; return next(); } req.telegramData = verifyTelegramLogin(Buffer.from(cookieUser, 'base64url').toString('utf8')); if (req.telegramData) return next(); }
             catch { /* fall through to the normal unauthorized response */ }
         }
         console.warn('[MiniApp Server] Unauthorized: No init data provided.');
@@ -5393,6 +5393,7 @@ async function ensureMiniAppDeploymentSchema() {
             await pool.query(`CREATE TABLE IF NOT EXISTS deployment_jobs (job_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, app_name TEXT NOT NULL, bot_type TEXT NOT NULL, session_id TEXT NOT NULL, auto_status_view TEXT DEFAULT 'false', status TEXT NOT NULL DEFAULT 'queued', progress INTEGER NOT NULL DEFAULT 0, progress_message TEXT NOT NULL DEFAULT 'Queued', payment_method TEXT NOT NULL, payment_reference TEXT, error_message TEXT, retry_of TEXT, idempotency_key TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_id TEXT`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS plan_days INTEGER`);
+            await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'telegram'`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS retry_of TEXT`);
             await pool.query(`ALTER TABLE deployment_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT`);
             await pool.query(`ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS job_id TEXT`);
@@ -5428,11 +5429,12 @@ async function startMiniAppDeploymentJob(jobId) {
     if (!jobResult.rows.length) throw new Error('Deployment job not found.');
     const job = jobResult.rows[0];
     const isTelegramUser = /^-?\d+$/.test(String(job.user_id));
+    const isPortalJob = job.source === 'portal' || !isTelegramUser;
     try {
         await updateDeploymentJob(jobId, { status: 'running', progress: 10, progress_message: 'Registering bot' });
         await dbServices.addUserBot(job.user_id, job.app_name, job.session_id, job.bot_type);
         await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting deployment' });
-        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* is now building.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] User progress notification failed:`, error.message));
+        if (!isPortalJob && isTelegramUser) await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* is now building.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] User progress notification failed:`, error.message));
         await bot.sendMessage(ADMIN_ID, `*Deployment Build Started*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin start notification failed:`, error.message));
         const buildResult = await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
@@ -5441,15 +5443,15 @@ async function startMiniAppDeploymentJob(jobId) {
                 ? { AUTO_READ_STATUS: job.auto_status_view || 'false' }
                 : { AUTO_STATUS_VIEW: job.auto_status_view || 'false' }),
             DAYS: job.plan_days || 30
-        }, false, false, job.bot_type, null, null, null, false, !isTelegramUser, progress => updateDeploymentJob(jobId, { progress: progress.progress, progress_message: progress.message }));
+        }, false, false, job.bot_type, null, null, null, false, isPortalJob, progress => updateDeploymentJob(jobId, { progress: progress.progress, progress_message: progress.message }));
         if (buildResult && buildResult.success === false) throw new Error(buildResult.error || 'The bot build failed to start.');
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
-        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
+        if (!isPortalJob && isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
         await bot.sendMessage(ADMIN_ID, `*Deployment Completed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin completion notification failed:`, error.message));
     } catch (error) {
         console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
         await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' }).catch(updateError => console.error(`[MiniApp Job ${jobId}] Failed to persist failure:`, updateError.message));
-        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
+        if (!isPortalJob && isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
         await bot.sendMessage(ADMIN_ID, `*Deployment Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\`\n*Reason:* ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(notificationError => console.error(`[MiniApp Job ${jobId}] Admin failure notification failed:`, notificationError.message));
     }
 }
@@ -5645,6 +5647,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
     const normalizedName = String(appName || '').trim().toLowerCase();
     const normalizedSession = String(sessionId || '').trim();
     const isTelegramUser = /^-?\d+$/.test(userId);
+    const jobSource = req.isPortalUser ? 'portal' : 'telegram';
     if (isMaintenanceMode && String(req.telegramData.id) !== String(ADMIN_ID)) {
         return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
     }
@@ -5683,7 +5686,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             const normalizedKey = String(deployKey).trim().toUpperCase();
             const usesLeft = await dbServices.useDeployKey(normalizedKey, userId);
             if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
-            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30,$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, String(idempotencyKey || '') || null]);
+            await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days, idempotency_key, source) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30,$7,$8)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, String(idempotencyKey || '') || null, jobSource]);
             const requesterName = req.telegramData.username ? `@${escapeMarkdown(req.telegramData.username)}` : escapeMarkdown(req.telegramData.first_name || 'User');
             if (isTelegramUser) await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
             await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*User Type:* ${isTelegramUser ? 'Telegram' : 'Website'}\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
@@ -5704,7 +5707,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, plan_id, plan_days, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7,$8,$9,$10)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference, selectedPlan.id, selectedPlan.days, String(idempotencyKey || '') || null]);
+            await client.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, plan_id, plan_days, idempotency_key, source) VALUES ($1,$2,$3,$4,$5,$6,'awaiting_payment',0,'Waiting for payment confirmation','flutterwave',$7,$8,$9,$10,$11)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, reference, selectedPlan.id, selectedPlan.days, String(idempotencyKey || '') || null, jobSource]);
             await client.query(`INSERT INTO pending_payments (reference, user_id, email, bot_type, app_name, session_id, status, job_id, auto_status_view, plan_id, plan_days) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10)`, [reference, userId, normalizedEmail, normalizedType, normalizedName, normalizedSession, jobId, herokuAutoStatusView, selectedPlan.id, selectedPlan.days]);
             const payment = await axios.post('https://api.flutterwave.com/v3/payments', { tx_ref: reference, amount: priceNgn, currency: 'NGN', redirect_url: miniAppReturnUrl, customer: { email: normalizedEmail, name: `User ${userId}` }, meta: { user_id: userId, product: 'Bot Deployment', bot_type: normalizedType, app_name: normalizedName, session_id: normalizedSession, auto_status_view: herokuAutoStatusView, job_id: jobId, plan_id: selectedPlan.id, plan_days: selectedPlan.days }, customizations: { title: "Ultar's WBD", description: `${selectedPlan.name} bot deployment` } }, { headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` } });
             await client.query('COMMIT');
@@ -6272,9 +6275,10 @@ app.post('/flutterwave/webhook', async (req, res) => {
 
             // --- 5. EXECUTION LOGIC (Ordered by Intent) ---
 
+            const portalJob = jobId ? (await pool.query('SELECT source FROM deployment_jobs WHERE job_id = $1', [jobId])).rows[0]?.source === 'portal' : !isTelegramUser;
             if (jobId) {
                 await updateDeploymentJob(jobId, { status: 'queued', progress: 0, progress_message: 'Payment confirmed; deployment queued', payment_reference: reference });
-                await bot.sendMessage(userId, `Payment confirmed. Deployment job ${jobId} is starting.`, { parse_mode: 'Markdown' });
+                if (!portalJob && isTelegramUser) await bot.sendMessage(userId, `Payment confirmed. Deployment job ${jobId} is starting.`, { parse_mode: 'Markdown' });
                 void launchMiniAppDeploymentJob(jobId);
             } else if (isGroupFiller) {
                 const link = session_id; 

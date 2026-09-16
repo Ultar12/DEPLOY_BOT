@@ -2216,11 +2216,12 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                             currentPct = 'Error';
                         }
 
-                        if (progressCallback) await progressCallback({ progress: Number.isFinite(currentPct) ? currentPct : 0, status: buildStatus, message: buildStatus === 'succeeded' ? 'Build succeeded; waiting for bot to connect' : `Building... ${currentPct}%` });
+                        const progressMessage = buildStatus === 'succeeded' ? 'Building... (100%)' : `Building... (${currentPct}%)`;
+                        if (progressCallback) await progressCallback({ progress: Number.isFinite(currentPct) ? currentPct : 0, status: buildStatus, message: progressMessage });
 
                         // --- This now edits the USER's message ---
                         if (telegramProgress) {
-                            await bot.editMessageText(`Building... ${currentPct}%`, {
+                            await bot.editMessageText(progressMessage, {
                                 chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
                             }).catch(() => {});
                         }
