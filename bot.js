@@ -5052,7 +5052,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 ud.config_vars
             FROM user_bots ub
             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
-            WHERE ub.user_id = $1 AND (ud.deleted_from_heroku_at IS NULL OR ub.status = 'online')`,
+            WHERE ub.user_id = $1 AND (ud.app_name IS NULL OR ud.deleted_from_heroku_at IS NULL)`,
             [userId]
         );
 
