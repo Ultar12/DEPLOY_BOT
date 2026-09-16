@@ -343,8 +343,13 @@
                 }
             });
         };
+        const isTelegramContext = () => Boolean(tg.initData);
+        const showAppAlert = (message) => {
+            if (isTelegramContext() && typeof tg.showAlert === 'function') tg.showAlert(message);
+            else window.alert(message);
+        };
         const confirmAction = (message, callback) => {
-            if (typeof tg.showConfirm === 'function') tg.showConfirm(message, callback);
+            if (isTelegramContext() && typeof tg.showConfirm === 'function') tg.showConfirm(message, callback);
             else callback(window.confirm(message));
         };
 
@@ -673,9 +678,9 @@
                 try {
                     const res = await fetch(`${API_BASE_URL}/${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName }) });
                     const data = await res.json();
-                    tg.showAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
+                    showAppAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
                     if (data.success) window.location.href = '/apps/dashboard';
-                } catch (e) { tg.showAlert('Action failed.'); }
+                } catch (e) { showAppAlert('Action failed.'); }
             });
         }
 
