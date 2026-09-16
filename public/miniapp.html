@@ -478,7 +478,7 @@
         }
 
         function getDashboardHTML() {
-            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div><a class="whatsapp-fab" href="https://wa.me/message/XERVFASU4WOOC1" target="_blank" rel="noopener" aria-label="Chat on WhatsApp"><span class="whatsapp-fab-logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a9.7 9.7 0 0 0-8.4 14.55L2.1 22l5.57-1.46A9.7 9.7 0 1 0 12 2Zm0 17.7a8 8 0 0 1-4.08-1.12l-.29-.17-3.3.86.88-3.21-.19-.31A8 8 0 1 1 12 19.7Zm4.4-5.94c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.02-.38-1.94-1.2-.72-.64-1.2-1.43-1.34-1.67-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.2-.47-.4-.4-.54-.41h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.69 2.58 4.1 3.62.57.25 1.02.4 1.37.51.58.18 1.1.15 1.52.09.46-.07 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28Z"/></svg></span><span>Contact support</span></a></div>`;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div id="dashboardDeploymentProgress" class="workspace-panel" style="display:none;margin-bottom:20px;"></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div><a class="whatsapp-fab" href="https://wa.me/message/XERVFASU4WOOC1" target="_blank" rel="noopener" aria-label="Chat on WhatsApp"><span class="whatsapp-fab-logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a9.7 9.7 0 0 0-8.4 14.55L2.1 22l5.57-1.46A9.7 9.7 0 1 0 12 2Zm0 17.7a8 8 0 0 1-4.08-1.12l-.29-.17-3.3.86.88-3.21-.19-.31A8 8 0 1 1 12 19.7Zm4.4-5.94c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.02-.38-1.94-1.2-.72-.64-1.2-1.43-1.34-1.67-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.2-.47-.4-.4-.54-.41h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.69 2.58 4.1 3.62.57.25 1.02.4 1.37.51.58.18 1.1.15 1.52.09.46-.07 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28Z"/></svg></span><span>Contact support</span></a></div>`;
         }
 
         function getNotificationsHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Notification Center</h1><p class="dashboard-subtitle">Important updates about your bots and account.</p><div id="notificationCenterList" class="plugin-list"><div class="workspace-panel">Loading notifications...</div></div></div>`; }
@@ -519,14 +519,32 @@
             try {
                 const res = await fetch(`${API_BASE_URL}/deployment-history`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json(); if (!data.success) throw new Error(data.message);
-                list.innerHTML = data.jobs.length ? data.jobs.map(job => `<div class="workspace-panel"><strong>${job.app_name}</strong><p>${job.bot_type} · ${job.status} · ${job.progress || 0}%</p><p>${job.progress_message || ''}</p>${job.status === 'failed' ? `<button class="support-btn retry-deployment" data-job-id="${job.job_id}">RETRY</button>` : ''}</div>`).join('') : '<div class="workspace-panel">No deployments yet.</div>';
-                list.querySelectorAll('.retry-deployment').forEach(button => button.onclick = async () => { button.disabled = true; try { const response = await fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(button.dataset.jobId)}/retry`, { method: 'POST', headers: { 'X-Telegram-Init-Data': tg.initData } }); const result = await response.json(); await showAppAlert(result.message || 'Retry queued.'); if (result.success) loadDeploymentHistory(); } catch (error) { await showAppAlert('Could not retry deployment.'); } finally { button.disabled = false; } });
+                list.innerHTML = data.jobs.length ? data.jobs.map(job => `<div class="workspace-panel"><strong>${job.app_name}</strong><p>${job.bot_type} · ${job.status} · ${job.progress || 0}%</p><p>${job.progress_message || ''}</p>${job.error_message ? `<p class="error-copy">${job.error_message}</p>` : ''}</div>`).join('') : '<div class="workspace-panel">No deployments yet.</div>';
             } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel">${error.message || 'Could not load deployment history.'}</div>`; }
         }
 
         async function loadReconciliation() {
             const list = document.getElementById('reconciliationList'); if (!list) return;
             try { const res = await fetch(`${API_BASE_URL}/admin/reconciliation`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await res.json(); if (!data.success) throw new Error(data.message); list.innerHTML = data.issues.length ? data.issues.map(issue => `<div class="workspace-panel"><strong>${issue.issue}</strong><p>${issue.app_name} · User ${issue.user_id}</p></div>`).join('') : '<div class="workspace-panel">No reconciliation issues found.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel">${error.message || 'Could not run reconciliation.'}</div>`; }
+        }
+
+        async function loadDashboardDeploymentProgress(jobId) {
+            const panel = document.getElementById('dashboardDeploymentProgress');
+            if (!panel || !jobId) return;
+            if (window.__dashboardJobTimer) clearTimeout(window.__dashboardJobTimer);
+            try {
+                const response = await fetch(`${API_BASE_URL}/deployment-jobs/${encodeURIComponent(jobId)}`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await response.json();
+                if (!data.success) throw new Error(data.message || 'Unable to read deployment progress.');
+                const job = data.job;
+                panel.style.display = 'block';
+                panel.innerHTML = `<strong>Deployment in progress</strong><p>${job.app_name} · ${job.status} · ${job.progress || 0}%</p><p>${job.progress_message || 'Processing deployment...'}</p>`;
+                if (!['completed', 'failed'].includes(job.status)) window.__dashboardJobTimer = setTimeout(() => loadDashboardDeploymentProgress(jobId), 2500);
+                else if (job.status === 'failed') panel.innerHTML += `<p class="error-copy">${job.error_message || 'Deployment failed.'}</p>`;
+            } catch (error) {
+                panel.style.display = 'block';
+                panel.innerHTML = `<strong>Deployment progress unavailable</strong><p>${error.message || 'Please check Deployment History.'}</p>`;
+            }
         }
 
         async function loadDashboard() {
@@ -588,6 +606,8 @@
                         setTimeout(() => showAppAlert(live ? `${routeBot.appName} is live and connected.` : `${routeBot.appName} was deployed, but the session is offline or incorrect. Please use Change Session.`), 250);
                     }
                 }
+                const dashboardJobId = new URLSearchParams(window.location.search).get('job');
+                if (dashboardJobId) loadDashboardDeploymentProgress(dashboardJobId);
             } catch (e) { document.getElementById('botList').innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load your bots</strong><p>${e.message || 'Please refresh and try again.'}</p><a href="/apps">Refresh dashboard</a></div>`; }
         }
 
@@ -880,7 +900,8 @@
                             navigateTo('job', { jobId: data.jobId, appName: payload.appName, paymentRequired: true });
                             tg.openLink(data.paymentUrl);
                         } else {
-                            navigateTo('job', { jobId: data.jobId, appName: payload.appName });
+                            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
+                            navigateTo('dashboard');
                         }
                     } catch (e) { window.__deploySubmitting = false; result.textContent = e.message || 'Connection error. Try again.'; }
                 };
