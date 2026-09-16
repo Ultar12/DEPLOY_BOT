@@ -338,7 +338,7 @@
         const nativeFetch = window.fetch.bind(window);
         window.fetch = (input, options = {}) => {
             const url = String(typeof input === 'string' ? input : input?.url || '');
-            const backgroundRequest = /deployment-jobs|\/bots\/logs/.test(url);
+            const backgroundRequest = /deployment-jobs|\/bots\/logs|check-app-name|validate-session/.test(url);
             if (!backgroundRequest) {
                 activeVisibleRequests += 1;
                 clearTimeout(loaderTimer);
