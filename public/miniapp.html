@@ -221,6 +221,10 @@
         }
 
         .mgmt-option-label { font-weight: 600; font-size: 0.95em; }
+        .danger-option { border-color: #dc2626 !important; background: #fef2f2 !important; color: #b91c1c !important; }
+        .danger-option .mgmt-option-label { color: #b91c1c !important; }
+        .whatsapp-fab { position: fixed; right: 18px; bottom: 18px; z-index: 120; display: inline-flex; align-items: center; justify-content: center; padding: 11px 15px; border-radius: 999px; background: #16a34a; color: #fff; font-size: 12px; font-weight: 800; text-decoration: none; box-shadow: 0 8px 22px rgba(22, 163, 74, .3); }
+        .whatsapp-fab:hover { background: #15803d; }
         .mgmt-option-hint { font-size: 0.8em; color: #94a3b8; }
         
         .logs-container { 
@@ -466,7 +470,7 @@
         }
 
         function getDashboardHTML() {
-            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div></div>`;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div><a class="whatsapp-fab" href="https://wa.me/message/XERVFASU4WOOC1" target="_blank" rel="noopener" aria-label="Chat on WhatsApp">WhatsApp</a></div>`;
         }
 
         function getNotificationsHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Notification Center</h1><p class="dashboard-subtitle">Important updates about your bots and account.</p><div id="notificationCenterList" class="plugin-list"><div class="workspace-panel">Loading notifications...</div></div></div>`; }
@@ -549,7 +553,7 @@
                 const routeBotName = decodeURIComponent(routeMatch?.[1] || '');
                 const routeBot = bots.find(bot => bot.appName === routeBotName);
                 if (routeBot) {
-                    navigateTo('bot-tab', { bot: routeBot, tab: routeMatch?.[2] || 'overview' });
+                    navigateTo('bot-tab', { bot: routeBot, tab: 'settings' });
                     if (new URLSearchParams(window.location.search).get('deployment') === 'completed') {
                         const live = String(routeBot.status || '').toLowerCase() === 'online';
                         setTimeout(() => showAppAlert(live ? `${routeBot.appName} is live and connected.` : `${routeBot.appName} was deployed, but the session is offline or incorrect. Please use Change Session.`), 250);
@@ -584,8 +588,8 @@
                         <div class="mgmt-option" data-action="renew-bot" data-app-name="${bot.appName}">
                             <div class="mgmt-option-label">Renew Subscription</div>
                         </div>
-                        <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="border-color:#ef4444;">
-                            <div class="mgmt-option-label" style="color:#fca5a5;">Permanent Delete</div>
+                        <div class="mgmt-option danger-option" data-action="delete-bot" data-app-name="${bot.appName}">
+                            <div class="mgmt-option-label">Permanent Delete</div>
                         </div>
                     </div>
                 `;
@@ -597,7 +601,7 @@
                     <div class="mgmt-option" data-action="turn-off-bot" data-app-name="${bot.appName}" style="border-color:rgba(245,158,11,.45);"><div class="mgmt-option-label" style="color:#fcd34d;">Turn Off Bot</div></div>
                     <div class="mgmt-option" data-action="navigate" data-view="variables" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">View and Edit Variables</div></div>
                     <div class="mgmt-option" data-action="navigate" data-view="logs" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">Live Logs</div></div>
-                    <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="margin-top:20px; border-color:rgba(239,68,68,0.3);"><div class="mgmt-option-label" style="color:#fca5a5;">Delete Bot</div></div>
+                    <div class="mgmt-option danger-option" data-action="delete-bot" data-app-name="${bot.appName}" style="margin-top:20px;"><div class="mgmt-option-label">Delete Bot</div></div>
                 </div>
             `;
         }
@@ -608,15 +612,14 @@
 
         function getBotWorkspaceHTML(payload = {}) {
             const bot = payload.bot || payload;
-            const tab = payload.tab || 'overview';
+            const tab = 'settings';
             if (!bot || !bot.appName) return `<div class="workspace-panel error-panel"><strong>Bot details unavailable</strong><p>Return to My Bots and open the bot again.</p><a href="/apps">Back to My Bots</a></div>`;
             if (window.__maintenanceMode) return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT WORKSPACE</p><h1>${bot.appName}</h1></div></div><div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div></div>`;
             const safeName = encodeURIComponent(bot.appName);
             const remaining = Math.max(0, Math.ceil((new Date(bot.expirationDate) - Date.now()) / 86400000));
-            const tabs = [['overview','Overview'],['settings','Settings']];
+            const tabs = [['settings','Settings']];
             const nav = tabs.map(([key,label]) => `<a class="bot-tab ${tab === key ? 'active' : ''}" href="/apps/bots/${safeName}/${key}">${label}</a>`).join('');
             let content = '';
-            if (tab === 'overview') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status || 'Unknown'}</div><div class="stat-label">STATUS</div></div><div class="stat-card"><div class="stat-value">${bot.botType || 'Bot'}</div><div class="stat-label">TYPE</div></div><div class="stat-card"><div class="stat-value">${remaining}</div><div class="stat-label">DAYS REMAINING</div></div></div>`;
             if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Offline'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
             if (tab === 'activity') content = `<div class="workspace-panel"><h2>Activity</h2><div class="activity-item"><strong>Bot opened</strong><span>Current session</span></div><div class="activity-item"><strong>Status: ${bot.status || 'Unknown'}</strong><span>Latest available status</span></div></div>`;
             if (tab === 'settings') content = getBotManagementHTML(bot);
@@ -947,7 +950,7 @@
                     const botsData = await botsResponse.json();
                     const deployedBot = (botsData.bots || []).find(bot => bot.appName === job.app_name);
                     if (deployedBot) {
-                        window.location.href = `/apps/bots/${encodeURIComponent(deployedBot.appName)}/overview?deployment=completed`;
+                        window.location.href = `/apps/bots/${encodeURIComponent(deployedBot.appName)}/settings?deployment=completed`;
                     } else {
                         status.textContent = 'Deployment completed. Syncing your bot into management…';
                         setTimeout(() => pollJob(jobId), 2500);
