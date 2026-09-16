@@ -5413,26 +5413,12 @@ async function startMiniAppDeploymentJob(jobId) {
     if (!jobResult.rows.length) throw new Error('Deployment job not found.');
     const job = jobResult.rows[0];
     const isTelegramUser = /^-?\d+$/.test(String(job.user_id));
-    const progressStages = [
-        { progress: 40, message: 'Provisioning deployment resources' },
-        { progress: 55, message: 'Configuring bot environment' },
-        { progress: 70, message: 'Building bot source' },
-        { progress: 85, message: 'Finalizing deployment' }
-    ];
-    let progressStageIndex = 0;
-    let progressTimer;
     try {
         await updateDeploymentJob(jobId, { status: 'running', progress: 10, progress_message: 'Registering bot' });
         await dbServices.addUserBot(job.user_id, job.app_name, job.session_id, job.bot_type);
         await updateDeploymentJob(jobId, { progress: 25, progress_message: 'Starting deployment' });
-        progressTimer = setInterval(() => {
-            const stage = progressStages[progressStageIndex++];
-            if (!stage) return clearInterval(progressTimer);
-            updateDeploymentJob(jobId, { progress: stage.progress, progress_message: stage.message }).catch(error => console.error(`[MiniApp Job ${jobId}] Progress update failed:`, error.message));
-        }, 12000);
-        await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* is now building.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] User progress notification failed:`, error.message));
+        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* is now building.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] User progress notification failed:`, error.message));
         await bot.sendMessage(ADMIN_ID, `*Deployment Build Started*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin start notification failed:`, error.message));
-        const isTelegramUser = /^-?\d+$/.test(String(job.user_id));
         const buildResult = await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
@@ -5440,18 +5426,16 @@ async function startMiniAppDeploymentJob(jobId) {
                 ? { AUTO_READ_STATUS: job.auto_status_view || 'false' }
                 : { AUTO_STATUS_VIEW: job.auto_status_view || 'false' }),
             DAYS: job.plan_days || 30
-        }, false, false, job.bot_type, null, null, null, false, !isTelegramUser);
+        }, false, false, job.bot_type, null, null, null, false, !isTelegramUser, progress => updateDeploymentJob(jobId, { progress: progress.progress, progress_message: progress.message }));
         if (buildResult && buildResult.success === false) throw new Error(buildResult.error || 'The bot build failed to start.');
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
-        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
+        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
         await bot.sendMessage(ADMIN_ID, `*Deployment Completed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin completion notification failed:`, error.message));
     } catch (error) {
         console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
         await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' }).catch(updateError => console.error(`[MiniApp Job ${jobId}] Failed to persist failure:`, updateError.message));
         if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
         await bot.sendMessage(ADMIN_ID, `*Deployment Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\`\n*Reason:* ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(notificationError => console.error(`[MiniApp Job ${jobId}] Admin failure notification failed:`, notificationError.message));
-    } finally {
-        if (progressTimer) clearInterval(progressTimer);
     }
 }
 

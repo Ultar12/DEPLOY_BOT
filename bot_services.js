@@ -1926,7 +1926,7 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
 
 
-async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null, silentRestore = false, portalBuild = false) {
+async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null, silentRestore = false, portalBuild = false, progressCallback = null) {
     const telegramProgress = !silentRestore && !portalBuild;
     const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
@@ -2216,8 +2216,10 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                             currentPct = 'Error';
                         }
 
+                        if (progressCallback) await progressCallback({ progress: Number.isFinite(currentPct) ? currentPct : 0, status: buildStatus, message: buildStatus === 'succeeded' ? 'Build succeeded; waiting for bot to connect' : `Building... ${currentPct}%` });
+
                         // --- This now edits the USER's message ---
-                        if (!silentRestore) {
+                        if (telegramProgress) {
                             await bot.editMessageText(`Building... ${currentPct}%`, {
                                 chat_id: primaryAnimChatId, message_id: primaryAnimMsgId
                             }).catch(() => {});
