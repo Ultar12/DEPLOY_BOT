@@ -290,7 +290,8 @@
         html,#main-container,#view-container{background:#050505;color:#f4f4f5}.header{background:#050505!important}.dashboard,.settings-page,.plugins-page,.bot-workspace{color:#f4f4f5}.dashboard-heading h1,.settings-page h1,.bot-workspace-heading h1,.plugins-page h1{color:#fff!important}.section-title,.kicker{color:#a1a1aa!important}.news-card,.workspace-panel,.settings-card,.bot-list,.mgmt-option{background:#111114!important;border-color:#29292f!important;color:#e4e4e7!important}.news-title,.mgmt-option-label,.workspace-panel h2{color:#fff!important}.news-content,.mgmt-option-hint,.workspace-panel p,.settings-card p{color:#a1a1aa!important}.management-grid input,.management-grid select,.management-grid textarea,.session-form input,.session-form select,.session-form textarea{background:#0b0b0d!important;color:#fff!important;border-color:#3f3f46!important}.management-grid label,.session-form label{color:#d4d4d8!important}.support-btn{background:#7c3aed!important;color:#fff!important}.hero-action.primary{background:#fff;color:#111}.pagination{color:#a1a1aa}.error-panel{border-color:#7f1d1d!important}.bot-card{background:#111114!important;border-bottom-color:#29292f!important;color:#fff!important}.bot-name{color:#fff!important}.bot-meta{color:#c4b5fd!important}.plugin-row{background:#111114!important;border-color:#29292f!important}
 
     .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}.bot-tabs{border-bottom-color:#64748b!important}.bot-tab{display:inline-block;background:#fff!important;color:#111!important;font-weight:800!important;border:1px solid #64748b;border-radius:5px;padding:9px 14px!important}.bot-tab.active{background:#111!important;color:#fff!important;border-color:#111!important}.bot-tab-content .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}.bot-tab-content .mgmt-option .mgmt-option-label{color:#fff!important}.bot-tab-content .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.global-loader{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(5,5,5,.72);backdrop-filter:blur(3px);opacity:1;visibility:visible;transition:opacity .2s ease,visibility .2s ease}.global-loader.hidden{opacity:0;visibility:hidden;pointer-events:none}.loader-card{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:170px;padding:24px 28px;border:1px solid #64748b;border-radius:10px;background:#111;color:#fff;box-shadow:0 18px 50px rgba(0,0,0,.35)}.loader-spinner{width:34px;height:34px;border:3px solid #64748b;border-top-color:#fff;border-radius:50%;animation:loader-spin .8s linear infinite}.loader-text{font-size:12px;font-weight:700;letter-spacing:.04em}.loader-progress{position:fixed;top:0;left:0;z-index:10000;width:100%;height:3px;background:#111;transform:scaleX(0);transform-origin:left;transition:transform .2s ease}.loader-progress.active{transform:scaleX(.7);animation:loader-progress 1.2s ease-in-out infinite alternate}@keyframes loader-spin{to{transform:rotate(360deg)}}@keyframes loader-progress{to{transform:scaleX(.95)}}
-    body .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover{background:#272727!important;border-color:#fff!important}
+    body .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover{background:#272727!important;border-color:#fff!important}body .bot-card .bot-actions{display:flex!important;visibility:visible!important;opacity:1!important;position:relative!important;z-index:3!important;gap:8px!important;flex-wrap:wrap!important;align-items:center!important}body .bot-card .bot-actions .support-btn{display:inline-flex!important;visibility:visible!important;opacity:1!important;white-space:nowrap!important}@media(max-width:620px){body .bot-card{display:flex!important;flex-wrap:wrap!important;align-items:flex-start!important}body .bot-card .bot-info{flex:1 1 100%!important;width:100%!important}body .bot-card .bot-actions{width:100%!important;margin-top:12px!important;justify-content:flex-start!important}
+    }
     </style>
 </head>
 <body>
@@ -518,7 +519,7 @@
                                     ${isExpired ? `Deletion in ${hoursRemaining}h` : `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left`}
                                 </div>
                             </div>
-                            <div class="bot-actions"><button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>${bot.status === 'Offline' ? `<button class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
+                            <div class="bot-actions"><button type="button" class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>${String(bot.status || '').toLowerCase() === 'offline' ? `<button type="button" class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
                         </div>
                     `;
                 }).join('') || '<div class="empty-state"><div class="empty-icon">H</div><h2>Create your first app</h2><p>You do not have any apps yet.</p><a class="support-btn" href="/apps/create">Create new app</a></div>';
@@ -665,6 +666,19 @@
             window.__liveLogPollTimer = setInterval(refreshLogs, 4000);
         }
 
+        function runManagementAction(act, btn) {
+            confirmAction(`Confirm ${act}?`, async (ok) => {
+                if (!ok) return;
+                const ep = { 'restart-bot': 'bots/restart', 'redeploy-bot': 'bots/redeploy', 'turn-off-bot': 'bots/turn-off', 'delete-bot': 'bots/delete' }[act];
+                try {
+                    const res = await fetch(`${API_BASE_URL}/${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName }) });
+                    const data = await res.json();
+                    tg.showAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
+                    if (data.success) window.location.href = '/apps/dashboard';
+                } catch (e) { tg.showAlert('Action failed.'); }
+            });
+        }
+
         function attachEventListeners() {
             document.querySelectorAll('[data-action="navigate"]').forEach(button => {
                 button.onclick = event => {
@@ -672,6 +686,9 @@
                     event.stopPropagation();
                     navigateTo(button.dataset.view, button.dataset.botJson ? JSON.parse(button.dataset.botJson) : null);
                 };
+            });
+            document.querySelectorAll('[data-action="restart-bot"],[data-action="redeploy-bot"],[data-action="turn-off-bot"],[data-action="delete-bot"]').forEach(card => {
+                card.onclick = event => { event.preventDefault(); event.stopPropagation(); runManagementAction(card.dataset.action, card); };
             });
             document.onclick = (e) => {
                 const btn = e.target.closest('[data-action]');
@@ -716,22 +733,7 @@
                     if (value === null) return;
                     fetch(`${API_BASE_URL}/bots/set-var`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, varName: btn.dataset.varName, varValue: value }) }).then(r => r.json()).then(data => tg.showAlert(data.message || 'Saved.')).catch(() => tg.showAlert('Failed to save variable.'));
                 }
-                if (act === 'restart-bot' || act === 'redeploy-bot' || act === 'turn-off-bot' || act === 'delete-bot') {
-                    confirmAction(`Confirm ${act}?`, async (ok) => {
-                        if (!ok) return;
-                        const ep = { 'restart-bot': 'bots/restart', 'redeploy-bot': 'bots/redeploy', 'turn-off-bot': 'bots/turn-off', 'delete-bot': 'bots/delete' }[act];
-                        try {
-                            const res = await fetch(`${API_BASE_URL}/${ep}`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
-                                body: JSON.stringify({ appName: btn.dataset.appName })
-                            });
-                            const data = await res.json();
-                            tg.showAlert(data.message);
-                            if (data.success) window.location.href = '/apps/dashboard';
-                        } catch (e) { tg.showAlert("Error."); }
-                    });
-                }
+                if (act === 'restart-bot' || act === 'redeploy-bot' || act === 'turn-off-bot' || act === 'delete-bot') runManagementAction(act, btn);
                 if (act === 'deploy-bot') return;
             };
             const pluginForm = document.getElementById('pluginForm');
