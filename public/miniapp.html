@@ -565,13 +565,14 @@
                     <label class="section-title" style="margin:0;">Session ID<input id="deploySessionId" required placeholder="Paste the session ID" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><span id="sessionState" class="validation-state">Not checked</span></label>
                     <label class="section-title" style="margin:0;">Auto status view<select id="autoStatusView" aria-label="Auto status view" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="yes">Yes</option><option value="no">No</option></select></label>
                     <div id="wizardActions"><button class="support-btn" id="saveNextBtn" type="button">SAVE AND NEXT</button></div>
-                    <div id="deployOptions" class="news-card" style="display:none;"><div class="news-title">Choose how to continue</div><div class="news-content" id="deployOptionsText"></div><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><div style="display:flex;gap:10px;flex-wrap:nowrap;margin-top:12px;"><button class="support-btn" id="keyDeployBtn" type="button" style="flex:1;min-width:0;">Deploy with key</button><button class="support-btn" id="payDeployBtn" type="button" style="flex:1;min-width:0;">Pay</button></div></div>
+                    <div id="deployOptions" class="news-card" style="display:none;"><div id="planOptions" class="management-grid" style="display:none;margin-top:12px;"></div><div style="display:flex;gap:10px;flex-wrap:nowrap;margin-top:12px;"><button class="support-btn" id="keyDeployBtn" type="button" style="flex:1;min-width:0;">Deploy with key</button><button class="support-btn" id="payDeployBtn" type="button" style="flex:1;min-width:0;">Pay</button></div></div>
                     <div id="deployResult" class="news-content"></div>
                 </form>`;
         }
 
         function getDeploymentJobHTML(data) {
-            return `<div class="management-grid"><div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
+            const paymentNotice = data.paymentRequired ? '<div class="news-card"><div class="news-title">Choose how to continue</div><div class="news-content">Choose a deployment method</div></div>' : '';
+            return `<div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
         }
 
         function getSessionHTML() {
@@ -715,7 +716,6 @@
                     if (!nameOk || !sessionOk) return;
                     document.getElementById('deployOptions').style.display = 'block';
                     document.getElementById('wizardActions').style.display = 'none';
-                    document.getElementById('deployOptionsText').textContent = 'Choose a deployment method.';
                     const planOptions = document.getElementById('planOptions');
                     planOptions.style.display = 'grid';
                     {
@@ -748,7 +748,7 @@
                         const data = await res.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
                         if (data.paymentRequired && data.paymentUrl) {
-                            navigateTo('job', { jobId: data.jobId });
+                            navigateTo('job', { jobId: data.jobId, paymentRequired: true });
                             tg.openLink(data.paymentUrl);
                         } else {
                             navigateTo('job', { jobId: data.jobId });
