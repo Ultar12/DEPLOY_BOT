@@ -4835,7 +4835,7 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     try {
       const email = String(req.body.email || '').trim().toLowerCase();
       const result = await pool.query('SELECT user_id FROM web_accounts WHERE LOWER(email)=LOWER($1) AND is_verified=TRUE', [email]);
-      if (!result.rows[0]) return res.json({ success: true, message: 'If an account exists, a reset code has been sent.' });
+      if (!result.rows[0]) return res.status(404).json({ success: false, message: 'No registered account was found for this email address.' });
       const code = String(crypto.randomInt(100000, 1000000));
       await pool.query("UPDATE web_accounts SET reset_code=$1, reset_expires_at=NOW()+INTERVAL '10 minutes' WHERE user_id=$2", [code, result.rows[0].user_id]);
       if (!await sendVerificationEmail(email, code, 'password_reset')) return res.status(503).json({ success: false, message: 'We could not send the reset email.' });
