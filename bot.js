@@ -4867,13 +4867,13 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
 
   app.get('/auth/google', (req, res) => {
     if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).send('Google login is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render environment variables.');
-    const redirect = `${APP_URL || ''}/auth/google/callback`;
+    const redirect = process.env.GOOGLE_REDIRECT_URI || 'https://ultarsync.store/auth/google/callback';
     res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(process.env.GOOGLE_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=openid%20email%20profile`);
   });
   app.get('/auth/google/callback', async (req, res) => {
     try {
       if (!req.query.code || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect('/apps');
-      const redirect_uri = `${APP_URL || ''}/auth/google/callback`;
+      const redirect_uri = process.env.GOOGLE_REDIRECT_URI || 'https://ultarsync.store/auth/google/callback';
       const token = await axios.post('https://oauth2.googleapis.com/token', { code: req.query.code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri, grant_type: 'authorization_code' }, { headers: { 'Content-Type': 'application/json' } });
       const profile = await axios.get('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${token.data.access_token}` } });
       const email = String(profile.data.email || '').toLowerCase(); if (!email) return res.redirect('/apps');
