@@ -336,6 +336,9 @@
         .plugin-page-btn { border:1px solid #3f3f46; border-radius:5px; padding:6px 9px; background:#111114; color:#d4d4d8; font:inherit; font-size:10px; cursor:pointer; }
         .plugin-page-btn:disabled { opacity:.4; cursor:default; }
         .plugin-page-label { color:#a1a1aa; font-size:10px; }
+        .pairing-loading { display:flex; align-items:center; gap:9px; padding:10px 0; color:#a1a1aa; }
+        .pairing-spinner { width:16px; height:16px; flex:0 0 16px; border:2px solid #3f3f46; border-top-color:#a78bfa; border-radius:50%; animation:pairing-spin .8s linear infinite; }
+        @keyframes pairing-spin { to { transform:rotate(360deg); } }
         @media (max-width: 620px) {
             #view-container { padding: 14px 12px 24px; }
             .dark-dashboard,
@@ -409,7 +412,7 @@
         const nativeFetch = window.fetch.bind(window);
         window.fetch = (input, options = {}) => {
             const url = String(typeof input === 'string' ? input : input?.url || '');
-            const backgroundRequest = options.__background === true || /deployment-jobs|\/bots\/logs|check-app-name|validate-session/.test(url);
+            const backgroundRequest = options.__background === true || /deployment-jobs|\/bots\/logs|session-requests|check-app-name|validate-session/.test(url);
             if (!backgroundRequest) {
                 activeVisibleRequests += 1;
                 clearTimeout(loaderTimer);
@@ -1069,20 +1072,26 @@
             const sessionRequestForm = document.getElementById('sessionRequestForm');
             if (sessionRequestForm) {
                 const result = document.getElementById('sessionRequestResult');
+                const submitButton = sessionRequestForm.querySelector('button[type="submit"]');
+                const showPairingLoading = (message = 'Waiting for pairing code…') => { result.innerHTML = `<div class="pairing-loading"><span class="pairing-spinner" aria-hidden="true"></span><span>${message}</span></div>`; };
                 const renderRequest = request => {
                     if (request.status === 'pairing_code') {
+                        if (submitButton) submitButton.disabled = true;
                         result.innerHTML = `<div class="news-card"><div class="news-title">Pairing code ready</div><div class="news-content">Enter this code in WhatsApp linked devices:</div><div style="display:flex;align-items:center;gap:10px;margin:12px 0;"><div id="pairingCode" style="font-size:1.35em;letter-spacing:.08em;font-weight:700;"></div><button type="button" class="support-btn" data-action="copy-pairing" data-code="" aria-label="Copy pairing code" title="Copy pairing code" style="width:auto;padding:7px 10px;line-height:1;">⧉</button></div></div>`;
                         document.getElementById('pairingCode').textContent = request.pairingCode || '';
                         result.querySelector('[data-action="copy-pairing"]').dataset.code = request.pairingCode || '';
                     } else if (request.status === 'completed') {
+                        if (submitButton) submitButton.disabled = false;
                         result.innerHTML = `<div class="news-card"><div class="news-title">Session ID ready</div><textarea id="generatedSessionId" readonly style="display:block;width:100%;min-height:110px;margin-top:10px;padding:10px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"></textarea><button class="support-btn" data-action="copy-session" data-session="">COPY SESSION ID</button></div>`;
                         const area = document.getElementById('generatedSessionId');
                         area.value = request.sessionId || '';
                         result.querySelector('[data-action="copy-session"]').dataset.session = request.sessionId || '';
                     } else if (request.status === 'failed') {
+                        if (submitButton) submitButton.disabled = false;
                         result.textContent = request.error || 'Could not generate a session. Please try again.';
                     } else {
-                        result.textContent = 'Processing...';
+                        if (submitButton) submitButton.disabled = true;
+                        showPairingLoading(request.status === 'queued' ? 'Request queued. Waiting for pairing code…' : 'Generating pairing code…');
                     }
                 };
                 const pollSessionRequest = async requestId => {
@@ -1096,6 +1105,7 @@
                             window.__sessionRequestPollTimer = null;
                         }
                     } catch (error) {
+                        if (submitButton) submitButton.disabled = false;
                         result.textContent = error.message || 'Session request unavailable.';
                     }
                 };
@@ -1103,7 +1113,8 @@
                     event.preventDefault();
                     const botType = document.getElementById('sessionBotType').value;
                     const number = document.getElementById('sessionPhoneNumber').value.trim();
-                    result.textContent = 'Requesting pairing...';
+                    if (submitButton) submitButton.disabled = true;
+                    showPairingLoading('Starting pairing request…');
                     try {
                         const response = await fetch(`${API_BASE_URL}/session-requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ botType, number }) });
                         const data = await response.json();
@@ -1111,7 +1122,7 @@
                         await pollSessionRequest(data.requestId);
                         if (window.__sessionRequestPollTimer) clearInterval(window.__sessionRequestPollTimer);
                         window.__sessionRequestPollTimer = setInterval(() => pollSessionRequest(data.requestId), 2500);
-                    } catch (error) { result.textContent = error.message || 'Could not start session request.'; }
+                    } catch (error) { if (submitButton) submitButton.disabled = false; result.textContent = error.message || 'Could not start session request.'; }
                 };
             }
         }
