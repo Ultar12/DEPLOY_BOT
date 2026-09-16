@@ -5450,6 +5450,7 @@ async function startMiniAppDeploymentJob(jobId) {
 
 app.get('/api/deployment-jobs/:jobId', validateWebAppInitData, async (req, res) => {
     try {
+        await ensureMiniAppDeploymentSchema();
         const result = await pool.query('SELECT job_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, payment_reference, error_message, created_at, updated_at FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, String(req.telegramData.id)]);
         if (!result.rows.length) return res.status(404).json({ success: false, message: 'Deployment job not found.' });
         res.json({ success: true, job: result.rows[0] });
@@ -5461,6 +5462,7 @@ app.get('/api/deployment-jobs/:jobId', validateWebAppInitData, async (req, res) 
 
 app.get('/api/deployment-history', validateWebAppInitData, async (req, res) => {
     try {
+        await ensureMiniAppDeploymentSchema();
         const result = await pool.query(`SELECT job_id, app_name, bot_type, status, progress, progress_message, error_message, retry_of, created_at, updated_at
             FROM deployment_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [String(req.telegramData.id)]);
         res.json({ success: true, jobs: result.rows });
@@ -5473,6 +5475,7 @@ app.get('/api/deployment-history', validateWebAppInitData, async (req, res) => {
 app.post('/api/deployment-jobs/:jobId/retry', validateWebAppInitData, async (req, res) => {
     const userId = String(req.telegramData.id);
     try {
+        await ensureMiniAppDeploymentSchema();
         const result = await pool.query('SELECT * FROM deployment_jobs WHERE job_id = $1 AND user_id = $2', [req.params.jobId, userId]);
         if (!result.rows.length) return res.status(404).json({ success: false, message: 'Deployment job not found.' });
         const job = result.rows[0];
