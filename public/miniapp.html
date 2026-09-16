@@ -386,11 +386,10 @@
         const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
         document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
         document.addEventListener('click', () => document.getElementById('accountMenu')?.classList.remove('open'));
-        document.getElementById('newAppBtn')?.addEventListener('click', async event => {
+        document.getElementById('newAppBtn')?.addEventListener('click', event => {
             event.preventDefault();
             if (window.__maintenanceMode) {
-                await showAppAlert('The service is currently under maintenance. Please come back shortly.');
-                window.location.href = '/apps/dashboard';
+                showAppAlert('The service is currently under maintenance. Please come back shortly.');
                 return;
             }
             navigateTo('deploy');
@@ -506,10 +505,6 @@
                 const data = await res.json();
                 const bots = data.bots || [];
                 window.__maintenanceMode = data.maintenanceMode === true;
-                if (window.__maintenanceMode && !window.__maintenanceNoticeShown) {
-                    window.__maintenanceNoticeShown = true;
-                    await showAppAlert('The service is currently under maintenance. Please come back shortly.');
-                }
                 window.__dashboardBots = bots;
                 document.getElementById('totalBots').textContent = bots.length;
                 document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
@@ -728,7 +723,7 @@
                 const deployLink = e.target.closest('a[href="/apps/create"]');
                 if (deployLink && window.__maintenanceMode) {
                     e.preventDefault();
-                    return showAppAlert('The service is currently under maintenance. Please come back shortly.').then(() => { window.location.href = '/apps/dashboard'; });
+                    return showAppAlert('The service is currently under maintenance. Please come back shortly.');
                 }
                 const btn = e.target.closest('[data-action]');
                 if (!btn) return;
