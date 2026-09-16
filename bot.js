@@ -9747,6 +9747,79 @@ bot.onText(/^\/updateall (levanter|raganork|hermit)$/, async (msg, match) => {
     }
 });
 
+// Temporary admin command: update PLAY_URL on every active Levanter/Raganork app.
+bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const requestedUrl = String(match[1] || '').trim();
+    let playUrl;
+    try {
+        const parsed = new URL(requestedUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP and HTTPS URLs are supported.');
+        playUrl = parsed.toString().replace(/\/$/, '');
+    } catch (error) {
+        return bot.sendMessage(adminId, `Invalid PLAY_URL: ${error.message}`);
+    }
+
+    const workingMessage = await bot.sendMessage(adminId, `Updating PLAY_URL for all Levanter and Raganork bots to:\n\`${playUrl}\`\n\nPlease wait...`);
+    let bots = [];
+    let updated = 0;
+    let failed = 0;
+    const failures = [];
+
+    try {
+        const result = await pool.query(
+            `SELECT user_id, bot_name, bot_type
+             FROM user_bots
+             WHERE bot_type IN ('levanter', 'raganork')
+             ORDER BY bot_type, bot_name`
+        );
+        bots = result.rows;
+
+        for (const app of bots) {
+            try {
+                await herokuApi.get(`/apps/${encodeURIComponent(app.bot_name)}/config-vars`);
+                await herokuApi.patch(`/apps/${encodeURIComponent(app.bot_name)}/config-vars`, { PLAY_URL: playUrl });
+
+                await pool.query(
+                    `UPDATE user_deployments
+                     SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1)
+                     WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
+                    [playUrl, app.user_id, app.bot_name, app.bot_type]
+                );
+                if (backupPool) {
+                    await backupPool.query(
+                        `UPDATE user_deployments
+                         SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1)
+                         WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
+                        [playUrl, app.user_id, app.bot_name, app.bot_type]
+                    );
+                }
+                updated++;
+                console.log(`[PLAY_URL] Updated ${app.bot_type} app ${app.bot_name} to ${playUrl}`);
+            } catch (error) {
+                failed++;
+                const reason = error.response?.data?.message || error.message || 'Unknown error';
+                failures.push(`${app.bot_name}: ${reason}`);
+                console.error(`[PLAY_URL] Failed to update ${app.bot_name}:`, reason);
+            }
+        }
+
+        const failureSummary = failures.length ? `\n\nFailed apps:\n${failures.slice(0, 20).map(item => `- ${escapeMarkdown(item)}`).join('\n')}` : '';
+        await bot.editMessageText(
+            `PLAY_URL update finished.\n\nTarget URL: \`${escapeMarkdown(playUrl)}\`\nApps found: ${bots.length}\nUpdated: ${updated}\nFailed: ${failed}${failureSummary}`,
+            { chat_id: adminId, message_id: workingMessage.message_id, parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error('[PLAY_URL] Bulk update failed:', error);
+        await bot.editMessageText(
+            `PLAY_URL update failed: ${error.message}`,
+            { chat_id: adminId, message_id: workingMessage.message_id }
+        ).catch(() => bot.sendMessage(adminId, `PLAY_URL update failed: ${error.message}`));
+    }
+});
+
 
 bot.onText(/^\/createneondb (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
