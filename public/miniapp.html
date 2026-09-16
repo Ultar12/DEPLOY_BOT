@@ -393,7 +393,7 @@
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
                 case 'deploy': container.innerHTML = getDeployHTML(data); break;
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
-                case 'bot-tab': container.innerHTML = getBotWorkspaceHTML(data.bot, data.tab); break;
+                case 'bot-tab': container.innerHTML = getBotWorkspaceHTML({ bot: data.bot, tab: data.tab }); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
                 case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
