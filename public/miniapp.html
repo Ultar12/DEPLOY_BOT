@@ -698,7 +698,7 @@
 
         function getDeploymentJobHTML(data) {
             const paymentNotice = data.paymentRequired ? '<div class="news-card"><div class="news-title">Choose how to continue</div><div class="news-content">Choose a deployment method</div></div>' : '';
-            return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT MANAGEMENT</p><h1>${data.appName || 'New bot'}</h1><p>Deployment progress and live status</p></div></div><div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div></div>`;
+            return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT MANAGEMENT</p><h1>${data.appName || 'New bot'}</h1><p>Deployment progress and live status</p></div></div><div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><a id="openBotDashboard" class="support-btn" href="#" style="display:none;">OPEN BOT DASHBOARD</a><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div></div>`;
         }
 
         function getPaymentHTML(data = {}) {
@@ -897,12 +897,10 @@
                         const data = await res.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
                         if (data.paymentRequired && data.paymentUrl) {
-                            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
-                            navigateTo('dashboard');
+                            navigateTo('job', { jobId: data.jobId, appName: payload.appName, paymentRequired: true });
                             tg.openLink(data.paymentUrl);
                         } else {
-                            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
-                            navigateTo('dashboard');
+                            navigateTo('job', { jobId: data.jobId, appName: payload.appName });
                         }
                     } catch (e) { window.__deploySubmitting = false; result.textContent = e.message || 'Connection error. Try again.'; }
                 };
@@ -936,8 +934,7 @@
                         const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `payment_${Date.now()}_${Math.random().toString(16).slice(2)}`) }) });
                         const data = await response.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the payment.');
-                        window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
-                        navigateTo('dashboard');
+                        navigateTo('job', { jobId: data.jobId, appName: state.selectedBot?.appName, paymentRequired: true });
                         if (data.paymentUrl) tg.openLink(data.paymentUrl);
                     } catch (error) { result.textContent = error.message || 'Could not start payment.'; button.disabled = false; }
                 };
@@ -1005,8 +1002,16 @@
                     const botsResponse = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                     const botsData = await botsResponse.json();
                     const deployedBot = (botsData.bots || []).find(bot => bot.appName === job.app_name);
-                    if (deployedBot) {
-                        window.location.href = `/apps/bots/${encodeURIComponent(deployedBot.appName)}/settings?deployment=completed`;
+                    const openBotDashboard = document.getElementById('openBotDashboard');
+                    if (deployedBot && String(deployedBot.status || '').toLowerCase() === 'online') {
+                        status.textContent = `Live: ${job.app_name} is connected and ready (${job.progress || 100}%).`;
+                        if (openBotDashboard) {
+                            openBotDashboard.href = `/apps/bots/${encodeURIComponent(deployedBot.appName)}/settings?deployment=completed`;
+                            openBotDashboard.style.display = 'inline-flex';
+                        }
+                    } else if (deployedBot) {
+                        status.textContent = 'Deployment completed. Waiting for the bot to come online…';
+                        setTimeout(() => pollJob(jobId), 2500);
                     } else {
                         status.textContent = 'Deployment completed. Syncing your bot into management…';
                         setTimeout(() => pollJob(jobId), 2500);
@@ -1030,8 +1035,10 @@
                 state.currentView = 'deploy'; state.selectedBot = { appName: data.job.app_name, botType: data.job.bot_type, sessionId: data.job.session_id, autoStatusView: data.job.auto_status_view === 'true' ? 'yes' : 'no', paymentCancelled: true }; renderView('deploy', state.selectedBot); updateHeader();
             }).catch(() => navigateTo('deploy', { paymentCancelled: true }));
         } else if (returnedJobId) {
-            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(returnedJobId)}`);
-            navigateTo('dashboard');
+            state.currentView = 'job';
+            state.selectedBot = { jobId: returnedJobId };
+            renderView('job', state.selectedBot);
+            updateHeader();
         } else {
             navigateTo(pathView, queryParams.get('payment') === 'cancelled' ? { paymentCancelled: true } : null);
         }
