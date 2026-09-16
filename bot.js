@@ -4756,6 +4756,9 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/apps/bots/:appName', (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
+  app.get('/apps/bots/:appName/:tab', (req, res) => {
+    telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
+  });
 
   app.get('/auth/check-identifier', async (req, res) => {
     try {

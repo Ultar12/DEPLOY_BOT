@@ -247,6 +247,9 @@
     
         .mgmt-option{color:#172033!important;background:#fff!important;border:1px solid #e5e7eb!important}.mgmt-option:hover{border-color:#cbb2df!important;background:#faf8fd!important}.support-btn{background:#430098!important;color:#fff!important;border:0!important}.management-grid input,.management-grid select,.management-grid textarea{background:#fff!important;color:#172033!important;border:1px solid #d1d5db!important}.management-grid input:focus,.management-grid select:focus,.management-grid textarea:focus{border-color:#8b5bb5!important;outline:3px solid rgba(67,0,152,.1)}
 
+    
+        .bot-workspace{max-width:1000px;margin:0 auto}.bot-workspace-heading h1{font-size:28px;margin:0;color:#172033}.bot-workspace-heading p:not(.kicker){margin:6px 0 20px;color:#7d8795;font-size:12px}.bot-tabs{display:flex;gap:22px;border-bottom:1px solid #e5e7eb;overflow:auto;margin-bottom:22px}.bot-tab{color:#6b7280;text-decoration:none;padding:0 1px 12px;font-size:12px;white-space:nowrap}.bot-tab.active{color:#430098;font-weight:800;border-bottom:2px solid #430098}.bot-tab-content{min-height:260px}.bot-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}.workspace-panel{background:#fff;border:1px solid #e5e7eb;border-radius:7px;padding:20px;color:#4b5563}.workspace-panel h2{color:#172033;font-size:17px;margin:0 0 8px}.workspace-panel p{font-size:13px;line-height:1.6}.resource-row,.activity-item{display:flex;justify-content:space-between;gap:18px;border-top:1px solid #f0f1f3;padding:13px 0;font-size:12px}.resource-row strong,.activity-item strong{color:#172033}.activity-item{display:block}.activity-item span{display:block;color:#7d8795;margin-top:4px}.settings-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.settings-actions .mgmt-option{display:block;padding:14px}.settings-link{margin-top:14px;text-decoration:none}.bot-workspace .management-grid{margin-bottom:20px}@media(max-width:620px){.bot-overview-grid{grid-template-columns:1fr}.settings-actions{grid-template-columns:1fr}.bot-tabs{gap:16px}.bot-workspace-heading h1{font-size:24px}}
+
     </style>
 </head>
 <body>
@@ -296,7 +299,7 @@
         }
 
         function updateHeader() {
-            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'session': 'Get Session' };
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'bot-tab': 'Bot Workspace', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'session': 'Get Session' };
             document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
             document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
         }
@@ -323,6 +326,7 @@
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
                 case 'deploy': container.innerHTML = getDeployHTML(); break;
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
+                case 'bot-tab': container.innerHTML = getBotWorkspaceHTML(data.bot, data.tab); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
                 case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
@@ -412,9 +416,10 @@
                     `;
                 }).join('') || '<div class="empty-state"><div class="empty-icon">H</div><h2>Create your first app</h2><p>You do not have any apps yet.</p><a class="support-btn" href="/apps/create">Create new app</a></div>';
                 document.querySelector('.pagination').style.display = bots.length > 10 ? 'flex' : 'none';
-                const routeBotName = decodeURIComponent(window.location.pathname.match(/^\/apps\/bots\/(.+)$/)?.[1] || '');
+                const routeMatch = window.location.pathname.match(/^\/apps\/bots\/([^/]+)(?:\/([^/]+))?$/);
+                const routeBotName = decodeURIComponent(routeMatch?.[1] || '');
                 const routeBot = bots.find(bot => bot.appName === routeBotName);
-                if (routeBot) navigateTo('management', routeBot);
+                if (routeBot) navigateTo('bot-tab', { bot: routeBot, tab: routeMatch?.[2] || 'overview' });
             } catch (e) { document.getElementById('botList').textContent = "Connection error."; }
         }
 
@@ -454,6 +459,22 @@
 
         function getBotVariablesHTML(bot) {
             return `<div><div class="news-card"><div class="news-title">Configuration</div><div class="news-content">Values are visible in this private Telegram mini app. Editing a variable updates this bot's configuration.</div></div><div id="varsList" class="management-grid"><div class="news-content">Loading configuration...</div></div></div>`;
+        }
+
+        function getBotWorkspaceHTML({ bot, tab = 'overview' }) {
+            const safeName = encodeURIComponent(bot.appName);
+            const remaining = Math.max(0, Math.ceil((new Date(bot.expirationDate) - Date.now()) / 86400000));
+            const tabs = [['overview','Overview'],['resources','Resources'],['deploy','Deploy'],['metrics','Metrics'],['activity','Activity'],['access','Access'],['settings','Settings']];
+            const nav = tabs.map(([key,label]) => `<a class="bot-tab ${tab === key ? 'active' : ''}" href="/apps/bots/${safeName}/${key}">${label}</a>`).join('');
+            let content = '';
+            if (tab === 'overview') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status || 'Unknown'}</div><div class="stat-label">STATUS</div></div><div class="stat-card"><div class="stat-value">${bot.botType || 'Bot'}</div><div class="stat-label">TYPE</div></div><div class="stat-card"><div class="stat-value">${remaining}</div><div class="stat-label">DAYS REMAINING</div></div></div><div class="section-title">Quick actions</div>${getBotManagementHTML(bot)}`;
+            if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Offline'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
+            if (tab === 'deploy') content = `<div class="workspace-panel"><h2>Deploy</h2><p>Review deployment status and start a new bot deployment when needed.</p><div class="resource-row"><span>Current status</span><strong>${bot.status || 'Unknown'}</strong></div><a class="support-btn settings-link" href="/apps/create">Create another app</a></div>`;
+            if (tab === 'metrics') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status === 'Online' ? 'Online' : '—'}</div><div class="stat-label">CURRENT STATE</div></div><div class="stat-card"><div class="stat-value">${bot.lastActivity || '—'}</div><div class="stat-label">LAST ACTIVITY</div></div></div><div class="workspace-panel"><h2>Metrics</h2><p>Live performance charts will appear here as this bot reports activity.</p></div>`;
+            if (tab === 'activity') content = `<div class="workspace-panel"><h2>Activity</h2><div class="activity-item"><strong>Bot opened</strong><span>Current session</span></div><div class="activity-item"><strong>Status: ${bot.status || 'Unknown'}</strong><span>Latest available status</span></div></div>`;
+            if (tab === 'access') content = `<div class="workspace-panel"><h2>Access</h2><p>This bot is managed by the authenticated Ultar WBD account.</p><div class="resource-row"><span>Owner</span><strong>Authenticated account</strong></div></div>`;
+            if (tab === 'settings') content = `<div class="workspace-panel"><h2>Settings</h2><p>Manage configuration and operational tools for this bot.</p><div class="settings-actions"><a class="mgmt-option" href="/apps/bots/${safeName}/resources">View resources</a><a class="mgmt-option" href="/apps/bots/${safeName}/activity">View activity</a><a class="mgmt-option" href="/apps/bots/${safeName}/settings">Refresh settings</a></div></div>`;
+            return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT WORKSPACE</p><h1>${bot.appName}</h1><p>${bot.botType || 'Bot'} · ${bot.status || 'Unknown'}</p></div></div><nav class="bot-tabs">${nav}</nav><div class="bot-tab-content">${content}</div></div>`;
         }
 
         function getBotLogsHTML(bot) {
