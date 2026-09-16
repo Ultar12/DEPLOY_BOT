@@ -5033,7 +5033,10 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
                 ub.bot_name, 
                 ub.bot_type,
                 ub.status,
-                ud.expiration_date
+                ud.expiration_date,
+                COALESCE(ud.deploy_date, ub.created_at) AS deploy_date,
+                ud.is_free_trial,
+                ud.config_vars
             FROM user_bots ub
             LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name
             WHERE ub.user_id = $1 AND (ud.deleted_from_heroku_at IS NULL OR ub.status = 'online')`,
@@ -5054,7 +5057,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
             return {
                 appName: bot.bot_name,
                 botType: bot.bot_type,
-                expirationDate: bot.expiration_date,
+                expirationDate: resolveExpirationDate(bot),
                 status: statusText,
             };
         });

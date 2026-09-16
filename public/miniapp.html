@@ -290,7 +290,7 @@
         html,#main-container,#view-container{background:#050505;color:#f4f4f5}.header{background:#050505!important}.dashboard,.settings-page,.plugins-page,.bot-workspace{color:#f4f4f5}.dashboard-heading h1,.settings-page h1,.bot-workspace-heading h1,.plugins-page h1{color:#fff!important}.section-title,.kicker{color:#a1a1aa!important}.news-card,.workspace-panel,.settings-card,.bot-list,.mgmt-option{background:#111114!important;border-color:#29292f!important;color:#e4e4e7!important}.news-title,.mgmt-option-label,.workspace-panel h2{color:#fff!important}.news-content,.mgmt-option-hint,.workspace-panel p,.settings-card p{color:#a1a1aa!important}.management-grid input,.management-grid select,.management-grid textarea,.session-form input,.session-form select,.session-form textarea{background:#0b0b0d!important;color:#fff!important;border-color:#3f3f46!important}.management-grid label,.session-form label{color:#d4d4d8!important}.support-btn{background:#7c3aed!important;color:#fff!important}.hero-action.primary{background:#fff;color:#111}.pagination{color:#a1a1aa}.error-panel{border-color:#7f1d1d!important}.bot-card{background:#111114!important;border-bottom-color:#29292f!important;color:#fff!important}.bot-name{color:#fff!important}.bot-meta{color:#c4b5fd!important}.plugin-row{background:#111114!important;border-color:#29292f!important}
 
     .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}.bot-tabs{border-bottom-color:#64748b!important}.bot-tab{display:inline-block;background:#fff!important;color:#111!important;font-weight:800!important;border:1px solid #64748b;border-radius:5px;padding:9px 14px!important}.bot-tab.active{background:#111!important;color:#fff!important;border-color:#111!important}.bot-tab-content .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}.bot-tab-content .mgmt-option .mgmt-option-label{color:#fff!important}.bot-tab-content .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.global-loader{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(5,5,5,.72);backdrop-filter:blur(3px);opacity:1;visibility:visible;transition:opacity .2s ease,visibility .2s ease}.global-loader.hidden{opacity:0;visibility:hidden;pointer-events:none}.loader-card{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:170px;padding:24px 28px;border:1px solid #64748b;border-radius:10px;background:#111;color:#fff;box-shadow:0 18px 50px rgba(0,0,0,.35)}.loader-spinner{width:34px;height:34px;border:3px solid #64748b;border-top-color:#fff;border-radius:50%;animation:loader-spin .8s linear infinite}.loader-text{font-size:12px;font-weight:700;letter-spacing:.04em}.loader-progress{position:fixed;top:0;left:0;z-index:10000;width:100%;height:3px;background:#111;transform:scaleX(0);transform-origin:left;transition:transform .2s ease}.loader-progress.active{transform:scaleX(.7);animation:loader-progress 1.2s ease-in-out infinite alternate}@keyframes loader-spin{to{transform:rotate(360deg)}}@keyframes loader-progress{to{transform:scaleX(.95)}}
-    body .mgmt-option,body.telegram-theme .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label,body.telegram-theme .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover,body.telegram-theme .mgmt-option:hover{background:#272727!important;border-color:#fff!important}body .bot-card .bot-actions{display:flex!important;visibility:visible!important;opacity:1!important;position:relative!important;z-index:3!important;gap:8px!important;flex-wrap:wrap!important;align-items:center!important}body .bot-card .bot-actions .support-btn{display:inline-flex!important;visibility:visible!important;opacity:1!important;white-space:nowrap!important}@media(max-width:620px){body .bot-card{display:flex!important;flex-wrap:wrap!important;align-items:flex-start!important}body .bot-card .bot-info{flex:1 1 100%!important;width:100%!important}body .bot-card .bot-actions{width:100%!important;margin-top:12px!important;justify-content:flex-start!important}
+    body .mgmt-option,body.telegram-theme .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label,body.telegram-theme .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover,body.telegram-theme .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.renew-btn{width:auto!important;min-width:0!important;padding:8px 12px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important}body .bot-card .bot-actions{display:flex!important;visibility:visible!important;opacity:1!important;position:relative!important;z-index:3!important;gap:8px!important;flex-wrap:wrap!important;align-items:center!important}body .bot-card .bot-actions .support-btn{display:inline-flex!important;visibility:visible!important;opacity:1!important;white-space:nowrap!important}@media(max-width:620px){body .bot-card{display:flex!important;flex-wrap:wrap!important;align-items:flex-start!important}body .bot-card .bot-info{flex:1 1 100%!important;width:100%!important}body .bot-card .bot-actions{width:100%!important;margin-top:12px!important;justify-content:flex-start!important}
     }
     </style>
 </head>
@@ -504,11 +504,13 @@
                 const notificationList = document.getElementById('notificationList'); const notificationCount = document.getElementById('notificationCount'); if (notificationList) notificationList.innerHTML = alerts.length ? alerts.map(alert => `<div class="notification-item">${alert}</div>`).join('') : 'No new notifications.'; if (notificationCount) notificationCount.textContent = alerts.length; const dot = document.getElementById('notificationDot'); if (dot) dot.style.display = alerts.length ? 'block' : 'none';
 
                 document.getElementById('botList').innerHTML = bots.map(bot => {
-                    const timeLeft = new Date(bot.expirationDate) - new Date();
-                    const isExpired = timeLeft <= 0;
-                    const daysRemaining = Math.max(0, Math.ceil(timeLeft / 86400000));
-                    const hoursRemaining = Math.max(0, Math.round(((24*60*60*1000) + timeLeft) / (1000 * 60 * 60)));
-                    const isExpiring = daysRemaining <= 3;
+                    const expirationTime = bot.expirationDate ? new Date(bot.expirationDate).getTime() : NaN;
+                    const hasExpiration = Number.isFinite(expirationTime);
+                    const timeLeft = hasExpiration ? expirationTime - Date.now() : Infinity;
+                    const isExpired = hasExpiration && timeLeft <= 0;
+                    const daysRemaining = hasExpiration ? Math.max(0, Math.ceil(timeLeft / 86400000)) : null;
+                    const hoursRemaining = hasExpiration ? Math.max(0, Math.round(((24*60*60*1000) + timeLeft) / (1000 * 60 * 60))) : null;
+                    const isExpiring = hasExpiration && daysRemaining <= 3;
                     let statusClass = bot.status === 'Online' ? 'online' : bot.status === 'Building' ? 'building' : 'offline';
                     if (isExpired) statusClass = 'suspended';
                     const primaryAction = isExpiring
@@ -525,7 +527,7 @@
                                     <span class="bot-badge">${isExpired ? 'Suspended' : bot.status}</span>
                                 </div>
                                 <div style="font-size:0.8em; margin-top:5px; color:${isExpired ? '#ef4444' : '#10b981'}">
-                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left`}
+                                    ${isExpired ? `Deletion in ${hoursRemaining}h` : hasExpiration ? `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left` : 'Subscription active · Expiry pending'}
                                 </div>
                             </div>
                             <div class="bot-actions">${primaryAction}${String(bot.status || '').toLowerCase() === 'offline' ? `<button type="button" class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
@@ -537,7 +539,13 @@
                 const routeMatch = window.location.pathname.match(/^\/apps\/bots\/([^/]+)(?:\/([^/]+))?$/);
                 const routeBotName = decodeURIComponent(routeMatch?.[1] || '');
                 const routeBot = bots.find(bot => bot.appName === routeBotName);
-                if (routeBot) navigateTo('bot-tab', { bot: routeBot, tab: routeMatch?.[2] || 'overview' });
+                if (routeBot) {
+                    navigateTo('bot-tab', { bot: routeBot, tab: routeMatch?.[2] || 'overview' });
+                    if (new URLSearchParams(window.location.search).get('deployment') === 'completed') {
+                        const live = String(routeBot.status || '').toLowerCase() === 'online';
+                        setTimeout(() => showAppAlert(live ? `${routeBot.appName} is live and connected.` : `${routeBot.appName} was deployed, but the session is offline or incorrect. Please use Change Session.`), 250);
+                    }
+                }
             } catch (e) { document.getElementById('botList').innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load your bots</strong><p>${e.message || 'Please refresh and try again.'}</p><a href="/apps">Refresh dashboard</a></div>`; }
         }
 
@@ -625,7 +633,7 @@
 
         function getDeploymentJobHTML(data) {
             const paymentNotice = data.paymentRequired ? '<div class="news-card"><div class="news-title">Choose how to continue</div><div class="news-content">Choose a deployment method</div></div>' : '';
-            return `<div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
+            return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT MANAGEMENT</p><h1>${data.appName || 'New bot'}</h1><p>Deployment progress and live status</p></div></div><div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div></div>`;
         }
 
         function getPaymentHTML(data = {}) {
@@ -816,10 +824,10 @@
                         const data = await res.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
                         if (data.paymentRequired && data.paymentUrl) {
-                            navigateTo('job', { jobId: data.jobId, paymentRequired: true });
+                            navigateTo('job', { jobId: data.jobId, appName: payload.appName, paymentRequired: true });
                             tg.openLink(data.paymentUrl);
                         } else {
-                            navigateTo('job', { jobId: data.jobId });
+                            navigateTo('job', { jobId: data.jobId, appName: payload.appName });
                         }
                     } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
                 };
@@ -853,7 +861,7 @@
                         const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id }) });
                         const data = await response.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the payment.');
-                        navigateTo('job', { jobId: data.jobId, paymentRequired: true });
+                        navigateTo('job', { jobId: data.jobId, appName: state.selectedBot?.appName, paymentRequired: true });
                         if (data.paymentUrl) tg.openLink(data.paymentUrl);
                     } catch (error) { result.textContent = error.message || 'Could not start payment.'; button.disabled = false; }
                 };
@@ -916,8 +924,22 @@
                 const data = await res.json();
                 if (!data.success) throw new Error(data.message || 'Unable to read job status.');
                 const job = data.job;
-                status.textContent = `${job.status}: ${job.progress_message} (${job.progress}%)`;
-                if (!['completed', 'failed'].includes(job.status)) setTimeout(() => pollJob(jobId), 2500);
+                status.textContent = `${job.status}: ${job.progress_message || 'Processing deployment'} (${job.progress || 0}%)`;
+                if (job.status === 'completed') {
+                    const botsResponse = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                    const botsData = await botsResponse.json();
+                    const deployedBot = (botsData.bots || []).find(bot => bot.appName === job.app_name);
+                    if (deployedBot) {
+                        window.location.href = `/apps/bots/${encodeURIComponent(deployedBot.appName)}/overview?deployment=completed`;
+                    } else {
+                        status.textContent = 'Deployment completed. Syncing your bot into management…';
+                        setTimeout(() => pollJob(jobId), 2500);
+                    }
+                } else if (job.status === 'failed') {
+                    const message = job.error_message || job.progress_message || 'Deployment failed. Check your session ID and try again.';
+                    status.textContent = `Failed: ${message}`;
+                    showAppAlert(message);
+                } else setTimeout(() => pollJob(jobId), 2500);
             } catch (e) { status.textContent = e.message || 'Status unavailable.'; }
         }
 
