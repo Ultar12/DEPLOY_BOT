@@ -386,9 +386,13 @@
         const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
         document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
         document.addEventListener('click', () => document.getElementById('accountMenu')?.classList.remove('open'));
-        document.getElementById('newAppBtn')?.addEventListener('click', event => {
+        document.getElementById('newAppBtn')?.addEventListener('click', async event => {
             event.preventDefault();
-            if (window.__maintenanceMode) return showAppAlert('The service is currently under maintenance. Please come back shortly.');
+            if (window.__maintenanceMode) {
+                await showAppAlert('The service is currently under maintenance. Please come back shortly.');
+                window.location.href = '/apps/dashboard';
+                return;
+            }
             navigateTo('deploy');
         });
         document.getElementById('notificationsLink')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); window.location.href = '/apps/notifications'; });
@@ -512,7 +516,8 @@
                 const alerts = bots.flatMap(bot => { const remaining = new Date(bot.expirationDate) - new Date(); const items = []; if (bot.status === 'Offline') items.push(`${bot.appName} is logged out or offline.`); if (remaining <= 0) items.push(`${bot.appName} has expired.`); else if (remaining < 3 * 86400000) items.push(`${bot.appName} expires soon.`); if (bot.error || bot.lastError) items.push(`${bot.appName} needs attention.`); return items; });
                 const notificationList = document.getElementById('notificationList'); const notificationCount = document.getElementById('notificationCount'); if (notificationList) notificationList.innerHTML = alerts.length ? alerts.map(alert => `<div class="notification-item">${alert}</div>`).join('') : 'No new notifications.'; if (notificationCount) notificationCount.textContent = alerts.length; const dot = document.getElementById('notificationDot'); if (dot) dot.style.display = alerts.length ? 'block' : 'none';
 
-                document.getElementById('botList').innerHTML = bots.map(bot => {
+                const maintenanceBotsHTML = '<div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div>';
+                document.getElementById('botList').innerHTML = window.__maintenanceMode ? maintenanceBotsHTML : bots.map(bot => {
                     const expirationTime = bot.expirationDate ? new Date(bot.expirationDate).getTime() : NaN;
                     const hasExpiration = Number.isFinite(expirationTime);
                     const timeLeft = hasExpiration ? expirationTime - Date.now() : Infinity;
@@ -572,6 +577,7 @@
         }
 
         function getBotManagementHTML(bot) {
+            if (window.__maintenanceMode) return '<div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div>';
             const isExpired = (new Date(bot.expirationDate) - new Date()) <= 0;
             if (isExpired) {
                 return `
@@ -609,6 +615,7 @@
             const bot = payload.bot || payload;
             const tab = payload.tab || 'overview';
             if (!bot || !bot.appName) return `<div class="workspace-panel error-panel"><strong>Bot details unavailable</strong><p>Return to My Bots and open the bot again.</p><a href="/apps">Back to My Bots</a></div>`;
+            if (window.__maintenanceMode) return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT WORKSPACE</p><h1>${bot.appName}</h1></div></div><div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div></div>`;
             const safeName = encodeURIComponent(bot.appName);
             const remaining = Math.max(0, Math.ceil((new Date(bot.expirationDate) - Date.now()) / 86400000));
             const tabs = [['overview','Overview'],['settings','Settings']];
@@ -721,7 +728,7 @@
                 const deployLink = e.target.closest('a[href="/apps/create"]');
                 if (deployLink && window.__maintenanceMode) {
                     e.preventDefault();
-                    return showAppAlert('The service is currently under maintenance. Please come back shortly.');
+                    return showAppAlert('The service is currently under maintenance. Please come back shortly.').then(() => { window.location.href = '/apps/dashboard'; });
                 }
                 const btn = e.target.closest('[data-action]');
                 if (!btn) return;

@@ -934,12 +934,12 @@ async function getBotNameBySessionId(sessionId) {
 async function permanentlyDeleteBotRecord(userId, appName) {
     try {
         // Delete from the main database (pool)
-        await pool.query('DELETE FROM user_bots WHERE user_id = $1 AND bot_name = $2', [userId, appName]);
-        await pool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        await pool.query('DELETE FROM user_bots WHERE bot_name = $1', [appName]);
+        await pool.query('DELETE FROM user_deployments WHERE app_name = $1', [appName]);
 
         // --- THIS IS THE NEW LOGIC ---
         // Also delete from the backup database (backupPool)
-        await backupPool.query('DELETE FROM user_deployments WHERE user_id = $1 AND app_name = $2', [userId, appName]);
+        await backupPool.query('DELETE FROM user_deployments WHERE app_name = $1', [appName]);
         // --- END OF NEW LOGIC ---
 
         console.log(`[DB-Cleanup] Permanently deleted all records for app ${appName} from all databases.`);

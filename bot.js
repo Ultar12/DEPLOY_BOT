@@ -5697,8 +5697,7 @@ app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
 
         // 2. Clean up all records from your local databases
         console.log(`[API /bots/delete] Cleaning up database records for '${appName}'.`);
-        await dbServices.deleteUserBot(userId, appName);
-        await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
+        await dbServices.permanentlyDeleteBotRecord(userId, appName);
         console.log(`[API /bots/delete] Database cleanup complete for '${appName}'.`);
 
         res.json({ success: true, message: `Bot '${appName}' has been successfully and permanently deleted.` });
@@ -5707,8 +5706,7 @@ app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
         // This handles cases where the bot was already deleted on Heroku but still in your DB
         if (e.response && e.response.status === 404) {
             console.log(`[API /bots/delete] Bot '${appName}' not found on Heroku. Cleaning up DB records anyway.`);
-            await dbServices.deleteUserBot(userId, appName);
-            await dbServices.markDeploymentDeletedFromHeroku(userId, appName);
+            await dbServices.permanentlyDeleteBotRecord(userId, appName);
             return res.json({ success: true, message: `Bot '${appName}' was already deleted from the server. Your list has been updated.` });
         }
         // Handle other potential errors (API keys, network, etc.)
