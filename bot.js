@@ -5439,7 +5439,7 @@ async function startMiniAppDeploymentJob(jobId) {
                 ? { AUTO_READ_STATUS: job.auto_status_view || 'false' }
                 : { AUTO_STATUS_VIEW: job.auto_status_view || 'false' }),
             DAYS: job.plan_days || 30
-        }, false, false, job.bot_type, null, null, null, !isTelegramUser);
+        }, false, false, job.bot_type, null, null, null, false, !isTelegramUser);
         if (buildResult && buildResult.success === false) throw new Error(buildResult.error || 'The bot build failed to start.');
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
         await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
@@ -5620,6 +5620,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
     const normalizedType = String(botType || '').trim().toLowerCase();
     const normalizedName = String(appName || '').trim().toLowerCase();
     const normalizedSession = String(sessionId || '').trim();
+    const isTelegramUser = /^-?\d+$/.test(userId);
     if (isMaintenanceMode && String(req.telegramData.id) !== String(ADMIN_ID)) {
         return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
     }
@@ -5653,10 +5654,10 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             if (usesLeft === null) return res.status(400).json({ success: false, message: 'Invalid or expired deploy key.' });
             await pool.query(`INSERT INTO deployment_jobs (job_id, user_id, app_name, bot_type, session_id, auto_status_view, status, progress, progress_message, payment_method, plan_id, plan_days, idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,'queued',0,'Deploy key accepted','deploy_key','deploy_key_30',30,$7)`, [jobId, userId, normalizedName, normalizedType, normalizedSession, herokuAutoStatusView, String(idempotencyKey || '') || null]);
             const requesterName = req.telegramData.username ? `@${escapeMarkdown(req.telegramData.username)}` : escapeMarkdown(req.telegramData.first_name || 'User');
-            await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
-            await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
+            if (isTelegramUser) await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
+            await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*User Type:* ${isTelegramUser ? 'Telegram' : 'Website'}\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
             void launchMiniAppDeploymentJob(jobId);
-            await bot.sendMessage(userId, `Deployment for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
+            if (isTelegramUser) await bot.sendMessage(userId, `Deployment for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
         }
 

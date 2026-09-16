@@ -1926,7 +1926,8 @@ async function sendAppList(chatId, messageId = null, callbackPrefix = 'selectapp
 
 
 
-async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null, silentRestore = false) {
+async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, botType, referredBy = null, ipAddress = null, daysToAdd = null, silentRestore = false, portalBuild = false) {
+    const telegramProgress = !silentRestore && !portalBuild;
     const isFreeTrial = false;
     // 1. Get all the tools from the 'init' function
         const {
@@ -1985,7 +1986,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
                 vars.APP_NAME = newAppName;
 
                 // Notify Admin
-                if (!silentRestore && String(targetChatId) !== ADMIN_ID) {
+                if (telegramProgress && String(targetChatId) !== ADMIN_ID) {
                      bot.sendMessage(ADMIN_ID, `⚠️ **Ownership Conflict Fixed**\n\nBot \`${originalAppName}\` was owned by another Heroku account. Renamed to \`${appName}\` for this deployment.`).catch(()=>{});
                 }
 
@@ -2001,7 +2002,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- NEW MESSAGE LOGIC ---
         // This logic determines where to send animations.
 
-        if (silentRestore) {
+        if (!telegramProgress) {
             // Mass-restore owns the single edited progress message. Do not emit
             // one Telegram message or percentage update per app here.
             adminLogMsg = null;
@@ -2030,7 +2031,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         // --- END OF NEW LOGIC ---
 
 
-        primaryAnimateIntervalId = silentRestore ? null : await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`);
+        primaryAnimateIntervalId = telegramProgress ? await animateMessage(primaryAnimChatId, primaryAnimMsgId, `Building ${appName}...`) : null;
 
         // --- Step 1: Create the Heroku app ---
         const appSetup = { name: appName, region: 'us', stack: 'heroku-24' };
@@ -2038,7 +2039,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         clearInterval(primaryAnimateIntervalId);
 
         // --- All animations now go to the user ---
-        if (!silentRestore) {
+        if (telegramProgress) {
             await bot.editMessageText(`Configuring resources...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
             primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Configuring resources');
         }
@@ -2129,7 +2130,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
         }
 
         // --- Step 4: Set Environment Variables ---
-        if (!silentRestore) {
+        if (telegramProgress) {
             await bot.editMessageText(`Setting environment variables...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
             primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, 'Setting environment variables');
         }
@@ -2164,7 +2165,7 @@ async function buildWithProgress(targetChatId, vars, _isFreeTrial, isRestore, bo
 
         // --- Step 5: Trigger Build from GitHub ---
                 // --- Step 5: Trigger Build from GitHub ---
-        if (!silentRestore) {
+        if (telegramProgress) {
             await bot.editMessageText(`Starting to build your Bot...`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId });
         }
 
@@ -2344,7 +2345,7 @@ if (botType === 'levanter' || botType === 'raganork') {
         // This block now animates and edits the USER's message
 
         const baseWaitingText = `Build successful! Waiting for bot to connect...`;
-        if (!silentRestore) {
+        if (telegramProgress) {
             await bot.editMessageText(`${baseWaitingText} ${getAnimatedEmoji()}`, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' });
             primaryAnimateIntervalId = await animateMessage(primaryAnimChatId, primaryAnimMsgId, baseWaitingText); // Re-using primaryAnimateIntervalId
         }
@@ -2374,7 +2375,7 @@ if (botType === 'levanter' || botType === 'raganork') {
                 `Your bot *${escapeMarkdown(appName)}* is now live!\n\nBackup your app for future reference.`;
 
             // Edit the USER's message to show SUCCESS
-            await bot.editMessageText(
+            if (telegramProgress) await bot.editMessageText(
                 successMessage,
                 {
                     chat_id: primaryAnimChatId,
@@ -2405,7 +2406,7 @@ if (botType === 'levanter' || botType === 'raganork') {
             const failMessage = `Bot *${escapeMarkdown(appName)}* failed to start: ${escapeMarkdown(err.message)}\n\nYou may need to update the session ID.`;
 
             // Send failure to USER (or admin-as-user)
-            await bot.editMessageText(
+            if (telegramProgress) await bot.editMessageText(
                 failMessage,
                 {
                     chat_id: primaryAnimChatId,
@@ -2437,7 +2438,7 @@ if (botType === 'levanter' || botType === 'raganork') {
         const userFailureMessage = isAdminTarget
             ? `Your bot *${escapeMarkdown(appName)}* failed to deploy.\n*Reason:* ${escapeMarkdown(errorMsg)}`
             : `Your bot *${escapeMarkdown(appName)}* failed to deploy.\nPlease contact the admin for assistance.`;
-        await bot.editMessageText(userFailureMessage, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
+        if (telegramProgress) await bot.editMessageText(userFailureMessage, { chat_id: primaryAnimChatId, message_id: primaryAnimMsgId, parse_mode: 'Markdown' }).catch(()=>{});
 
         // If it was a user, update the ADMIN's log
         if (adminLogMsg) {
