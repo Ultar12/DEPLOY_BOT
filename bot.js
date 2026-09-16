@@ -5082,7 +5082,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
             const isBuilding = ['queued', 'running'].includes(bot.deployment_status);
             let statusText = isBuilding ? 'Building' : bot.status;
             if (bot.status === 'online') statusText = 'Online';
-            if (bot.status === 'logged_out' || bot.status === 'offline') statusText = 'Offline';
+            if (bot.status === 'logged_out' || bot.status === 'offline') statusText = 'Logged out';
 
             return {
                 appName: bot.bot_name,
@@ -5528,7 +5528,7 @@ app.get('/api/notifications', validateWebAppInitData, async (req, res) => {
         const notifications = [];
         for (const job of jobs.rows) notifications.push({ id: `job:${job.job_id}`, type: job.status, title: job.status === 'completed' ? 'Deployment completed' : 'Deployment failed', message: job.status === 'completed' ? `${job.app_name} is ready to manage.` : `${job.app_name}: ${job.error_message || job.progress_message || 'Deployment failed.'}`, created_at: job.updated_at });
         for (const bot of bots.rows) {
-            if (String(bot.status || '').toLowerCase() === 'offline') notifications.push({ id: `offline:${bot.bot_name}`, type: 'warning', title: 'Bot offline', message: `${bot.bot_name} is offline or logged out.`, created_at: null });
+            if (['offline', 'logged out'].includes(String(bot.status || '').toLowerCase())) notifications.push({ id: `logged-out:${bot.bot_name}`, type: 'warning', title: 'Bot logged out', message: `${bot.bot_name} is logged out.`, created_at: null });
             if (bot.expiration_date && new Date(bot.expiration_date).getTime() - Date.now() < 3 * 86400000) notifications.push({ id: `expiry:${bot.bot_name}`, type: 'warning', title: 'Subscription ending soon', message: `${bot.bot_name} needs renewal soon.`, created_at: bot.expiration_date });
         }
         res.json({ success: true, notifications: notifications.slice(0, 30) });

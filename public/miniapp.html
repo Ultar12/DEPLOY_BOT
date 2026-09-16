@@ -440,6 +440,10 @@
         }
 
         function renderView(viewName, data) {
+            if (window.__dashboardRefreshTimer) {
+                clearInterval(window.__dashboardRefreshTimer);
+                window.__dashboardRefreshTimer = null;
+            }
             if (viewName !== 'logs' && window.__liveLogPollTimer) {
                 clearInterval(window.__liveLogPollTimer);
                 window.__liveLogPollTimer = null;
@@ -467,7 +471,12 @@
             }
             attachEventListeners();
             setTimeout(() => { if (!activeVisibleRequests) hideGlobalLoader(); }, 180);
-            if (viewName === 'dashboard') loadDashboard();
+            if (viewName === 'dashboard') {
+                loadDashboard();
+                window.__dashboardRefreshTimer = setInterval(() => {
+                    if (state.currentView === 'dashboard') loadDashboard();
+                }, 10000);
+            }
             if (viewName === 'variables') loadVariables(data);
             if (viewName === 'logs') loadLogs(data);
             if (viewName === 'job') pollJob(data.jobId);
@@ -559,7 +568,7 @@
                 window.__dashboardBots = bots;
                 document.getElementById('totalBots').textContent = bots.length;
                 document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
-                const alerts = bots.flatMap(bot => { const remaining = new Date(bot.expirationDate) - new Date(); const items = []; if (bot.status === 'Offline') items.push(`${bot.appName} is logged out or offline.`); if (remaining <= 0) items.push(`${bot.appName} has expired.`); else if (remaining < 3 * 86400000) items.push(`${bot.appName} expires soon.`); if (bot.error || bot.lastError) items.push(`${bot.appName} needs attention.`); return items; });
+                const alerts = bots.flatMap(bot => { const remaining = new Date(bot.expirationDate) - new Date(); const items = []; if (bot.status === 'Logged out') items.push(`${bot.appName} is logged out.`); if (remaining <= 0) items.push(`${bot.appName} has expired.`); else if (remaining < 3 * 86400000) items.push(`${bot.appName} expires soon.`); if (bot.error || bot.lastError) items.push(`${bot.appName} needs attention.`); return items; });
                 const notificationList = document.getElementById('notificationList'); const notificationCount = document.getElementById('notificationCount'); if (notificationList) notificationList.innerHTML = alerts.length ? alerts.map(alert => `<div class="notification-item">${alert}</div>`).join('') : 'No new notifications.'; if (notificationCount) notificationCount.textContent = alerts.length; const dot = document.getElementById('notificationDot'); if (dot) dot.style.display = alerts.length ? 'block' : 'none';
 
                 const maintenanceBotsHTML = '<div class="workspace-panel maintenance-panel"><strong>Maintenance mode</strong><p>The service is currently under maintenance. Please come back shortly.</p></div>';
@@ -591,7 +600,7 @@
                                     ${isBuilding ? (bot.deploymentMessage || 'Building deployment...') : isExpired ? `Deletion in ${hoursRemaining}h` : hasExpiration ? `Subscription Active · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} left` : 'Subscription active · Expiry pending'}
                                 </div>
                             </div>
-                            <div class="bot-actions">${primaryAction}${String(bot.status || '').toLowerCase() === 'offline' ? `<button type="button" class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
+                            <div class="bot-actions">${primaryAction}${['offline', 'logged out'].includes(String(bot.status || '').toLowerCase()) ? `<button type="button" class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
                         </div>
                     `;
                 }).join('') || '<div class="empty-state"><div class="empty-icon">H</div><h2>Create your first app</h2><p>You do not have any apps yet.</p><a class="support-btn" href="/apps/create">Create new app</a></div>';
@@ -604,7 +613,7 @@
                     navigateTo('bot-tab', { bot: routeBot, tab: 'settings' });
                     if (new URLSearchParams(window.location.search).get('deployment') === 'completed') {
                         const live = String(routeBot.status || '').toLowerCase() === 'online';
-                        setTimeout(() => showAppAlert(live ? `${routeBot.appName} is live and connected.` : `${routeBot.appName} was deployed, but the session is offline or incorrect. Please use Change Session.`), 250);
+                        setTimeout(() => showAppAlert(live ? `${routeBot.appName} is live and connected.` : `${routeBot.appName} was deployed, but the session is logged out or incorrect. Please use Change Session.`), 250);
                     }
                 }
                 const dashboardJobId = new URLSearchParams(window.location.search).get('job');
@@ -673,7 +682,7 @@
             const tabs = [['settings','Settings']];
             const nav = tabs.map(([key,label]) => `<a class="bot-tab ${tab === key ? 'active' : ''}" href="/apps/bots/${safeName}/${key}">${label}</a>`).join('');
             let content = '';
-            if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Offline'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
+            if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Logged out'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
             if (tab === 'activity') content = `<div class="workspace-panel"><h2>Activity</h2><div class="activity-item"><strong>Bot opened</strong><span>Current session</span></div><div class="activity-item"><strong>Status: ${bot.status || 'Unknown'}</strong><span>Latest available status</span></div></div>`;
             if (tab === 'settings') content = getBotManagementHTML(bot);
             return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT WORKSPACE</p><h1>${bot.appName}</h1><p>${bot.botType || 'Bot'} · ${bot.status || 'Unknown'}</p></div></div><nav class="bot-tabs">${nav}</nav><div class="bot-tab-content">${content}</div></div>`;
