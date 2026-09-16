@@ -5412,6 +5412,7 @@ async function startMiniAppDeploymentJob(jobId) {
     const jobResult = await pool.query('SELECT * FROM deployment_jobs WHERE job_id = $1', [jobId]);
     if (!jobResult.rows.length) throw new Error('Deployment job not found.');
     const job = jobResult.rows[0];
+    const isTelegramUser = /^-?\d+$/.test(String(job.user_id));
     const progressStages = [
         { progress: 40, message: 'Provisioning deployment resources' },
         { progress: 55, message: 'Configuring bot environment' },
@@ -5447,7 +5448,7 @@ async function startMiniAppDeploymentJob(jobId) {
     } catch (error) {
         console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
         await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' }).catch(updateError => console.error(`[MiniApp Job ${jobId}] Failed to persist failure:`, updateError.message));
-        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
+        if (isTelegramUser) await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
         await bot.sendMessage(ADMIN_ID, `*Deployment Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\`\n*Reason:* ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(notificationError => console.error(`[MiniApp Job ${jobId}] Admin failure notification failed:`, notificationError.message));
     } finally {
         if (progressTimer) clearInterval(progressTimer);
@@ -5464,7 +5465,7 @@ async function launchMiniAppDeploymentJob(jobId) {
             if (result.rows.length) {
                 const job = result.rows[0];
                 await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed to start', error_message: error.message || 'Deployment worker failed to start' }).catch(() => {});
-                await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* could not start. Please contact support.`, { parse_mode: 'Markdown' }).catch(() => {});
+                if (/^-?\d+$/.test(String(job.user_id))) await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* could not start. Please contact support.`, { parse_mode: 'Markdown' }).catch(() => {});
                 await bot.sendMessage(ADMIN_ID, `*Deployment Worker Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${jobId}\`\n*Reason:* ${escapeMarkdown(error.message || 'Worker failed to start')}`, { parse_mode: 'Markdown' }).catch(() => {});
             }
         } catch (notificationError) {
@@ -5635,8 +5636,15 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         }
         const duplicate = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 LIMIT 1', [normalizedName]);
         if (duplicate.rows.length) return res.status(409).json({ success: false, message: 'That app name is already registered.' });
-        const activeJob = await pool.query(`SELECT job_id FROM deployment_jobs WHERE user_id = $1 AND app_name = $2 AND status IN ('queued','running','awaiting_payment') LIMIT 1`, [userId, normalizedName]);
-        if (activeJob.rows.length) return res.status(409).json({ success: false, code: 'DEPLOYMENT_IN_PROGRESS', jobId: activeJob.rows[0].job_id, message: 'A deployment for this bot is already in progress.' });
+        const activeJob = await pool.query(`SELECT job_id, status, updated_at FROM deployment_jobs WHERE user_id = $1 AND app_name = $2 AND status IN ('queued','running','awaiting_payment') ORDER BY updated_at DESC LIMIT 1`, [userId, normalizedName]);
+        if (activeJob.rows.length) {
+            const stale = ['queued', 'running'].includes(activeJob.rows[0].status) && Date.now() - new Date(activeJob.rows[0].updated_at).getTime() > 15 * 60 * 1000;
+            if (stale) {
+                await updateDeploymentJob(activeJob.rows[0].job_id, { status: 'failed', progress_message: 'Previous deployment timed out', error_message: 'The previous deployment stopped responding. You can start a new deployment.' });
+            } else {
+                return res.status(409).json({ success: false, code: 'DEPLOYMENT_IN_PROGRESS', jobId: activeJob.rows[0].job_id, message: 'A deployment for this bot is already in progress. Opening its live progress page.' });
+            }
+        }
         const pending = await pool.query('SELECT reference FROM pending_payments WHERE user_id = $1 AND app_name = $2 AND status = $3 LIMIT 1', [userId, normalizedName, 'pending']);
         if (pending.rows.length) return res.status(409).json({ success: false, message: 'A payment is already pending for this app.' });
         try {

@@ -895,7 +895,13 @@
                     try {
                         const res = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify(payload) });
                         const data = await res.json();
-                        if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
+                        if (!res.ok || !data.success) {
+                            if (data.code === 'DEPLOYMENT_IN_PROGRESS' && data.jobId) {
+                                navigateTo('job', { jobId: data.jobId, appName: payload.appName });
+                                return;
+                            }
+                            throw new Error(data.message || 'Could not create the deployment job.');
+                        }
                         if (data.paymentRequired && data.paymentUrl) {
                             navigateTo('job', { jobId: data.jobId, appName: payload.appName, paymentRequired: true });
                             tg.openLink(data.paymentUrl);
