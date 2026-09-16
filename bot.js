@@ -9806,10 +9806,10 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
             }
         }
 
-        const failureSummary = failures.length ? `\n\nFailed apps:\n${failures.slice(0, 20).map(item => `- ${escapeMarkdown(item)}`).join('\n')}` : '';
+        const failureSummary = failures.length ? `\n\nFailed apps:\n${failures.slice(0, 20).map(item => `- ${item}`).join('\n')}` : '';
         await bot.editMessageText(
-            `PLAY_URL update finished.\n\nTarget URL: \`${escapeMarkdown(playUrl)}\`\nApps found: ${bots.length}\nUpdated: ${updated}\nFailed: ${failed}${failureSummary}`,
-            { chat_id: adminId, message_id: workingMessage.message_id, parse_mode: 'Markdown' }
+            `PLAY_URL update finished.\n\nTarget URL: ${playUrl}\nApps found: ${bots.length}\nUpdated: ${updated}\nFailed: ${failed}${failureSummary}`,
+            { chat_id: adminId, message_id: workingMessage.message_id }
         );
     } catch (error) {
         console.error('[PLAY_URL] Bulk update failed:', error);
