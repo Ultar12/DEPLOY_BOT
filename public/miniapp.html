@@ -285,7 +285,7 @@
         document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
         document.addEventListener('click', () => document.getElementById('accountMenu')?.classList.remove('open'));
         document.getElementById('newAppBtn')?.addEventListener('click', () => navigateTo('deploy'));
-        document.getElementById('notificationsLink')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); document.getElementById('notificationPanel').classList.toggle('open'); document.getElementById('accountMenu').classList.remove('open'); });
+        document.getElementById('notificationsLink')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); window.location.href = '/apps/notifications'; });
 
         function navigateTo(viewName, data = null) {
             state.viewHistory.push({ view: state.currentView, data: state.selectedBot });
@@ -342,6 +342,7 @@
                 case 'session': container.innerHTML = getSessionHTML(); break;
                 case 'plugins': container.innerHTML = getPluginsHTML(); break;
                 case 'settings': container.innerHTML = getSettingsHTML(); break;
+                case 'notifications': container.innerHTML = getNotificationsHTML(); break;
             }
             attachEventListeners();
             if (viewName === 'dashboard') loadDashboard();
@@ -349,11 +350,14 @@
             if (viewName === 'logs') loadLogs(data);
             if (viewName === 'job') pollJob(data.jobId);
             if (viewName === 'plugins') loadPlugins();
+            if (viewName === 'notifications') loadNotificationCenter();
         }
 
         function getDashboardHTML() {
-            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading"><div><p class="kicker">ULTAR WBD</p><h1>Bot control center</h1><p class="dashboard-subtitle">Deploy, manage, and extend your WhatsApp bots.</p></div></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Manage plugin URLs</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div><div class="pagination"><button class="page-active">1</button><button>2</button><a href="#">Next →</a></div></div>`;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div>`;
         }
+
+        function getNotificationsHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Notification Center</h1><p class="dashboard-subtitle">Important updates about your bots and account.</p><div id="notificationCenterList" class="plugin-list"><div class="workspace-panel">Loading notifications...</div></div></div>`; }
 
         async function loadNews() {
             try {
@@ -371,6 +375,16 @@
                     container.innerHTML = '<div class="news-content">No active updates.</div>';
                 }
             } catch (e) { document.getElementById('newsContainer').textContent = "Failed to load news."; }
+        }
+
+        async function loadNotificationCenter() {
+            const list = document.getElementById('notificationCenterList'); if (!list) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const data = await res.json(); const bots = data.bots || [];
+                const alerts = bots.flatMap(bot => { const remaining = new Date(bot.expirationDate) - new Date(); const items = []; if (bot.status === 'Offline') items.push(`${bot.appName} is logged out or offline.`); if (remaining <= 0) items.push(`${bot.appName} has expired.`); else if (remaining < 3 * 86400000) items.push(`${bot.appName} expires soon.`); if (bot.error || bot.lastError) items.push(`${bot.appName} needs attention.`); return items; });
+                list.innerHTML = alerts.length ? alerts.map(alert => `<div class="workspace-panel notification-item">${alert}</div>`).join('') : '<div class="workspace-panel">You have no new notifications.</div>';
+            } catch (error) { list.innerHTML = '<div class="workspace-panel error-panel">Could not load notifications.</div>'; }
         }
 
         async function loadDashboard() {
@@ -470,16 +484,13 @@
             if (!bot || !bot.appName) return `<div class="workspace-panel error-panel"><strong>Bot details unavailable</strong><p>Return to My Bots and open the bot again.</p><a href="/apps">Back to My Bots</a></div>`;
             const safeName = encodeURIComponent(bot.appName);
             const remaining = Math.max(0, Math.ceil((new Date(bot.expirationDate) - Date.now()) / 86400000));
-            const tabs = [['overview','Overview'],['resources','Resources'],['deploy','Deploy'],['metrics','Metrics'],['activity','Activity'],['access','Access'],['settings','Settings']];
+            const tabs = [['overview','Overview'],['resources','Resources'],['activity','Activity'],['access','Access']];
             const nav = tabs.map(([key,label]) => `<a class="bot-tab ${tab === key ? 'active' : ''}" href="/apps/bots/${safeName}/${key}">${label}</a>`).join('');
             let content = '';
             if (tab === 'overview') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status || 'Unknown'}</div><div class="stat-label">STATUS</div></div><div class="stat-card"><div class="stat-value">${bot.botType || 'Bot'}</div><div class="stat-label">TYPE</div></div><div class="stat-card"><div class="stat-value">${remaining}</div><div class="stat-label">DAYS REMAINING</div></div></div><div class="section-title">Quick actions</div>${getBotManagementHTML(bot)}`;
             if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Offline'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
-            if (tab === 'deploy') content = `<div class="workspace-panel"><h2>Deploy</h2><p>Review deployment status and start a new bot deployment when needed.</p><div class="resource-row"><span>Current status</span><strong>${bot.status || 'Unknown'}</strong></div><a class="support-btn settings-link" href="/apps/create">Create another app</a></div>`;
-            if (tab === 'metrics') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status === 'Online' ? 'Online' : '—'}</div><div class="stat-label">CURRENT STATE</div></div><div class="stat-card"><div class="stat-value">${bot.lastActivity || '—'}</div><div class="stat-label">LAST ACTIVITY</div></div></div><div class="workspace-panel"><h2>Metrics</h2><p>Live performance charts will appear here as this bot reports activity.</p></div>`;
             if (tab === 'activity') content = `<div class="workspace-panel"><h2>Activity</h2><div class="activity-item"><strong>Bot opened</strong><span>Current session</span></div><div class="activity-item"><strong>Status: ${bot.status || 'Unknown'}</strong><span>Latest available status</span></div></div>`;
             if (tab === 'access') content = `<div class="workspace-panel"><h2>Access</h2><p>This bot is managed by the authenticated Ultar WBD account.</p><div class="resource-row"><span>Owner</span><strong>Authenticated account</strong></div></div>`;
-            if (tab === 'settings') content = `<div class="workspace-panel"><h2>Settings</h2><p>Manage configuration and operational tools for this bot.</p><div class="settings-actions"><a class="mgmt-option" href="/apps/bots/${safeName}/resources">View resources</a><a class="mgmt-option" href="/apps/bots/${safeName}/activity">View activity</a><a class="mgmt-option" href="/apps/bots/${safeName}/settings">Refresh settings</a></div></div>`;
             return `<div class="bot-workspace"><div class="bot-workspace-heading"><div><p class="kicker">BOT WORKSPACE</p><h1>${bot.appName}</h1><p>${bot.botType || 'Bot'} · ${bot.status || 'Unknown'}</p></div></div><nav class="bot-tabs">${nav}</nav><div class="bot-tab-content">${content}</div></div>`;
         }
 
@@ -764,7 +775,7 @@
 
         document.getElementById('backBtn').onclick = goBack;
         const returnedJobId = new URLSearchParams(window.location.search).get('job');
-        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : 'dashboard';
+        const pathView = ['/apps/new', '/apps/create'].includes(window.location.pathname) ? 'deploy' : window.location.pathname === '/apps/session' ? 'session' : window.location.pathname === '/apps/plugins' ? 'plugins' : window.location.pathname === '/apps/settings' ? 'settings' : window.location.pathname === '/apps/notifications' ? 'notifications' : 'dashboard';
         if (returnedJobId) {
             state.currentView = 'job';
             state.selectedBot = { jobId: returnedJobId };

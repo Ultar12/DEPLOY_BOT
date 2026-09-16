@@ -435,6 +435,19 @@ await client.query(`
         `);
         await client.query(`ALTER TABLE user_plugins ADD COLUMN IF NOT EXISTS plugin_name TEXT NOT NULL DEFAULT 'Unnamed plugin';`);
         await client.query(`ALTER TABLE user_plugins ADD COLUMN IF NOT EXISTS description TEXT;`);
+
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS web_accounts (
+            user_id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            verification_code TEXT,
+            verification_expires_at TIMESTAMP WITH TIME ZONE,
+            is_verified BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
         
         await client.query(`CREATE TABLE IF NOT EXISTS banned_users (user_id TEXT PRIMARY KEY, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, banned_by TEXT);`);
 
@@ -4696,6 +4709,8 @@ const findAuthorizedLogin = async (identifier) => {
     const result = await pool.query(`SELECT user_id FROM user_deployments WHERE LOWER(email) = LOWER($1)
         UNION
         SELECT user_id FROM email_verification WHERE LOWER(email) = LOWER($1) AND is_verified = TRUE
+        UNION
+        SELECT user_id FROM web_accounts WHERE LOWER(email) = LOWER($1) AND is_verified = TRUE
         LIMIT 1`, [value]);
     return result.rows[0] ? String(result.rows[0].user_id) : null;
 };
@@ -4783,6 +4798,62 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
         console.error('[Login] Identifier lookup failed:', error.message);
         res.status(503).json({ allowed: false, message: 'Login service temporarily unavailable.' });
     }
+  });
+
+  const webAccountKey = email => `web:${String(email).trim().toLowerCase()}`;
+  const hashWebPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => ({ salt, hash: crypto.scryptSync(password, salt, 64).toString('hex') });
+  const validWebPassword = (password, account) => crypto.timingSafeEqual(Buffer.from(hashWebPassword(password, account.password_salt).hash, 'hex'), Buffer.from(account.password_hash, 'hex'));
+
+  app.post('/auth/register', async (req, res) => {
+    try {
+      const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+      if (password.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+      const existing = await pool.query('SELECT is_verified FROM web_accounts WHERE LOWER(email) = LOWER($1)', [email]);
+      if (existing.rows[0]?.is_verified) return res.status(409).json({ success: false, message: 'An account with this email already exists. Please log in.' });
+      const userId = webAccountKey(email), { salt, hash } = hashWebPassword(password), code = String(crypto.randomInt(100000, 1000000));
+      await pool.query(`INSERT INTO web_accounts (user_id,email,password_hash,password_salt,verification_code,verification_expires_at,is_verified) VALUES ($1,$2,$3,$4,$5,NOW()+INTERVAL '10 minutes',FALSE) ON CONFLICT (user_id) DO UPDATE SET password_hash=EXCLUDED.password_hash,password_salt=EXCLUDED.password_salt,verification_code=EXCLUDED.verification_code,verification_expires_at=EXCLUDED.verification_expires_at`, [userId, email, hash, salt, code]);
+      if (!await sendVerificationEmail(email, code, 'signup')) return res.status(503).json({ success: false, message: 'We could not send the verification email. Please try again later.' });
+      res.json({ success: true, message: 'Verification code sent to your email.' });
+    } catch (error) { console.error('[Web signup]', error); res.status(503).json({ success: false, message: 'Signup service temporarily unavailable.' }); }
+  });
+
+  app.post('/auth/register/verify', async (req, res) => {
+    try {
+      const email = String(req.body.email || '').trim().toLowerCase(), code = String(req.body.code || '').trim();
+      const result = await pool.query('SELECT * FROM web_accounts WHERE LOWER(email)=LOWER($1) AND verification_code=$2 AND verification_expires_at > NOW()', [email, code]);
+      if (!result.rows[0]) return res.status(400).json({ success: false, message: 'Invalid or expired verification code.' });
+      await pool.query('UPDATE web_accounts SET is_verified=TRUE, verification_code=NULL, verification_expires_at=NULL WHERE user_id=$1', [result.rows[0].user_id]);
+      res.json({ success: true, message: 'Account verified. You can now log in.' });
+    } catch (error) { console.error('[Web signup verify]', error); res.status(503).json({ success: false, message: 'Verification service temporarily unavailable.' }); }
+  });
+
+  app.post('/auth/password-login', async (req, res) => {
+    try {
+      const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
+      const result = await pool.query('SELECT * FROM web_accounts WHERE LOWER(email)=LOWER($1)', [email]), account = result.rows[0];
+      if (!account || !account.is_verified || !validWebPassword(password, account)) return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+      res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(account.user_id))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`);
+      res.json({ success: true });
+    } catch (error) { console.error('[Web password login]', error); res.status(503).json({ success: false, message: 'Login service temporarily unavailable.' }); }
+  });
+
+  app.get('/auth/google', (req, res) => {
+    if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).send('Google login is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render environment variables.');
+    const redirect = `${APP_URL || ''}/auth/google/callback`;
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(process.env.GOOGLE_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=openid%20email%20profile`);
+  });
+  app.get('/auth/google/callback', async (req, res) => {
+    try {
+      if (!req.query.code || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect('/apps');
+      const redirect_uri = `${APP_URL || ''}/auth/google/callback`;
+      const token = await axios.post('https://oauth2.googleapis.com/token', { code: req.query.code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri, grant_type: 'authorization_code' }, { headers: { 'Content-Type': 'application/json' } });
+      const profile = await axios.get('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${token.data.access_token}` } });
+      const email = String(profile.data.email || '').toLowerCase(); if (!email) return res.redirect('/apps');
+      const userId = webAccountKey(email), generated = hashWebPassword(crypto.randomBytes(24).toString('hex'));
+      await pool.query(`INSERT INTO web_accounts (user_id,email,password_hash,password_salt,is_verified) VALUES ($1,$2,$3,$4,TRUE) ON CONFLICT (user_id) DO UPDATE SET is_verified=TRUE`, [userId, email, generated.hash, generated.salt]);
+      res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`); res.redirect('/apps');
+    } catch (error) { console.error('[Google OAuth]', error.response?.data || error.message); res.redirect('/apps'); }
   });
 
   app.get('/auth/login', async (req, res) => {
