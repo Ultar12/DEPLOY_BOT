@@ -328,6 +328,9 @@
         .plugins-page .dashboard-subtitle { margin-bottom: 16px; }
         .plugin-row span { margin-top: 3px; line-height: 1.35; }
         .plugin-copy-btn { padding: 7px 9px; }
+        .plugin-filters { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 12px; }
+        .plugin-filter { border:1px solid #3f3f46; border-radius:5px; padding:7px 11px; background:#111114; color:#a1a1aa; font:inherit; font-size:11px; font-weight:700; cursor:pointer; }
+        .plugin-filter.active { background:#7c3aed; border-color:#7c3aed; color:#fff; }
         @media (max-width: 620px) {
             #view-container { padding: 14px 12px 24px; }
             .dark-dashboard,
@@ -358,6 +361,8 @@
             .plugin-row strong { font-size: 11px; }
             .plugin-row span { font-size: 11px; }
             .plugin-copy-btn { align-self: flex-start; padding: 6px 8px; }
+            .plugin-filters { gap:5px; margin-bottom:9px; }
+            .plugin-filter { padding:6px 9px; font-size:10px; }
         }
     </style>
 </head>
@@ -685,12 +690,24 @@
         }
 
         function getPluginsHTML() {
-            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Plugins published by the administrator for Levanter and Raganork bots.</p><div class="section-title">Plugin list</div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
+            return `<div class="plugins-page"><p class="kicker">PLUGIN LIBRARY</p><h1>My Plugins</h1><p class="dashboard-subtitle">Plugins published by the administrator for Levanter and Raganork bots.</p><div class="section-title">Plugin list</div><div class="plugin-filters" role="group" aria-label="Filter plugins by bot type"><button type="button" class="plugin-filter active" data-action="filter-plugins" data-plugin-type="all">ALL</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="levanter">LEVANTER</button><button type="button" class="plugin-filter" data-action="filter-plugins" data-plugin-type="raganork">RAGANORK</button></div><div id="pluginList" class="plugin-list">Loading plugins...</div></div>`;
+        }
+
+        function renderPluginList(filter = 'all') {
+            const list = document.getElementById('pluginList');
+            if (!list) return;
+            const plugins = window.__plugins || [];
+            const normalizedFilter = String(filter || 'all').toLowerCase();
+            const visiblePlugins = plugins
+                .filter(plugin => normalizedFilter === 'all' || String(plugin.bot_type || '').toLowerCase() === normalizedFilter)
+                .sort((a, b) => normalizedFilter === 'all' ? 0 : (String(b.bot_type || '').toLowerCase() === normalizedFilter) - (String(a.bot_type || '').toLowerCase() === normalizedFilter));
+            list.innerHTML = visiblePlugins.length ? visiblePlugins.map(plugin => `<div class="plugin-row"><div class="plugin-info"><strong>${plugin.plugin_name} · ${plugin.bot_type}</strong><span>${plugin.description || 'No description'}</span></div><button class="support-btn plugin-copy-btn" data-action="copy-plugin" data-url="${encodeURIComponent(plugin.plugin_url)}" type="button">COPY URL</button></div>`).join('') : `<div class="workspace-panel">No ${normalizedFilter === 'all' ? '' : `${normalizedFilter} `}plugins published yet.</div>`;
+            document.querySelectorAll('.plugin-filter').forEach(button => button.classList.toggle('active', button.dataset.pluginType === normalizedFilter));
         }
 
         async function loadPlugins() {
             const list = document.getElementById('pluginList'); if (!list) return;
-            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); list.innerHTML = data.plugins.length ? data.plugins.map(plugin => `<div class="plugin-row"><div class="plugin-info"><strong>${plugin.plugin_name} · ${plugin.bot_type}</strong><span>${plugin.description || 'No description'}</span></div><button class="support-btn plugin-copy-btn" data-action="copy-plugin" data-url="${encodeURIComponent(plugin.plugin_url)}" type="button">COPY URL</button></div>`).join('') : '<div class="workspace-panel">No plugins published yet.</div>'; } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
+            try { const response = await fetch(`${API_BASE_URL}/plugins`, { headers: { 'X-Telegram-Init-Data': tg.initData } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.message || 'Could not load plugins.'); window.__plugins = data.plugins || []; renderPluginList('all'); } catch (error) { list.innerHTML = `<div class="workspace-panel error-panel"><strong>Could not load plugins</strong><p>${error.message}</p></div>`; }
         }
 
         function getBotManagementHTML(bot) {
@@ -862,6 +879,10 @@
                     const sessionId = window.prompt('Paste the new session ID.');
                     if (!sessionId) return;
                     fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(async data => { await showAppAlert(data.message || 'Session update completed.'); if (data.success) await loadDashboard(); }).catch(() => showAppAlert('Failed to update session.'));
+                    return;
+                }
+                if (act === 'filter-plugins') {
+                    renderPluginList(btn.dataset.pluginType || 'all');
                     return;
                 }
                 if (act === 'copy-plugin') {
