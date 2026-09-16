@@ -703,7 +703,6 @@
                     const data = await res.json();
                     await showAppAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
                     if (data.success && act === 'delete-bot') window.location.href = '/apps/dashboard';
-                    else if (data.success) { window.__dashboardBots = null; await loadDashboard(); }
                 } catch (e) { showAppAlert('Action failed.'); }
             });
         }
