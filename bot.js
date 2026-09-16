@@ -9747,7 +9747,7 @@ bot.onText(/^\/updateall (levanter|raganork|hermit)$/, async (msg, match) => {
     }
 });
 
-// Temporary admin command: update PLAY_URL on every active Levanter/Raganork app.
+// Temporary admin command: update PLAY_URL on every active Levanter/Raganork app in Heroku only.
 bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
@@ -9770,7 +9770,7 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
 
     try {
         const result = await pool.query(
-            `SELECT DISTINCT ON (bot_name) user_id, bot_name, bot_type
+            `SELECT DISTINCT ON (bot_name) bot_name, bot_type
              FROM user_bots
              WHERE bot_type IN ('levanter', 'raganork')
              ORDER BY bot_name, created_at DESC`
@@ -9781,21 +9781,6 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
             try {
                 await herokuApi.get(`/apps/${encodeURIComponent(app.bot_name)}/config-vars`);
                 await herokuApi.patch(`/apps/${encodeURIComponent(app.bot_name)}/config-vars`, { PLAY_URL: playUrl });
-
-                await pool.query(
-                    `UPDATE user_deployments
-                     SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1::text)
-                     WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
-                    [playUrl, app.user_id, app.bot_name, app.bot_type]
-                );
-                if (backupPool) {
-                    await backupPool.query(
-                        `UPDATE user_deployments
-                         SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1::text)
-                         WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
-                        [playUrl, app.user_id, app.bot_name, app.bot_type]
-                    );
-                }
                 updated++;
                 console.log(`[PLAY_URL] Updated ${app.bot_type} app ${app.bot_name} to ${playUrl}`);
             } catch (error) {
