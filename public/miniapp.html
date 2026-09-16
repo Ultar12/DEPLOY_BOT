@@ -897,7 +897,8 @@
                         const data = await res.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the deployment job.');
                         if (data.paymentRequired && data.paymentUrl) {
-                            navigateTo('job', { jobId: data.jobId, appName: payload.appName, paymentRequired: true });
+                            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
+                            navigateTo('dashboard');
                             tg.openLink(data.paymentUrl);
                         } else {
                             window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
@@ -935,7 +936,8 @@
                         const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id, idempotencyKey: (globalThis.crypto?.randomUUID?.() || `payment_${Date.now()}_${Math.random().toString(16).slice(2)}`) }) });
                         const data = await response.json();
                         if (!data.success) throw new Error(data.message || 'Could not create the payment.');
-                        navigateTo('job', { jobId: data.jobId, appName: state.selectedBot?.appName, paymentRequired: true });
+                        window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(data.jobId)}`);
+                        navigateTo('dashboard');
                         if (data.paymentUrl) tg.openLink(data.paymentUrl);
                     } catch (error) { result.textContent = error.message || 'Could not start payment.'; button.disabled = false; }
                 };
@@ -1028,10 +1030,8 @@
                 state.currentView = 'deploy'; state.selectedBot = { appName: data.job.app_name, botType: data.job.bot_type, sessionId: data.job.session_id, autoStatusView: data.job.auto_status_view === 'true' ? 'yes' : 'no', paymentCancelled: true }; renderView('deploy', state.selectedBot); updateHeader();
             }).catch(() => navigateTo('deploy', { paymentCancelled: true }));
         } else if (returnedJobId) {
-            state.currentView = 'job';
-            state.selectedBot = { jobId: returnedJobId };
-            renderView('job', state.selectedBot);
-            updateHeader();
+            window.history.replaceState({}, '', `/apps/dashboard?job=${encodeURIComponent(returnedJobId)}`);
+            navigateTo('dashboard');
         } else {
             navigateTo(pathView, queryParams.get('payment') === 'cancelled' ? { paymentCancelled: true } : null);
         }
