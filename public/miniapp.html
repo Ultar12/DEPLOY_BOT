@@ -302,7 +302,7 @@
             <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
         <div class="purple-rule"></div>
-        <div class="workspace-bar"><button class="workspace-select">◉ Personal <span>⌄</span></button><a class="new-btn" id="newAppBtn" href="#" data-action="navigate" data-view="deploy">New <span>⌄</span></a></div>
+        <div class="workspace-bar"><button class="workspace-select">◉ Personal <span>⌄</span></button><a class="new-btn" id="newAppBtn" href="/apps/create">New <span>⌄</span></a></div>
         <div id="view-container"></div>
     </div>
 
@@ -358,14 +358,11 @@
 
         function goBack() {
             if (state.currentView === 'payment') {
-                navigateTo('deploy', { ...(state.selectedBot || {}), paymentCancelled: true });
+                window.location.href = '/apps/create?payment=cancelled';
                 return;
             }
-            const prev = state.viewHistory.pop() || { view: 'dashboard', data: null };
-            state.currentView = prev.view;
-            state.selectedBot = prev.data;
-            renderView(prev.view, prev.data);
-            updateHeader();
+            if (document.referrer.includes('/apps')) window.history.back();
+            else window.location.href = '/apps/dashboard';
         }
 
         function updateHeader() {
@@ -416,7 +413,7 @@
         }
 
         function getDashboardHTML() {
-            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="#" data-action="navigate" data-view="session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="#" data-action="navigate" data-view="deploy"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="#" data-action="navigate" data-view="plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div></div>`;
+            return `<div class="dashboard workspace-dashboard dark-dashboard"><div class="dashboard-heading" style="text-align:center"><h1>ULTAR'S WBD</h1></div><div class="hero-actions"><a class="hero-action primary" href="/apps/session"><strong>Get Session</strong><span>Generate a WhatsApp session</span></a><a class="hero-action" href="/apps/create"><strong>Deploy Now</strong><span>Launch Levanter or Raganork</span></a><a class="hero-action" href="/apps/plugins"><strong>My Plugins</strong><span>Browse the plugin library</span></a></div><div class="stats-grid compact-stats"><div class="stat-card"><div class="stat-value" id="totalBots">0</div><div class="stat-label">MY BOTS</div></div><div class="stat-card"><div class="stat-value" id="onlineBots">0</div><div class="stat-label">ACTIVE</div></div></div><div id="myBotsSection"><div class="section-title">My Bots</div><div class="bot-list app-list" id="botList">Loading bots...</div></div></div>`;
         }
 
         function getNotificationsHTML() { return `<div class="plugins-page"><p class="kicker">ACCOUNT</p><h1>Notification Center</h1><p class="dashboard-subtitle">Important updates about your bots and account.</p><div id="notificationCenterList" class="plugin-list"><div class="workspace-panel">Loading notifications...</div></div></div>`; }
@@ -484,7 +481,7 @@
                             <div class="bot-actions"><button class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>${bot.status === 'Offline' ? `<button class="support-btn" data-action="change-session" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">CHANGE SESSION</button>` : ''}</div>
                         </div>
                     `;
-                }).join('') || '<div class="empty-state"><div class="empty-icon">H</div><h2>Create your first app</h2><p>You do not have any apps yet.</p><a class="support-btn" href="#" data-action="navigate" data-view="deploy">Create new app</a></div>';
+                }).join('') || '<div class="empty-state"><div class="empty-icon">H</div><h2>Create your first app</h2><p>You do not have any apps yet.</p><a class="support-btn" href="/apps/create">Create new app</a></div>';
                 const myBotsSection = document.getElementById('myBotsSection'); if (myBotsSection) myBotsSection.style.display = bots.length ? 'block' : 'none';
                 const pagination = document.querySelector('.pagination'); if (pagination) pagination.style.display = bots.length > 10 ? 'flex' : 'none';
                 const routeMatch = window.location.pathname.match(/^\/apps\/bots\/([^/]+)(?:\/([^/]+))?$/);
@@ -889,7 +886,7 @@
             renderView('job', state.selectedBot);
             updateHeader();
         } else {
-            navigateTo(pathView);
+            navigateTo(pathView, queryParams.get('payment') === 'cancelled' ? { paymentCancelled: true } : null);
         }
     </script>
 </body>
