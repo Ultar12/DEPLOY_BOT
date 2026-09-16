@@ -426,11 +426,15 @@ await client.query(`
             id SERIAL PRIMARY KEY,
             user_id TEXT NOT NULL,
             bot_type TEXT NOT NULL CHECK (bot_type IN ('levanter', 'raganork')),
+            plugin_name TEXT NOT NULL DEFAULT 'Unnamed plugin',
+            description TEXT,
             plugin_url TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (user_id, bot_type, plugin_url)
           );
         `);
+        await client.query(`ALTER TABLE user_plugins ADD COLUMN IF NOT EXISTS plugin_name TEXT NOT NULL DEFAULT 'Unnamed plugin';`);
+        await client.query(`ALTER TABLE user_plugins ADD COLUMN IF NOT EXISTS description TEXT;`);
         
         await client.query(`CREATE TABLE IF NOT EXISTS banned_users (user_id TEXT PRIMARY KEY, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, banned_by TEXT);`);
 
@@ -4964,7 +4968,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
 
 app.get('/api/plugins', validateWebAppInitData, async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, bot_type, plugin_url, created_at FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(req.telegramData.id)]);
+        const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url, created_at FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(req.telegramData.id)]);
         res.json({ success: true, plugins: result.rows });
     } catch (error) {
         console.error('[Plugins] List failed:', error.message);
@@ -4974,11 +4978,13 @@ app.get('/api/plugins', validateWebAppInitData, async (req, res) => {
 
 app.post('/api/plugins', validateWebAppInitData, async (req, res) => {
     const botType = String(req.body.botType || '').toLowerCase();
+    const pluginName = String(req.body.name || 'Unnamed plugin').trim().slice(0, 120);
+    const description = String(req.body.description || '').trim().slice(0, 500);
     const pluginUrl = String(req.body.url || '').trim();
     if (!['levanter', 'raganork'].includes(botType)) return res.status(400).json({ success: false, message: 'Choose Levanter or Raganork.' });
     if (!/^https?:\/\//i.test(pluginUrl)) return res.status(400).json({ success: false, message: 'Enter a valid plugin URL.' });
     try {
-        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_url) VALUES ($1, $2, $3) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id, bot_type, plugin_url, created_at', [String(req.telegramData.id), botType, pluginUrl]);
+        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_name, description, plugin_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id, plugin_name, bot_type, description, plugin_url, created_at', [String(req.telegramData.id), botType, pluginName, description, pluginUrl]);
         res.json({ success: true, plugin: result.rows[0] || null, message: result.rows[0] ? 'Plugin added.' : 'Plugin already exists.' });
     } catch (error) {
         console.error('[Plugins] Add failed:', error.message);
@@ -9478,17 +9484,35 @@ bot.onText(/^\/createneondb (.+)$/, async (msg, match) => {
     }
 });
 
+bot.onText(/^\/plugin$/i, async (msg) => {
+    const source = msg.reply_to_message?.text || '';
+    const lines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const url = lines.find(line => /^https?:\/\//i.test(line));
+    const botType = lines.find(line => /^(levanter|raganork)$/i.test(line))?.toLowerCase();
+    const descriptionIndex = lines.findIndex(line => /^description\s*:/i.test(line));
+    const nameIndex = lines.findIndex(line => /^(plugin\s*name|name)\s*:/i.test(line));
+    const pluginName = nameIndex >= 0 ? lines[nameIndex].split(':').slice(1).join(':').trim() : lines[0];
+    const urlIndex = url ? lines.indexOf(url) : -1;
+    const typeIndex = botType ? lines.findIndex(line => line.toLowerCase() === botType) : -1;
+    const description = descriptionIndex >= 0 ? lines[descriptionIndex].split(':').slice(1).join(':').trim() : (typeIndex >= 0 && urlIndex > typeIndex ? lines.slice(typeIndex + 1, urlIndex).filter(line => line !== pluginName).join(' ') : '');
+    if (!msg.reply_to_message || !url || !botType || !pluginName) return bot.sendMessage(msg.chat.id, 'Reply /plugin to a message containing plugin name, bot type (Levanter or Raganork), description, and URL.');
+    try {
+        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_name, description, plugin_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), botType, pluginName, description, url]);
+        await bot.sendMessage(msg.chat.id, result.rows[0] ? `Plugin saved: ${pluginName} (${botType}). ID: ${result.rows[0].id}` : 'That plugin is already saved.');
+    } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
+});
+
 bot.onText(/^\/plugin\s+list$/i, async (msg) => {
     try {
-        const result = await pool.query('SELECT id, bot_type, plugin_url FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(msg.from.id)]);
+        const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(msg.from.id)]);
         if (!result.rows.length) return bot.sendMessage(msg.chat.id, 'No plugins saved yet. Use /plugin (levanter|raganork) (url).');
-        await bot.sendMessage(msg.chat.id, result.rows.map(item => `${item.id}. ${item.bot_type}: ${item.plugin_url}`).join('\n'));
+        await bot.sendMessage(msg.chat.id, result.rows.map(item => `${item.id}. ${item.plugin_name} (${item.bot_type})\n${item.description || 'No description'}\n${item.plugin_url}`).join('\n\n'));
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not load your plugins.'); }
 });
 
 bot.onText(/^\/plugin\s+(levanter|raganork)\s+(https?:\/\/\S+)$/i, async (msg, match) => {
     try {
-        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_url) VALUES ($1, $2, $3) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), match[1].toLowerCase(), match[2]]);
+        const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_name, description, plugin_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), match[1].toLowerCase(), match[2].split('/').pop(), '', match[2]]);
         await bot.sendMessage(msg.chat.id, result.rows[0] ? `Plugin saved for ${match[1]}. ID: ${result.rows[0].id}` : 'That plugin is already saved.');
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
 });
