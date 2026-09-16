@@ -4779,7 +4779,10 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
     res.sendFile(path.join(__dirname, 'public', 'miniapp.html'));
 });
 
-  app.get(['/app', '/apps'], (req, res) => {
+  app.get('/apps', (req, res) => {
+    telegramLoginRequired(req, res, () => res.redirect('/apps/dashboard'));
+  });
+  app.get(['/app', '/apps/dashboard'], (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
   app.get('/auth/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')));
