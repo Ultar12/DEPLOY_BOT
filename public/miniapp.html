@@ -223,6 +223,8 @@
         .mgmt-option-label { font-weight: 600; font-size: 0.95em; }
         .danger-option { border-color: #dc2626 !important; background: #fef2f2 !important; color: #b91c1c !important; }
         .danger-option .mgmt-option-label { color: #b91c1c !important; }
+        .danger-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+        @media(max-width:620px){ .danger-actions { grid-template-columns: 1fr; } }
         .whatsapp-fab { position: fixed; right: 18px; bottom: 16px; z-index: 120; display: inline-flex; flex-direction: column; align-items: center; gap: 4px; color: #166534; font-size: 10px; font-weight: 800; text-decoration: none; }
         .whatsapp-fab-logo { width: 50px; height: 50px; display: grid; place-items: center; border-radius: 50%; background: #16a34a; color: #fff; box-shadow: 0 8px 22px rgba(22, 163, 74, .3); }
         .whatsapp-fab-logo svg { width: 27px; height: 27px; fill: currentColor; }
@@ -625,10 +627,12 @@
                 <div class="management-grid">
                     <div class="mgmt-option" data-action="restart-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Restart Bot</div></div>
                     <div class="mgmt-option" data-action="redeploy-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Redeploy Bot</div></div>
-                    <div class="mgmt-option" data-action="turn-off-bot" data-app-name="${bot.appName}" style="border-color:rgba(245,158,11,.45);"><div class="mgmt-option-label" style="color:#fcd34d;">Turn Off Bot</div></div>
                     <div class="mgmt-option" data-action="navigate" data-view="variables" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">View and Edit Variables</div></div>
                     <div class="mgmt-option" data-action="navigate" data-view="logs" data-bot-json='${JSON.stringify(bot)}'><div class="mgmt-option-label">Live Logs</div></div>
-                    <div class="mgmt-option danger-option" data-action="delete-bot" data-app-name="${bot.appName}" style="margin-top:20px;"><div class="mgmt-option-label">Delete Bot</div></div>
+                    <div class="danger-actions">
+                        <div class="mgmt-option danger-option" data-action="turn-off-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Turn Off Bot</div></div>
+                        <div class="mgmt-option danger-option" data-action="delete-bot" data-app-name="${bot.appName}"><div class="mgmt-option-label">Delete Bot</div></div>
+                    </div>
                 </div>
             `;
         }
