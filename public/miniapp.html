@@ -344,10 +344,10 @@
             });
         };
         const isTelegramContext = () => Boolean(tg.initData);
-        const showAppAlert = (message) => {
-            if (isTelegramContext() && typeof tg.showAlert === 'function') tg.showAlert(message);
-            else window.alert(message);
-        };
+        const showAppAlert = (message) => new Promise(resolve => {
+            if (isTelegramContext() && typeof tg.showAlert === 'function') tg.showAlert(message, resolve);
+            else { window.alert(message); resolve(); }
+        });
         const confirmAction = (message, callback) => {
             if (isTelegramContext() && typeof tg.showConfirm === 'function') tg.showConfirm(message, callback);
             else callback(window.confirm(message));
@@ -386,7 +386,11 @@
         const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
         document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
         document.addEventListener('click', () => document.getElementById('accountMenu')?.classList.remove('open'));
-        document.getElementById('newAppBtn')?.addEventListener('click', () => navigateTo('deploy'));
+        document.getElementById('newAppBtn')?.addEventListener('click', event => {
+            event.preventDefault();
+            if (window.__maintenanceMode) return showAppAlert('The service is currently under maintenance. Please come back shortly.');
+            navigateTo('deploy');
+        });
         document.getElementById('notificationsLink')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); window.location.href = '/apps/notifications'; });
 
         function navigateTo(viewName, data = null) {
@@ -497,6 +501,11 @@
                 const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json();
                 const bots = data.bots || [];
+                window.__maintenanceMode = data.maintenanceMode === true;
+                if (window.__maintenanceMode && !window.__maintenanceNoticeShown) {
+                    window.__maintenanceNoticeShown = true;
+                    await showAppAlert('The service is currently under maintenance. Please come back shortly.');
+                }
                 window.__dashboardBots = bots;
                 document.getElementById('totalBots').textContent = bots.length;
                 document.getElementById('onlineBots').textContent = bots.filter(b => b.status === 'Online').length;
@@ -515,7 +524,7 @@
                     if (isExpired) statusClass = 'suspended';
                     const primaryAction = isExpiring
                         ? `<a class="support-btn renew-btn" href="https://t.me/ultarswbdbot?start=renew_${encodeURIComponent(bot.appName)}" target="_blank" rel="noopener">RENEW</a>`
-                        : `<button type="button" class="support-btn" data-action="bot-menu" data-app-name="${bot.appName}" style="width:auto;padding:8px 12px;">MENU</button>`;
+                        : `<button type="button" class="support-btn" data-action="navigate" data-view="management" data-app-route="/apps/bots/${encodeURIComponent(bot.appName)}" data-bot-json='${JSON.stringify(bot)}' style="width:auto;padding:8px 12px;">MANAGE</button>`;
 
                     return `
                         <div class="bot-card ${isExpired ? 'suspended' : ''}" data-action="navigate" data-view="management" data-app-route="/apps/bots/${encodeURIComponent(bot.appName)}" data-bot-json='${JSON.stringify(bot)}'>
@@ -571,7 +580,7 @@
                         <div class="news-content">Renew now to restore bot functionality.</div>
                     </div>
                     <div class="management-grid">
-                        <div class="mgmt-option" onclick="tg.showAlert('Please use the Renew button in your Telegram chat.')">
+                        <div class="mgmt-option" data-action="renew-bot" data-app-name="${bot.appName}">
                             <div class="mgmt-option-label">Renew Subscription</div>
                         </div>
                         <div class="mgmt-option" data-action="delete-bot" data-app-name="${bot.appName}" style="border-color:#ef4444;">
@@ -690,8 +699,9 @@
                 try {
                     const res = await fetch(`${API_BASE_URL}/${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName }) });
                     const data = await res.json();
-                    showAppAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
-                    if (data.success) window.location.href = '/apps/dashboard';
+                    await showAppAlert(data.message || (data.success ? 'Action completed.' : 'Action failed.'));
+                    if (data.success && act === 'delete-bot') window.location.href = '/apps/dashboard';
+                    else if (data.success) { window.__dashboardBots = null; await loadDashboard(); }
                 } catch (e) { showAppAlert('Action failed.'); }
             });
         }
@@ -708,19 +718,25 @@
                 card.onclick = event => { event.preventDefault(); event.stopPropagation(); runManagementAction(card.dataset.action, card); };
             });
             document.onclick = (e) => {
+                const deployLink = e.target.closest('a[href="/apps/create"]');
+                if (deployLink && window.__maintenanceMode) {
+                    e.preventDefault();
+                    return showAppAlert('The service is currently under maintenance. Please come back shortly.');
+                }
                 const btn = e.target.closest('[data-action]');
                 if (!btn) return;
                 const act = btn.dataset.action;
                 if (act === 'navigate') { if (btn.dataset.appRoute) { window.location.href = btn.dataset.appRoute; return; } navigateTo(btn.dataset.view, btn.dataset.botJson ? JSON.parse(btn.dataset.botJson) : null); }
-                if (act === 'bot-menu') {
-                    const bot = (window.__dashboardBots || []).find(item => item.appName === btn.dataset.appName);
-                    if (bot) navigateTo('management', bot);
+                if (act === 'renew-bot') {
+                    const renewUrl = `https://t.me/ultarswbdbot?start=renew_${encodeURIComponent(btn.dataset.appName || '')}`;
+                    if (typeof tg.openTelegramLink === 'function') tg.openTelegramLink(renewUrl);
+                    else window.open(renewUrl, '_blank', 'noopener');
                     return;
                 }
                 if (act === 'change-session') {
                     const sessionId = window.prompt('Paste the new session ID.');
                     if (!sessionId) return;
-                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) window.location.href = '/apps/dashboard'; }).catch(() => tg.showAlert('Failed to update session.'));
+                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(async data => { await showAppAlert(data.message || 'Session update completed.'); if (data.success) await loadDashboard(); }).catch(() => showAppAlert('Failed to update session.'));
                     return;
                 }
                 if (act === 'copy-plugin') {

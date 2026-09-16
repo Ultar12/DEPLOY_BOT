@@ -274,6 +274,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+let isMaintenanceMode = false;
+
 const backupPool = new Pool({
   connectionString: DATABASE_URL2,
   ssl: { rejectUnauthorized: false }
@@ -5027,7 +5029,18 @@ app.get('/api/app-name-check/:appName', validateWebAppInitData, async (req, res)
 app.get('/api/bots', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     try {
-        // New Logic: Get the bot list directly from the database
+        // Keep the dashboard ownership table aligned with active deployment records.
+        await pool.query(`
+            INSERT INTO user_bots (user_id, bot_name, session_id, bot_type)
+            SELECT user_id, app_name, session_id, bot_type
+            FROM user_deployments
+            WHERE user_id = $1 AND deleted_from_heroku_at IS NULL
+            ON CONFLICT (user_id, bot_name) DO UPDATE SET
+                session_id = COALESCE(EXCLUDED.session_id, user_bots.session_id),
+                bot_type = COALESCE(EXCLUDED.bot_type, user_bots.bot_type)
+        `, [userId]);
+
+        // Get the synchronized bot list directly from the database.
         const botsResult = await pool.query(
             `SELECT 
                 ub.bot_name, 
@@ -5065,7 +5078,7 @@ app.get('/api/bots', validateWebAppInitData, async (req, res) => {
         // Filter out any bots that were found but have a deleted status
         const filteredBots = formattedBots.filter(b => b.status !== 'Deleted');
         
-        res.json({ success: true, bots: filteredBots });
+        res.json({ success: true, bots: filteredBots, maintenanceMode: Boolean(isMaintenanceMode) });
     } catch (e) {
         console.error('[MiniApp V2] Error fetching user bots:', e.message);
         res.status(500).json({ success: false, message: 'Failed to fetch bot list.' });
@@ -5112,9 +5125,12 @@ app.delete('/api/plugins/:id', validateWebAppInitData, async (req, res) => {
 app.post('/api/bots/restart', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.body;
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     try {
-        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 UNION SELECT 1 FROM user_bots WHERE bot_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
         await herokuApi.delete(`https://api.heroku.com/apps/${appName}/dynos`, {
@@ -5158,8 +5174,8 @@ app.get('/api/bots/logs/:appName', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.params;
     try {
-        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 UNION SELECT 1 FROM user_bots WHERE bot_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
         
@@ -5178,9 +5194,12 @@ app.get('/api/bots/logs/:appName', validateWebAppInitData, async (req, res) => {
 app.post('/api/bots/redeploy', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.body;
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     try {
-        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1 AND user_id = $2 UNION SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
 
@@ -5210,8 +5229,11 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
     const userId = String(req.telegramData.id);
     const { appName, sessionId } = req.body;
     const normalizedSession = String(sessionId || '').trim();
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     try {
-        const ownerCheck = await pool.query(`SELECT ud.bot_type, ub.status FROM user_deployments ud JOIN user_bots ub ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name WHERE ud.app_name = $1 AND ud.user_id = $2 LIMIT 1`, [appName, userId]);
+        const ownerCheck = await pool.query(`SELECT ub.bot_type, ub.status FROM user_bots ub LEFT JOIN user_deployments ud ON ub.user_id = ud.user_id AND ub.bot_name = ud.app_name WHERE ub.bot_name = $1 AND ub.user_id = $2 LIMIT 1`, [appName, userId]);
         if (!ownerCheck.rows.length) return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         const { bot_type: botType, status } = ownerCheck.rows[0];
         if (status !== 'logged_out' && status !== 'offline') return res.status(409).json({ success: false, message: 'Session replacement is available only while this bot is offline.' });
@@ -5231,8 +5253,11 @@ app.post('/api/bots/set-session', validateWebAppInitData, async (req, res) => {
 app.post('/api/bots/turn-off', validateWebAppInitData, async (req, res) => {
     const userId = String(req.telegramData.id);
     const { appName } = req.body;
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     try {
-        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 UNION SELECT 1 FROM user_bots WHERE bot_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
         if (!ownerCheck.rows.length) return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         await herokuApi.patch(`https://api.heroku.com/apps/${appName}/formation/web`, { quantity: 0 }, { headers: { Authorization: `Bearer ${HEROKU_API_KEY}`, Accept: 'application/vnd.heroku+json; version=3', 'Content-Type': 'application/json' } });
         await pool.query('UPDATE user_bots SET status = $1 WHERE bot_name = $2 AND user_id = $3', ['offline', appName, userId]);
@@ -5249,7 +5274,7 @@ app.get('/api/bots/config-vars/:appName', validateWebAppInitData, async (req, re
     const userId = req.telegramData.id.toString();
     const { appName } = req.params;
     try {
-        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1 AND user_id = $2', [appName, userId]);
+        const ownerCheck = await pool.query('SELECT user_id, bot_type FROM user_bots WHERE bot_name = $1 AND user_id = $2 UNION SELECT user_id, bot_type FROM user_deployments WHERE app_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
         if (ownerCheck.rows.length === 0) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
@@ -5492,6 +5517,9 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
     const normalizedType = String(botType || '').trim().toLowerCase();
     const normalizedName = String(appName || '').trim().toLowerCase();
     const normalizedSession = String(sessionId || '').trim();
+    if (isMaintenanceMode && String(req.telegramData.id) !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     const validationError = validateMiniAppDeploymentInput(normalizedType, normalizedName, normalizedSession);
     if (validationError) return res.status(400).json({ success: false, message: validationError });
 
@@ -5647,11 +5675,14 @@ app.post('/nowpayments-webhook', express.json(), async (req, res) => {
 app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
     const { appName } = req.body;
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     console.log(`[API /bots/delete] User ${userId} initiated deletion for '${appName}'.`);
     
     try {
         // First, verify the user actually owns this bot to prevent unauthorized deletions
-        const ownerCheck = await pool.query('SELECT user_id FROM user_deployments WHERE app_name = $1 AND user_id = $2', [appName, userId]);
+        const ownerCheck = await pool.query('SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 UNION SELECT 1 FROM user_bots WHERE bot_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
         if (ownerCheck.rows.length === 0) {
             console.warn(`[API /bots/delete] Auth Failure: User ${userId} does not own '${appName}'.`);
             return res.status(403).json({ success: false, message: 'Authorization Failed: You are not the owner of this bot.' });
@@ -5694,9 +5725,12 @@ app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
 app.post('/api/bots/set-var', validateWebAppInitData, async (req, res) => {
     const { appName, varName, varValue } = req.body;
     const userId = req.telegramData.id.toString();
+    if (isMaintenanceMode && userId !== String(ADMIN_ID)) {
+        return res.status(503).json({ success: false, code: 'MAINTENANCE', message: 'The service is currently under maintenance. Please come back shortly.' });
+    }
     try {
-        const ownerCheck = await pool.query('SELECT user_id FROM user_bots WHERE bot_name = $1', [appName]);
-        if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].user_id !== userId) {
+        const ownerCheck = await pool.query('SELECT 1 FROM user_bots WHERE bot_name = $1 AND user_id = $2 UNION SELECT 1 FROM user_deployments WHERE app_name = $1 AND user_id = $2 LIMIT 1', [appName, userId]);
+        if (ownerCheck.rows.length === 0) {
             return res.status(403).json({ success: false, message: 'You do not own this bot.' });
         }
         await herokuApi.patch(`https://api.heroku.com/apps/${appName}/config-vars`, { [varName]: varValue }, {
