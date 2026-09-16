@@ -9770,10 +9770,10 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
 
     try {
         const result = await pool.query(
-            `SELECT user_id, bot_name, bot_type
+            `SELECT DISTINCT ON (bot_name) user_id, bot_name, bot_type
              FROM user_bots
              WHERE bot_type IN ('levanter', 'raganork')
-             ORDER BY bot_type, bot_name`
+             ORDER BY bot_name, created_at DESC`
         );
         bots = result.rows;
 
@@ -9784,14 +9784,14 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
 
                 await pool.query(
                     `UPDATE user_deployments
-                     SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1)
+                     SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1::text)
                      WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
                     [playUrl, app.user_id, app.bot_name, app.bot_type]
                 );
                 if (backupPool) {
                     await backupPool.query(
                         `UPDATE user_deployments
-                         SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1)
+                         SET config_vars = COALESCE(config_vars, '{}'::jsonb) || jsonb_build_object('PLAY_URL', $1::text)
                          WHERE user_id = $2 AND app_name = $3 AND bot_type = $4`,
                         [playUrl, app.user_id, app.bot_name, app.bot_type]
                     );
