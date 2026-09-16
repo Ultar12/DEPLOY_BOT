@@ -290,6 +290,7 @@
         html,#main-container,#view-container{background:#050505;color:#f4f4f5}.header{background:#050505!important}.dashboard,.settings-page,.plugins-page,.bot-workspace{color:#f4f4f5}.dashboard-heading h1,.settings-page h1,.bot-workspace-heading h1,.plugins-page h1{color:#fff!important}.section-title,.kicker{color:#a1a1aa!important}.news-card,.workspace-panel,.settings-card,.bot-list,.mgmt-option{background:#111114!important;border-color:#29292f!important;color:#e4e4e7!important}.news-title,.mgmt-option-label,.workspace-panel h2{color:#fff!important}.news-content,.mgmt-option-hint,.workspace-panel p,.settings-card p{color:#a1a1aa!important}.management-grid input,.management-grid select,.management-grid textarea,.session-form input,.session-form select,.session-form textarea{background:#0b0b0d!important;color:#fff!important;border-color:#3f3f46!important}.management-grid label,.session-form label{color:#d4d4d8!important}.support-btn{background:#7c3aed!important;color:#fff!important}.hero-action.primary{background:#fff;color:#111}.pagination{color:#a1a1aa}.error-panel{border-color:#7f1d1d!important}.bot-card{background:#111114!important;border-bottom-color:#29292f!important;color:#fff!important}.bot-name{color:#fff!important}.bot-meta{color:#c4b5fd!important}.plugin-row{background:#111114!important;border-color:#29292f!important}
 
     .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}.bot-tabs{border-bottom-color:#64748b!important}.bot-tab{display:inline-block;background:#fff!important;color:#111!important;font-weight:800!important;border:1px solid #64748b;border-radius:5px;padding:9px 14px!important}.bot-tab.active{background:#111!important;color:#fff!important;border-color:#111!important}.bot-tab-content .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}.bot-tab-content .mgmt-option .mgmt-option-label{color:#fff!important}.bot-tab-content .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.global-loader{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(5,5,5,.72);backdrop-filter:blur(3px);opacity:1;visibility:visible;transition:opacity .2s ease,visibility .2s ease}.global-loader.hidden{opacity:0;visibility:hidden;pointer-events:none}.loader-card{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:170px;padding:24px 28px;border:1px solid #64748b;border-radius:10px;background:#111;color:#fff;box-shadow:0 18px 50px rgba(0,0,0,.35)}.loader-spinner{width:34px;height:34px;border:3px solid #64748b;border-top-color:#fff;border-radius:50%;animation:loader-spin .8s linear infinite}.loader-text{font-size:12px;font-weight:700;letter-spacing:.04em}.loader-progress{position:fixed;top:0;left:0;z-index:10000;width:100%;height:3px;background:#111;transform:scaleX(0);transform-origin:left;transition:transform .2s ease}.loader-progress.active{transform:scaleX(.7);animation:loader-progress 1.2s ease-in-out infinite alternate}@keyframes loader-spin{to{transform:rotate(360deg)}}@keyframes loader-progress{to{transform:scaleX(.95)}}
+    body .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover{background:#272727!important;border-color:#fff!important}
     </style>
 </head>
 <body>
@@ -393,6 +394,10 @@
         function goBack() {
             if (state.currentView === 'payment') {
                 window.location.href = '/apps/create?payment=cancelled';
+                return;
+            }
+            if (state.currentView === 'variables' || state.currentView === 'logs') {
+                navigateTo('bot-tab', { bot: state.selectedBot, tab: 'settings' });
                 return;
             }
             if (document.referrer.includes('/apps')) window.history.back();
@@ -681,7 +686,7 @@
                 if (act === 'change-session') {
                     const sessionId = window.prompt('Paste the new session ID.');
                     if (!sessionId) return;
-                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) navigateTo('dashboard'); }).catch(() => tg.showAlert('Failed to update session.'));
+                    fetch(`${API_BASE_URL}/bots/set-session`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ appName: btn.dataset.appName, sessionId }) }).then(response => response.json()).then(data => { tg.showAlert(data.message); if (data.success) window.location.href = '/apps/dashboard'; }).catch(() => tg.showAlert('Failed to update session.'));
                     return;
                 }
                 if (act === 'copy-plugin') {
@@ -723,7 +728,7 @@
                             });
                             const data = await res.json();
                             tg.showAlert(data.message);
-                            if (data.success) navigateTo('dashboard');
+                            if (data.success) window.location.href = '/apps/dashboard';
                         } catch (e) { tg.showAlert("Error."); }
                     });
                 }
