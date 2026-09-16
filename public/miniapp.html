@@ -348,7 +348,9 @@
                 padding: 9px 10px;
                 border-radius: 5px;
             }
-            body .bot-card .bot-actions { margin-top: 7px !important; gap: 6px !important; }
+            body .bot-card { flex-wrap: nowrap !important; align-items: center !important; }
+            body .bot-card .bot-info { flex: 1 1 auto !important; width: auto !important; min-width: 0; }
+            body .bot-card .bot-actions { width: auto !important; margin-top: 0 !important; gap: 4px !important; justify-content: flex-end !important; }
             body .bot-card .bot-actions .support-btn { padding: 6px 9px !important; font-size: 9px; }
             .section-title { margin-top: 14px; margin-bottom: 8px; }
             .plugins-page .dashboard-subtitle { margin-bottom: 12px; }
@@ -395,7 +397,7 @@
         const nativeFetch = window.fetch.bind(window);
         window.fetch = (input, options = {}) => {
             const url = String(typeof input === 'string' ? input : input?.url || '');
-            const backgroundRequest = /deployment-jobs|\/bots\/logs|check-app-name|validate-session/.test(url);
+            const backgroundRequest = options.__background === true || /deployment-jobs|\/bots\/logs|check-app-name|validate-session/.test(url);
             if (!backgroundRequest) {
                 activeVisibleRequests += 1;
                 clearTimeout(loaderTimer);
@@ -530,8 +532,8 @@
             setTimeout(() => { if (!activeVisibleRequests) hideGlobalLoader(); }, 180);
             if (viewName === 'dashboard') {
                 loadDashboard();
-                window.__dashboardRefreshTimer = setInterval(() => {
-                    if (state.currentView === 'dashboard') loadDashboard();
+                    window.__dashboardRefreshTimer = setInterval(() => {
+                    if (state.currentView === 'dashboard') loadDashboard(true);
                 }, 10000);
             }
             if (viewName === 'variables') loadVariables(data);
@@ -613,9 +615,9 @@
             }
         }
 
-        async function loadDashboard() {
+        async function loadDashboard(isBackgroundRefresh = false) {
             try {
-                const res = await fetch(`${API_BASE_URL}/bots`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                const res = await fetch(`${API_BASE_URL}/bots`, { __background: isBackgroundRefresh, headers: { 'X-Telegram-Init-Data': tg.initData } });
                 const data = await res.json();
                 const bots = data.bots || [];
                 window.__maintenanceMode = data.maintenanceMode === true;
