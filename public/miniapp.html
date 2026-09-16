@@ -365,7 +365,7 @@
         }
 
         function updateHeader() {
-            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'bot-tab': 'Bot Workspace', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'session': 'Get Session' };
+            const titles = { 'dashboard': 'Dashboard', 'management': 'Settings', 'bot-tab': 'Bot Workspace', 'variables': 'Config', 'logs': 'Logs', 'deploy': 'Deploy', 'job': 'Deployment', 'payment': 'Pay to Deploy', 'session': 'Get Session' };
             document.getElementById('headerTitle').textContent = titles[state.currentView] || 'Bot Manager';
             document.getElementById('backBtn').classList.toggle('show', state.currentView !== 'dashboard');
         }
@@ -396,6 +396,7 @@
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
                 case 'logs': container.innerHTML = getBotLogsHTML(data); break;
                 case 'job': container.innerHTML = getDeploymentJobHTML(data); break;
+                case 'payment': container.innerHTML = getPaymentHTML(data); break;
                 case 'session': container.innerHTML = getSessionHTML(); break;
                 case 'plugins': container.innerHTML = getPluginsHTML(); break;
                 case 'settings': container.innerHTML = getSettingsHTML(); break;
@@ -575,6 +576,10 @@
             return `<div class="management-grid">${paymentNotice}<div class="news-card"><div class="news-title">Deployment in progress</div><div class="news-content">Deploy ID: <strong>${data.jobId}</strong></div><div id="jobStatus" class="news-content" style="margin-top:12px;">Processing deployment...</div></div><button class="support-btn" data-action="navigate" data-view="dashboard">BACK TO DASHBOARD</button></div>`;
         }
 
+        function getPaymentHTML(data = {}) {
+            return `<div id="paymentView" class="management-grid"><div class="news-card"><div class="news-title">Choose a deployment plan</div><div class="news-content">Select a price option to continue to secure payment.</div></div><div id="paymentPlans" class="management-grid"><div class="news-content">Loading available plans...</div></div><button id="continuePaymentBtn" class="support-btn" type="button" disabled>PAY TO DEPLOY</button><div id="paymentResult" class="news-content"></div></div>`;
+        }
+
         function getSessionHTML() {
             return `<form id="sessionRequestForm" class="management-grid"><div class="news-card"><div class="news-title">Get Session</div><div class="news-content">Select your bot type, enter your WhatsApp number in international format, then complete the pairing request. Your session ID appears here for copying.</div></div><label class="section-title" style="margin:0;">Bot type<select id="sessionBotType" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"><option value="levanter">Levanter</option><option value="raganork">Raganork</option></select></label><label class="section-title" style="margin:0;">WhatsApp number<input id="sessionPhoneNumber" inputmode="tel" required placeholder="2349160000000" style="display:block;width:100%;margin-top:8px;padding:12px;background:#fff;color:#172033;border:1px solid #d1d5db;border-radius:6px;"></label><button class="support-btn" type="submit">REQUEST SESSION</button><div id="sessionRequestResult" class="news-content"></div></form>`;
         }
@@ -688,6 +693,7 @@
                 const fields = { name: document.getElementById('deployAppName'), type: document.getElementById('deployBotType'), session: document.getElementById('deploySessionId'), autoStatus: document.getElementById('autoStatusView') };
                 const states = { name: document.getElementById('appNameState'), session: document.getElementById('sessionState') };
                 let selectedPlan = null;
+                let paymentPlansLoaded = false;
                 const setState = (element, good, message) => { element.textContent = `${good ? '✓' : '✕'} ${message}`; element.className = `validation-state ${good ? 'good' : 'bad'}`; };
                 const debounce = (fn, delay = 450) => { let timer; return () => { clearTimeout(timer); timer = setTimeout(fn, delay); }; };
                 const checkName = async () => {
@@ -708,6 +714,29 @@
                     setState(states.session, data.valid === true, data.message || (data.valid ? 'Session is valid' : 'Invalid session ID'));
                     return data.valid === true;
                 };
+                const loadPaymentPlans = async () => {
+                    if (paymentPlansLoaded) return;
+                    const planOptions = document.getElementById('planOptions');
+                    planOptions.style.display = 'grid';
+                    planOptions.innerHTML = '<div class="news-content">Loading available plans...</div>';
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Could not load plans.');
+                        planOptions.innerHTML = data.plans.map(plan => `<button type="button" class="mgmt-option" data-plan-id="${plan.id}" data-plan-days="${plan.days}" data-plan-amount="${plan.amountNgn}" data-plan-name="${plan.name}"><div><div class="mgmt-option-label">${plan.name}</div><div class="mgmt-option-hint">₦${Number(plan.amountNgn).toLocaleString()} · ${plan.days} days</div></div><span>○</span></button>`).join('');
+                        paymentPlansLoaded = true;
+                        planOptions.querySelectorAll('[data-plan-id]').forEach(button => {
+                            button.onclick = () => {
+                                selectedPlan = { id: button.dataset.planId, days: Number(button.dataset.planDays), amount: Number(button.dataset.planAmount), name: button.dataset.planName };
+                                planOptions.querySelectorAll('[data-plan-id]').forEach(item => { item.style.borderColor = ''; item.style.background = ''; item.querySelector('span').textContent = '○'; });
+                                button.style.borderColor = '#22c55e';
+                                button.style.background = 'rgba(34, 197, 94, .15)';
+                                button.querySelector('span').textContent = '✓';
+                                document.getElementById('payDeployBtn').textContent = 'PAY TO DEPLOY';
+                            };
+                        });
+                    } catch (error) { planOptions.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
+                };
                 fields.name.addEventListener('input', debounce(checkName));
                 fields.session.addEventListener('input', debounce(checkSession));
                 fields.type.addEventListener('change', checkSession);
@@ -716,27 +745,6 @@
                     if (!nameOk || !sessionOk) return;
                     document.getElementById('deployOptions').style.display = 'block';
                     document.getElementById('wizardActions').style.display = 'none';
-                    const planOptions = document.getElementById('planOptions');
-                    planOptions.style.display = 'grid';
-                    {
-                        planOptions.innerHTML = '<div class="news-content">Loading available plans...</div>';
-                        try {
-                            const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
-                            const data = await response.json();
-                            if (!data.success) throw new Error(data.message || 'Could not load plans.');
-                            planOptions.innerHTML = data.plans.map(plan => `<button type="button" class="mgmt-option" data-plan-id="${plan.id}" data-plan-days="${plan.days}" data-plan-amount="${plan.amountNgn}" data-plan-name="${plan.name}"><div><div class="mgmt-option-label">${plan.name}</div><div class="mgmt-option-hint">₦${Number(plan.amountNgn).toLocaleString()} · ${plan.days} days</div></div><span>○</span></button>`).join('');
-                            planOptions.querySelectorAll('[data-plan-id]').forEach(button => {
-                                button.onclick = () => {
-                                    selectedPlan = { id: button.dataset.planId, days: Number(button.dataset.planDays), amount: Number(button.dataset.planAmount), name: button.dataset.planName };
-                                    planOptions.querySelectorAll('[data-plan-id]').forEach(item => { item.style.borderColor = ''; item.style.background = ''; item.querySelector('span').textContent = '○'; });
-                                    button.style.borderColor = '#22c55e';
-                                    button.style.background = 'rgba(34, 197, 94, .15)';
-                                    button.querySelector('span').textContent = '✓';
-                                    document.getElementById('payDeployBtn').style.display = 'block';
-                                };
-                            });
-                        } catch (error) { planOptions.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
-                    }
                 };
                 const submitDeployment = async (forcePayment, deployKeyOverride = '') => {
                     const result = document.getElementById('deployResult');
@@ -756,8 +764,40 @@
                     } catch (e) { result.textContent = e.message || 'Connection error. Try again.'; }
                 };
                 document.getElementById('keyDeployBtn').onclick = () => { const key = window.prompt('Enter your deploy key.'); if (key) submitDeployment(false, key.trim()); };
-                document.getElementById('payDeployBtn').onclick = () => submitDeployment(true);
+                document.getElementById('payDeployBtn').onclick = () => navigateTo('payment', { botType: fields.type.value, appName: fields.name.value.trim().toLowerCase(), sessionId: fields.session.value.trim(), autoStatusView: fields.autoStatus.value });
                 deployForm.onsubmit = (event) => { event.preventDefault(); submitDeployment(false); };
+            }
+            const paymentView = document.getElementById('paymentView');
+            if (paymentView) {
+                const plans = document.getElementById('paymentPlans');
+                const result = document.getElementById('paymentResult');
+                let selectedPlan = null;
+                const loadPlans = async () => {
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/deployment-plans`, { headers: { 'X-Telegram-Init-Data': tg.initData } });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Could not load plans.');
+                        plans.innerHTML = data.plans.map(plan => `<button type="button" class="mgmt-option" data-plan-id="${plan.id}" data-plan-days="${plan.days}" data-plan-amount="${plan.amountNgn}" data-plan-name="${plan.name}"><div><div class="mgmt-option-label">${plan.name}</div><div class="mgmt-option-hint">₦${Number(plan.amountNgn).toLocaleString()} · ${plan.days} days</div></div><span>○</span></button>`).join('');
+                        plans.querySelectorAll('[data-plan-id]').forEach(button => button.onclick = () => {
+                            selectedPlan = { id: button.dataset.planId };
+                            plans.querySelectorAll('[data-plan-id]').forEach(item => { item.style.borderColor = ''; item.style.background = ''; item.querySelector('span').textContent = '○'; });
+                            button.style.borderColor = '#22c55e'; button.style.background = 'rgba(34, 197, 94, .15)'; button.querySelector('span').textContent = '✓';
+                            document.getElementById('continuePaymentBtn').disabled = false;
+                        });
+                    } catch (error) { plans.innerHTML = `<div class="news-content">${error.message || 'Could not load plans.'}</div>`; }
+                };
+                document.getElementById('continuePaymentBtn').onclick = async () => {
+                    if (!selectedPlan) return;
+                    const button = document.getElementById('continuePaymentBtn'); button.disabled = true; result.textContent = 'Redirecting to payment...';
+                    try {
+                        const response = await fetch(`${API_BASE_URL}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData }, body: JSON.stringify({ ...state.selectedBot, planId: selectedPlan.id }) });
+                        const data = await response.json();
+                        if (!data.success) throw new Error(data.message || 'Could not create the payment.');
+                        navigateTo('job', { jobId: data.jobId, paymentRequired: true });
+                        if (data.paymentUrl) tg.openLink(data.paymentUrl);
+                    } catch (error) { result.textContent = error.message || 'Could not start payment.'; button.disabled = false; }
+                };
+                loadPlans();
             }
             const sessionRequestForm = document.getElementById('sessionRequestForm');
             if (sessionRequestForm) {

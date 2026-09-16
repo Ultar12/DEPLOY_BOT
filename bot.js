@@ -4879,7 +4879,8 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
       const profile = await axios.get('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${token.data.access_token}` } });
       const email = String(profile.data.email || '').toLowerCase(); if (!email) return res.redirect('/apps');
       const userId = webAccountKey(email), generated = hashWebPassword(crypto.randomBytes(24).toString('hex'));
-      await pool.query(`INSERT INTO web_accounts (user_id,email,password_hash,password_salt,is_verified) VALUES ($1,$2,$3,$4,TRUE) ON CONFLICT (user_id) DO UPDATE SET is_verified=TRUE`, [userId, email, generated.hash, generated.salt]);
+      await pool.query(`INSERT INTO web_accounts (user_id,email,password_hash,password_salt,is_verified) VALUES ($1,$2,$3,$4,TRUE) ON CONFLICT (user_id) DO UPDATE SET email=EXCLUDED.email, is_verified=TRUE`, [userId, email, generated.hash, generated.salt]);
+      await pool.query(`INSERT INTO email_verification (user_id, email, is_verified) VALUES ($1, $2, TRUE) ON CONFLICT (user_id) DO UPDATE SET email=EXCLUDED.email, is_verified=TRUE`, [userId, email]);
       res.setHeader('Set-Cookie', `${TELEGRAM_LOGIN_COOKIE}=${encodeURIComponent(createPortalSession(userId))}; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax`); res.redirect('/apps');
     } catch (error) { console.error('[Google OAuth]', error.response?.data || error.message); res.redirect('/apps'); }
   });
@@ -5353,7 +5354,11 @@ async function ensureMiniAppDeploymentSchema() {
 
 async function getMiniAppUserEmail(userId) {
     const result = await pool.query('SELECT email FROM email_verification WHERE user_id = $1 AND is_verified = TRUE LIMIT 1', [String(userId)]);
-    return result.rows[0]?.email || null;
+    if (result.rows[0]?.email) return result.rows[0].email;
+    const webAccount = await pool.query('SELECT email FROM web_accounts WHERE user_id = $1 AND is_verified = TRUE LIMIT 1', [String(userId)]);
+    const email = webAccount.rows[0]?.email || null;
+    if (email) await pool.query(`INSERT INTO email_verification (user_id, email, is_verified) VALUES ($1, $2, TRUE) ON CONFLICT (user_id) DO UPDATE SET email=EXCLUDED.email, is_verified=TRUE`, [String(userId), email]);
+    return email;
 }
 
 async function updateDeploymentJob(jobId, fields) {
