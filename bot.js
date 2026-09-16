@@ -5429,22 +5429,47 @@ async function startMiniAppDeploymentJob(jobId) {
             if (!stage) return clearInterval(progressTimer);
             updateDeploymentJob(jobId, { progress: stage.progress, progress_message: stage.message }).catch(error => console.error(`[MiniApp Job ${jobId}] Progress update failed:`, error.message));
         }, 12000);
-        await dbServices.buildWithProgress(job.user_id, {
+        await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* is now building.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] User progress notification failed:`, error.message));
+        await bot.sendMessage(ADMIN_ID, `*Deployment Build Started*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin start notification failed:`, error.message));
+        const isTelegramUser = /^-?\d+$/.test(String(job.user_id));
+        const buildResult = await dbServices.buildWithProgress(job.user_id, {
             SESSION_ID: job.session_id,
             APP_NAME: job.app_name,
             ...(job.bot_type === 'raganork'
                 ? { AUTO_READ_STATUS: job.auto_status_view || 'false' }
                 : { AUTO_STATUS_VIEW: job.auto_status_view || 'false' }),
             DAYS: job.plan_days || 30
-        }, false, false, job.bot_type);
+        }, false, false, job.bot_type, null, null, null, !isTelegramUser);
+        if (buildResult && buildResult.success === false) throw new Error(buildResult.error || 'The bot build failed to start.');
         await updateDeploymentJob(jobId, { status: 'completed', progress: 100, progress_message: 'Deployment completed' });
-        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} for *${escapeMarkdown(job.app_name)}* completed.`, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Completion notification failed:`, error.message));
+        await bot.sendMessage(ADMIN_ID, `*Deployment Completed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\``, { parse_mode: 'Markdown' }).catch(error => console.error(`[MiniApp Job ${jobId}] Admin completion notification failed:`, error.message));
     } catch (error) {
         console.error(`[MiniApp Job ${jobId}] Deployment failed:`, error);
-        await updateDeploymentJob(jobId, { status: 'failed', progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' });
+        await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed', error_message: error.message || 'Deployment failed' }).catch(updateError => console.error(`[MiniApp Job ${jobId}] Failed to persist failure:`, updateError.message));
         await bot.sendMessage(job.user_id, `Deployment job ${job.job_id} failed: ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(() => {});
+        await bot.sendMessage(ADMIN_ID, `*Deployment Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${job.job_id}\`\n*Reason:* ${escapeMarkdown(error.message || 'Unknown error')}`, { parse_mode: 'Markdown' }).catch(notificationError => console.error(`[MiniApp Job ${jobId}] Admin failure notification failed:`, notificationError.message));
     } finally {
         if (progressTimer) clearInterval(progressTimer);
+    }
+}
+
+async function launchMiniAppDeploymentJob(jobId) {
+    try {
+        await startMiniAppDeploymentJob(jobId);
+    } catch (error) {
+        console.error(`[MiniApp Job ${jobId}] Worker startup failed:`, error);
+        try {
+            const result = await pool.query('SELECT user_id, app_name FROM deployment_jobs WHERE job_id = $1', [jobId]);
+            if (result.rows.length) {
+                const job = result.rows[0];
+                await updateDeploymentJob(jobId, { status: 'failed', progress: 0, progress_message: 'Deployment failed to start', error_message: error.message || 'Deployment worker failed to start' }).catch(() => {});
+                await bot.sendMessage(job.user_id, `Deployment for *${escapeMarkdown(job.app_name)}* could not start. Please contact support.`, { parse_mode: 'Markdown' }).catch(() => {});
+                await bot.sendMessage(ADMIN_ID, `*Deployment Worker Failed*\n\n*Bot:* \`${escapeMarkdown(job.app_name)}\`\n*User:* \`${job.user_id}\`\n*Deploy ID:* \`${jobId}\`\n*Reason:* ${escapeMarkdown(error.message || 'Worker failed to start')}`, { parse_mode: 'Markdown' }).catch(() => {});
+            }
+        } catch (notificationError) {
+            console.error(`[MiniApp Job ${jobId}] Worker failure handling failed:`, notificationError.message);
+        }
     }
 }
 
@@ -5483,7 +5508,7 @@ app.post('/api/deployment-jobs/:jobId/retry', validateWebAppInitData, async (req
         const active = await pool.query(`SELECT job_id FROM deployment_jobs WHERE user_id = $1 AND app_name = $2 AND status IN ('queued','running','awaiting_payment') LIMIT 1`, [userId, job.app_name]);
         if (active.rows.length) return res.status(409).json({ success: false, jobId: active.rows[0].job_id, message: 'A deployment for this bot is already running.' });
         await updateDeploymentJob(job.job_id, { status: 'queued', progress: 0, progress_message: 'Retry queued', error_message: null, retry_of: job.job_id });
-        void startMiniAppDeploymentJob(job.job_id);
+        void launchMiniAppDeploymentJob(job.job_id);
         res.json({ success: true, jobId: job.job_id, message: 'Deployment retry queued.' });
     } catch (error) {
         console.error('[MiniApp] Deployment retry error:', error.message);
@@ -5630,7 +5655,7 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
             const requesterName = req.telegramData.username ? `@${escapeMarkdown(req.telegramData.username)}` : escapeMarkdown(req.telegramData.first_name || 'User');
             await bot.sendMessage(userId, `Deploy key used: \`${normalizedKey}\`\nUses remaining: *${usesLeft}*\nDeploy ID: \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
             await bot.sendMessage(ADMIN_ID, `*Key Used By:*\n*User:* ${requesterName} (\`${userId}\`)\n*Key Used:* \`${normalizedKey}\`\n*Uses Left:* ${usesLeft}\n*Deploy ID:* \`${jobId}\``, { parse_mode: 'Markdown' }).catch(() => {});
-            void startMiniAppDeploymentJob(jobId);
+            void launchMiniAppDeploymentJob(jobId);
             await bot.sendMessage(userId, `Deployment for *${escapeMarkdown(normalizedName)}* has started.`, { parse_mode: 'Markdown' }).catch(() => {});
             return res.json({ success: true, jobId, paymentRequired: false, message: 'Deploy key accepted. Track the job using its ID.' });
         }
@@ -6217,7 +6242,7 @@ app.post('/flutterwave/webhook', async (req, res) => {
             if (jobId) {
                 await updateDeploymentJob(jobId, { status: 'queued', progress: 0, progress_message: 'Payment confirmed; deployment queued', payment_reference: reference });
                 await bot.sendMessage(userId, `Payment confirmed. Deployment job ${jobId} is starting.`, { parse_mode: 'Markdown' });
-                void startMiniAppDeploymentJob(jobId);
+                void launchMiniAppDeploymentJob(jobId);
             } else if (isGroupFiller) {
                 const link = session_id; 
                 const members = parseInt(app_name, 10); 
@@ -6370,7 +6395,7 @@ app.post('/paystack/webhook', express.json(), async (req, res) => {
                 if (job_id) {
                     await updateDeploymentJob(job_id, { status: 'queued', progress: 0, progress_message: 'Payment confirmed; deployment queued', payment_reference: reference });
                     await bot.sendMessage(userId, `Payment confirmed. Deployment job ${job_id} is starting.`, { parse_mode: 'Markdown' });
-                    void startMiniAppDeploymentJob(job_id);
+                    void launchMiniAppDeploymentJob(job_id);
                 } else {
                     await bot.sendMessage(userId, `Payment confirmed! Your bot deployment has started.`, { parse_mode: 'Markdown' });
                     const deployVars = { SESSION_ID: session_id, APP_NAME: app_name, DAYS: days };

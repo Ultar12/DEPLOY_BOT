@@ -2296,7 +2296,7 @@ if (botType === 'levanter' || botType === 'raganork') {
         );
 
         // --- ✅ Reward Logic ---
-        if (!isRestore) {
+        if (!isRestore && !silentRestore) {
             try {
                 const userBotCount = await getUserBotCount(targetChatId);
                 const userHasReceivedReward = await hasReceivedReward(targetChatId);
@@ -2313,12 +2313,12 @@ if (botType === 'levanter' || botType === 'raganork') {
         }
 
         // --- Referral Logic ---
-        if (!isRestore && referredBy) {
+        if (!isRestore && !silentRestore && referredBy) {
             await grantReferralRewards(targetChatId, appName);
         }
 
         // --- Admin Notification (This is a NEW message, which is fine) ---
-        if (!isRestore) {
+        if (!isRestore && !silentRestore) {
             const userChat = await bot.getChat(targetChatId);
             const userDetails = `*Name:* ${escapeMarkdown(userChat.first_name || '')} ${escapeMarkdown(userChat.last_name || '')}\n*Username:* @${escapeMarkdown(userChat.username || 'N/A')}\n*Chat ID:* \`${escapeMarkdown(targetChatId)}\``;
             const appDetails = `*App Name:* \`${escapeMarkdown(appName)}\`\n*Session ID:* \`${escapeMarkdown(vars.SESSION_ID)}\`\n*Type:* Paid`;
