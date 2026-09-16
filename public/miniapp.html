@@ -289,7 +289,7 @@
     
         html,#main-container,#view-container{background:#050505;color:#f4f4f5}.header{background:#050505!important}.dashboard,.settings-page,.plugins-page,.bot-workspace{color:#f4f4f5}.dashboard-heading h1,.settings-page h1,.bot-workspace-heading h1,.plugins-page h1{color:#fff!important}.section-title,.kicker{color:#a1a1aa!important}.news-card,.workspace-panel,.settings-card,.bot-list,.mgmt-option{background:#111114!important;border-color:#29292f!important;color:#e4e4e7!important}.news-title,.mgmt-option-label,.workspace-panel h2{color:#fff!important}.news-content,.mgmt-option-hint,.workspace-panel p,.settings-card p{color:#a1a1aa!important}.management-grid input,.management-grid select,.management-grid textarea,.session-form input,.session-form select,.session-form textarea{background:#0b0b0d!important;color:#fff!important;border-color:#3f3f46!important}.management-grid label,.session-form label{color:#d4d4d8!important}.support-btn{background:#7c3aed!important;color:#fff!important}.hero-action.primary{background:#fff;color:#111}.pagination{color:#a1a1aa}.error-panel{border-color:#7f1d1d!important}.bot-card{background:#111114!important;border-bottom-color:#29292f!important;color:#fff!important}.bot-name{color:#fff!important}.bot-meta{color:#c4b5fd!important}.plugin-row{background:#111114!important;border-color:#29292f!important}
 
-    .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}
+    .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}.bot-tabs{border-bottom-color:#cbd5e1}.bot-tab{color:#172033!important;font-weight:700}.bot-tab.active{color:#000!important;border-bottom-color:#000!important}
     </style>
 </head>
 <body>
@@ -391,7 +391,7 @@
             const container = document.getElementById('view-container');
             switch(viewName) {
                 case 'dashboard': container.innerHTML = getDashboardHTML(); break;
-                case 'deploy': container.innerHTML = getDeployHTML(data); break;
+                case 'deploy': container.innerHTML = getDeployHTML(data || {}); break;
                 case 'management': container.innerHTML = getBotManagementHTML(data); break;
                 case 'bot-tab': container.innerHTML = getBotWorkspaceHTML({ bot: data.bot, tab: data.tab }); break;
                 case 'variables': container.innerHTML = getBotVariablesHTML(data); break;
@@ -547,7 +547,7 @@
             const tabs = [['overview','Overview'],['settings','Settings']];
             const nav = tabs.map(([key,label]) => `<a class="bot-tab ${tab === key ? 'active' : ''}" href="/apps/bots/${safeName}/${key}">${label}</a>`).join('');
             let content = '';
-            if (tab === 'overview') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status || 'Unknown'}</div><div class="stat-label">STATUS</div></div><div class="stat-card"><div class="stat-value">${bot.botType || 'Bot'}</div><div class="stat-label">TYPE</div></div><div class="stat-card"><div class="stat-value">${remaining}</div><div class="stat-label">DAYS REMAINING</div></div></div><div class="section-title">Quick actions</div>${getBotManagementHTML(bot)}`;
+            if (tab === 'overview') content = `<div class="bot-overview-grid"><div class="stat-card"><div class="stat-value">${bot.status || 'Unknown'}</div><div class="stat-label">STATUS</div></div><div class="stat-card"><div class="stat-value">${bot.botType || 'Bot'}</div><div class="stat-label">TYPE</div></div><div class="stat-card"><div class="stat-value">${remaining}</div><div class="stat-label">DAYS REMAINING</div></div></div>`;
             if (tab === 'resources') content = `<div class="workspace-panel"><h2>Resources</h2><p>Runtime and session resources for <strong>${bot.appName}</strong>.</p><div class="resource-row"><span>Bot type</span><strong>${bot.botType || 'Not set'}</strong></div><div class="resource-row"><span>Session</span><strong>${bot.status === 'Online' ? 'Connected' : 'Offline'}</strong></div><div class="resource-row"><span>Subscription</span><strong>${remaining} days remaining</strong></div></div>`;
             if (tab === 'activity') content = `<div class="workspace-panel"><h2>Activity</h2><div class="activity-item"><strong>Bot opened</strong><span>Current session</span></div><div class="activity-item"><strong>Status: ${bot.status || 'Unknown'}</strong><span>Latest available status</span></div></div>`;
             if (tab === 'settings') content = getBotManagementHTML(bot);
