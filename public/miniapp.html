@@ -300,6 +300,63 @@
     .hero-action.primary{background:#111114!important;color:#fff!important;border-color:#29292f!important}.hero-action.primary span{color:#a1a1aa!important}.bot-tabs{border-bottom-color:#64748b!important}.bot-tab{display:inline-block;background:#fff!important;color:#111!important;font-weight:800!important;border:1px solid #64748b;border-radius:5px;padding:9px 14px!important}.bot-tab.active{background:#111!important;color:#fff!important;border-color:#111!important}.bot-tab-content .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}.bot-tab-content .mgmt-option .mgmt-option-label{color:#fff!important}.bot-tab-content .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.global-loader{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(5,5,5,.72);backdrop-filter:blur(3px);opacity:1;visibility:visible;transition:opacity .2s ease,visibility .2s ease}.global-loader.hidden{opacity:0;visibility:hidden;pointer-events:none}.loader-card{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:170px;padding:24px 28px;border:1px solid #64748b;border-radius:10px;background:#111;color:#fff;box-shadow:0 18px 50px rgba(0,0,0,.35)}.loader-spinner{width:34px;height:34px;border:3px solid #64748b;border-top-color:#fff;border-radius:50%;animation:loader-spin .8s linear infinite}.loader-text{font-size:12px;font-weight:700;letter-spacing:.04em}.loader-progress{position:fixed;top:0;left:0;z-index:10000;width:100%;height:3px;background:#111;transform:scaleX(0);transform-origin:left;transition:transform .2s ease}.loader-progress.active{transform:scaleX(.7);animation:loader-progress 1.2s ease-in-out infinite alternate}@keyframes loader-spin{to{transform:rotate(360deg)}}@keyframes loader-progress{to{transform:scaleX(.95)}}
         body .mgmt-option,body.telegram-theme .mgmt-option{background:#111!important;color:#fff!important;border:1px solid #64748b!important;cursor:pointer!important}body .mgmt-option .mgmt-option-label,body.telegram-theme .mgmt-option .mgmt-option-label{color:#fff!important}body .mgmt-option:hover,body.telegram-theme .mgmt-option:hover{background:#272727!important;border-color:#fff!important}.bot-tab-content .danger-option,body .danger-actions .danger-option{background:#7f1d1d!important;border-color:#ef4444!important;color:#fff!important}.bot-tab-content .danger-option .mgmt-option-label,body .danger-actions .danger-option .mgmt-option-label{color:#fff!important}.bot-tab-content .danger-option:hover,body .danger-actions .danger-option:hover{background:#991b1b!important;border-color:#f87171!important}.renew-btn{width:auto!important;min-width:0!important;padding:8px 12px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important}body .bot-card .bot-actions{display:flex!important;visibility:visible!important;opacity:1!important;position:relative!important;z-index:3!important;gap:8px!important;flex-wrap:wrap!important;align-items:center!important}body .bot-card .bot-actions .support-btn{display:inline-flex!important;visibility:visible!important;opacity:1!important;white-space:nowrap!important}@media(max-width:620px){body .bot-card{display:flex!important;flex-wrap:wrap!important;align-items:flex-start!important}body .bot-card .bot-info{flex:1 1 100%!important;width:100%!important}body .bot-card .bot-actions{width:100%!important;margin-top:12px!important;justify-content:flex-start!important}
     }
+        /* Compact list treatment: each bot/plugin stays visibly separate without oversized cards. */
+        .dark-dashboard,
+        .plugins-page,
+        .bot-workspace { padding-top: 24px; }
+        .dark-dashboard .dashboard-heading { margin-bottom: 16px; }
+        .hero-actions { margin-bottom: 18px; }
+        .stats-grid { margin-top: 8px; }
+        .dark-dashboard .bot-list,
+        .plugin-list {
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            gap: 8px;
+        }
+        .dark-dashboard .bot-card,
+        .plugin-row {
+            border: 1px solid #29292f;
+            border-radius: 6px;
+            padding: 11px 12px;
+            min-height: 0;
+        }
+        .dark-dashboard .bot-card:last-child { border-bottom: 1px solid #29292f; }
+        .dark-dashboard .bot-card:hover,
+        .plugin-row:hover { border-color: #45404f; }
+        .section-title { margin-top: 18px; margin-bottom: 10px; padding-bottom: 6px; }
+        .plugins-page .dashboard-subtitle { margin-bottom: 16px; }
+        .plugin-row span { margin-top: 3px; line-height: 1.35; }
+        .plugin-copy-btn { padding: 7px 9px; }
+        @media (max-width: 620px) {
+            #view-container { padding: 14px 12px 24px; }
+            .dark-dashboard,
+            .plugins-page,
+            .bot-workspace { padding-top: 12px; }
+            .dark-dashboard .dashboard-heading { margin-bottom: 12px; }
+            .dark-dashboard .dashboard-heading h1 { font-size: 26px; }
+            .hero-actions { gap: 7px; margin-bottom: 14px; }
+            .hero-action { gap: 4px; padding: 11px 12px; }
+            .hero-action span { font-size: 11px; }
+            .stats-grid { gap: 7px; }
+            .stat-card { padding: 9px 10px; }
+            .stat-value { font-size: 18px; }
+            .dark-dashboard .bot-list,
+            .plugin-list { gap: 6px; }
+            .dark-dashboard .bot-card,
+            .plugin-row {
+                padding: 9px 10px;
+                border-radius: 5px;
+            }
+            body .bot-card .bot-actions { margin-top: 7px !important; gap: 6px !important; }
+            body .bot-card .bot-actions .support-btn { padding: 6px 9px !important; font-size: 9px; }
+            .section-title { margin-top: 14px; margin-bottom: 8px; }
+            .plugins-page .dashboard-subtitle { margin-bottom: 12px; }
+            .plugin-row { gap: 8px; }
+            .plugin-row strong { font-size: 11px; }
+            .plugin-row span { font-size: 11px; }
+            .plugin-copy-btn { align-self: flex-start; padding: 6px 8px; }
+        }
     </style>
 </head>
 <body>
