@@ -4782,6 +4782,7 @@ const APP_URL = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   app.get('/apps', (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
 });
+  app.get('/auth/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'telegram-login.html')));
   app.get(['/apps/new', '/apps/create', '/apps/session', '/apps/plugins', '/apps/settings', '/apps/notifications'], (req, res) => {
     telegramLoginRequired(req, res, () => res.sendFile(path.join(__dirname, 'public', 'miniapp.html')));
   });
@@ -6868,11 +6869,19 @@ bot.onText(/^\/deleteawsdb (.+)$/, async (msg, match) => {
 });
 
 
-// New /add <user_id> command for admin
-bot.onText(/^\/add (\d+)$/, async (msg, match) => {
+// /add accepts a Telegram user ID or an email linked to an existing account.
+bot.onText(/^\/add\s+(.+)$/i, async (msg, match) => {
     const cid = msg.chat.id.toString();
     await dbServices.updateUserActivity(cid);
-    const targetUserId = match[1];
+    const targetInput = match[1].trim();
+    let targetUserId = targetInput;
+    if (!/^\d+$/.test(targetInput)) {
+        const account = await pool.query(`SELECT user_id FROM user_deployments WHERE LOWER(email)=LOWER($1)
+            UNION SELECT user_id FROM email_verification WHERE LOWER(email)=LOWER($1)
+            UNION SELECT user_id FROM web_accounts WHERE LOWER(email)=LOWER($1) LIMIT 1`, [targetInput]);
+        if (!account.rows[0]) return bot.sendMessage(cid, `No registered account was found for ${targetInput}.`);
+        targetUserId = String(account.rows[0].user_id);
+    }
 
     console.log(`[Admin] /add command received from ${cid}. Target user ID: ${targetUserId}`);
 
@@ -6885,8 +6894,8 @@ bot.onText(/^\/add (\d+)$/, async (msg, match) => {
     console.log(`[Admin] userStates cleared for ${cid}. Current state:`, userStates[cid]);
 
     try {
-        await bot.getChat(targetUserId);
-        console.log(`[Admin] Verified target user ID ${targetUserId} exists.`);
+        if (/^\d+$/.test(targetUserId)) await bot.getChat(targetUserId);
+        console.log(`[Admin] Verified target account ${targetUserId} exists.`);
     } catch (error) {
         console.error(`[Admin] Error verifying target user ID ${targetUserId} for /add command:`, error.message);
         if (error.response && error.response.body && error.response.body.description) {
