@@ -9611,7 +9611,7 @@ bot.onText(/^\/plugin$/i, async (msg) => {
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
 });
 
-bot.onText(/^\/plugin\s+list$/i, async (msg) => {
+bot.onText(/^(?:\/plugin\s+list|\/pluginlist)$/i, async (msg) => {
     try {
         const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(msg.from.id)]);
         if (!result.rows.length) return bot.sendMessage(msg.chat.id, 'No plugins saved yet. Use /plugin (levanter|raganork) (url).');
