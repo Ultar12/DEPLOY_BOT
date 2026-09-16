@@ -247,6 +247,20 @@
     
         .mgmt-option{color:#172033!important;background:#fff!important;border:1px solid #e5e7eb!important}.mgmt-option:hover{border-color:#cbb2df!important;background:#faf8fd!important}.support-btn{background:#430098!important;color:#fff!important;border:0!important}.management-grid input,.management-grid select,.management-grid textarea{background:#fff!important;color:#172033!important;border:1px solid #d1d5db!important}.management-grid input:focus,.management-grid select:focus,.management-grid textarea:focus{border-color:#8b5bb5!important;outline:3px solid rgba(67,0,152,.1)}
 
+        /* Telegram phone theme integration. These variables are updated from themeParams below. */
+        :root{color-scheme:light;--tg-bg:#fff;--tg-secondary-bg:#f7f7f8;--tg-section-bg:#fff;--tg-text:#172033;--tg-hint:#7d8795;--tg-link:#430098;--tg-button:#430098;--tg-button-text:#fff;--tg-border:#e5e7eb;--tg-destructive:#b42318}
+        body.telegram-theme{background:var(--tg-bg)!important;color:var(--tg-text)!important}
+        body.telegram-theme .header,body.telegram-theme .workspace-bar{background:var(--tg-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
+        body.telegram-theme #view-container{background:var(--tg-bg)!important}
+        body.telegram-theme .platform-strip{background:var(--tg-secondary-bg)!important;color:var(--tg-hint)!important;border-color:var(--tg-border)!important}
+        body.telegram-theme .dashboard-heading h1,body.telegram-theme .bot-workspace-heading h1,body.telegram-theme .settings-page h1,body.telegram-theme .header-title,body.telegram-theme .brand-lockup,body.telegram-theme .workspace-select{color:var(--tg-text)!important}
+        body.telegram-theme .news-card{background:var(--tg-secondary-bg)!important;border-color:var(--tg-link)!important;color:var(--tg-text)!important}
+        body.telegram-theme .news-title,body.telegram-theme .tab.active,body.telegram-theme .kicker,body.telegram-theme .new-btn,body.telegram-theme .back-btn{color:var(--tg-link)!important}
+        body.telegram-theme .news-content,body.telegram-theme .bot-meta,body.telegram-theme .dashboard-count,body.telegram-theme .section-title,body.telegram-theme .stat-label,.telegram-theme .mgmt-option-hint{color:var(--tg-hint)!important}
+        body.telegram-theme .mgmt-option{background:var(--tg-section-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
+        body.telegram-theme .support-btn{background:var(--tg-button)!important;color:var(--tg-button-text)!important}
+        body.telegram-theme .management-grid input,body.telegram-theme .management-grid select,body.telegram-theme .management-grid textarea{background:var(--tg-section-bg)!important;color:var(--tg-text)!important;border-color:var(--tg-border)!important}
+
     
         .bot-workspace{max-width:1000px;margin:0 auto}.bot-workspace-heading h1{font-size:28px;margin:0;color:#172033}.bot-workspace-heading p:not(.kicker){margin:6px 0 20px;color:#7d8795;font-size:12px}.bot-tabs{display:flex;gap:22px;border-bottom:1px solid #e5e7eb;overflow:auto;margin-bottom:22px}.bot-tab{color:#6b7280;text-decoration:none;padding:0 1px 12px;font-size:12px;white-space:nowrap}.bot-tab.active{color:#430098;font-weight:800;border-bottom:2px solid #430098}.bot-tab-content{min-height:260px}.bot-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}.workspace-panel{background:#fff;border:1px solid #e5e7eb;border-radius:7px;padding:20px;color:#4b5563}.workspace-panel h2{color:#172033;font-size:17px;margin:0 0 8px}.workspace-panel p{font-size:13px;line-height:1.6}.resource-row,.activity-item{display:flex;justify-content:space-between;gap:18px;border-top:1px solid #f0f1f3;padding:13px 0;font-size:12px}.resource-row strong,.activity-item strong{color:#172033}.activity-item{display:block}.activity-item span{display:block;color:#7d8795;margin-top:4px}.settings-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.settings-actions .mgmt-option{display:block;padding:14px}.settings-link{margin-top:14px;text-decoration:none}.bot-workspace .management-grid{margin-bottom:20px}@media(max-width:620px){.bot-overview-grid{grid-template-columns:1fr}.settings-actions{grid-template-columns:1fr}.bot-tabs{gap:16px}.bot-workspace-heading h1{font-size:24px}}
 
@@ -280,6 +294,36 @@
         const tg = window.Telegram?.WebApp || { initData: '', ready() {}, expand() {}, showAlert: (message) => window.alert(message) };
         tg.ready();
         tg.expand();
+
+        function applyTelegramTheme() {
+            const params = tg.themeParams || {};
+            const root = document.documentElement;
+            const colors = {
+                '--tg-bg': params.bg_color,
+                '--tg-secondary-bg': params.secondary_bg_color || params.section_bg_color,
+                '--tg-section-bg': params.section_bg_color || params.bg_color,
+                '--tg-text': params.text_color,
+                '--tg-hint': params.hint_color || params.subtitle_text_color,
+                '--tg-link': params.link_color || params.accent_text_color,
+                '--tg-button': params.button_color,
+                '--tg-button-text': params.button_text_color,
+                '--tg-border': params.hint_color,
+                '--tg-destructive': params.destructive_text_color
+            };
+            Object.entries(colors).forEach(([name, value]) => { if (value) root.style.setProperty(name, value); });
+            root.style.colorScheme = params.bg_color && isLightColor(params.bg_color) ? 'light' : 'dark';
+            document.body.classList.add('telegram-theme');
+        }
+
+        function isLightColor(hex) {
+            const value = String(hex || '').replace('#', '');
+            if (value.length !== 6) return true;
+            const [r, g, b] = [0, 2, 4].map(index => parseInt(value.slice(index, index + 2), 16));
+            return (r * 299 + g * 587 + b * 114) / 1000 > 155;
+        }
+
+        applyTelegramTheme();
+        tg.onEvent?.('themeChanged', applyTelegramTheme);
 
         const state = { currentView: 'dashboard', selectedBot: null, viewHistory: [] };
         document.getElementById('avatarBtn')?.addEventListener('click', (event) => { event.stopPropagation(); document.getElementById('accountMenu').classList.toggle('open'); });
