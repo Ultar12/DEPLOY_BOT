@@ -356,10 +356,6 @@
         }
 
         function goBack() {
-            if (window.location.pathname !== '/apps' && window.location.pathname !== '/app') {
-                window.location.href = '/apps';
-                return;
-            }
             if (state.currentView === 'payment') {
                 navigateTo('deploy', { ...(state.selectedBot || {}), paymentCancelled: true });
                 return;
@@ -632,6 +628,13 @@
         }
 
         function attachEventListeners() {
+            document.querySelectorAll('[data-action="navigate"]').forEach(button => {
+                button.onclick = event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    navigateTo(button.dataset.view, button.dataset.botJson ? JSON.parse(button.dataset.botJson) : null);
+                };
+            });
             document.onclick = (e) => {
                 const btn = e.target.closest('[data-action]');
                 if (!btn) return;
