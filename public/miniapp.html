@@ -3,38 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultar WBD</title>
+    <title>Ultar</title>
     <link rel="icon" href="/ultar-sync-logo.jpg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
     <div id="main-container">
-        <button class="back-btn" id="backBtn" type="button" hidden><</button>
+        <div class="app-top">
+            <a class="mark" href="/apps/dashboard">Ultar</a>
+            <nav class="app-links">
+                <a href="/apps/session">Session</a>
+                <a href="/apps/create">Deploy</a>
+                <a href="/apps/plugins">Plugins</a>
+                <a href="/apps/settings">Account</a>
+            </nav>
+        </div>
+        <button class="back-btn" id="backBtn" type="button" hidden></button>
         <button class="avatar-btn" id="avatarBtn" type="button" hidden>U</button>
         <div class="account-menu" id="accountMenu" hidden></div>
-        <a id="newAppBtn" href="/apps/create" hidden>New app</a>
+        <a id="newAppBtn" href="/apps/create" hidden>Deploy</a>
         <a id="notificationsLink" href="/apps/notifications" hidden>Notifications</a>
-        <div id="headerTitle" hidden>Dashboard</div>
+        <div id="headerTitle" hidden></div>
         <div id="view-container"></div>
     </div>
     <script src="/wbd.js"></script>
     <script>
-      const path = location.pathname;
-      const home = path === '/apps' || path === '/app' || path === '/apps/dashboard';
-      if (home) {
-        const box = document.getElementById('view-container');
-        const hero = '<div class="hero"><h1>Ultar WBD.</h1><p>Multi session WhatsApp bots built for performance.</p><div class="hero-btns"><a class="btn-solid" href="/apps/session">Get Session</a><a class="btn-outline" href="/apps/create">Deploy Now</a><a class="btn-outline" href="/apps/plugins">Get Plugins</a></div></div>';
-        const paint = () => { if (box && !box.querySelector('.hero')) box.insertAdjacentHTML('afterbegin', hero); };
-        if (box) new MutationObserver(paint).observe(box, { childList: true });
-        paint();
-      } else {
-        const box = document.getElementById('view-container');
-        const back = '<p class="page-back"><a href="/apps/dashboard">Back</a></p>';
-        const paint = () => { if (box && !box.querySelector('.page-back')) box.insertAdjacentHTML('afterbegin', back); };
-        if (box) new MutationObserver(paint).observe(box, { childList: true });
-        paint();
-      }
+      document.querySelectorAll('.app-links a').forEach((a) => {
+        if (location.pathname === a.getAttribute('href')) a.setAttribute('aria-current', 'page');
+      });
     </script>
 </body>
 </html>
