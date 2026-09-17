@@ -14,7 +14,7 @@
 <body>
     <div id="main-container">
         <div class="header">
-            <button class="back-btn" id="backBtn">&lt;</button>
+            <button class="back-btn" id="backBtn"><</button>
             <a class="brand-lockup" href="/apps/dashboard" aria-label="Ultar WBD dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span><strong>Ultar WBD</strong></span></a>
             <nav class="app-nav" aria-label="App">
                 <a href="/apps/dashboard">Dashboard</a>
@@ -23,12 +23,10 @@
                 <a id="newAppBtn" class="cta" href="/apps/create">New app</a>
             </nav>
             <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="/apps/settings">Account</a><a href="/apps/deployments">Deployments</a><a href="/apps/reconciliation" id="adminReconciliationLink" style="display:none">Reconciliation</a><a href="#" id="notificationsLink">Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">Log out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
-            <div class="header-title" id="headerTitle">Dashboard</div>
-            <button class="logout-btn" type="button" onclick="window.location.href='/telegram-logout'">Log out</button>
         </div>
         <div id="view-container"></div>
     </div>
-    <div id="globalLoader" class="global-loader" role="status" aria-live="polite"><div class="loader-card"><div class="loader-spinner" aria-hidden="true"></div><div class="loader-text">Loading…</div></div></div><div id="loaderProgress" class="loader-progress" aria-hidden="true"></div>
+    <div id="globalLoader" class="global-loader hidden" hidden></div>
     <script src="/wbd.js"></script>
 </body>
 </html>
