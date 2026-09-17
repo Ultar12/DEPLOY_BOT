@@ -11,7 +11,7 @@
 <body>
     <div id="main-container">
         <div class="header">
-            <a class="back-btn" id="backBtn" href="/apps/dashboard"><</a>
+            <a class="back-btn show" id="backBtn" href="/apps/dashboard"><</a>
             <a class="brand-lockup" href="/apps/dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar WBD"><span><strong>Ultar WBD</strong></span></a>
             <nav class="app-nav">
                 <a href="/apps/dashboard">Dashboard</a>
@@ -35,5 +35,17 @@
         <div id="view-container"></div>
     </div>
     <script src="/wbd.js"></script>
+    <script>
+      const path = location.pathname;
+      const home = path === '/apps' || path === '/app' || path === '/apps/dashboard';
+      document.getElementById('backBtn')?.classList.toggle('show', !home);
+      if (home) {
+        const box = document.getElementById('view-container');
+        const hero = '<div class="hero"><h1>Ultar WBD.</h1><p>Multi session WhatsApp bots built for performance.</p><div class="hero-btns"><a class="btn-solid" href="/apps/session">Get Session</a><a class="btn-outline" href="/apps/create">Deploy Now</a><a class="btn-outline" href="/apps/plugins">Get Plugins</a></div></div>';
+        const paint = () => { if (box && !box.querySelector('.hero')) box.insertAdjacentHTML('afterbegin', hero); };
+        if (box) new MutationObserver(paint).observe(box, { childList: true });
+        paint();
+      }
+    </script>
 </body>
 </html>
