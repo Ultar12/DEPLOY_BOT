@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ultar WBD</title>
     <link rel="icon" href="/ultar-sync-logo.jpg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/app.css">
 </head>
@@ -15,14 +12,15 @@
     <div id="main-container">
         <div class="header">
             <button class="back-btn" id="backBtn"><</button>
-            <a class="brand-lockup" href="/apps/dashboard" aria-label="Ultar WBD dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar Sync logo"><span><strong>Ultar WBD</strong></span></a>
-            <nav class="app-nav" aria-label="App">
+            <a class="brand-lockup" href="/apps/dashboard"><img class="header-logo" src="/ultar-sync-logo.jpg" alt="Ultar WBD"><span><strong>Ultar WBD</strong></span></a>
+            <nav class="app-nav">
                 <a href="/apps/dashboard">Dashboard</a>
                 <a href="/apps/plugins">Plugins</a>
                 <a href="/apps/session">Session</a>
                 <a id="newAppBtn" class="cta" href="/apps/create">New app</a>
             </nav>
-            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn" aria-label="Account menu">U<span class="notification-dot" id="notificationDot"></span></button><div class="account-menu" id="accountMenu"><a href="/apps/settings">Account</a><a href="/apps/deployments">Deployments</a><a href="/apps/reconciliation" id="adminReconciliationLink" style="display:none">Reconciliation</a><a href="#" id="notificationsLink">Notifications <span id="notificationCount">0</span></a><a href="/telegram-logout">Log out</a></div><div class="notification-panel" id="notificationPanel"><strong>Notifications</strong><div id="notificationList">No new notifications.</div></div></div></div>
+            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn">U</button><div class="account-menu" id="accountMenu"><a href="/apps/settings">Account</a><a href="/apps/deployments">Deployments</a><a href="/telegram-logout">Log out</a></div></div></div>
+            <div id="headerTitle" hidden>Dashboard</div>
         </div>
         <div id="view-container"></div>
     </div>
