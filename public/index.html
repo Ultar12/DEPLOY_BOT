@@ -4,10 +4,206 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ultar Sync — Emmanuel Ezenwugo, Software Engineer</title>
-  <link rel="stylesheet" href="/styles.css">
+  <meta name="description" content="Ultar Sync is the studio of Emmanuel Ezenwugo — software engineer in Anambra, Nigeria. Web products, APIs, automation, and deployment systems that ship.">
+  <meta name="theme-color" content="#0b0b0c">
+  <link rel="canonical" href="https://ultarsync.store/">
   <link rel="icon" href="/ultar-sync-logo.jpg">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://ultarsync.store/">
+  <meta property="og:title" content="Ultar Sync — Emmanuel Ezenwugo">
+  <meta property="og:description" content="Software engineer building reliable web products, APIs, and deployment systems.">
+  <meta property="og:image" content="https://ultarsync.store/ultar-sync-logo.jpg">
+  <meta name="twitter:card" content="summary">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <p>placeholder</p>
+  <a class="skip" href="#work">Skip to work</a>
+  <header class="site-header">
+    <div class="wrap nav">
+      <a class="brand" href="#top">
+        <img src="/ultar-sync-logo.jpg" alt="" width="36" height="36">
+        <span>Ultar Sync</span>
+      </a>
+      <button class="menu-btn" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+      <nav id="nav-links" class="nav-links" aria-label="Primary">
+        <a href="#work">Work</a>
+        <a href="#services">Services</a>
+        <a href="#process">Process</a>
+        <a href="#about">About</a>
+        <a class="nav-cta" href="#contact">Contact</a>
+      </nav>
+    </div>
+  </header>
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow"><span class="dot"></span> Available for selected projects · Anambra, NG</p>
+          <h1>I design and ship software that people can actually run.</h1>
+          <p class="lede">I’m Emmanuel Ezenwugo, a software engineer working as Ultar Sync. I build web products, APIs, and automation — including Ultar WBD, a workspace for deploying and managing bots.</p>
+          <div class="hero-actions">
+            <a class="btn btn-solid" href="#work">See selected work</a>
+            <a class="btn btn-ghost" href="#contact">Start a project</a>
+          </div>
+        </div>
+        <aside class="hero-panel" aria-label="Snapshot">
+          <p class="mono muted">ultarsync.store</p>
+          <dl>
+            <div><dt>Focus</dt><dd>Product engineering</dd></div>
+            <div><dt>Stack</dt><dd>JavaScript, Node, Python</dd></div>
+            <div><dt>Live product</dt><dd><a href="/apps">Ultar WBD</a></dd></div>
+            <div><dt>Code</dt><dd><a href="https://github.com/Ultar12">github.com/Ultar12</a></dd></div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+    <section id="work" class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">01 — Work</p>
+          <h2>Selected projects</h2>
+          <p>Real systems, not concept decks. Each one solves an operational problem: deploy, monitor, automate, or connect data.</p>
+        </div>
+        <article class="feature">
+          <div class="feature-visual">
+            <div class="browser">
+              <div class="browser-bar"><span></span><span></span><span></span><em>ultarsync.store/apps</em></div>
+              <div class="browser-body">
+                <p class="mono">ULTAR WBD</p>
+                <h3>Deploy. Manage. Keep building.</h3>
+                <p>A workspace for creating and watching software deployments from one place.</p>
+              </div>
+            </div>
+          </div>
+          <div class="feature-copy">
+            <p class="kicker">Product · Web app</p>
+            <h3>Ultar WBD</h3>
+            <p>Bot deployment and management platform. Operators can sign in, stand up instances, and keep an eye on running services without hopping across hosting dashboards.</p>
+            <ul class="facts">
+              <li>Auth (email + Google)</li>
+              <li>Deployment workspace</li>
+              <li>Hosted on Render + Cloudflare</li>
+            </ul>
+            <div class="hero-actions">
+              <a class="btn btn-solid" href="/apps">Open live app</a>
+              <a class="btn btn-ghost" href="#contact">Ask how it was built</a>
+            </div>
+          </div>
+        </article>
+        <div class="project-grid">
+          <article class="project">
+            <p class="kicker">Telegram · Python</p>
+            <h3>TG_TAG</h3>
+            <p>Production Telegram automation: media pipelines, voice, and YouTube helpers, packaged for Docker, Render, and Heroku.</p>
+            <p class="stack">Python · ffmpeg · Docker · Render</p>
+            <a href="https://github.com/Ultar12/TG_TAG">View repository</a>
+          </article>
+          <article class="project">
+            <p class="kicker">Monitoring · JavaScript</p>
+            <h3>Monitorbot</h3>
+            <p>Always-on monitoring bot for watching services and surfacing failures quickly instead of discovering them from users.</p>
+            <p class="stack">JavaScript · Node.js</p>
+            <a href="https://github.com/Ultar12/Monitorbot">View repository</a>
+          </article>
+          <article class="project">
+            <p class="kicker">Messaging · Node</p>
+            <h3>WhatsApp SMS controller</h3>
+            <p>Admin-gated Telegram controller for WhatsApp session setup on numbers you own, with parallel request limits and Heroku worker packaging.</p>
+            <p class="stack">Node.js · Telegram API</p>
+            <a href="https://github.com/Ultar12/whatsapp-sms-bot">View repository</a>
+          </article>
+          <article class="project">
+            <p class="kicker">Data · Python</p>
+            <h3>Scrape / Scrapebot</h3>
+            <p>Collection and processing scripts for turning messy public data into structured output that other tools can use.</p>
+            <p class="stack">Python · automation</p>
+            <a href="https://github.com/Ultar12/Scrapebot">View repository</a>
+          </article>
+        </div>
+      </div>
+    </section>
+    <section id="services" class="section alt">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">02 — Services</p>
+          <h2>What I take on</h2>
+          <p>I work best when the problem is concrete: a product that needs to exist, a workflow that should run itself, or an API that other software must trust.</p>
+        </div>
+        <div class="service-grid">
+          <article><span>01</span><h3>Web products</h3><p>Marketing sites, dashboards, and app interfaces with clear structure and production-ready front ends.</p></article>
+          <article><span>02</span><h3>APIs &amp; backends</h3><p>REST services, auth, and the glue between tools so data moves reliably instead of living in chat threads.</p></article>
+          <article><span>03</span><h3>Automation</h3><p>Bots and workers that deploy, monitor, notify, and process media so operations do not depend on you being online.</p></article>
+          <article><span>04</span><h3>Data work</h3><p>SQL, spreadsheets, and lightweight analysis when a decision needs a number instead of a guess.</p></article>
+        </div>
+      </div>
+    </section>
+    <section id="process" class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">03 — Process</p>
+          <h2>How an engagement runs</h2>
+        </div>
+        <ol class="steps">
+          <li><h3>Scope the real constraint</h3><p>We name the user, the failure mode, and the smallest version that would already be useful.</p></li>
+          <li><h3>Build in the open</h3><p>You get working software early — usually a deployable repo, not a slide deck — and we correct course with evidence.</p></li>
+          <li><h3>Ship and hand over</h3><p>Hosting, env vars, and runbooks are part of the work. If it cannot be restarted by someone else, it is not done.</p></li>
+        </ol>
+      </div>
+    </section>
+    <section id="about" class="section alt">
+      <div class="wrap about-grid">
+        <div>
+          <p class="eyebrow">04 — About</p>
+          <h2>Practical engineering from Anambra.</h2>
+        </div>
+        <div>
+          <p>I treat software as infrastructure for a business, not as decoration. Most of my recent work sits at the intersection of messaging platforms, deployment, and small multi-tenant products.</p>
+          <p>Ultar Sync is the studio name. I also keep a general-merchandise line for local trade; it is separate from engineering work and does not belong in a product brief.</p>
+          <ul class="skill-list">
+            <li>JavaScript / Node.js</li><li>Python</li><li>SQL &amp; databases</li><li>REST APIs</li><li>Git &amp; GitHub</li><li>Docker, Render, Heroku</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+    <section id="contact" class="section contact">
+      <div class="wrap">
+        <p class="eyebrow">05 — Contact</p>
+        <h2>Have a problem worth shipping?</h2>
+        <p class="lede">Tell me what you are building, what is breaking, or what you need standing in production. I reply by email or chat.</p>
+        <div class="contact-grid">
+          <a href="mailto:ezenwugoemmanuel2004@gmail.com">Email<br><span>ezenwugoemmanuel2004@gmail.com</span></a>
+          <a href="https://wa.me/message/XERVFASU4WOOC1">WhatsApp<br><span>Message directly</span></a>
+          <a href="https://t.me/staries1">Telegram<br><span>@staries1</span></a>
+          <a href="https://github.com/Ultar12">GitHub<br><span>Ultar12</span></a>
+        </div>
+        <p class="fine">Prefer a call: <a href="tel:+2349163916314">+234 916 391 6314</a>.</p>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-row">
+      <p>© <span id="y"></span> Ultar Sync · Emmanuel Ezenwugo</p>
+      <nav>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/apps">Open WBD</a>
+      </nav>
+    </div>
+  </footer>
+  <script>
+    document.getElementById('y').textContent = new Date().getFullYear();
+    const btn = document.querySelector('.menu-btn');
+    const nav = document.getElementById('nav-links');
+    btn.addEventListener('click', () => {
+      const open = nav.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+    nav.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => {
+      nav.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }));
+  </script>
 </body>
 </html>
