@@ -34,7 +34,7 @@
   <main class="card">
     <a class="brand" href="/"><img src="/ultar-sync-logo.jpg" alt=""><span>Ultar WBD</span></a>
     <h1 id="title">Sign in</h1>
-    <p class="note" id="note">Use email and password, Google, or a login link.</p>
+    <p class="note" id="note">Use email and password, or Google.</p>
     <p class="error" id="error"></p>
     <form id="form">
       <input id="email" type="email" placeholder="Email" autocomplete="email" required>
@@ -43,7 +43,6 @@
       <button class="primary" id="submit" type="submit">Continue</button>
     </form>
     <a class="google" id="googleBtn" href="/auth/google" style="margin-top:10px">Continue with Google</a>
-    <button class="google" id="linkBtn" type="button" style="width:100%;margin-top:8px">Email me a login link</button>
     <form id="codeForm" class="hidden" style="margin-top:14px">
       <input id="code" class="code" maxlength="12" placeholder="LOGIN CODE" autocomplete="one-time-code" required>
       <input id="newPassword" class="hidden" type="password" placeholder="New password" minlength="8">
@@ -68,12 +67,11 @@
       show($('form'), next !== 'code');
       show($('codeForm'), next === 'code');
       show($('googleBtn'), next === 'login' || next === 'register');
-      show($('linkBtn'), next === 'login');
       show($('password'), next === 'login' || next === 'register' || next === 'reset');
       show($('password2'), next === 'register');
       show($('newPassword'), false);
       $('password').required = next === 'login' || next === 'register' || next === 'reset';
-      const titles = { login: ['Sign in', 'Use email and password, Google, or a login link.'], register: ['Create account', 'Choose an email and password. We will email a login code.'], reset: ['Reset password', 'Enter your email. We will send a reset code.'], code: ['Check your email', 'Enter the 10-character code, or open the login link in that email.'] };
+      const titles = { login: ['Sign in', 'Use email and password, or Google.'], register: ['Create account', 'Choose an email and password. We will email a verification code.'], reset: ['Reset password', 'Enter your email. We will send a reset code.'], code: ['Check your email', 'Enter the code we sent.'] };
       $('title').textContent = titles[next][0];
       $('note').textContent = titles[next][1];
       ready($('submit'), next === 'register' ? 'Create account' : next === 'reset' ? 'Send reset code' : 'Continue');
@@ -88,20 +86,6 @@
       if (!res.ok || data.success === false) throw new Error(data.message || 'Please try again.');
       return data;
     }
-    $('linkBtn').onclick = async () => {
-      setError('');
-      email = $('email').value.trim().toLowerCase();
-      if (!email) return setError('Enter your email first.');
-      busy($('linkBtn'), 'Sending link…');
-      try {
-        await post('/auth/login', { identifier: email });
-        setMode('code');
-        ready($('linkBtn'), 'Email me a login link');
-      } catch (err) {
-        ready($('linkBtn'), 'Email me a login link');
-        setError(err.message);
-      }
-    };
     $('form').onsubmit = async ev => {
       ev.preventDefault();
       setError('');
