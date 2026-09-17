@@ -19,12 +19,20 @@
                 <a href="/apps/session">Session</a>
                 <a id="newAppBtn" class="cta" href="/apps/create">New app</a>
             </nav>
-            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn">U</button><div class="account-menu" id="accountMenu"><a href="/apps/settings">Account</a><a href="/apps/deployments">Deployments</a><a href="/telegram-logout">Log out</a></div></div></div>
+            <div class="header-tools"><div class="account-area"><button class="avatar-btn" id="avatarBtn">U</button><div class="account-menu" id="accountMenu"><a href="/apps/settings">Account</a><a href="/apps/deployments">Deployments</a><a href="#" id="notificationsLink">Notifications</a><a href="/telegram-logout">Log out</a></div></div></div>
             <div id="headerTitle" hidden>Dashboard</div>
         </div>
         <div id="view-container"></div>
     </div>
-    <div id="globalLoader" class="global-loader hidden" hidden></div>
+    <div id="globalLoader" class="hidden" hidden></div>
     <script src="/wbd.js"></script>
+    <script>
+      document.getElementById('globalLoader')?.remove();
+      const hero = '<div class="hero"><h1>Ultar WBD.</h1><p>Multi session WhatsApp bots built for performance.</p><div class="hero-btns"><a class="btn-solid" href="/apps/session">Get Session</a><a class="btn-outline" href="/apps/create">Deploy Now</a><a class="btn-outline" href="/apps/plugins">Get Plugins</a></div></div>';
+      const box = document.getElementById('view-container');
+      const paint = () => { if (box && !box.querySelector('.hero')) box.insertAdjacentHTML('afterbegin', hero); };
+      if (box) new MutationObserver(paint).observe(box, { childList: true });
+      paint();
+    </script>
 </body>
 </html>
