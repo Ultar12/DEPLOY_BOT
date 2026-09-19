@@ -26,10 +26,30 @@ const fs = require('fs');
 const { NEON_ACCOUNTS } = require('./neon_db');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+const { DateTime } = require('luxon');
 // Change it to:
 const { URL, URLSearchParams } = require('url'); // Add URL
 
 const express = require('express');
+
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Africa/Lagos';
+
+function utcNow() {
+    return DateTime.utc();
+}
+
+function dateTimeFromDatabase(value) {
+    if (!value) return null;
+    const dateTime = value instanceof Date
+        ? DateTime.fromJSDate(value, { zone: 'utc' })
+        : DateTime.fromISO(String(value), { zone: 'utc' });
+    return dateTime.isValid ? dateTime : null;
+}
+
+function formatAppDateTime(value) {
+    const dateTime = dateTimeFromDatabase(value);
+    return dateTime ? dateTime.setZone(APP_TIME_ZONE).toLocaleString(DateTime.DATETIME_MED_WITH_SECONDS) : 'Unknown';
+}
 
 // Global map to track pairing requests, intervals, and message IDs
 global.levanterPairingRequests = new Map();
@@ -881,7 +901,7 @@ async function getBotInfo(userId, botId) {
         // Format data for better display if needed
         const botData = result.rows[0];
         botData.status = botData.status === 'online' ? 'Online' : 'Logged Out';
-        botData.expiration_date = botData.expiration_date ? new Date(botData.expiration_date).toLocaleDateString() : 'Not Set';
+        botData.expiration_date = botData.expiration_date ? formatAppDateTime(botData.expiration_date).split(',')[0] : 'Not Set';
         botData.deploy_date = botData.deploy_date ? new Date(botData.deploy_date).toLocaleDateString() : 'Unknown';
 
         return { status: "success", data: botData };
@@ -1689,12 +1709,11 @@ function formatTimeLeft(expirationDateStr) {
     if (!expirationDateStr) {
         return ' (Expiry unavailable)';
     }
-    const expirationDate = new Date(expirationDateStr);
-    if (Number.isNaN(expirationDate.getTime())) {
+    const expirationDate = dateTimeFromDatabase(expirationDateStr);
+    if (!expirationDate) {
         return ' (Expiry unavailable)';
     }
-    const now = new Date();
-    const timeLeftMs = expirationDate.getTime() - now.getTime();
+    const timeLeftMs = expirationDate.diff(utcNow()).as('milliseconds');
 
     // --- GRACE PERIOD LOGIC ---
     if (timeLeftMs <= 0) {
@@ -5529,7 +5548,8 @@ app.get('/api/notifications', validateWebAppInitData, async (req, res) => {
         for (const job of jobs.rows) notifications.push({ id: `job:${job.job_id}`, type: job.status, title: job.status === 'completed' ? 'Deployment completed' : 'Deployment failed', message: job.status === 'completed' ? `${job.app_name} is ready to manage.` : `${job.app_name}: ${job.error_message || job.progress_message || 'Deployment failed.'}`, created_at: job.updated_at });
         for (const bot of bots.rows) {
             if (['offline', 'logged out'].includes(String(bot.status || '').toLowerCase())) notifications.push({ id: `logged-out:${bot.bot_name}`, type: 'warning', title: 'Bot logged out', message: `${bot.bot_name} is logged out.`, created_at: null });
-            if (bot.expiration_date && new Date(bot.expiration_date).getTime() - Date.now() < 3 * 86400000) notifications.push({ id: `expiry:${bot.bot_name}`, type: 'warning', title: 'Subscription ending soon', message: `${bot.bot_name} needs renewal soon.`, created_at: bot.expiration_date });
+            const expiration = dateTimeFromDatabase(bot.expiration_date);
+            if (expiration && expiration.diff(utcNow()).as('milliseconds') < 3 * 86400000) notifications.push({ id: `expiry:${bot.bot_name}`, type: 'warning', title: 'Subscription ending soon', message: `${bot.bot_name} needs renewal soon.`, created_at: expiration.toUTC().toISO() });
         }
         res.json({ success: true, notifications: notifications.slice(0, 30) });
     } catch (error) {
@@ -6974,7 +6994,7 @@ bot.onText(/^\/aa (\d+) (\d+)$/, async (msg, match) => {
 
     const targetNumber = match[1];
     const hours = parseInt(match[2], 10);
-    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+    const remindAt = utcNow().plus({ hours }).toJSDate();
 
     try {
         await pool.query(
@@ -6982,7 +7002,7 @@ bot.onText(/^\/aa (\d+) (\d+)$/, async (msg, match) => {
             [adminId, targetNumber, remindAt, hours]
         );
 
-        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        const timeString = formatAppDateTime(remindAt);
         await bot.sendMessage(adminId, `Timer saved for ${targetNumber}. I will remind you in ${hours} hour(s) (at ${timeString}).`);
         
         // Start a timeout for the current session
@@ -7008,7 +7028,7 @@ bot.onText(/^\/aalist$/, async (msg) => {
 
         let listMsg = "*Active Number Timers:*\n\n";
         result.rows.forEach((row, index) => {
-            const timeStr = new Date(row.remind_at).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+            const timeStr = formatAppDateTime(row.remind_at);
             listMsg += `${index + 1}. \`${row.target_number}\`\n   ⏳ Due: ${timeStr}\n\n`;
         });
 
@@ -7279,7 +7299,7 @@ bot.onText(/^\/postnews (\d+)\s*\|(.+)$/, async (msg, match) => {
         return bot.sendMessage(adminId, "The replied message has no text content to post.");
     }
     
-    const expiresAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+    const expiresAt = utcNow().plus({ hours }).toJSDate();
 
     try {
         await pool.query(
@@ -7287,7 +7307,7 @@ bot.onText(/^\/postnews (\d+)\s*\|(.+)$/, async (msg, match) => {
             [title, content, expiresAt]
         );
         
-        const timeStr = expiresAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        const timeStr = formatAppDateTime(expiresAt);
         await bot.sendMessage(adminId, `News posted! Body taken from reply. Auto-delete at: ${timeStr}`);
     } catch (e) {
         console.error("Error posting news:", e.message);
@@ -7363,7 +7383,7 @@ bot.onText(/^\/info (\d+)$/, async (msg, match) => {
 
         // Fetch user's last seen activity
         const lastSeen = await dbServices.getUserLastSeen(targetUserId);
-        userDetails += `*Last Activity:* ${lastSeen ? new Date(lastSeen).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }) : 'Never seen'}\n`;
+        userDetails += `*Last Activity:* ${lastSeen ? formatAppDateTime(lastSeen) : 'Never seen'}\n`;
 
         // Check ban status
         const bannedStatus = await dbServices.isUserBanned(targetUserId);
@@ -8124,16 +8144,14 @@ bot.onText(/^\/exp$/, async (msg) => {
         }
 
         let responseMessage = `*Bots Expiring Soon (Next 7 Days):*\n\n`;
-        const now = new Date();
+        const now = utcNow();
 
         for (const bot of expiringBots) {
-            const expDate = new Date(bot.expiration_date);
-            const timeLeftMs = expDate.getTime() - now.getTime();
-            
-            // Calculate days, hours, and minutes
-            const daysLeft = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
-            const hoursLeft = Math.floor((timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const minutesLeft = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+            const expDate = dateTimeFromDatabase(bot.expiration_date);
+            const remaining = expDate ? expDate.diff(now, ['days', 'hours', 'minutes']).toObject() : {};
+            const daysLeft = Math.max(0, Math.floor(remaining.days || 0));
+            const hoursLeft = Math.max(0, Math.floor(remaining.hours || 0));
+            const minutesLeft = Math.max(0, Math.floor(remaining.minutes || 0));
 
             let timeRemaining;
             
@@ -9309,13 +9327,13 @@ bot.onText(/^\/addexpall (\d+)$/, async (msg, match) => {
         if (result.rows.length > 0 && result.rows.length <= 20) {
             summary += `Updated:\n`;
             result.rows.forEach((row, idx) => {
-                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                const newDate = formatAppDateTime(row.expiration_date).split(',')[0];
                 summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
             });
         } else if (result.rows.length > 20) {
             summary += `First 20 of ${result.rows.length} updates:\n`;
             result.rows.slice(0, 20).forEach((row, idx) => {
-                const newDate = new Date(row.expiration_date).toLocaleDateString();
+                const newDate = formatAppDateTime(row.expiration_date).split(',')[0];
                 summary += `${idx + 1}. ${row.app_name} (User: ${row.user_id}) → ${newDate}\n`;
             });
         }
@@ -10606,7 +10624,7 @@ if (st && st.step === 'AA_CONTINUOUS_MODE') {
         return bot.sendMessage(cid, "Invalid time. Please provide hours as a number.");
     }
 
-    const remindAt = new Date(Date.now() + (hours * 60 * 60 * 1000));
+    const remindAt = utcNow().plus({ hours }).toJSDate();
 
     try {
         // Save to Database (Persistent)
@@ -10618,7 +10636,7 @@ if (st && st.step === 'AA_CONTINUOUS_MODE') {
         // Start the timeout
         setTimeout(() => sendReminder(targetNumber, cid, hours), hours * 60 * 60 * 1000);
 
-        const timeString = remindAt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos' });
+        const timeString = formatAppDateTime(remindAt);
         await bot.sendMessage(cid, `Timer saved for ${targetNumber}. Due at ${timeString}.\n\nKeep sending or type 'exit'.`);
     } catch (e) {
         console.error("AA Mode DB Error:", e);
@@ -11775,7 +11793,7 @@ if (action === 'addexp_select') {
         );
         
         if (result.rowCount > 0) {
-            const newDate = new Date(result.rows[0].expiration_date).toLocaleDateString('en-GB');
+        const newDate = formatAppDateTime(result.rows[0].expiration_date).split(',')[0];
             await bot.answerCallbackQuery(q.id, { text: `Success: Added ${daysToAdd} days to ${appName}` });
             await bot.editMessageText(
                 `Successfully added **${daysToAdd} days** to \`${appName}\`.\n\nNew Expiration: **${newDate}**`,
@@ -12245,10 +12263,11 @@ if (action === 'set_auto_status_choice') {
     
     // Filter out bots that are already active on Heroku (deleted_from_heroku_at IS NULL)
     // and those whose original 45-day expiration has passed
-    const now = new Date();
+    const now = utcNow();
     const restorableDeployments = userDeployments.filter(dep => {
         const isCurrentlyActive = dep.deleted_from_heroku_at === null; // Must not be active
-        const hasExpired = dep.expiration_date && new Date(dep.expiration_date) <= now; // Must not have expired
+        const expirationDate = dateTimeFromDatabase(dep.expiration_date);
+        const hasExpired = expirationDate && expirationDate <= now; // Must not have expired
 
         // Also check if deploy_date is null or missing, it implies it's a very old record not correctly saved
         const hasDeployDate = dep.deploy_date !== null && dep.deploy_date !== undefined;
@@ -12265,15 +12284,14 @@ if (action === 'set_auto_status_choice') {
     }
 
     const restoreOptions = restorableDeployments.map(dep => {
-        const deployDate = new Date(dep.deploy_date).toLocaleDateString();
-        // Calculate remaining time from original deploy date
-        const originalExpirationDate = new Date(new Date(dep.deploy_date).getTime() + 45 * 24 * 60 * 60 * 1000);
-        const daysLeft = Math.ceil((originalExpirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const deployDate = formatAppDateTime(dep.deploy_date).split(',')[0];
+        const originalExpirationDate = dateTimeFromDatabase(dep.expiration_date) || dateTimeFromDatabase(dep.deploy_date)?.plus({ days: 45 });
+        const daysLeft = originalExpirationDate ? Math.ceil(originalExpirationDate.diff(now, 'days').days) : 0;
         let expirationText = '';
         if (daysLeft > 0) {
             expirationText = ` (Expires in ${daysLeft} days)`;
         } else {
-            expirationText = ` (Expired on ${originalExpirationDate.toLocaleDateString()})`;
+            expirationText = ` (Expired on ${originalExpirationDate ? originalExpirationDate.setZone(APP_TIME_ZONE).toLocaleString(DateTime.DATE_SHORT) : 'unknown date'})`;
         }
 
 
@@ -12641,13 +12659,13 @@ if (action === 'restore_from_backup') {
         const userDeployments = await dbServices.getUserDeploymentsForRestore(userId);
         
         const restorableDeployments = [];
-        const now = new Date();
+        const now = utcNow();
 
         for (const dep of userDeployments) {
             // A bot is restorable if its original expiration period hasn't passed
-            const deployDate = new Date(dep.deploy_date);
+            const deployDate = dateTimeFromDatabase(dep.deploy_date);
             // Assuming a 45-day expiration for this example
-            const originalExpirationDate = new Date(deployDate.getTime() + 45 * 24 * 60 * 60 * 1000);
+            const originalExpirationDate = deployDate?.plus({ days: 45 });
             
             if (originalExpirationDate <= now) {
                 // If it has truly expired, remove it from the backup permanently
@@ -12678,7 +12696,8 @@ if (action === 'restore_from_backup') {
 
         // Create a button for each restorable bot
         const restoreOptions = restorableDeployments.map(dep => {
-            const daysLeft = Math.ceil((new Date(dep.expiration_date) - now) / (1000 * 60 * 60 * 24));
+            const expirationDate = dateTimeFromDatabase(dep.expiration_date);
+            const daysLeft = expirationDate ? Math.ceil(expirationDate.diff(now, 'days').days) : 0;
             const expirationText = daysLeft > 0 ? `(${daysLeft} days left)` : '(Expired)';
             
             return [{
@@ -14411,11 +14430,10 @@ if (action === 'paystack_switch' || action === 'flutterwave_switch') {
         );
         
         if (result.rows.length > 0 && result.rows[0].expiration_date) {
-            const expDate = new Date(result.rows[0].expiration_date);
-            const now = new Date();
-            const diffTime = expDate - now;
+            const expDate = dateTimeFromDatabase(result.rows[0].expiration_date);
+            const now = utcNow();
             // Calculate days left (round up so they don't lose the partial day)
-            remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            remainingDays = expDate ? Math.ceil(expDate.diff(now, 'days').days) : 0;
             
             // If expired (negative), set to 0
             if (remainingDays < 0) remainingDays = 0;
@@ -16321,7 +16339,8 @@ async function checkAndManageExpirations() {
     const expiringBots = await dbServices.getExpiringBackups(); 
     
     for (const botInfo of expiringBots) {
-        const daysLeft = Math.ceil((new Date(botInfo.expiration_date) - Date.now()) / ONE_DAY_IN_MS);
+        const expirationDate = dateTimeFromDatabase(botInfo.expiration_date);
+        const daysLeft = expirationDate ? Math.ceil(expirationDate.diff(utcNow(), 'days').days) : 0;
         let warningToSend = null; 
         let newWarningLevel = 0;
 
