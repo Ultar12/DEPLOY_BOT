@@ -1733,8 +1733,7 @@ async function createAllTablesInPool(dbPool, dbName) {
 
 // In bot_services.js, replace the entire syncDatabases function
 
-async function syncDatabases(sourcePool, targetPool, options = {}) {
-    const { includeSessions = false } = options;
+async function syncDatabases(sourcePool, targetPool) {
     const clientSource = await sourcePool.connect();
     const clientTarget = await targetPool.connect();
 
@@ -1743,9 +1742,8 @@ async function syncDatabases(sourcePool, targetPool, options = {}) {
 
         const sourceTablesResult = await clientSource.query(`
             SELECT tablename FROM pg_catalog.pg_tables
-            WHERE schemaname = 'public'
-              AND ($1::boolean OR tablename != 'sessions');
-        `, [includeSessions]);
+            WHERE schemaname = 'public' AND tablename != 'sessions';
+        `);
         const sourceTableNames = sourceTablesResult.rows.map(row => row.tablename);
 
         if (sourceTableNames.length === 0) {
