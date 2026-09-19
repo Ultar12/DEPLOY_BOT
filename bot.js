@@ -14202,6 +14202,9 @@ if (action === 'cancel_payment_and_deploy') {
 if (action === 'selectapp' || action === 'selectbot') {
     const messageId = q.message.message_id;
     const appName = payload;
+    // Acknowledge immediately so Telegram stops showing the callback button spinner
+    // while the database and Heroku status checks are running.
+    await bot.answerCallbackQuery(q.id).catch(() => {});
     const previousState = userStates[cid];
     const previousLogInterval = previousState?.data?.logInterval;
     const wasLogStreamRunning = Boolean(previousLogInterval);
