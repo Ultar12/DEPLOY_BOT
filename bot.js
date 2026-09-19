@@ -2237,90 +2237,119 @@ async function attemptCreateOnAccount(dbName, accountId) {
  * Runs the core logic to scan all Neon accounts for databases that exist 
  * but are not referenced in the local database (orphans) and deletes them.
  */
+let orphanCleanupRunning = false;
 async function runOrphanDbCleanup(adminId) {
-    console.log('[Scheduler] Starting Orphan DB Cleanup...');
+    if (orphanCleanupRunning) return;
+    orphanCleanupRunning = true;
+    const logTarget = adminId || ADMIN_ID;
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+    if (!apiUrl || !apiKey) {
+        orphanCleanupRunning = false;
+        return;
+    }
 
-    let dbCounter = 0;
-    let deletionPromises = [];
-    let knownApps;
-    
-    // Use the admin's ID for logging critical results
-    const LOG_TARGET = adminId || ADMIN_ID; 
+    const normalizeDbName = value => String(value || '').replace(/-/g, '_').toLowerCase();
+    const dbNameFromUrl = value => {
+        try {
+            const pathname = new URL(String(value)).pathname.replace(/\/$/, '');
+            return normalizeDbName(decodeURIComponent(pathname.split('/').pop()));
+        } catch (_) {
+            return '';
+        }
+    };
 
     try {
-        // Step 1: Get all apps we manage from local DB
-        knownApps = await getKnownAppNames(pool);
-        console.log(`[Orphan Cleanup] Found ${knownApps.size - 1} known apps. Scanning Neon accounts...`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS orphan_database_candidates (
+                database_name TEXT PRIMARY KEY,
+                first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
 
-        // Step 2: Loop through all Neon accounts and find orphans
-        for (const accountConfig of NEON_ACCOUNTS) {
-            const accountId = String(accountConfig.id);
-            const dbsUrl = `https://console.neon.tech/api/v2/projects/${accountConfig.project_id}/branches/${accountConfig.branch_id}/databases`;
-            const headers = { 'Authorization': `Bearer ${accountConfig.api_key}`, 'Accept': 'application/json' };
+        const [awsResponse, herokuResponse, localResponse] = await Promise.all([
+            axios.get(`${apiUrl}/list`, { headers: { 'x-api-key': apiKey }, timeout: 15000 }),
+            herokuApi.get('/apps', { headers: { Authorization: `Bearer ${HEROKU_API_KEY}` }, timeout: 15000 }),
+            pool.query('SELECT app_name, config_vars FROM user_deployments')
+        ]);
+        if (!awsResponse.data?.success) throw new Error('AWS database listing failed.');
 
-            try {
-                const dbsResponse = await axios.get(dbsUrl, { headers });
-                const dbList = dbsResponse.data.databases;
-                
-                dbList.forEach(db => {
-                    const dbName = db.name.replace(/-/g, '_'); // Sanitize name for comparison
-                    
-                    if (!knownApps.has(dbName) && dbName !== 'neondb') {
-                        // Found an orphan!
-                        dbCounter++;
-                        deletionPromises.push({
-                            promise: deleteNeonDatabase(dbName, accountId), // Use the specific account ID
-                            dbName: dbName,
-                            accountId: accountId
-                        });
-                        // Do not log every finding, only critical errors or final results
-                    }
-                });
-            } catch (error) {
-                // Log API failure for a single account
-                console.error(`[Orphan Cleanup] Failed to scan Account ${accountId}. Error: ${error.message.substring(0, 50)}`);
-            }
-        }
-        
-        console.log(`[Orphan Cleanup] Scan complete. Found ${dbCounter} orphaned DBs. Starting deletion...`);
-
-        if (dbCounter === 0) {
-             console.log('[Orphan Cleanup] No orphans found. Job finished.');
-             return;
+        const referencedDbNames = new Set();
+        for (const app of herokuResponse.data || []) {
+            const configResponse = await herokuApi.get(`/apps/${encodeURIComponent(app.name)}/config-vars`, { timeout: 15000 });
+            const dbName = dbNameFromUrl(configResponse.data?.DATABASE_URL);
+            if (dbName) referencedDbNames.add(dbName);
         }
 
-        // Step 3: Execute Deletion
-        let successCount = 0;
-        let failLog = [];
-        
-        for (const { promise, dbName, accountId } of deletionPromises) {
-            const result = await promise;
-            if (result.success) {
-                successCount++;
-            } else {
-                failLog.push(`${dbName} (Acc ${accountId}): ${result.error || 'Unknown Error'}`);
-            }
+        for (const row of localResponse.rows) {
+            const config = typeof row.config_vars === 'string'
+                ? (() => { try { return JSON.parse(row.config_vars); } catch (_) { return {}; } })()
+                : (row.config_vars || {});
+            const dbName = dbNameFromUrl(config.DATABASE_URL);
+            if (dbName) referencedDbNames.add(dbName);
         }
 
-        // Step 4: Final Report (send to admin via Telegram)
-        let finalReport = `**Intelligent Orphan DB Cleanup Report**\n\n`;
-        finalReport += `*Total Orphans Found:* ${dbCounter}\n`;
-        finalReport += `*Successfully Deleted:* ${successCount}\n`;
-        finalReport += `*Failed to Delete:* ${dbCounter - successCount}\n\n`;
+        const protectedNames = new Set(['neondb', 'postgres', 'template0', 'template1']);
+        const candidates = (awsResponse.data.databases || []).filter(db => {
+            const normalized = normalizeDbName(db.name);
+            return normalized && !protectedNames.has(normalized) && !referencedDbNames.has(normalized);
+        });
 
-        if (failLog.length > 0) {
-            finalReport += `**Deletion Failures:**\n\`\`\`\n${failLog.join('\n')}\n\`\`\``;
+        for (const db of candidates) {
+            await pool.query(`
+                INSERT INTO orphan_database_candidates (database_name)
+                VALUES ($1)
+                ON CONFLICT (database_name) DO UPDATE SET last_seen_at = NOW()
+            `, [db.name]);
+        }
+
+        const activeCandidateNames = candidates.map(db => db.name);
+        if (activeCandidateNames.length > 0) {
+            await pool.query(
+                'DELETE FROM orphan_database_candidates WHERE NOT (database_name = ANY($1::text[]))',
+                [activeCandidateNames]
+            );
         } else {
-             finalReport += `All ${successCount} orphaned databases were successfully deleted.`;
+            await pool.query('DELETE FROM orphan_database_candidates');
         }
-        
-        await bot.sendMessage(LOG_TARGET, finalReport, { parse_mode: 'Markdown' });
 
-    } catch (e) {
-        console.error(`[Orphan Cleanup] CRITICAL FAILURE:`, e);
-        await bot.sendMessage(LOG_TARGET, `**CRITICAL ERROR** during Orphan DB Cleanup: ${escapeMarkdown(e.message)}`, { parse_mode: 'Markdown' });
+        const expired = await pool.query(`
+            SELECT database_name FROM orphan_database_candidates
+            WHERE first_seen_at <= NOW() - INTERVAL '24 hours'
+            ORDER BY first_seen_at ASC
+        `);
+        const deleted = [];
+        for (const row of expired.rows) {
+            const normalized = normalizeDbName(row.database_name);
+            if (referencedDbNames.has(normalized)) {
+                await pool.query('DELETE FROM orphan_database_candidates WHERE database_name = $1', [row.database_name]);
+                continue;
+            }
+            const result = await deleteSelfHostedDatabase(row.database_name);
+            if (result.success) {
+                deleted.push(row.database_name);
+                await pool.query('DELETE FROM orphan_database_candidates WHERE database_name = $1', [row.database_name]);
+            } else {
+                console.error(`[Orphan Cleanup] Could not delete ${row.database_name}: ${result.error}`);
+            }
+        }
+
+        if (deleted.length > 0) {
+            await bot.sendMessage(logTarget, `AWS orphan cleanup deleted ${deleted.length} database(s) after 24 hours:\n${deleted.map(name => `- ${name}`).join('\n')}`).catch(() => {});
+        }
+        console.log(`[Orphan Cleanup] ${candidates.length} currently unreferenced; deleted ${deleted.length} after grace period.`);
+    } catch (error) {
+        console.error('[Orphan Cleanup] Safety check failed; no databases were deleted:', error.message);
+    } finally {
+        orphanCleanupRunning = false;
     }
 }
+
+setInterval(() => runOrphanDbCleanup().catch(error => {
+    console.error('[Orphan Cleanup] Scheduled run failed:', error.message);
+}), 60 * 60 * 1000);
+console.log('[Orphan Cleanup] Scheduled hourly AWS orphan scan with a 24-hour grace period.');
 
 
 // In bot_services.js (Add this helper function)
@@ -6817,73 +6846,11 @@ bot.onText(/^\/id$/, async (msg) => {
 
 // In bot.js (REPLACE this handler)
 
-bot.onText(/^\/changedb (.+)$/, async (msg, match) => {
+bot.onText(/^\/changedb\s+([a-z0-9][a-z0-9-]{2,29})$/i, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    const target = match[1].trim();
-    
-    // --- CASE 1: MASS MIGRATION (/changedb all) ---
-    if (target.toLowerCase() === 'all') {
-        const confirmMsg = await bot.sendMessage(adminId, `⚠️ **Mass Database Migration (AWS Only)**\n\nThis will create a new database for EVERY bot currently on the **AWS Self-Hosted** platform and restart them.\n\nBots on Neon will *not* be affected. Proceed?`, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: 'Yes, Migrate AWS Bots', callback_data: 'changedb_confirm_all' }],
-                    [{ text: 'No, Cancel', callback_data: 'changedb_cancel' }]
-                ]
-            }
-        });
-        return;
-    }
-
-    if (target === 'confirm_all') {
-        const workingMsg = await bot.sendMessage(adminId, "Starting Mass Database Migration (AWS Bots Only)...");
-        
-        // --- 💡 FIX: Query for AWS bots only ---
-        const allBotsResult = await pool.query(
-            "SELECT app_name as bot_name FROM user_deployments WHERE neon_account_id = 'AWS_MAIN'"
-        );
-        const allBots = allBotsResult.rows;
-        
-        if (allBots.length === 0) {
-            return bot.editMessageText("No bots found on the AWS platform to migrate.", { chat_id: adminId, message_id: workingMsg.message_id });
-        }
-
-        let success = 0;
-        let failed = 0;
-        
-        for (const [i, botRow] of allBots.entries()) {
-            const appName = botRow.bot_name;
-            
-            if (i % 5 === 0) {
-                await bot.editMessageText(
-                    `**Migrating AWS Databases...**\nProgress: ${i}/${allBots.length}\nSuccess: ${success} | Failed: ${failed}\n\nCurrent: \`${appName}\``, 
-                    { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-                ).catch(()=>{});
-            }
-
-            // Call the helper (dbServices is imported in bot.js)
-            const result = await changeBotDatabase(appName);
-            
-            if (result.success) success++;
-            else {
-                failed++;
-                console.error(`Failed to migrate ${appName}: ${result.message}`);
-            }
-            
-            await new Promise(r => setTimeout(r, 2000));
-        }
-
-        await bot.editMessageText(
-            `**AWS Migration Complete**\n\nTotal: ${allBots.length}\nSuccess: ${success}\nFailed: ${failed}`, 
-            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-        );
-        return;
-    }
-
-    // --- CASE 2: SINGLE APP MIGRATION (/changedb botname) ---
-    const appName = target;
+    const appName = match[1].toLowerCase();
     const workingMsg = await bot.sendMessage(adminId, `Changing database for \`${appName}\`...`, { parse_mode: 'Markdown' });
 
     // Call helper
@@ -6963,10 +6930,27 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
         const result = await createSelfHostedDatabase(dbName);
 
         if (result.success) {
+            await dbServices.saveUserDeployment(
+                adminId,
+                result.db_name,
+                null,
+                { DATABASE_URL: result.connection_string },
+                'aws',
+                false,
+                null,
+                null,
+                'AWS_MAIN'
+            );
+            const ownerCheck = await pool.query(
+                'SELECT 1 FROM user_deployments WHERE user_id = $1 AND app_name = $2 AND neon_account_id = $3',
+                [adminId, result.db_name, 'AWS_MAIN']
+            );
+            if (ownerCheck.rowCount === 0) throw new Error('Database was created, but the admin ownership record could not be saved.');
             await bot.editMessageText(
                 `**AWS Database Created!**\n\n` +
                 `**Name:** \`${result.db_name}\`\n` +
-                `**Connection:** \`${result.connection_string}\``,
+                `**Owner:** \`${adminId}\`\n` +
+                `The database has been added to the admin ownership records.`,
                 {
                     chat_id: adminId,
                     message_id: workingMsg.message_id,
@@ -8919,7 +8903,7 @@ bot.onText(/^\/list$/, async (msg) => {
 \`/deleteawsdb <name>\` - Delete AWS database
 \`/getawsdb <name>\` - Get AWS database info
 \`/createneondb <name>\` - Create Neon database
-\`/changedb <url>\` - Change database URL
+\`/changedb <app-name>\` - Change one bot database
 \`/updatehost <ip>\` - Update database host IP
 
 ⏱️ **EXPIRATION:**
@@ -12015,22 +11999,6 @@ if (action === 'copydb_confirm_simple') {
     return;
 }
 
-// Add these to your bot.on('callback_query', ...) function in bot.js
-
-if (action === 'changedb_confirm_all') {
-    // This simulates running the command again to trigger the full loop
-    // Ensure you use q.message.chat.id for context
-    bot.emit('message', { chat: q.message.chat, text: '/changedb confirm_all' });
-    // Delete the original buttons
-    await bot.deleteMessage(q.message.chat.id, q.message.message_id).catch(() => {});
-    return;
-}
-
-if (action === 'changedb_cancel') {
-    await bot.editMessageText('Mass migration cancelled.', { chat_id: q.message.chat.id, message_id: q.message.message_id });
-    return;
-}
-  
 if (action === 'copydb_cancel') {
     await bot.editMessageText('Database copy cancelled.', {
         chat_id: cid,
