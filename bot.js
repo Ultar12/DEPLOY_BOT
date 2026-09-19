@@ -1986,6 +1986,67 @@ async function createSelfHostedDatabase(dbName) {
         return { success: false, error: errorMsg };
     }
 }
+
+async function migrateBotDatabaseToAws(appName) {
+    const configResponse = await herokuApi.get(`/apps/${encodeURIComponent(appName)}/config-vars`);
+    const sourceUrl = configResponse.data?.DATABASE_URL;
+    if (!sourceUrl) throw new Error('The app has no DATABASE_URL config var.');
+
+    const baseName = appName.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^\d+/, 'db_').slice(0, 45) || 'bot_db';
+    let creationResult;
+    let selectedName;
+    let lastCreationError;
+
+    for (let suffix = 0; suffix <= 20; suffix++) {
+        selectedName = suffix === 0 ? baseName : `${baseName}_${suffix}`;
+        creationResult = await createSelfHostedDatabase(selectedName);
+        if (creationResult.success) break;
+        lastCreationError = creationResult.error || 'Unknown provisioning error';
+        if (!/exist|duplicate|already|taken|name/i.test(lastCreationError)) {
+            throw new Error(`AWS database creation failed: ${lastCreationError}`);
+        }
+    }
+
+    if (!creationResult?.success) {
+        throw new Error(`Could not find an available AWS database name after 21 attempts: ${lastCreationError}`);
+    }
+    if (!creationResult.connection_string) throw new Error('AWS did not return a connection string.');
+
+    const sourcePool = new Pool({ connectionString: sourceUrl, ssl: { rejectUnauthorized: false } });
+    const targetPool = new Pool({ connectionString: creationResult.connection_string, ssl: { rejectUnauthorized: false } });
+    let herokuSwitched = false;
+    try {
+        await sourcePool.query('SELECT 1');
+        await targetPool.query('SELECT 1');
+        const syncResult = await dbServices.syncDatabases(sourcePool, targetPool, { includeSessions: true });
+        if (!syncResult.success) throw new Error(syncResult.message || 'Database copy failed.');
+
+        await herokuApi.patch(`/apps/${encodeURIComponent(appName)}/config-vars`, {
+            DATABASE_URL: creationResult.connection_string
+        });
+        herokuSwitched = true;
+
+        await pool.query(`
+            UPDATE user_deployments
+            SET neon_account_id = $1,
+                config_vars = jsonb_set(COALESCE(config_vars, '{}'::jsonb), '{DATABASE_URL}', to_jsonb($2::text), true)
+            WHERE app_name = $3
+        `, [creationResult.provider_account_id || 'AWS_MAIN', creationResult.connection_string, appName]);
+
+        return { dbName: selectedName, connectionString: creationResult.connection_string, tables: syncResult.message };
+    } catch (error) {
+        if (herokuSwitched) {
+            await herokuApi.patch(`/apps/${encodeURIComponent(appName)}/config-vars`, {
+                DATABASE_URL: sourceUrl
+            }).catch(revertError => console.error(`[Migrate] Could not revert Heroku DATABASE_URL for ${appName}:`, revertError.message));
+        }
+        await deleteSelfHostedDatabase(selectedName).catch(cleanupError => console.error(`[Migrate] Could not clean up ${selectedName}:`, cleanupError.message));
+        throw error;
+    } finally {
+        await Promise.allSettled([sourcePool.end(), targetPool.end()]);
+    }
+}
+
 // In bot_services.js
 
 /**
@@ -9820,6 +9881,28 @@ bot.onText(/^\/playurl\s+(https?:\/\/\S+)$/i, async (msg, match) => {
             `PLAY_URL update failed: ${error.message}`,
             { chat_id: adminId, message_id: workingMessage.message_id }
         ).catch(() => bot.sendMessage(adminId, `PLAY_URL update failed: ${error.message}`));
+    }
+});
+
+// Admin command: copy an app database to a new AWS database, then switch the app.
+bot.onText(/^\/migrate\s+([a-z0-9][a-z0-9-]{2,29})$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    const appName = match[1].toLowerCase();
+    const workingMessage = await bot.sendMessage(adminId, `Migrating ${appName} to a new AWS database. This may take a while...`);
+    try {
+        const result = await migrateBotDatabaseToAws(appName);
+        await bot.editMessageText(
+            `Database migration completed for ${appName}.\n\nNew database: ${result.dbName}\n${result.tables}\n\nThe Heroku DATABASE_URL and local deployment record were updated.`,
+            { chat_id: adminId, message_id: workingMessage.message_id }
+        );
+    } catch (error) {
+        console.error(`[Migrate] Failed for ${appName}:`, error);
+        await bot.editMessageText(
+            `Database migration failed for ${appName}.\n\nReason: ${error.message}`,
+            { chat_id: adminId, message_id: workingMessage.message_id }
+        ).catch(() => bot.sendMessage(adminId, `Database migration failed for ${appName}: ${error.message}`));
     }
 });
 
