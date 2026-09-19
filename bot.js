@@ -6947,14 +6947,15 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
             );
             if (ownerCheck.rowCount === 0) throw new Error('Database was created, but the admin ownership record could not be saved.');
             await bot.editMessageText(
-                `**AWS Database Created!**\n\n` +
-                `**Name:** \`${result.db_name}\`\n` +
-                `**Owner:** \`${adminId}\`\n` +
+                `<b>AWS Database Created!</b>\n\n` +
+                `<b>Name:</b> <code>${escapeHTML(result.db_name)}</code>\n` +
+                `<b>Owner:</b> <code>${escapeHTML(adminId)}</code>\n` +
+                `<b>Connection URL:</b>\n<code>${escapeHTML(result.connection_string)}</code>\n\n` +
                 `The database has been added to the admin ownership records.`,
                 {
                     chat_id: adminId,
                     message_id: workingMsg.message_id,
-                    parse_mode: 'Markdown'
+                    parse_mode: 'HTML'
                 }
             );
         } else {
@@ -8369,6 +8370,45 @@ bot.onText(/^\/dbstats$/, async (msg) => {
         userId: bot.user_id
     }));
 
+    // Resolve owners from the database name inside each Heroku app's DATABASE_URL.
+    // This covers apps whose local bot/deployment row is missing an owner.
+    const herokuUrlOwners = new Map();
+    let herokuUrlScanErrors = 0;
+    const databaseNameFromUrl = value => {
+        try {
+            const pathname = new URL(String(value)).pathname.replace(/\/$/, '');
+            return pathname ? pathname.split('/').pop().replace(/-/g, '_').toLowerCase() : '';
+        } catch (_) {
+            return '';
+        }
+    };
+    try {
+        const herokuApps = await herokuApi.get('/apps', { timeout: 15000 });
+        for (const app of herokuApps.data || []) {
+            try {
+                const config = await herokuApi.get(`/apps/${encodeURIComponent(app.name)}/config-vars`, { timeout: 15000 });
+                const dbName = databaseNameFromUrl(config.data?.DATABASE_URL);
+                if (!dbName) continue;
+
+                const appLabel = app.name.replace(/-/g, '_').toLowerCase();
+                const localOwner = botList.find(bot => bot.canonical.toLowerCase() === appLabel);
+                const dbLabelOwner = botList.find(bot => bot.canonical.toLowerCase() === dbName);
+                const resolvedOwner = localOwner?.userId || dbLabelOwner?.userId || ADMIN_ID;
+                const resolvedMatchType = localOwner || dbLabelOwner ? 'heroku_url' : 'heroku_url_admin_fallback';
+                const previousOwner = herokuUrlOwners.get(dbName);
+                if (!previousOwner || previousOwner.userId === ADMIN_ID || resolvedOwner !== ADMIN_ID) {
+                    herokuUrlOwners.set(dbName, { userId: resolvedOwner, matchType: resolvedMatchType });
+                }
+            } catch (error) {
+                herokuUrlScanErrors++;
+                console.error(`[DB Stats] Could not inspect Heroku app ${app.name}:`, error.message);
+            }
+        }
+    } catch (error) {
+        herokuUrlScanErrors++;
+        console.error('[DB Stats] Could not list Heroku apps for DATABASE_URL owner lookup:', error.message);
+    }
+
     function getSimilarity(str1, str2) {
         const longer = str1.length > str2.length ? str1 : str2;
         const shorter = str1.length > str2.length ? str2 : str1;
@@ -8404,6 +8444,9 @@ bot.onText(/^\/dbstats$/, async (msg) => {
      */
     function findOwnerByName(dbName) {
         const dbNameWithUnderscores = dbName.replace(/-/g, '_');
+
+        const herokuOwner = herokuUrlOwners.get(dbNameWithUnderscores.toLowerCase());
+        if (herokuOwner) return herokuOwner;
 
         // 1. Exact match (canonical)
         for (const bot of botList) {
@@ -8519,7 +8562,13 @@ bot.onText(/^\/dbstats$/, async (msg) => {
     msgOut += `<b>✅ MATCHED — WITH USER ID (${matchedEntries.length})</b>\n\n`;
     if (matchedEntries.length > 0) {
         matchedEntries.forEach((e, i) => {
-            const tag = e.matchType === 'fuzzy' ? ' <i>(fuzzy)</i>' : '';
+            const tag = e.matchType === 'fuzzy'
+                ? ' <i>(fuzzy)</i>'
+                : e.matchType === 'heroku_url'
+                    ? ' <i>(Heroku DATABASE_URL)</i>'
+                    : e.matchType === 'heroku_url_admin_fallback'
+                        ? ' <i>(Heroku URL → admin fallback)</i>'
+                        : '';
             const sizeStr = e.size ? ` | ${e.size}` : '';
             msgOut += `#${i + 1} (${e.source}) <code>${escapeHTML(e.name)}</code>${sizeStr} → <code>${e.owner}</code>${tag}\n`;
         });
@@ -8539,6 +8588,9 @@ bot.onText(/^\/dbstats$/, async (msg) => {
 
     if (neonErrors.length > 0) {
         msgOut += `\n<b>Neon Account Errors:</b>\n${neonErrors.map(e => escapeHTML(e)).join('\n')}\n`;
+    }
+    if (herokuUrlScanErrors > 0) {
+        msgOut += `\n<b>Heroku URL lookup warnings:</b> ${herokuUrlScanErrors} app(s) could not be inspected.\n`;
     }
 
     msgOut += `\n========================================\n`;
