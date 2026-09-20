@@ -2950,27 +2950,26 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
 
         // PHASE 2: copydb if the backup phase was successful
         if (backupSuccess) {
-            await bot.sendMessage(adminId, 'Starting Phase 2: Automatically copying main database to backup database...');
+            await bot.editMessageText(`${summary}\nStarting Phase 2: Automatically copying main database to backup database...`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
             try {
                 await runCopyDbTask();
-                await bot.sendMessage(adminId, 'Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.');
             } catch (copyError) {
                 console.error('Error during automated /copydb task:', copyError);
-                await bot.sendMessage(adminId, `Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`);
+                await bot.editMessageText(`Bot backup was successful, but the final /copydb task failed.\n\nReason: ${copyError.message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
             }
         } else {
-            await bot.sendMessage(adminId, 'Main database copy was skipped because errors occurred during the bot backup phase.');
+            await bot.editMessageText(`${summary}\nMain database copy was skipped because errors occurred during the bot backup phase.`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
         }
 
         // PHASE 3: trigger the AWS PostgreSQL archive backup through the AWS manager API
-        await bot.sendMessage(adminId, 'Starting Phase 3: Creating and uploading the AWS PostgreSQL backup...');
+        await bot.editMessageText(`${summary}\nStarting Phase 3: Creating and uploading the AWS PostgreSQL backup...`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
         try {
             const awsBackup = await runAwsBackupNow();
             const output = String(awsBackup.output || '').trim().split('\n').slice(-3).join('\n');
-            await bot.sendMessage(adminId, `AWS PostgreSQL backup completed successfully.\n\n${output}`);
+            await bot.editMessageText(`Full System Maintenance Complete!\n\nAll bot settings and the main database copy are finished.\n\nAWS PostgreSQL backup completed successfully.\n\n${output}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
         } catch (awsBackupError) {
             console.error('[Backup Task] AWS PostgreSQL backup failed:', awsBackupError);
-            await bot.sendMessage(adminId, `Bot backup completed, but the AWS PostgreSQL backup failed.\n\nReason: ${awsBackupError.message}`);
+            await bot.editMessageText(`Bot backup completed, but the AWS PostgreSQL backup failed.\n\nReason: ${awsBackupError.message}`, { chat_id: adminId, message_id: progressMsg.message_id }).catch(()=>{});
         }
 
     } catch (error) {
