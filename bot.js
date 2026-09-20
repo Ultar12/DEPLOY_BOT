@@ -773,6 +773,19 @@ async function runCopyDbTask() {
     }
 }
 
+async function runAwsBackupNow() {
+    const apiUrl = process.env.SELF_HOSTED_DB_URL;
+    const apiKey = process.env.SELF_HOSTED_DB_SECRET;
+    if (!apiUrl || !apiKey) throw new Error('AWS database API configuration is missing.');
+
+    const response = await axios.post(`${apiUrl.replace(/\/$/, '')}/backup`, {}, {
+        headers: { 'x-api-key': apiKey },
+        timeout: 15 * 60 * 1000
+    });
+    if (!response.data?.success) throw new Error(response.data?.error || 'AWS backup failed.');
+    return response.data;
+}
+
 // In bot.js (Add these new functions globally)
 
 /**
@@ -2939,6 +2952,17 @@ async function runBackupAllTask(adminId, initialMessageId = null) {
             }
         } else {
             await bot.sendMessage(adminId, 'Main database copy was skipped because errors occurred during the bot backup phase.');
+        }
+
+        // PHASE 3: trigger the AWS PostgreSQL archive backup through the AWS manager API
+        await bot.sendMessage(adminId, 'Starting Phase 3: Creating and uploading the AWS PostgreSQL backup...');
+        try {
+            const awsBackup = await runAwsBackupNow();
+            const output = String(awsBackup.output || '').trim().split('\n').slice(-3).join('\n');
+            await bot.sendMessage(adminId, `AWS PostgreSQL backup completed successfully.\n\n${output}`);
+        } catch (awsBackupError) {
+            console.error('[Backup Task] AWS PostgreSQL backup failed:', awsBackupError);
+            await bot.sendMessage(adminId, `Bot backup completed, but the AWS PostgreSQL backup failed.\n\nReason: ${awsBackupError.message}`);
         }
 
     } catch (error) {
