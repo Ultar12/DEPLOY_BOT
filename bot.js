@@ -778,10 +778,18 @@ async function runAwsBackupNow() {
     const apiKey = process.env.SELF_HOSTED_DB_SECRET;
     if (!apiUrl || !apiKey) throw new Error('AWS database API configuration is missing.');
 
-    const response = await axios.post(`${apiUrl.replace(/\/$/, '')}/backup`, {}, {
-        headers: { 'x-api-key': apiKey },
-        timeout: 15 * 60 * 1000
-    });
+    let response;
+    try {
+        response = await axios.post(`${apiUrl.replace(/\/$/, '')}/backup`, {}, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 15 * 60 * 1000
+        });
+    } catch (error) {
+        if (error.response?.status === 404) {
+            throw new Error('AWS /backup endpoint is not deployed. Pull the latest Database- repository and run docker compose up -d --build on the AWS server.');
+        }
+        throw new Error(error.response?.data?.error || error.message);
+    }
     if (!response.data?.success) throw new Error(response.data?.error || 'AWS backup failed.');
     return response.data;
 }
