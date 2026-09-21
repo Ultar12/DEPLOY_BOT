@@ -2150,9 +2150,16 @@ async function createRenderDatabase(requestedName) {
             psqlCommand: connectionInfo.psqlCommand
         };
     } catch (error) {
-        const details = error.response?.data?.message || error.response?.data?.error || error.message;
-        console.error('[Render Postgres] Creation failed:', details);
-        return { success: false, error: details };
+        const responseBody = error.response?.data;
+        const details = typeof responseBody === 'string'
+            ? responseBody
+            : responseBody?.message || responseBody?.error || responseBody?.detail ||
+              (responseBody ? JSON.stringify(responseBody) : error.message);
+        const status = error.response?.status ? `HTTP ${error.response.status}: ` : '';
+        const requestId = error.response?.headers?.['render-request-id'];
+        const diagnostic = `${status}${details}${requestId ? ` (request ${requestId})` : ''}`;
+        console.error('[Render Postgres] Creation failed:', diagnostic);
+        return { success: false, error: diagnostic };
     }
 }
 
