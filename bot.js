@@ -2136,7 +2136,7 @@ async function createRenderDatabase(requestedName) {
             await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
-        if (!connectionInfo) {
+        if (!connectionInfo?.externalConnectionString && !connectionInfo?.internalConnectionString) {
             const reason = lastConnectionError?.response?.data?.message || lastConnectionError?.message || 'Connection information is not available yet.';
             return {
                 success: true,
@@ -2173,6 +2173,112 @@ async function createRenderDatabase(requestedName) {
     }
 }
 
+
+/**
+ * Deletes a Render Postgres instance using its resource ID. The hostname in a
+ * Render connection URL is also the Postgres resource ID (for example dpg-...).
+ */
+async function deleteRenderDatabaseByUrl(connectionUrl) {
+    const renderApiKey = process.env.RENDER_API_KEY;
+    if (!renderApiKey) return { success: false, error: 'RENDER_API_KEY is not configured.' };
+
+    let postgresId;
+    try {
+        const parsed = new URL(connectionUrl);
+        postgresId = parsed.hostname.split('.')[0];
+    } catch (error) {
+        return { success: false, error: `Invalid Render database URL: ${error.message}` };
+    }
+
+    if (!/^dpg-[a-z0-9-]+$/i.test(postgresId)) {
+        return { success: false, error: `Could not determine the Render Postgres ID from hostname '${postgresId}'.` };
+    }
+
+    try {
+        await axios.delete(`https://api.render.com/v1/postgres/${encodeURIComponent(postgresId)}`, {
+            headers: { Authorization: `Bearer ${renderApiKey}`, Accept: 'application/json' }
+        });
+        console.log(`[Backup Recovery] Deleted old Render Postgres database ${postgresId}.`);
+        return { success: true, id: postgresId };
+    } catch (error) {
+        if (error.response?.status === 404) {
+            console.log(`[Backup Recovery] Render database ${postgresId} was already deleted.`);
+            return { success: true, id: postgresId, alreadyGone: true };
+        }
+        const body = error.response?.data;
+        const details = typeof body === 'string' ? body : body?.message || body?.error || error.message;
+        return { success: false, id: postgresId, error: `HTTP ${error.response?.status || 'N/A'}: ${details}` };
+    }
+}
+
+
+let renderBackupRecoveryInProgress = false;
+
+/**
+ * Replaces DATABASE_URL2 after the backup database becomes unreachable.
+ */
+async function recoverRenderBackupDatabase(failure) {
+    if (renderBackupRecoveryInProgress) {
+        console.log('[Backup Recovery] Recovery already in progress; skipping duplicate trigger.');
+        return { success: false, skipped: true, error: 'Recovery already in progress.' };
+    }
+
+    const oldBackupUrl = process.env.DATABASE_URL2 || DATABASE_URL2;
+    const renderApiKey = process.env.RENDER_API_KEY;
+    const renderServiceId = process.env.RENDER_SERVICE_ID;
+    if (!renderApiKey || !renderServiceId) {
+        return { success: false, error: 'RENDER_API_KEY and RENDER_SERVICE_ID are required for backup recovery.' };
+    }
+    if (!oldBackupUrl) {
+        return { success: false, error: 'DATABASE_URL2 is not configured.' };
+    }
+
+    renderBackupRecoveryInProgress = true;
+    try {
+        await bot.sendMessage(
+            ADMIN_ID,
+            `⚠️ Render backup database failure detected. Replacing DATABASE_URL2 automatically.\n\nReason: ${escapeMarkdown(failure.message || String(failure))}`,
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+
+        const deletion = await deleteRenderDatabaseByUrl(oldBackupUrl);
+        if (!deletion.success) {
+            throw new Error(`Could not delete old Render backup database: ${deletion.error}`);
+        }
+
+        const replacementName = `backup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const creation = await createRenderDatabase(replacementName);
+        if (!creation.success || creation.pending || !creation.internalUrl) {
+            throw new Error(creation.error || 'Replacement Render database did not provide an internal URL.');
+        }
+
+        const update = await updateRenderVar('DATABASE_URL2', creation.internalUrl, false);
+        if (!update.success) {
+            throw new Error(`Replacement database created, but DATABASE_URL2 update failed: ${update.message}`);
+        }
+
+        const restarted = await triggerRenderRestart();
+        if (!restarted) {
+            throw new Error('DATABASE_URL2 was updated, but the Render service restart could not be triggered.');
+        }
+        await bot.sendMessage(
+            ADMIN_ID,
+            `✅ Backup database recovery completed.\n\nNew database: \`${escapeMarkdown(creation.name)}\`\nDATABASE_URL2 was updated to the internal Render URL and the service restart was triggered.`,
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+        return { success: true, database: creation };
+    } catch (error) {
+        console.error('[Backup Recovery] Automatic replacement failed:', error.message);
+        await bot.sendMessage(
+            ADMIN_ID,
+            `❌ Automatic backup database recovery failed.\n\nReason: ${escapeMarkdown(error.message)}`,
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+        return { success: false, error: error.message };
+    } finally {
+        renderBackupRecoveryInProgress = false;
+    }
+}
 
 
 /**
@@ -4292,15 +4398,17 @@ async function triggerRenderRestart() {
     const { RENDER_API_KEY, RENDER_SERVICE_ID } = process.env;
     if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
         console.error('[Restart] Cannot trigger restart: Render API details are not set.');
-        return;
+        return false;
     }
     try {
         const deployUrl = `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys`;
         const headers = { 'Authorization': `Bearer ${RENDER_API_KEY}` };
         await axios.post(deployUrl, {}, { headers });
         console.log('[Restart] Successfully triggered an explicit restart on Render.');
+        return true;
     } catch (error) {
         console.error('[Restart] Failed to trigger explicit restart:', error.message);
+        return false;
     }
 }
 
@@ -16716,6 +16824,12 @@ async function runDailyBackup() {
         console.error(`[Backup] CRITICAL ERROR during daily automatic backup:`, error.message);
         // Notify admin on failure
         await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: The automatic daily database backup failed. Please check the logs.\n\nReason: ${error.message}`);
+
+        // A dead Render Postgres hostname means DATABASE_URL2 points to a
+        // database that can no longer serve as the backup destination.
+        if (/getaddrinfo\s+ENOTFOUND\s+dpg-[a-z0-9-]+/i.test(error.message || '')) {
+            await recoverRenderBackupDatabase(error);
+        }
     }
 }
 
