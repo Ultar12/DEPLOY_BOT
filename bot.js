@@ -7134,7 +7134,7 @@ bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
                 `<b>Name:</b> <code>${escapeHTML(result.name)}</code>\n` +
                 `<b>ID:</b> <code>${escapeHTML(result.id)}</code>\n` +
                 (result.dashboardUrl ? `<b>Dashboard:</b> ${escapeHTML(result.dashboardUrl)}\n` : '') +
-                `\nRun <code>/cr ${escapeHTML(result.name)}</code> again only if you need to retry fetching the details.`,
+                `\nThe database was created successfully. Do not run /cr again for this database, because /cr always creates a new database.`,
                 { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
             );
         }
