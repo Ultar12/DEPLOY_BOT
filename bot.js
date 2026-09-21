@@ -11620,8 +11620,10 @@ if (text === 'Extra Commands') {
     return bot.sendMessage(cid, 'Choose which bot\'s extra commands you want to view:', {
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' }],
-                [{ text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }]
+                [
+                    { text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' },
+                    { text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }
+                ]
             ]
         }
     });
@@ -12173,8 +12175,10 @@ if (action === 'recovery_enter_new_key') {
       message_id: q.message.message_id,
       reply_markup: {
         inline_keyboard: [
-          [{ text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' }],
-          [{ text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }]
+          [
+            { text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' },
+            { text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }
+          ]
         ]
       }
     });
@@ -12238,7 +12242,7 @@ if (action === 'recovery_enter_new_key') {
         `<b>${escapeHTML(plugin.plugin_name)}</b>\n\n` +
         `<b>Bot:</b> ${escapeHTML(plugin.bot_type)}\n` +
         `<b>Description:</b> ${escapeHTML(plugin.description || 'No description available.')}\n\n` +
-        `<b>Install:</b> Copy the plugin, then send <code>${plugin.bot_type === 'levanter' ? '.plugin' : '.install'}</code> followed by the copied plugin in your ${escapeHTML(plugin.bot_type)} bot.`,
+        `Install: Copy the plugin, then send ${plugin.bot_type === 'levanter' ? '.plugin' : '.install'} followed by the copied plugin to your ${escapeHTML(plugin.bot_type)} bot on WhatsApp.`,
         {
           chat_id: cid,
           message_id: q.message.message_id,
