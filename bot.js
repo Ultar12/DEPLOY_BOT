@@ -12238,14 +12238,14 @@ if (action === 'recovery_enter_new_key') {
         `<b>${escapeHTML(plugin.plugin_name)}</b>\n\n` +
         `<b>Bot:</b> ${escapeHTML(plugin.bot_type)}\n` +
         `<b>Description:</b> ${escapeHTML(plugin.description || 'No description available.')}\n\n` +
-        `<b>Plugin URL:</b>\n<code>${escapeHTML(plugin.plugin_url)}</code>`,
+        `<b>Install:</b> Copy the plugin, then send <code>${plugin.bot_type === 'levanter' ? '.plugin' : '.install'}</code> followed by the copied plugin in your ${escapeHTML(plugin.bot_type)} bot.`,
         {
           chat_id: cid,
           message_id: q.message.message_id,
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
-              [{ text: 'Open Plugin URL', url: plugin.plugin_url, style: 'success' }],
+              [{ text: 'Copy Plugin', copy_text: { text: plugin.plugin_url }, style: 'success' }],
               [{ text: 'Back to Bot Types', callback_data: 'extra_menu' }]
             ]
           }
