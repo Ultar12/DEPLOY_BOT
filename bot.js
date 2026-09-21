@@ -4552,10 +4552,11 @@ function buildKeyboard(isAdmin) {
       { text: 'Deploy', style: 'success' }         // Green
     ],
     [
-
-      { text: 'Support', style: 'danger' }, 
+      { text: 'Extra Commands', style: 'success' },
       { text: 'My Bots', style: 'success' } 
-        
+    ],
+    [
+      { text: 'Support', style: 'danger' }
     ]
 ];
 
@@ -11615,6 +11616,17 @@ if (text === 'More Features') {
 
 
 // Add this inside your bot.on('message') handler
+if (text === 'Extra Commands') {
+    return bot.sendMessage(cid, 'Choose which bot\'s extra commands you want to view:', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' }],
+                [{ text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }]
+            ]
+        }
+    });
+}
+
 if (text === 'Support') {
     return bot.sendMessage(cid, "Contact our official support here: @staries1", {
         reply_markup: {
@@ -12145,13 +12157,104 @@ bot.on('callback_query', async q => {
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
 
-  if (action === 'recovery_enter_new_key') {
+if (action === 'recovery_enter_new_key') {
     if (cid !== ADMIN_ID) return;
     userStates[cid] = { step: 'AWAITING_RECOVERY_API_KEY', data: {} };
     await bot.editMessageText('Send the replacement API key now. It will be verified before recovery continues.', {
       chat_id: cid,
       message_id: q.message.message_id
     });
+    return;
+  }
+
+  if (action === 'extra_menu') {
+    await bot.editMessageText('Choose which bot\'s extra commands you want to view:', {
+      chat_id: cid,
+      message_id: q.message.message_id,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' }],
+          [{ text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }]
+        ]
+      }
+    });
+    return;
+  }
+
+  if (action === 'extra_bot') {
+    const botType = String(payload || '').toLowerCase();
+    if (!['levanter', 'raganork'].includes(botType)) return;
+
+    try {
+      const result = await pool.query(
+        'SELECT id, plugin_name, description, plugin_url FROM user_plugins WHERE bot_type = $1 ORDER BY created_at DESC',
+        [botType]
+      );
+      const title = `${botType === 'raganork' ? 'Raganork' : 'Levanter'} plugins`;
+      const rows = result.rows.map(plugin => ([{
+        text: plugin.plugin_name,
+        callback_data: `extra_plugin:${plugin.id}`
+      }]));
+      rows.push([{ text: 'Back', callback_data: 'extra_menu' }]);
+
+      await bot.editMessageText(
+        result.rows.length
+          ? `Available ${title}:\n\nSelect a plugin to view its details and URL.`
+          : `No ${title} are available yet.`,
+        {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          reply_markup: { inline_keyboard: rows }
+        }
+      );
+    } catch (error) {
+      console.error('[Extra Commands] Failed to load plugins:', error.message);
+      await bot.editMessageText('Could not load the available plugins right now.', {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: 'extra_menu' }]] }
+      });
+    }
+    return;
+  }
+
+  if (action === 'extra_plugin') {
+    try {
+      const result = await pool.query(
+        'SELECT plugin_name, bot_type, description, plugin_url FROM user_plugins WHERE id = $1',
+        [payload]
+      );
+      const plugin = result.rows[0];
+      if (!plugin) {
+        await bot.editMessageText('That plugin is no longer available.', {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          reply_markup: { inline_keyboard: [[{ text: 'Back', callback_data: 'extra_menu' }]] }
+        });
+        return;
+      }
+
+      await bot.editMessageText(
+        `<b>${escapeHTML(plugin.plugin_name)}</b>\n\n` +
+        `<b>Bot:</b> ${escapeHTML(plugin.bot_type)}\n` +
+        `<b>Description:</b> ${escapeHTML(plugin.description || 'No description available.')}\n\n` +
+        `<b>Plugin URL:</b>\n<code>${escapeHTML(plugin.plugin_url)}</code>`,
+        {
+          chat_id: cid,
+          message_id: q.message.message_id,
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Open Plugin URL', url: plugin.plugin_url, style: 'success' }],
+              [{ text: 'Back to Bot Types', callback_data: 'extra_menu' }]
+            ]
+          }
+        }
+      );
+    } catch (error) {
+      console.error('[Extra Commands] Failed to load plugin:', error.message);
+      await bot.sendMessage(cid, 'Could not load that plugin right now.');
+    }
     return;
   }
 
