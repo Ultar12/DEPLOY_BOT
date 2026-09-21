@@ -172,7 +172,7 @@ const STICKER_PACK_NAME = `ultar_7897230448_by_ultarbotdeploybot`;
 const MINI_APP_URL = process.env.MINI_APP_URL || 'https://ultarsync.store/apps';
 // --- END NEW GLOBAL CONSTANT --
 // --- NEW GLOBAL CONSTANT ---
-const KEYBOARD_VERSION = 7; 
+const KEYBOARD_VERSION = 8; 
 
 // Ensure monitorInit exports sendTelegramAlert as monitorSendTelegramAlert
 const { init: monitorInit, sendTelegramAlert: monitorSendTelegramAlert } = require('./bot_monitor');
