@@ -2067,6 +2067,96 @@ async function deleteSelfHostedDatabase(dbName) {
 }
 
 
+/**
+ * Creates a managed PostgreSQL database on Render and retrieves its connection details.
+ * Render may take a short time to make connection information available, so the
+ * connection-info request is retried for a bounded period after creation.
+ */
+async function createRenderDatabase(requestedName) {
+    const renderApiKey = process.env.RENDER_API_KEY;
+    if (!renderApiKey) {
+        return { success: false, error: 'RENDER_API_KEY is not configured.' };
+    }
+
+    const rawName = String(requestedName || `render_db_${Date.now()}`).trim().toLowerCase();
+    const dbName = rawName
+        .replace(/[^a-z0-9_-]+/g, '_')
+        .replace(/^[-_]+|[-_]+$/g, '')
+        .slice(0, 55);
+
+    if (!dbName || !/^[a-z0-9][a-z0-9_-]*$/.test(dbName)) {
+        return { success: false, error: 'Invalid database name. Use letters, numbers, hyphens, or underscores.' };
+    }
+
+    const headers = {
+        Authorization: `Bearer ${renderApiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+    };
+    const payload = {
+        databaseName: dbName,
+        databaseUser: `${dbName}_user`.slice(0, 63),
+        plan: 'free',
+        region: 'virginia',
+        version: '18',
+        enableHighAvailability: false,
+        enableDiskAutoscaling: false,
+        connectionPool: 'none'
+    };
+
+    try {
+        const createResponse = await axios.post('https://api.render.com/v1/postgres', payload, { headers });
+        const postgres = createResponse.data;
+        const postgresId = postgres.id;
+        if (!postgresId) throw new Error('Render did not return a Postgres resource ID.');
+
+        let connectionInfo;
+        let lastConnectionError;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            try {
+                const infoResponse = await axios.get(
+                    `https://api.render.com/v1/postgres/${encodeURIComponent(postgresId)}/connection-info`,
+                    { headers }
+                );
+                connectionInfo = infoResponse.data;
+                if (connectionInfo.externalConnectionString || connectionInfo.internalConnectionString) break;
+            } catch (error) {
+                lastConnectionError = error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+
+        if (!connectionInfo) {
+            const reason = lastConnectionError?.response?.data?.message || lastConnectionError?.message || 'Connection information is not available yet.';
+            return {
+                success: true,
+                pending: true,
+                id: postgresId,
+                name: postgres.name || postgres.databaseName || dbName,
+                dashboardUrl: postgres.dashboardUrl,
+                error: reason
+            };
+        }
+
+        return {
+            success: true,
+            id: postgresId,
+            name: postgres.name || postgres.databaseName || dbName,
+            dashboardUrl: postgres.dashboardUrl,
+            internalUrl: connectionInfo.internalConnectionString,
+            externalUrl: connectionInfo.externalConnectionString,
+            internalPoolUrl: connectionInfo.internalConnectionPoolString,
+            externalPoolUrl: connectionInfo.externalConnectionPoolString,
+            psqlCommand: connectionInfo.psqlCommand
+        };
+    } catch (error) {
+        const details = error.response?.data?.message || error.response?.data?.error || error.message;
+        console.error('[Render Postgres] Creation failed:', details);
+        return { success: false, error: details };
+    }
+}
+
+
 
 /**
  * Universal provisioning router.
@@ -7001,6 +7091,80 @@ bot.onText(/^\/createawsdb (.+)$/, async (msg, match) => {
     } catch (e) {
         console.error(e);
         await bot.editMessageText(`Error: ${e.message}`, { chat_id: adminId, message_id: workingMsg.message_id });
+    }
+});
+
+
+// --- Command: /cr [dbname] ---
+// Creates a managed Render Postgres database and returns all available URLs.
+bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
+    const adminId = msg.chat.id.toString();
+    if (adminId !== ADMIN_ID) return;
+
+    if (!process.env.RENDER_API_KEY) {
+        return bot.sendMessage(adminId, 'Render database creation is not configured. Set `RENDER_API_KEY` in the bot environment.', { parse_mode: 'Markdown' });
+    }
+
+    const requestedName = match[1] || `render_db_${Date.now()}`;
+    const workingMsg = await bot.sendMessage(
+        adminId,
+        `Creating Render PostgreSQL database \`${escapeMarkdown(requestedName)}\`...`,
+        { parse_mode: 'Markdown' }
+    );
+
+    try {
+        const result = await createRenderDatabase(requestedName);
+        if (!result.success) {
+            return bot.editMessageText(
+                `<b>Render database creation failed.</b>\n\n${escapeHTML(result.error)}`,
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
+            );
+        }
+
+        if (result.pending) {
+            return bot.editMessageText(
+                `<b>Render database created, but connection details are still provisioning.</b>\n\n` +
+                `<b>Name:</b> <code>${escapeHTML(result.name)}</code>\n` +
+                `<b>ID:</b> <code>${escapeHTML(result.id)}</code>\n` +
+                (result.dashboardUrl ? `<b>Dashboard:</b> ${escapeHTML(result.dashboardUrl)}\n` : '') +
+                `\nRun <code>/cr ${escapeHTML(result.name)}</code> again only if you need to retry fetching the details.`,
+                { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
+            );
+        }
+
+        const details = [
+            '<b>Render PostgreSQL database created.</b>',
+            '',
+            `<b>Name:</b> <code>${escapeHTML(result.name)}</code>`,
+            `<b>ID:</b> <code>${escapeHTML(result.id)}</code>`,
+            result.dashboardUrl ? `<b>Dashboard URL:</b> ${escapeHTML(result.dashboardUrl)}` : '',
+            '',
+            '<b>External URL:</b>',
+            `<code>${escapeHTML(result.externalUrl || 'Unavailable')}</code>`,
+            '',
+            '<b>Internal URL:</b>',
+            `<code>${escapeHTML(result.internalUrl || 'Unavailable')}</code>`,
+            '',
+            '<b>External pooled URL:</b>',
+            `<code>${escapeHTML(result.externalPoolUrl || 'Unavailable')}</code>`,
+            '',
+            '<b>Internal pooled URL:</b>',
+            `<code>${escapeHTML(result.internalPoolUrl || 'Unavailable')}</code>`,
+            result.psqlCommand ? `\n<b>PSQL command:</b>\n<code>${escapeHTML(result.psqlCommand)}</code>` : ''
+        ].filter(Boolean).join('\n');
+
+        return bot.editMessageText(details, {
+            chat_id: adminId,
+            message_id: workingMsg.message_id,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+        });
+    } catch (error) {
+        console.error('[Render Postgres] /cr handler failed:', error);
+        return bot.editMessageText(
+            `<b>Unexpected Render error.</b>\n\n${escapeHTML(error.message)}`,
+            { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
+        );
     }
 });
 
