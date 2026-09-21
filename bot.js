@@ -2098,7 +2098,7 @@ async function createRenderDatabase(requestedName) {
         // Render requires an ownerId (workspace ID). Resolve it using only the API key.
         const ownersResponse = await axios.get('https://api.render.com/v1/owners?limit=100', { headers });
         const owners = Array.isArray(ownersResponse.data) ? ownersResponse.data : [];
-        const owner = owners[0];
+        const owner = owners[0]?.owner || owners[0];
         if (!owner?.id) {
             throw new Error('The Render API key has no accessible workspace.');
         }
