@@ -7226,8 +7226,8 @@ bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
 
-    if (!process.env.RENDER_API_KEY) {
-        return bot.sendMessage(adminId, 'Render database creation is not configured. Set `RENDER_API_KEY` in the bot environment.', { parse_mode: 'Markdown' });
+    if (!process.env.RENDER_API_KEY || !process.env.RENDER_SERVICE_ID) {
+        return bot.sendMessage(adminId, 'Render database rotation requires `RENDER_API_KEY` and `RENDER_SERVICE_ID` in the bot environment.', { parse_mode: 'Markdown' });
     }
 
     const requestedName = match[1] || `render_db_${Date.now()}`;
@@ -7238,6 +7238,30 @@ bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
     );
 
     try {
+        const previousBackupUrl = process.env.DATABASE_URL2 || DATABASE_URL2;
+        let previousDatabaseStatus = 'No previous DATABASE_URL2 database was configured.';
+
+        // Only delete the previous database when DATABASE_URL2 points to a
+        // Render Postgres hostname. Other providers are left untouched.
+        if (previousBackupUrl) {
+            let previousHost = '';
+            try {
+                previousHost = new URL(previousBackupUrl).hostname;
+            } catch (error) {
+                throw new Error(`DATABASE_URL2 is not a valid URL: ${error.message}`);
+            }
+
+            if (/^dpg-[a-z0-9-]+\./i.test(previousHost)) {
+                const deletion = await deleteRenderDatabaseByUrl(previousBackupUrl);
+                if (!deletion.success) {
+                    throw new Error(`Could not delete the previous Render database: ${deletion.error}`);
+                }
+                previousDatabaseStatus = `Previous Render database deleted (${deletion.id}).`;
+            } else {
+                previousDatabaseStatus = 'DATABASE_URL2 is not a Render Postgres URL; previous database was left untouched.';
+            }
+        }
+
         const result = await createRenderDatabase(requestedName);
         if (!result.success) {
             return bot.editMessageText(
@@ -7252,9 +7276,18 @@ bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
                 `<b>Name:</b> <code>${escapeHTML(result.name)}</code>\n` +
                 `<b>ID:</b> <code>${escapeHTML(result.id)}</code>\n` +
                 (result.dashboardUrl ? `<b>Dashboard:</b> ${escapeHTML(result.dashboardUrl)}\n` : '') +
+                `<b>Previous database:</b> ${escapeHTML(previousDatabaseStatus)}\n` +
                 `\nThe database was created successfully. Do not run /cr again for this database, because /cr always creates a new database.`,
                 { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'HTML' }
             );
+        }
+
+        const update = await updateRenderVar('DATABASE_URL2', result.internalUrl, false);
+        if (!update.success) {
+            throw new Error(`Database created, but DATABASE_URL2 could not be updated: ${update.message}`);
+        }
+        if (!(await triggerRenderRestart())) {
+            throw new Error('DATABASE_URL2 was updated, but the Render service restart could not be triggered.');
         }
 
         const details = [
@@ -7263,6 +7296,8 @@ bot.onText(/^\/cr(?:\s+([a-zA-Z0-9_-]{1,55}))?\s*$/i, async (msg, match) => {
             `<b>Name:</b> <code>${escapeHTML(result.name)}</code>`,
             `<b>ID:</b> <code>${escapeHTML(result.id)}</code>`,
             result.dashboardUrl ? `<b>Dashboard URL:</b> ${escapeHTML(result.dashboardUrl)}` : '',
+            `<b>Previous database:</b> ${escapeHTML(previousDatabaseStatus)}`,
+            '<b>DATABASE_URL2:</b> updated to the internal URL; Render restart triggered.',
             '',
             '<b>External URL:</b>',
             `<code>${escapeHTML(result.externalUrl || 'Unavailable')}</code>`,
