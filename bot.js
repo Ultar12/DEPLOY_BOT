@@ -4584,6 +4584,15 @@ function buildKeyboard(isAdmin) {
 
 
 
+async function userHasExistingBot(userId) {
+    const result = await pool.query(
+        'SELECT 1 FROM user_bots WHERE user_id = $1 LIMIT 1',
+        [String(userId)]
+    );
+    return result.rowCount > 0;
+}
+
+
 function chunkArray(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) {
@@ -11617,6 +11626,9 @@ if (text === 'More Features') {
 
 // Add this inside your bot.on('message') handler
 if (text === 'Extra Commands') {
+    if (!(await userHasExistingBot(cid))) {
+        return bot.sendMessage(cid, 'Extra Commands are available after you have deployed a bot.');
+    }
     return bot.sendMessage(cid, 'Choose which bot\'s extra commands you want to view:', {
         reply_markup: {
             inline_keyboard: [
@@ -12155,6 +12167,16 @@ bot.on('callback_query', async q => {
   await bot.answerCallbackQuery(q.id).catch(() => {});
   await dbServices.updateUserActivity(cid); // Update user activity on any callback query
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
+
+  if (action === 'extra_menu' || action === 'extra_bot' || action === 'extra_plugin') {
+    if (!(await userHasExistingBot(cid))) {
+      await bot.answerCallbackQuery(q.id, {
+        text: 'Deploy a bot first to use Extra Commands.',
+        show_alert: true
+      }).catch(() => {});
+      return;
+    }
+  }
 
   console.log(`[CallbackQuery] Received: action=${action}, payload=${payload}, extra=${extra}, flag=${flag} from ${cid}`);
   console.log(`[CallbackQuery] Current state for ${cid}:`, userStates[cid]);
