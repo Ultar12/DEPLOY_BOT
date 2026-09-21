@@ -2093,18 +2093,28 @@ async function createRenderDatabase(requestedName) {
         Accept: 'application/json',
         'Content-Type': 'application/json'
     };
-    const payload = {
-        databaseName: dbName,
-        databaseUser: `${dbName}_user`.slice(0, 63),
-        plan: 'free',
-        region: 'virginia',
-        version: '18',
-        enableHighAvailability: false,
-        enableDiskAutoscaling: false,
-        connectionPool: 'none'
-    };
 
     try {
+        // Render requires an ownerId (workspace ID). Resolve it using only the API key.
+        const ownersResponse = await axios.get('https://api.render.com/v1/owners?limit=100', { headers });
+        const owners = Array.isArray(ownersResponse.data) ? ownersResponse.data : [];
+        const owner = owners[0];
+        if (!owner?.id) {
+            throw new Error('The Render API key has no accessible workspace.');
+        }
+
+        const payload = {
+            name: dbName,
+            databaseName: dbName,
+            databaseUser: `${dbName}_user`.slice(0, 63),
+            ownerId: owner.id,
+            plan: 'free',
+            region: 'virginia',
+            version: '18',
+            enableHighAvailability: false,
+            enableDiskAutoscaling: false,
+            connectionPool: 'none'
+        };
         const createResponse = await axios.post('https://api.render.com/v1/postgres', payload, { headers });
         const postgres = createResponse.data;
         const postgresId = postgres.id;
