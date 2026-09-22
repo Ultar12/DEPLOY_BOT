@@ -11324,7 +11324,11 @@ if (text === 'Deploy') {
     
         if (!isVerified) {
             userStates[cid] = { step: 'AWAITING_EMAIL', data: { isFreeTrial: false } };
-            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:');
+            await bot.sendMessage(cid, 'To deploy a bot, you first need to register. Please enter your email address:', {
+                reply_markup: {
+                    inline_keyboard: [[{ text: 'Cancel', callback_data: 'cancel_registration', style: 'danger' }]]
+                }
+            });
             return;
         }
     
@@ -12208,6 +12212,18 @@ if (action === 'recovery_enter_new_key') {
     await bot.editMessageText('Send the replacement API key now. It will be verified before recovery continues.', {
       chat_id: cid,
       message_id: q.message.message_id
+    });
+    return;
+  }
+
+  if (action === 'cancel_registration') {
+    delete userStates[cid];
+    await bot.editMessageText('Registration cancelled.', {
+      chat_id: cid,
+      message_id: q.message.message_id
+    }).catch(() => {});
+    await bot.sendMessage(cid, 'Main menu:', {
+      reply_markup: { keyboard: buildKeyboard(cid === ADMIN_ID), resize_keyboard: true }
     });
     return;
   }
