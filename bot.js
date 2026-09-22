@@ -12189,7 +12189,7 @@ bot.on('callback_query', async q => {
   await dbServices.updateUserActivity(cid); // Update user activity on any callback query
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
 
-  if (action === 'extra_menu' || action === 'extra_bot' || action === 'extra_plugin') {
+  if (action === 'extra_menu' || action === 'extra_bot' || action === 'extra_plugin' || action === 'extra_request_plugin') {
     if (!(await userHasExistingBot(cid))) {
       await bot.answerCallbackQuery(q.id, {
         text: 'Deploy a bot first to use Extra Commands.',
@@ -12228,6 +12228,23 @@ if (action === 'recovery_enter_new_key') {
     return;
   }
 
+  if (action === 'extra_request_plugin') {
+    await bot.editMessageText(
+      'Describe the plugin you need and send the details to the admin. Include what the plugin should do and which bot it is for.',
+      {
+        chat_id: cid,
+        message_id: q.message.message_id,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Message Admin', url: `https://t.me/${SUPPORT_USERNAME}`, style: 'success' }],
+            [{ text: 'Back to Bot Types', callback_data: 'extra_menu' }]
+          ]
+        }
+      }
+    );
+    return;
+  }
+
   if (action === 'extra_bot') {
     const botType = String(payload || '').toLowerCase();
     if (!['levanter', 'raganork'].includes(botType)) return;
@@ -12242,11 +12259,14 @@ if (action === 'recovery_enter_new_key') {
         text: plugin.plugin_name,
         callback_data: `extra_plugin:${plugin.id}`
       }]));
-      rows.push([{ text: 'Back', callback_data: 'extra_menu' }]);
+      rows.push([
+        { text: 'Need a plugin?', callback_data: 'extra_request_plugin', style: 'success' },
+        { text: 'Back', callback_data: 'extra_menu' }
+      ]);
 
       await bot.editMessageText(
         result.rows.length
-          ? `Available ${title}:\n\nSelect a plugin to view its details and URL.`
+          ? `Available ${title}:\n\nSelect a plugin to view its details and copy option.`
           : `No ${title} are available yet.`,
         {
           chat_id: cid,
