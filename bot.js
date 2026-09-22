@@ -12189,7 +12189,7 @@ bot.on('callback_query', async q => {
   await dbServices.updateUserActivity(cid); // Update user activity on any callback query
   await notifyAdminUserOnline(q); // Call notifyAdminUserOnline for callback queries
 
-  if (action === 'extra_menu' || action === 'extra_bot' || action === 'extra_plugin' || action === 'extra_request_plugin') {
+  if (action === 'extra_menu' || action === 'extra_bot' || action === 'extra_page' || action === 'extra_plugin' || action === 'extra_request_plugin') {
     if (!(await userHasExistingBot(cid))) {
       await bot.answerCallbackQuery(q.id, {
         text: 'Deploy a bot first to use Extra Commands.',
@@ -12245,9 +12245,11 @@ if (action === 'recovery_enter_new_key') {
     return;
   }
 
-  if (action === 'extra_bot') {
+  if (action === 'extra_bot' || action === 'extra_page') {
     const botType = String(payload || '').toLowerCase();
     if (!['levanter', 'raganork'].includes(botType)) return;
+    const page = action === 'extra_page' ? Math.max(parseInt(extra, 10) || 1, 1) : 1;
+    const pageSize = 10;
 
     try {
       const result = await pool.query(
@@ -12255,10 +12257,23 @@ if (action === 'recovery_enter_new_key') {
         [botType]
       );
       const title = `${botType === 'raganork' ? 'Raganork' : 'Levanter'} plugins`;
-      const rows = result.rows.map(plugin => ([{
-        text: plugin.plugin_name,
-        callback_data: `extra_plugin:${plugin.id}`
-      }]));
+      const totalPages = Math.max(Math.ceil(result.rows.length / pageSize), 1);
+      const currentPage = Math.min(page, totalPages);
+      const pagePlugins = result.rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+      const columns = pagePlugins.length > 6 ? 3 : 2;
+      const rows = [];
+      for (let i = 0; i < pagePlugins.length; i += columns) {
+        rows.push(pagePlugins.slice(i, i + columns).map(plugin => ({
+          text: plugin.plugin_name,
+          callback_data: `extra_plugin:${plugin.id}`
+        })));
+      }
+      if (totalPages > 1) {
+        rows.push([
+          ...(currentPage > 1 ? [{ text: 'Previous', callback_data: `extra_page:${botType}:${currentPage - 1}` }] : []),
+          ...(currentPage < totalPages ? [{ text: 'Next', callback_data: `extra_page:${botType}:${currentPage + 1}` }] : [])
+        ]);
+      }
       rows.push([
         { text: 'Need a plugin?', callback_data: 'extra_request_plugin', style: 'success' },
         { text: 'Back', callback_data: 'extra_menu' }
@@ -12266,7 +12281,7 @@ if (action === 'recovery_enter_new_key') {
 
       await bot.editMessageText(
         result.rows.length
-          ? `Available ${title}:\n\nSelect a plugin to view its details and copy option.`
+          ? `Available ${title} — page ${currentPage}/${totalPages}:\n\nSelect a plugin to view its details and copy option.`
           : `No ${title} are available yet.`,
         {
           chat_id: cid,
