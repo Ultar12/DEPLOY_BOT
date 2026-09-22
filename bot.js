@@ -11689,13 +11689,12 @@ if (text === 'Extra Commands') {
     if (!(await userHasExistingBot(cid))) {
         return bot.sendMessage(cid, 'Extra Commands are available after you have deployed a bot.');
     }
-    return bot.sendMessage(cid, 'Choose which bot\'s extra commands you want to view:', {
+    return bot.sendMessage(cid, 'You can get extra commands for your bot via the websites below:', {
         reply_markup: {
             inline_keyboard: [
-                [
-                    { text: 'Levanter', callback_data: 'extra_bot:levanter', style: 'success' },
-                    { text: 'Raganork', callback_data: 'extra_bot:raganork', style: 'success' }
-                ]
+                [{ text: 'Levanter Plugins', url: 'https://levanter.site/plugin', style: 'success' }],
+                [{ text: 'Raganork Plugins', url: 'https://plugins.rgnk.site/', style: 'success' }],
+                [{ text: 'More Commands', callback_data: 'extra_menu', style: 'success' }]
             ]
         }
     });
