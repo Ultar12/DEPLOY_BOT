@@ -1603,7 +1603,9 @@ bot.editMessageText = async (text, options = {}) => {
 // Map to store Promises for app deployment status based on channel notifications
 const appDeploymentPromises = new Map(); // appName -> { resolve, reject, animateIntervalId }
 
+
 const forwardingContext = {}; // Stores context for admin replies
+const pluginRequestContexts = new Map();
 
 // These are correctly declared once here:
 const userLastSeenNotification = new Map(); // userId -> last timestamp notified
@@ -10593,6 +10595,39 @@ _Reply to this message to chat with the user._
 
 // REPLACE your existing 'AWAITING_EMAIL' handler with this one.
 
+if (st && st.step === 'AWAITING_PLUGIN_REQUEST') {
+    const requestText = text.trim();
+    if (!requestText) return bot.sendMessage(cid, 'Please describe the plugin you need, or press Cancel.');
+
+    const requestId = crypto.randomBytes(8).toString('hex');
+    const botType = st.data?.botType || 'unspecified';
+    const adminMessage =
+        `<b>New Plugin Request</b>\n\n` +
+        `<b>User ID:</b> <code>${escapeHTML(cid)}</code>\n` +
+        `<b>Bot:</b> ${escapeHTML(botType)}\n` +
+        `<b>Request:</b>\n${escapeHTML(requestText)}`;
+
+    try {
+        const sent = await bot.sendMessage(ADMIN_ID, adminMessage, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: 'Approve', callback_data: `plugin_request_decision:approve:${requestId}`, style: 'success' },
+                    { text: 'Reject', callback_data: `plugin_request_decision:reject:${requestId}`, style: 'danger' }
+                ]]
+            }
+        });
+        pluginRequestContexts.set(requestId, { userId: cid, botType });
+        delete userStates[cid];
+        await bot.sendMessage(cid, 'Your plugin request has been sent to the admin. You will be notified after it is reviewed.');
+        console.log(`[Plugin Request] Forwarded request ${requestId} from ${cid} to admin.`);
+    } catch (error) {
+        console.error('[Plugin Request] Failed to forward request:', error.message);
+        await bot.sendMessage(cid, 'I could not send your plugin request right now. Please try again.');
+    }
+    return;
+}
+
 if (st && st.step === 'AWAITING_EMAIL') {
     const email = text.trim().toLowerCase();
     
@@ -12228,6 +12263,41 @@ if (action === 'recovery_enter_new_key') {
     return;
   }
 
+  if (action === 'plugin_request_cancel') {
+    delete userStates[cid];
+    await bot.editMessageText('Plugin request cancelled.', {
+      chat_id: cid,
+      message_id: q.message.message_id
+    }).catch(() => {});
+    return;
+  }
+
+  if (action === 'plugin_request_decision') {
+    if (cid !== ADMIN_ID) return;
+    const decision = payload === 'approve' ? 'approved' : payload === 'reject' ? 'rejected' : null;
+    const requestId = extra;
+    const request = pluginRequestContexts.get(requestId);
+    if (!decision || !request) {
+      await bot.answerCallbackQuery(q.id, { text: 'This plugin request is no longer active.', show_alert: true }).catch(() => {});
+      return;
+    }
+
+    pluginRequestContexts.delete(requestId);
+    const statusText = decision === 'approved' ? 'Approved' : 'Rejected';
+    await bot.editMessageText(`${q.message.text || 'Plugin request'}\n\nStatus: ${statusText}`, {
+      chat_id: ADMIN_ID,
+      message_id: q.message.message_id
+    }).catch(() => {});
+    await bot.sendMessage(
+      request.userId,
+      decision === 'approved'
+        ? `Your ${request.botType || ''} plugin request was approved by the admin.`
+        : `Your ${request.botType || ''} plugin request was rejected by the admin.`,
+      { parse_mode: 'Markdown' }
+    ).catch(() => {});
+    return;
+  }
+
   if (action === 'extra_menu') {
     await bot.editMessageText('Choose which bot\'s extra commands you want to view:', {
       chat_id: cid,
@@ -12245,15 +12315,18 @@ if (action === 'recovery_enter_new_key') {
   }
 
   if (action === 'extra_request_plugin') {
+    const botType = ['levanter', 'raganork'].includes(String(payload || '').toLowerCase())
+      ? String(payload).toLowerCase()
+      : null;
+    userStates[cid] = { step: 'AWAITING_PLUGIN_REQUEST', data: { botType } };
     await bot.editMessageText(
-      'Describe the plugin you need and send the details to the admin. Include what the plugin should do and which bot it is for.',
+      `Tell me what plugin you need for ${botType || 'your bot'}. Send the description as your next message and I will forward it to the admin.`,
       {
         chat_id: cid,
         message_id: q.message.message_id,
         reply_markup: {
           inline_keyboard: [
-            [{ text: 'Message Admin', url: `https://t.me/${SUPPORT_USERNAME}`, style: 'success' }],
-            [{ text: 'Back', callback_data: 'extra_menu' }]
+            [{ text: 'Cancel', callback_data: 'plugin_request_cancel', style: 'danger' }]
           ]
         }
       }
@@ -12291,7 +12364,7 @@ if (action === 'recovery_enter_new_key') {
         ]);
       }
       rows.push([
-        { text: 'Need a plugin?', callback_data: 'extra_request_plugin', style: 'success' },
+        { text: 'Need a plugin?', callback_data: `extra_request_plugin:${botType}`, style: 'success' },
         { text: 'Back', callback_data: 'extra_menu' }
       ]);
 
