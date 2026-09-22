@@ -10258,6 +10258,15 @@ bot.onText(/^\/createneondb (.+)$/, async (msg, match) => {
     }
 });
 
+async function getPluginDisplayNumber(userId, pluginId) {
+    const result = await pool.query(
+        'SELECT id FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC',
+        [String(userId)]
+    );
+    const index = result.rows.findIndex(row => String(row.id) === String(pluginId));
+    return index >= 0 ? index + 1 : null;
+}
+
 bot.onText(/^\/plugin$/i, async (msg) => {
     if (String(msg.from.id) !== String(ADMIN_ID)) return bot.sendMessage(msg.chat.id, 'Only the administrator can publish plugins.');
     const source = msg.reply_to_message?.text || '';
@@ -10273,7 +10282,9 @@ bot.onText(/^\/plugin$/i, async (msg) => {
     if (!msg.reply_to_message || !url || !botType || !pluginName) return bot.sendMessage(msg.chat.id, 'Reply /plugin to a message containing plugin name, bot type (Levanter or Raganork), description, and URL.');
     try {
         const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_name, description, plugin_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), botType, pluginName, description, url]);
-        await bot.sendMessage(msg.chat.id, result.rows[0] ? `Plugin saved: ${pluginName} (${botType}). ID: ${result.rows[0].id}` : 'That plugin is already saved.');
+        if (!result.rows[0]) return bot.sendMessage(msg.chat.id, 'That plugin is already saved.');
+        const displayNumber = await getPluginDisplayNumber(msg.from.id, result.rows[0].id);
+        await bot.sendMessage(msg.chat.id, `Plugin saved: ${pluginName} (${botType}). Number: ${displayNumber || 'available in /plugin list'}`);
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
 });
 
@@ -10288,7 +10299,9 @@ bot.onText(/^(?:\/plugin\s+list|\/pluginlist)$/i, async (msg) => {
 bot.onText(/^\/plugin\s+(levanter|raganork)\s+(https?:\/\/\S+)$/i, async (msg, match) => {
     try {
         const result = await pool.query('INSERT INTO user_plugins (user_id, bot_type, plugin_name, description, plugin_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, bot_type, plugin_url) DO NOTHING RETURNING id', [String(msg.from.id), match[1].toLowerCase(), match[2].split('/').pop(), '', match[2]]);
-        await bot.sendMessage(msg.chat.id, result.rows[0] ? `Plugin saved for ${match[1]}. ID: ${result.rows[0].id}` : 'That plugin is already saved.');
+        if (!result.rows[0]) return bot.sendMessage(msg.chat.id, 'That plugin is already saved.');
+        const displayNumber = await getPluginDisplayNumber(msg.from.id, result.rows[0].id);
+        await bot.sendMessage(msg.chat.id, `Plugin saved for ${match[1]}. Number: ${displayNumber || 'available in /plugin list'}`);
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not save that plugin.'); }
 });
 
