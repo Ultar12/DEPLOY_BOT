@@ -12253,7 +12253,7 @@ if (action === 'recovery_enter_new_key') {
         reply_markup: {
           inline_keyboard: [
             [{ text: 'Message Admin', url: `https://t.me/${SUPPORT_USERNAME}`, style: 'success' }],
-            [{ text: 'Back to Bot Types', callback_data: 'extra_menu' }]
+            [{ text: 'Back', callback_data: 'extra_menu' }]
           ]
         }
       }
@@ -12343,7 +12343,7 @@ if (action === 'recovery_enter_new_key') {
           reply_markup: {
             inline_keyboard: [
               [{ text: 'Copy Plugin', copy_text: { text: plugin.plugin_url }, style: 'success' }],
-              [{ text: 'Back to Bot Types', callback_data: 'extra_menu' }]
+              [{ text: 'Back', callback_data: 'extra_menu' }]
             ]
           }
         }
