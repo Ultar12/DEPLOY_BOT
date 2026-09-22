@@ -12262,7 +12262,6 @@ if (action === 'recovery_enter_new_key') {
 
       await bot.editMessageText(
         `<b>${escapeHTML(plugin.plugin_name)}</b>\n\n` +
-        `<b>Bot:</b> ${escapeHTML(plugin.bot_type)}\n` +
         `<b>Description:</b> ${escapeHTML(plugin.description || 'No description available.')}\n\n` +
         `Install: Copy the plugin, then send ${plugin.bot_type === 'levanter' ? '.plugin' : '.install'} followed by the copied plugin to your ${escapeHTML(plugin.bot_type)} bot on WhatsApp.`,
         {
