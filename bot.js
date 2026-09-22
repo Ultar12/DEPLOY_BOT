@@ -79,7 +79,7 @@ const geminiModel = genAI.getGenerativeModel({
          - Raganork Session: ${process.env.RAGANORK_SESSION_SITE_URL || 'https://raganork-session.site'}
          - Hermit Session: ${process.env.HERMIT_SESSION_SITE_URL || 'https://hermit-session.site'}
          - Support Channel: ${process.env.MUST_JOIN_CHANNEL_LINK || 'https://t.me/yourchannel'}
-      - ADMIN: Telegram @staries1 | WhatsApp +2349163916314.
+      - ADMIN: Telegram @ultarsync | WhatsApp +2349163916314.
       - PRICING: Basic ($0.35/10 days), Standard ($1.00/45 days), Quarterly ($2.00/3 mos).
 
       ## INTELLIGENT CAPABILITIES
@@ -267,7 +267,7 @@ const GITHUB_LEVANTER_REPO_URL = process.env.GITHUB_LEVANTER_REPO_URL || 'https:
 const GITHUB_RAGANORK_REPO_URL = process.env.GITHUB_RAGANORK_REPO_URL || 'https://github.com/ultar1/raganork-md1';
 const GITHUB_HERMIT_REPO_URL = 'https://github.com/ultar1/hermit-bot'; 
 
-const SUPPORT_USERNAME = 'staries1';
+const SUPPORT_USERNAME = 'ultarsync';
 const ADMIN_SUDO_NUMBERS = ['234', '2349163916314'];
 const LEVANTER_SESSION_PREFIX = 'levanter_';
 const RAGANORK_SESSION_PREFIX = 'RGNK~';
@@ -1397,7 +1397,7 @@ async function handleFallbackWithGemini(chatId, userMessage) {
         // 🔧 Log full detail, and tell the admin exactly what broke
         console.error('[Brain Error]', error.response?.data || error.stack || error.message);
         await bot.sendMessage(ADMIN_ID, `⚠️ AI Brain error for user \`${chatId}\`:\n\`\`\`\n${String(error.message).substring(0, 500)}\n\`\`\``, { parse_mode: 'Markdown' }).catch(()=>{});
-        return bot.sendMessage(chatId, "I couldn't complete that right now. Please try again, use the menu, or contact @staries1.");
+        return bot.sendMessage(chatId, "I couldn't complete that right now. Please try again, use the menu, or contact @ultarsync.");
     }
 }
 
@@ -5666,7 +5666,7 @@ app.get('/api/check-app-name/:appName', validateWebAppInitData, async (req, res)
 });
 
 
-const MINIAPP_SUPPORT_HANDLE = 'staries1';
+const MINIAPP_SUPPORT_HANDLE = 'ultarsync';
 const MINIAPP_APP_NAME_RE = /^[a-z][a-z0-9-]{2,29}[a-z0-9]$/;
 const MINIAPP_PAYMENT_PLANS = [
     { id: 'basic', name: 'Basic', usd: 0.35, days: 10 },
@@ -11701,10 +11701,10 @@ if (text === 'Extra Commands') {
 }
 
 if (text === 'Support') {
-    return bot.sendMessage(cid, "Contact our official support here: @staries1", {
+    return bot.sendMessage(cid, "Contact our official support here: @ultarsync", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: 'Message Support', url: 'https://t.me/staries1', style: 'success' }]
+                [{ text: 'Message Support', url: 'https://t.me/ultarsync', style: 'success' }]
             ]
         }
     });
