@@ -10281,7 +10281,7 @@ bot.onText(/^(?:\/plugin\s+list|\/pluginlist)$/i, async (msg) => {
     try {
         const result = await pool.query('SELECT id, plugin_name, bot_type, description, plugin_url FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC', [String(msg.from.id)]);
         if (!result.rows.length) return bot.sendMessage(msg.chat.id, 'No plugins saved yet. Use /plugin (levanter|raganork) (url).');
-        await bot.sendMessage(msg.chat.id, result.rows.map(item => `${item.id}. ${item.plugin_name} (${item.bot_type})\n${item.description || 'No description'}\n${item.plugin_url}`).join('\n\n'));
+        await bot.sendMessage(msg.chat.id, result.rows.map((item, index) => `${index + 1}. ${item.plugin_name} (${item.bot_type})\n${item.description || 'No description'}\n${item.plugin_url}`).join('\n\n'));
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not load your plugins.'); }
 });
 
@@ -10294,7 +10294,15 @@ bot.onText(/^\/plugin\s+(levanter|raganork)\s+(https?:\/\/\S+)$/i, async (msg, m
 
 bot.onText(/^\/plugindelete\s+(\d+)$/i, async (msg, match) => {
     try {
-        const result = await pool.query('DELETE FROM user_plugins WHERE id = $1 AND user_id = $2 RETURNING id', [match[1], String(msg.from.id)]);
+        const pluginPosition = parseInt(match[1], 10);
+        const plugins = await pool.query(
+            'SELECT id FROM user_plugins WHERE user_id = $1 ORDER BY created_at DESC',
+            [String(msg.from.id)]
+        );
+        const selectedPlugin = plugins.rows[pluginPosition - 1];
+        const result = selectedPlugin
+            ? await pool.query('DELETE FROM user_plugins WHERE id = $1 AND user_id = $2 RETURNING id', [selectedPlugin.id, String(msg.from.id)])
+            : { rowCount: 0 };
         await bot.sendMessage(msg.chat.id, result.rowCount ? 'Plugin deleted.' : 'Plugin not found.');
     } catch (error) { await bot.sendMessage(msg.chat.id, 'Could not delete that plugin.'); }
 });
