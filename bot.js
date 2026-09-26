@@ -116,7 +116,7 @@ You possess full technical knowledge of the bot's codebase, infrastructure, and 
 ## 3. Pricing & Payments
 - PLANS: Basic ($0.35/10d), Standard ($1.00/45d), Quarterly ($2.00/92d), Semi-Annual ($3.35/185d), Yearly ($5.35/365d).
 - DYNAMIC FX: Prices in NGN are calculated using a dynamic DOLLAR_RATE (updated daily).
-- GATEWAYS: Paystack, Flutterwave, and NOWPayments (Crypto).
+- GATEWAYS: Paystack and Flutterwave.
 
 ## 4. Special Features
 - GROUP FILLER: A paid service to add bot members to WhatsApp groups.
@@ -3847,9 +3847,7 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
     // Fallback to 1.00 if days don't match
     const priceUsd = usdPrices[days] || 1.00;
 
-    // 2. Define Callbacks
-    // NOTE: We use 'nowpayments_deploy' to match the handler we created in the previous step.
-    
+    // Define payment callbacks.
     // Paystack
     const paystackCallback = isRenewal 
         ? `paystack_renew:${priceNgn}:${days}:${appName}` 
@@ -3859,12 +3857,6 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
     const flutterwaveCallback = isRenewal 
         ? `flutterwave_renew:${priceNgn}:${days}:${appName}` 
         : `flutterwave_deploy:${priceNgn}:${days}`;
-
-    // Crypto (NOWPayments)
-    // Format: action : NGN_Amount : Days : AppName(optional)
-    const cryptoCallback = isRenewal 
-        ? `nowpayments_renew:${priceNgn}:${days}:${appName}` 
-        : `nowpayments_deploy:${priceNgn}:${days}`;
 
     // Cancel
     const cancelCallback = isRenewal 
@@ -3882,7 +3874,6 @@ async function showPaymentOptions(chatId, messageId, priceNgn, days, appName = n
                 inline_keyboard: [
                     [{ text: 'Pay with Paystack', callback_data: paystackCallback }],
                     [{ text: 'Pay with Flutterwave', callback_data: flutterwaveCallback }],
-                    [{ text: 'Pay with Crypto', callback_data: cryptoCallback }], 
                     [{ text: '« Cancel', callback_data: cancelCallback }]
                 ]
             }
@@ -6032,97 +6023,6 @@ app.post('/api/deploy', validateWebAppInitData, async (req, res) => {
         res.status(error.code === '42P01' ? 503 : 500).json({ success: false, message });
     }
 });
-app.post('/nowpayments-webhook', express.json(), async (req, res) => {
-    
-    // 1. Verify the signature
-    const hmac = crypto.createHmac('sha512', process.env.NOWPAYMENTS_IPN_SECRET);
-    hmac.update(JSON.stringify(req.body, Object.keys(req.body).sort()));
-    const signature = hmac.digest('hex');
-
-    if (req.headers['x-nowpayments-sig'] !== signature) {
-        console.warn('[NOWPayments] Invalid IPN signature received. Ignoring.');
-        return res.status(401).send('Invalid signature');
-    }
-
-    // 2. Process the payment
-    const { payment_status, order_id, price_amount, pay_amount, pay_currency } = req.body;
-    console.log(`[NOWPayments] Webhook received for order: ${order_id}, Status: ${payment_status}`);
-
-    if (payment_status === 'finished') {
-        try {
-            // 3. Find the pending payment
-            const pendingPayment = await pool.query(
-                'SELECT * FROM pending_payments WHERE reference = $1', 
-                [order_id]
-            );
-
-            if (pendingPayment.rows.length === 0) {
-                console.warn(`[NOWPayments] Webhook for ${order_id} received, but no pending payment found.`);
-                return res.status(200).send('OK');
-            }
-            
-            const payment = pendingPayment.rows[0];
-            const userId = payment.user_id;
-
-            // 4. Check if it's a renewal or new deploy
-            const isRenewal = payment.bot_type === 'renewal';
-            
-            // 5. Calculate days based on USD amount
-            let days;
-            if (price_amount >= 5.0) days = 365;
-            else if (price_amount >= 3.0) days = 185;
-            else if (price_amount >= 1.5) days = 92;
-            else if (price_amount >= 0.8) days = 45;
-            else days = 10;
-            
-            // --- 💡 FIX: Calculate Kobo for storage ---
-            const rate = parseInt(process.env.DOLLAR_RATE || '1500', 10);
-            const amount_kobo = Math.ceil(price_amount * rate * 100);
-            
-            const userChat = await bot.getChat(userId);
-            const userName = userChat.username ? `@${escapeMarkdown(userChat.username)}` : `${escapeMarkdown(userChat.first_name || '')}`;
-            
-            // Check if already processed
-            const checkProcessed = await pool.query('SELECT reference FROM completed_payments WHERE reference = $1', [order_id]);
-            if (checkProcessed.rows.length > 0) return res.status(200).send('OK');
-
-            // --- 💡 FIX: Save amount_kobo ---
-            await pool.query(
-                `INSERT INTO completed_payments (reference, user_id, email, amount, currency, paid_at) VALUES ($1, $2, $3, $4, $5, NOW())`,
-                [order_id, userId, payment.email, amount_kobo, pay_currency.toUpperCase()]
-            );
-
-            if (isRenewal) {
-                // --- RENEWAL LOGIC ---
-                const appName = payment.app_name;
-                await pool.query(
-                    `UPDATE user_deployments SET expiration_date = CASE WHEN expiration_date IS NULL OR expiration_date < NOW() THEN NOW() + ($1 * INTERVAL '1 day') ELSE expiration_date + ($1 * INTERVAL '1 day') END WHERE user_id = $2 AND app_name = $3`,
-                    [days, userId, appName]
-                );
-                await bot.sendMessage(userId, `Payment confirmed! \n\nYour bot *${escapeMarkdown(appName)}* has been renewed for **${days} days** with ${pay_amount} ${pay_currency.toUpperCase()}.`, { parse_mode: 'Markdown' });
-                await bot.sendMessage(ADMIN_ID, `*Bot Renewed (Crypto)!*\n\n*User:* ${userName} (\`${userId}\`)\n*Bot:* \`${appName}\`\n*Amount:* $${price_amount} USD`, { parse_mode: 'Markdown' });
-            
-            } else { 
-                // --- NEW DEPLOYMENT LOGIC ---
-                await bot.sendMessage(userId, `Crypto payment confirmed! Your bot *${payment.app_name}* deployment has started.`, { parse_mode: 'Markdown' });
-                const deployVars = { SESSION_ID: payment.session_id, APP_NAME: payment.app_name, DAYS: days }; 
-                dbServices.buildWithProgress(userId, deployVars, false, false, payment.bot_type);
-                await bot.sendMessage(ADMIN_ID, `*New App Deployed (Crypto)!*\n\n*User:* ${userName} (\`${userId}\`)\n*App Name:* \`${payment.app_name}\`\n*Amount:* $${price_amount} USD`, { parse_mode: 'Markdown' });
-            }
-            
-            // 6. Clean up pending payment
-            await pool.query('DELETE FROM pending_payments WHERE reference = $1', [order_id]);
-            
-        } catch (dbError) {
-            console.error('[NOWPayments Webhook] DB Error:', dbError);
-            await bot.sendMessage(ADMIN_ID, `CRITICAL NOWPAYMENTS WEBHOOK ERROR for ref ${order_id}. Manual review needed. Error: ${dbError.message}`);
-        }
-    }
-    
-    res.status(200).send('OK');
-});
-
-
 // POST /api/bots/delete - Deletes a bot from Heroku and the database
 app.post('/api/bots/delete', validateWebAppInitData, async (req, res) => {
     const userId = req.telegramData.id.toString();
