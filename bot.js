@@ -295,6 +295,7 @@ const pool = new Pool({
 });
 
 let isMaintenanceMode = false;
+let databaseStartupError = null;
 
 const backupPool = new Pool({
   connectionString: DATABASE_URL2,
@@ -730,7 +731,8 @@ await client.query(`ALTER TABLE user_deployments DROP COLUMN IF EXISTS warning_s
 
   } catch (dbError) {
     console.error("[DB] CRITICAL ERROR during initial database table creation:", dbError.message);
-    process.exit(1);
+    databaseStartupError = dbError;
+    console.warn("[DB] Continuing in degraded mode so Render and administrative commands remain available.");
   }
 })();
 
@@ -5251,7 +5253,7 @@ app.get('/miniapp/health', async (req, res) => {
         res.status(200).json({ status: 'ok', database: 'ok', message: 'Server and database are running.' });
     } catch (error) {
         console.error('[Health Check] Database unavailable:', error.message);
-        res.status(503).json({ status: 'degraded', database: 'unavailable', message: 'Database is temporarily unavailable.' });
+        res.status(200).json({ status: 'degraded', database: 'unavailable', message: 'Database is temporarily unavailable; administrative recovery remains available.' });
     }
 });
 
@@ -7941,7 +7943,7 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
         }
     } catch (error) {
         console.error("Critical error during user bot update:", error);
-        return bot.sendMessage(adminId, `**Critical Error:** Database query failed. Migration stopped.\n${error.message}`);
+        await bot.sendMessage(adminId, `⚠️ Database query failed, so existing user bots could not be updated.\n\nContinuing with Phase 2 to update the main Render service.\nError: ${error.message}`);
     }
 
     // --- PHASE 2: Update Main Bot (Render) ---
