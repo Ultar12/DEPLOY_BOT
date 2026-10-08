@@ -7923,19 +7923,30 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
     }
 
     let newDatabaseUrl;
+    let newSelfHostedUrl;
     try {
         if (!process.env.DATABASE_URL) throw new Error('Render DATABASE_URL is not configured.');
         const databaseUrl = new URL(process.env.DATABASE_URL);
         databaseUrl.hostname = newHost;
         newDatabaseUrl = databaseUrl.toString();
+
+        const selfHostedUrl = new URL(process.env.SELF_HOSTED_DB_URL || `http://${newHost}:3000`);
+        selfHostedUrl.hostname = newHost;
+        newSelfHostedUrl = selfHostedUrl.toString();
     } catch (error) {
         await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
         return bot.sendMessage(adminId, `❌ Could not prepare DATABASE_URL: ${error.message}`);
     }
 
+    const selfHostedUpdate = await updateRenderVar('SELF_HOSTED_DB_URL', newSelfHostedUrl, false);
+    if (!selfHostedUpdate.success) {
+        await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
+        return bot.sendMessage(adminId, `❌ Could not update SELF_HOSTED_DB_URL: ${selfHostedUpdate.message}`);
+    }
+
     await bot.sendMessage(adminId,
         `🔄 **Recovery saved** for \`${newHost}\`.\n\n` +
-        `Updating only the IP inside Render \`DATABASE_URL\` and restarting now.\n` +
+        `Updating the IP inside Render \`DATABASE_URL\` and \`SELF_HOSTED_DB_URL\`, then restarting now.\n` +
         `After the database is online, user bots will be updated automatically.`,
         { parse_mode: 'Markdown' }
     );
