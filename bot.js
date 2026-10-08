@@ -7917,20 +7917,30 @@ bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
         return bot.sendMessage(adminId, "❌ Invalid IP address. Example: `/updatehost 13.48.5.119`");
     }
 
-    const newApiUrl = `http://${newHost}:3000`;
     const pending = await updateRenderVar('PENDING_UPDATEHOST_IP', newHost, false);
     if (!pending.success) {
         return bot.sendMessage(adminId, `❌ Could not save the pending migration: ${pending.message}`);
     }
 
+    let newDatabaseUrl;
+    try {
+        if (!process.env.DATABASE_URL) throw new Error('Render DATABASE_URL is not configured.');
+        const databaseUrl = new URL(process.env.DATABASE_URL);
+        databaseUrl.hostname = newHost;
+        newDatabaseUrl = databaseUrl.toString();
+    } catch (error) {
+        await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
+        return bot.sendMessage(adminId, `❌ Could not prepare DATABASE_URL: ${error.message}`);
+    }
+
     await bot.sendMessage(adminId,
         `🔄 **Recovery saved** for \`${newHost}\`.\n\n` +
-        `Updating Render \`SELF_HOSTED_DB_URL\` first and restarting now.\n` +
+        `Updating only the IP inside Render \`DATABASE_URL\` and restarting now.\n` +
         `After the database is online, user bots will be updated automatically.`,
         { parse_mode: 'Markdown' }
     );
 
-    const updateResult = await updateRenderVar('SELF_HOSTED_DB_URL', newApiUrl, true);
+    const updateResult = await updateRenderVar('DATABASE_URL', newDatabaseUrl, true);
     if (!updateResult.success) {
         await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
         return bot.sendMessage(adminId, `❌ Render update failed: ${updateResult.message}`);
