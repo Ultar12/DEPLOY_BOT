@@ -7835,149 +7835,105 @@ bot.onText(/^\/remove (\d+)$/, async (msg, match) => {
 });
 
 
-// In bot.js (REPLACE the existing /updatehost handler)
+// /updatehost is restart-first because the database may be unavailable during migration.
+let updateHostRecoveryRunning = false;
+
+async function completePendingUpdateHost(newHost, adminId = ADMIN_ID) {
+    if (updateHostRecoveryRunning) return { success: false, message: 'An updatehost recovery is already running.' };
+    updateHostRecoveryRunning = true;
+    try {
+        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments");
+        let success = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (const [i, botEntry] of result.rows.entries()) {
+            const appName = botEntry.app_name;
+            const oldUrl = (botEntry.config_vars || {}).DATABASE_URL;
+            if (!oldUrl || oldUrl.includes('neon')) {
+                skipped++;
+                continue;
+            }
+
+            try {
+                const dbUrlObj = new URL(oldUrl);
+                if (dbUrlObj.hostname === newHost) {
+                    skipped++;
+                    continue;
+                }
+                dbUrlObj.hostname = newHost;
+                const newUrl = dbUrlObj.toString();
+                await herokuApi.patch(`/apps/${appName}/config-vars`,
+                    { DATABASE_URL: newUrl },
+                    { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
+                );
+                await pool.query(`
+                    UPDATE user_deployments
+                    SET config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($1::text), true)
+                    WHERE app_name = $2
+                `, [newUrl, appName]);
+                success++;
+                if (i % 5 === 0) console.log(`[updatehost] ${i + 1}/${result.rows.length}: ${appName}`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+                console.error(`[updatehost] Failed to migrate ${appName}:`, error.message);
+                failed++;
+            }
+        }
+
+        await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
+        await bot.sendMessage(adminId,
+            `✅ **updatehost completed**\n\n` +
+            `Updated: ${success}\nSkipped: ${skipped}\nFailed: ${failed}\n` +
+            `All available AWS user bots now point to \`${newHost}\`.`,
+            { parse_mode: 'Markdown' }
+        ).catch(() => {});
+        return { success: true, updated: success, skipped, failed };
+    } catch (error) {
+        console.error('[updatehost] Database is still unavailable:', error.message);
+        return { success: false, retry: true, message: error.message };
+    } finally {
+        updateHostRecoveryRunning = false;
+    }
+}
+
+async function resumePendingUpdateHost() {
+    const pendingHost = String(process.env.PENDING_UPDATEHOST_IP || '').trim();
+    if (!pendingHost) return;
+    const result = await completePendingUpdateHost(pendingHost);
+    if (result.retry) console.log('[updatehost] Will retry the pending migration later.');
+}
+
+setTimeout(resumePendingUpdateHost, 30000);
+setInterval(resumePendingUpdateHost, 60000);
 
 bot.onText(/^\/updatehost (.+)$/, async (msg, match) => {
     const adminId = msg.chat.id.toString();
     if (adminId !== ADMIN_ID) return;
-
     const newHost = match[1].trim();
-    
-    // Smart IP validation - must be exactly 4 octets, each 0-255
-    function isValidIPAddress(ip) {
-        const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-        const match = ip.match(ipRegex);
-        
-        if (!match) return false;
-        
-        // Check each octet is between 0-255
-        for (let i = 1; i <= 4; i++) {
-            const octet = parseInt(match[i], 10);
-            if (octet < 0 || octet > 255) return false;
-        }
-        
-        return true;
-    }
-    
-    // Validate IP address
-    if (!isValidIPAddress(newHost)) {
-        return bot.sendMessage(adminId, "❌ Invalid IP address format.\n\nRequired: Must be exactly 4 octets (0-255 each).\nExample: `13.48.5.119`\n\nUsage: `/updatehost 13.48.5.119`");
+    const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+    const ipMatch = newHost.match(ipRegex);
+    if (!ipMatch || ipMatch.slice(1).some(octet => Number(octet) > 255)) {
+        return bot.sendMessage(adminId, "❌ Invalid IP address. Example: `/updatehost 13.48.5.119`");
     }
 
-    const workingMsg = await bot.sendMessage(adminId, `**Migration Started**\n\nTarget Host: \`${newHost}\`\n\n1️⃣ Phase 1: Updating User Bots...`, { parse_mode: 'Markdown' });
-
-    // --- PHASE 1: Update User Bots & Backup ---
-    let success = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    try {
-        // Get ALL bots with their config vars
-        const result = await pool.query("SELECT user_id, app_name, config_vars FROM user_deployments");
-        const allBots = result.rows;
-
-        if (allBots.length > 0) {
-            for (const [i, botEntry] of allBots.entries()) {
-                const appName = botEntry.app_name;
-                const oldConfig = botEntry.config_vars || {};
-                const oldUrl = oldConfig.DATABASE_URL;
-
-                if (!oldUrl) {
-                    skipped++;
-                    continue;
-                }
-
-                // ✅ CRITICAL: Only update if DATABASE_URL does NOT contain 'neon' (i.e., it's AWS)
-                if (oldUrl.includes('neon')) {
-                    skipped++;
-                    continue;
-                }
-
-                try {
-                    // 1. Parse and modify the URL
-                    const dbUrlObj = new URL(oldUrl);
-                    
-                    // Skip if it's already updated
-                    if (dbUrlObj.hostname === newHost) {
-                        skipped++;
-                        continue;
-                    }
-
-                    dbUrlObj.hostname = newHost;
-                    const newUrl = dbUrlObj.toString();
-
-                    // 2. Update Heroku (This restarts the user bot)
-                    await herokuApi.patch(`/apps/${appName}/config-vars`,
-                        { DATABASE_URL: newUrl },
-                        { headers: { 'Authorization': `Bearer ${HEROKU_API_KEY}` } }
-                    );
-
-                    // 3. BACKUP: Update Local Database Record Immediately
-                    // We update the JSON blob so your backup is always in sync with Heroku
-                    await pool.query(`
-                        UPDATE user_deployments
-                        SET config_vars = jsonb_set(config_vars, '{DATABASE_URL}', to_jsonb($1::text), true)
-                        WHERE app_name = $2
-                    `, [newUrl, appName]);
-
-                    success++;
-                    
-                    // Update progress message every 5 bots
-                    if (i % 5 === 0) {
-                         await bot.editMessageText(
-                             `1. Updating User Bots... (${i + 1}/${botsToUpdate.length})\n` +
-                             `Current: \`${appName}\`\n` +
-                             `OK: ${success} | Fail: ${failed}`, 
-                             { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
-                         ).catch(()=>{});
-                    }
-                    
-                    // Small delay to prevent Heroku rate limiting
-                    await new Promise(r => setTimeout(r, 1000));
-
-                } catch (e) {
-                    console.error(`Failed to migrate ${appName}:`, e.message);
-                    failed++;
-                }
-            }
-        }
-    } catch (error) {
-        console.error("Critical error during user bot update:", error);
-        await bot.sendMessage(adminId, `⚠️ Database query failed, so existing user bots could not be updated.\n\nContinuing with Phase 2 to update the main Render service.\nError: ${error.message}`);
+    const newApiUrl = `http://${newHost}:3000`;
+    const pending = await updateRenderVar('PENDING_UPDATEHOST_IP', newHost, false);
+    if (!pending.success) {
+        return bot.sendMessage(adminId, `❌ Could not save the pending migration: ${pending.message}`);
     }
 
-    // --- PHASE 2: Update Main Bot (Render) ---
-    
-    await bot.editMessageText(
-        `**Phase 1 Complete**\n\n` +
-        `User Bots Updated/Backed Up: ${success}\n` +
-        `Skipped (Already Done): ${skipped}\n` +
-        `Failed: ${failed}\n\n` +
-        `2. Updating Main Bot Config & Restarting...`, 
-        { chat_id: adminId, message_id: workingMsg.message_id, parse_mode: 'Markdown' }
+    await bot.sendMessage(adminId,
+        `🔄 **Recovery saved** for \`${newHost}\`.\n\n` +
+        `Updating Render \`SELF_HOSTED_DB_URL\` first and restarting now.\n` +
+        `After the database is online, user bots will be updated automatically.`,
+        { parse_mode: 'Markdown' }
     );
 
-    try {
-        // Construct the API URL (http://IP:3000)
-        const newApiUrl = `http://${newHost}:3000`;
-        
-        // Use your existing helper function to update Render
-        const updateResult = await updateRenderVar('SELF_HOSTED_DB_URL', newApiUrl);
-        
-        if (updateResult.success) {
-            await bot.sendMessage(adminId, 
-                `**Migration Successful!**\n\n` +
-                `1. All AWS User bots updated to \`${newHost}\`.\n` +
-                `2. Backups synchronized.\n` +
-                `3. Render \`SELF_HOSTED_DB_URL\` updated.\n\n` +
-                `**Main Bot is restarting now.** Back online in ~1 minute.`
-            );
-        } else {
-            throw new Error(updateResult.message);
-        }
-
-    } catch (error) {
-        await bot.sendMessage(adminId, `**Phase 2 Failed:** User bots are updated, but Main Bot failed to update Render.\nError: ${error.message}\n\nPlease update \`SELF_HOSTED_DB_URL\` manually in Render Dashboard.`);
+    const updateResult = await updateRenderVar('SELF_HOSTED_DB_URL', newApiUrl, true);
+    if (!updateResult.success) {
+        await updateRenderVar('PENDING_UPDATEHOST_IP', '', false);
+        return bot.sendMessage(adminId, `❌ Render update failed: ${updateResult.message}`);
     }
 });
 
