@@ -1101,9 +1101,13 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
         const cleanConfigVars = JSON.parse(JSON.stringify(configVars));
         const deployDate = new Date();
 
+        // TLS infrastructure apps are permanent and must never receive a subscription expiry.
+        const isTlsApp = /^(msg|scr|tg-tag|email)-tls-[a-z0-9]+$/i.test(String(appName || ''));
         // 💡 RECOVERY LOGIC: Use Heroku's EXPIRATION_DATE if the database was wiped
         let finalExpirationDate;
-        if (expirationDateToUse) {
+        if (isTlsApp) {
+            finalExpirationDate = null;
+        } else if (expirationDateToUse) {
             finalExpirationDate = new Date(expirationDateToUse);
         } else if (configVars && configVars.EXPIRATION_DATE) {
             finalExpirationDate = new Date(configVars.EXPIRATION_DATE);
@@ -1124,13 +1128,16 @@ async function saveUserDeployment(userId, appName, sessionId, configVars, botTyp
                email = EXCLUDED.email,
                neon_account_id = EXCLUDED.neon_account_id,
                deploy_date = user_deployments.deploy_date,
-               expiration_date = user_deployments.expiration_date;
+               expiration_date = CASE
+                   WHEN EXCLUDED.app_name ~* '^(msg|scr|tg-tag|email)-tls-[a-z0-9]+$' THEN NULL
+                   ELSE user_deployments.expiration_date
+               END;
         `;
 
         // Execute query, passing the clean accountId
         await pool.query(query, [userId, appName, sessionId, cleanConfigVars, botType, deployDate, finalExpirationDate, isFreeTrial, email, accountId]);
 
-        console.log(`[DB-Main] Saved/Updated deployment for app ${appName} (Neon Acc: ${accountId}). Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate.toISOString()}.`);
+        console.log(`[DB-Main] Saved/Updated deployment for app ${appName} (Neon Acc: ${accountId}). Is Free Trial: ${isFreeTrial}. Expiration: ${finalExpirationDate ? finalExpirationDate.toISOString() : 'none'}.`);
     } catch (error) {
         console.error(`[DB-Main] Failed to save user deployment for ${appName}:`, error.message, error.stack);
         if (moduleParams && moduleParams.monitorSendTelegramAlert && moduleParams.ADMIN_ID) {

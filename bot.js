@@ -1708,8 +1708,13 @@ function escapeMarkdown(text) {
         .replace(/\[/g, '\\[');
 }
 
+function isTlsAppName(appName) {
+    return /^(msg|scr|tg-tag|email)-tls-[a-z0-9]+$/i.test(String(appName || ''));
+}
+
 function resolveExpirationDate(record, defaultDays = 30) {
     if (!record) return null;
+    if (isTlsAppName(record.app_name || record.bot_name)) return null;
     const configVars = typeof record.config_vars === 'string'
         ? (() => { try { return JSON.parse(record.config_vars); } catch { return {}; } })()
         : (record.config_vars || {});
@@ -14755,14 +14760,17 @@ if (action === 'selectapp' || action === 'selectbot') {
     const expirationDateLabel = expirationDate
         ? expirationDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
         : null;
-    const expirationLabel = daysLeft === null
+    const isTlsApp = isTlsAppName(appName);
+    const expirationLabel = isTlsApp
+        ? 'Active'
+        : daysLeft === null
         ? 'Expiry unavailable'
         : daysLeft > 0
             ? `${expirationDateLabel} (${daysLeft} days left)`
             : `${expirationDateLabel} (Expired)`;
     const finalStatusText = dbBotInfo?.paused_at ? 'Paused' : (dbBotInfo?.wpp_status === 'logged_out' ? 'Logged Out' : 'Connected');
 
-    const isExpired = expirationDate && expirationDate < now;
+    const isExpired = !isTlsApp && expirationDate && expirationDate < now;
     const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
     if (isExpired) {
