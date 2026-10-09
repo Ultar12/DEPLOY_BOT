@@ -80,77 +80,6 @@ function init(params) {
     console.log('--- bot_services.js initialized! ---');
 }
 
-function getGitHubRepositoryPath(repoUrl) {
-    const { URL } = require('url');
-    let parsedUrl;
-    try {
-        parsedUrl = new URL(repoUrl);
-    } catch (error) {
-        throw new Error(`Invalid GitHub repository URL: ${repoUrl}`);
-    }
-
-    if (parsedUrl.hostname.toLowerCase() !== 'github.com') {
-        throw new Error(`Visibility changes are only supported for github.com repositories: ${repoUrl}`);
-    }
-
-    const parts = parsedUrl.pathname.split('/').filter(Boolean).map(part => part.replace(/\.git$/, ''));
-    if (parts.length !== 2) {
-        throw new Error(`Could not determine GitHub owner/repository from URL: ${repoUrl}`);
-    }
-    return `${parts[0]}/${parts[1]}`;
-}
-
-async function setGitHubRepositoryVisibility(repoUrl, isPrivate) {
-    if (!GITHUB_TOKEN) {
-        throw new Error('GITHUB_TOKEN is required to temporarily change repository visibility during deployment.');
-    }
-
-    const repositoryPath = getGitHubRepositoryPath(repoUrl);
-    await axios.patch(`https://api.github.com/repos/${repositoryPath}`, { private: isPrivate }, {
-        headers: {
-            Authorization: `Bearer ${GITHUB_TOKEN}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28'
-        }
-    });
-}
-
-async function toggleGitHubRepositoryVisibility(repoUrl) {
-    if (!GITHUB_TOKEN) {
-        throw new Error('GITHUB_TOKEN is required to toggle repository visibility.');
-    }
-
-    const repositoryPath = getGitHubRepositoryPath(repoUrl);
-    const response = await axios.get(`https://api.github.com/repos/${repositoryPath}`, {
-        headers: {
-            Authorization: `Bearer ${GITHUB_TOKEN}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28'
-        }
-    });
-    const wasPrivate = Boolean(response.data.private);
-    const nowPrivate = !wasPrivate;
-    await setGitHubRepositoryVisibility(repoUrl, nowPrivate);
-    return { repositoryPath, wasPrivate, nowPrivate };
-}
-
-async function withPublicGitHubRepository(repoUrl, deployOperation) {
-    console.log(`[GitHub] Temporarily making ${repoUrl} public for deployment.`);
-    await setGitHubRepositoryVisibility(repoUrl, false);
-    try {
-        return await deployOperation();
-    } finally {
-        try {
-            await setGitHubRepositoryVisibility(repoUrl, true);
-            console.log(`[GitHub] Restored ${repoUrl} to private.`);
-        } catch (restoreError) {
-            console.error(`[GitHub] CRITICAL: Failed to restore ${repoUrl} to private:`, restoreError.message);
-            throw new Error(`Deployment finished, but repository privacy could not be restored: ${restoreError.message}`);
-        }
-    }
-}
-
-
 function extractDbNameFromUrl(dbUrl) {
     if (!dbUrl || typeof dbUrl !== 'string') return null;
     const match = dbUrl.match(/\/([^/?]+)(?:\?.*)?$/);
@@ -2741,8 +2670,6 @@ async function silentRestoreBuild(targetChatId, vars, botType) {
 
 module.exports = {
     init,
-    withPublicGitHubRepository,
-    toggleGitHubRepositoryVisibility,
     addUserBot,
     getUserBots,
     setHerokuApiKey,
