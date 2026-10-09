@@ -14821,6 +14821,7 @@ if (action === 'selectapp' || action === 'selectbot') {
         let message = "```\n ═══ " + botType + " ═══⊷\n ┃❃╭──────────────\n ┃❃│ Bot Name : " + appName + "\n ┃❃│ Status   : Off\n ┃❃│ Expires  : Active\n ┃❃╰───────────────\n\n This bot is currently turned off.\n```";
 
         keyboard.push([{ text: 'Turn Bot On (Resume)', callback_data: `toggle_dyno:on:${appName}`, style: 'success' }]);
+        keyboard.push([{ text: 'Delete Bot', callback_data: `userdelete:${appName}`, style: 'danger' }]);
         keyboard.push([{ text: '« Back', callback_data: 'back_to_app_list', style: 'primary' }]);
 
         await bot.editMessageText(message, { chat_id: cid, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
