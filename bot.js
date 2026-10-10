@@ -2220,11 +2220,45 @@ async function deleteRenderDatabaseByUrl(connectionUrl) {
     }
 }
 
+async function getRenderDatabaseConnectionInfoByUrl(connectionUrl) {
+    const renderApiKey = process.env.RENDER_API_KEY;
+    if (!renderApiKey) return { success: false, error: 'RENDER_API_KEY is not configured.' };
+    let postgresId;
+    try {
+        const parsed = new URL(connectionUrl);
+        postgresId = parsed.hostname.split('.')[0];
+    } catch (error) {
+        return { success: false, error: `Invalid Render database URL: ${error.message}` };
+    }
+    if (!/^dpg-[a-z0-9-]+$/i.test(postgresId)) {
+        return { success: false, error: `Could not determine the Render Postgres ID from hostname '${postgresId}'.` };
+    }
+    try {
+        const response = await axios.get(
+            `https://api.render.com/v1/postgres/${encodeURIComponent(postgresId)}/connection-info`,
+            { headers: { Authorization: `Bearer ${renderApiKey}`, Accept: 'application/json' } }
+        );
+        const info = response.data || {};
+        return {
+            success: true,
+            id: postgresId,
+            internalUrl: info.internalConnectionString,
+            externalUrl: info.externalConnectionString,
+            internalPoolUrl: info.internalConnectionPoolString,
+            externalPoolUrl: info.externalConnectionPoolString
+        };
+    } catch (error) {
+        const body = error.response?.data;
+        const details = typeof body === 'string' ? body : body?.message || body?.error || error.message;
+        return { success: false, id: postgresId, error: `HTTP ${error.response?.status || 'N/A'}: ${details}` };
+    }
+}
 
 let renderBackupRecoveryInProgress = false;
 
 /**
- * Replaces DATABASE_URL2 after the backup database becomes unreachable.
+ * Refreshes DATABASE_URL2 from the existing Render Postgres database.
+ * This never deletes or creates a database.
  */
 async function recoverRenderBackupDatabase(failure) {
     if (renderBackupRecoveryInProgress) {
@@ -2246,24 +2280,18 @@ async function recoverRenderBackupDatabase(failure) {
     try {
         await bot.sendMessage(
             ADMIN_ID,
-            `⚠️ Render backup database failure detected. Replacing DATABASE_URL2 automatically.\n\nReason: ${escapeMarkdown(failure.message || String(failure))}`,
+            `⚠️ Render backup database connection failure detected. Refreshing DATABASE_URL2 from the existing database.\n\nReason: ${escapeMarkdown(failure.message || String(failure))}`,
             { parse_mode: 'Markdown' }
         ).catch(() => {});
 
-        const deletion = await deleteRenderDatabaseByUrl(oldBackupUrl);
-        if (!deletion.success) {
-            throw new Error(`Could not delete old Render backup database: ${deletion.error}`);
+        const connectionInfo = await getRenderDatabaseConnectionInfoByUrl(oldBackupUrl);
+        if (!connectionInfo.success || !connectionInfo.internalUrl) {
+            throw new Error(connectionInfo.error || 'The existing Render database did not provide an internal URL.');
         }
 
-        const replacementName = `backup_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const creation = await createRenderDatabase(replacementName);
-        if (!creation.success || creation.pending || !creation.internalUrl) {
-            throw new Error(creation.error || 'Replacement Render database did not provide an internal URL.');
-        }
-
-        const update = await updateRenderVar('DATABASE_URL2', creation.internalUrl, false);
+        const update = await updateRenderVar('DATABASE_URL2', connectionInfo.internalUrl, false);
         if (!update.success) {
-            throw new Error(`Replacement database created, but DATABASE_URL2 update failed: ${update.message}`);
+            throw new Error(`DATABASE_URL2 update failed: ${update.message}`);
         }
 
         const restarted = await triggerRenderRestart();
@@ -2272,15 +2300,15 @@ async function recoverRenderBackupDatabase(failure) {
         }
         await bot.sendMessage(
             ADMIN_ID,
-            `✅ Backup database recovery completed.\n\nNew database: \`${escapeMarkdown(creation.name)}\`\nDATABASE_URL2 was updated to the internal Render URL and the service restart was triggered.`,
+            `✅ Backup database URL refreshed.\n\nExisting database: \`${escapeMarkdown(connectionInfo.id)}\`\nDATABASE_URL2 was updated to its current internal Render URL and the service restart was triggered. No database was deleted or created.`,
             { parse_mode: 'Markdown' }
         ).catch(() => {});
-        return { success: true, database: creation };
+        return { success: true, database: connectionInfo };
     } catch (error) {
-        console.error('[Backup Recovery] Automatic replacement failed:', error.message);
+        console.error('[Backup Recovery] Automatic URL refresh failed:', error.message);
         await bot.sendMessage(
             ADMIN_ID,
-            `❌ Automatic backup database recovery failed.\n\nReason: ${escapeMarkdown(error.message)}`,
+            `❌ Automatic backup database URL refresh failed.\n\nReason: ${escapeMarkdown(error.message)}`,
             { parse_mode: 'Markdown' }
         ).catch(() => {});
         return { success: false, error: error.message };
@@ -16993,8 +17021,8 @@ async function runDailyBackup() {
         await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: The automatic daily database backup failed. Please check the logs.\n\nReason: ${error.message}`);
 
         // A dead Render Postgres hostname or a rejected PostgreSQL login role
-        // means DATABASE_URL2 can no longer serve as the backup destination.
-        // In either case, replace the Render backup database and restart.
+        // means DATABASE_URL2 may be stale and should be refreshed from the
+        // existing Render database before restarting the service.
         const backupDatabaseNeedsReplacement =
             /getaddrinfo\s+ENOTFOUND\s+dpg-[a-z0-9-]+/i.test(error.message || '') ||
             /role\s+"[^"]+"\s+is\s+not\s+permitted\s+to\s+log\s+in/i.test(error.message || '');
