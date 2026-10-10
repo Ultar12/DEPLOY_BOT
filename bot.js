@@ -16992,9 +16992,13 @@ async function runDailyBackup() {
         // Notify admin on failure
         await bot.sendMessage(ADMIN_ID, `CRITICAL ERROR: The automatic daily database backup failed. Please check the logs.\n\nReason: ${error.message}`);
 
-        // A dead Render Postgres hostname means DATABASE_URL2 points to a
-        // database that can no longer serve as the backup destination.
-        if (/getaddrinfo\s+ENOTFOUND\s+dpg-[a-z0-9-]+/i.test(error.message || '')) {
+        // A dead Render Postgres hostname or a rejected PostgreSQL login role
+        // means DATABASE_URL2 can no longer serve as the backup destination.
+        // In either case, replace the Render backup database and restart.
+        const backupDatabaseNeedsReplacement =
+            /getaddrinfo\s+ENOTFOUND\s+dpg-[a-z0-9-]+/i.test(error.message || '') ||
+            /role\s+"[^"]+"\s+is\s+not\s+permitted\s+to\s+log\s+in/i.test(error.message || '');
+        if (backupDatabaseNeedsReplacement) {
             await recoverRenderBackupDatabase(error);
         }
     }
